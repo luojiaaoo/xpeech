@@ -64,34 +64,34 @@ class AgentWrapper[T]:
                 max_tokens=max_tokens,
             ),
             history_processors=[
-                self.context_light_processor,
-                self.context_summary_processor,
+                self._context_light_processor,
+                self._context_summary_processor,
             ],
         )
 
-    def need_compress(self, total_tokens: int) -> bool:
+    def _need_compress(self, total_tokens: int) -> bool:
         # 预留出summary_tokens和压缩工具上下文的空间，超过则需要压缩历史消息
         max_history_tokens = self.context_window - self.summary_tokens - 10000
         return total_tokens > max_history_tokens
 
-    def context_light_processor(
+    def _context_light_processor(
         self,
         ctx: RunContext[T],
         messages: list[ModelMessage],
     ) -> list[ModelMessage]:
         total_tokens = estimate_pydantic_ai_tokens(messages)
-        if self.need_compress(total_tokens):
+        if self._need_compress(total_tokens):
             return messages
         else:
             return messages
 
-    def context_summary_processor(
+    def _context_summary_processor(
         self,
         ctx: RunContext[T],
         messages: list[ModelMessage],
     ) -> list[ModelMessage]:
         total_tokens = estimate_pydantic_ai_tokens(messages)
-        if self.need_compress(total_tokens):
+        if self._need_compress(total_tokens):
             num_summary_messages = int(len(messages) * self.percent_summary / 100)
             summary = create_summary(self.agent.model, messages[:num_summary_messages])
             return [*summary, *messages[num_summary_messages:]]
