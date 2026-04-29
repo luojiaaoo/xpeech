@@ -14,7 +14,8 @@ from ..model import ModelWrapper
 from pydantic import BaseModel
 from typing import AsyncGenerator
 from typing import Callable
-from pprint import pp
+from ..utils.async_util import ensure_async
+import asyncio
 from dataclasses import dataclass
 
 
@@ -50,8 +51,12 @@ class AgentWrapper:
         self, user_prompt: str, output_type: type[BaseModel]
     ) -> AsyncGenerator:
         if self.agent is None:
-            raise MissingAgentError("Agent has not been initialized. Call set_agent() first.")
-        message_history = self.message_history_calls.get_message_history()
+            raise MissingAgentError(
+                "Agent has not been initialized. Call set_agent() first."
+            )
+        message_history = await ensure_async(
+            self.message_history_calls.get_message_history
+        )()
         async with self.agent.iter(
             user_prompt=user_prompt,
             output_type=output_type,
@@ -99,5 +104,9 @@ class AgentWrapper:
                     assert run.result is not None
                     assert run.result.output == node.data.output
                     yield f"=== Final Agent Output: {run.result.output} ==="
-            
-            self.message_history_calls.set_message_history(run.all_messages())
+            # 异步存储消息历史
+            asyncio.create_task(
+                ensure_async(self.message_history_calls.set_message_history)(
+                    run.all_messages()
+                )
+            )

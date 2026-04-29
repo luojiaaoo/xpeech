@@ -9,3 +9,7 @@ dependencies = [
     "asyncer>=0.0.17",
     "pydantic-ai>=1.88.0",
 ]
+
+[[tool.uv.index]]
+name = "tsinghua"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple/"

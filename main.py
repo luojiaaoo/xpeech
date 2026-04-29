@@ -1,17 +1,19 @@
 from xpeech.model import OpenAIChatModelWrapper
 from xpeech.agent.agent import AgentWrapper, MessageHistoryCalls
-import asyncer
+from asyncer import runnify
+from settings import settings
 
 
 message_history = []
 
 
 async def main():
+
     aw = AgentWrapper(
         model_wrapper=OpenAIChatModelWrapper(
-            base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
-            api_key="1cda8e1a-03e4-xxxx-d1a415985dbf",
-            model_name="glm-5.1",
+            base_url=settings.base_url,
+            api_key=settings.api_key,
+            model_name=settings.model_name,
         ),
         deps_type=None,
         system_prompt="You are a helpful assistant.",
@@ -34,4 +36,4 @@ async def main():
         ...
 
 
-asyncer.runnify(main)()
+runnify(main)()
