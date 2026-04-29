@@ -20,7 +20,7 @@ async def main():
         message_history_calls=MessageHistoryCalls(
             get_message_history=lambda: message_history,
             set_message_history=lambda new_history: (
-                message_history.clear,
+                message_history.clear(),
                 message_history.extend(new_history),
             ),
         ),
@@ -28,11 +28,19 @@ async def main():
     async for output in aw.run(
         user_prompt="What is the capital of France?", output_type=str
     ):
-        print(output)
+        # print(output)
         ...
 
     async for output in aw.run(user_prompt="我刚刚说了什么", output_type=str):
-        print(output)
+        # print(output)
+        ...
+
+    async for output in aw.run(user_prompt="说个笑话", output_type=str):
+        # print(output)
+        ...
+
+    async for output in aw.run(user_prompt="再说个笑话", output_type=str):
+        # print(output)
         ...
 
 
