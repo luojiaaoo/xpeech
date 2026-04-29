@@ -8,10 +8,24 @@ from pydantic_ai import (
     TextPartDelta,
     ThinkingPartDelta,
     ToolCallPartDelta,
+    messages,
 )
 from ..model import ModelWrapper
 from pydantic import BaseModel
 from typing import AsyncGenerator
+from typing import Callable
+from pprint import pp
+from dataclasses import dataclass
+
+
+class MissingAgentError(Exception):
+    """Raised when the agent has not been initialized before calling run."""
+
+
+@dataclass
+class MessageHistoryCalls:
+    set_message_history: Callable[[list[messages.ModelMessage]], None]
+    get_message_history: Callable[[], list[messages.ModelMessage]]
 
 
 class AgentWrapper:
@@ -20,18 +34,28 @@ class AgentWrapper:
         model_wrapper: ModelWrapper,  # 模型包装
         deps_type: type,  # 依赖
         system_prompt: str,  # 系统提示词
+        message_history_calls: MessageHistoryCalls,
     ):
+        self.message_history_calls = message_history_calls
         self.agent = Agent[deps_type, str](
             model_wrapper.model,
             deps_type=deps_type,
             system_prompt=system_prompt,
         )
 
+    def set_model(self, model_wrapper: ModelWrapper):
+        self.agent.model = model_wrapper.model
+
     async def run(
         self, user_prompt: str, output_type: type[BaseModel]
     ) -> AsyncGenerator:
+        if self.agent is None:
+            raise MissingAgentError("Agent has not been initialized. Call set_agent() first.")
+        message_history = self.message_history_calls.get_message_history()
         async with self.agent.iter(
-            user_prompt=user_prompt, output_type=output_type
+            user_prompt=user_prompt,
+            output_type=output_type,
+            message_history=message_history,
         ) as run:
             async for node in run:
                 if Agent.is_user_prompt_node(node):
@@ -75,3 +99,5 @@ class AgentWrapper:
                     assert run.result is not None
                     assert run.result.output == node.data.output
                     yield f"=== Final Agent Output: {run.result.output} ==="
+            
+            self.message_history_calls.set_message_history(run.all_messages())
