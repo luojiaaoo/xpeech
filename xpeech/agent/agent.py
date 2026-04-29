@@ -12,7 +12,6 @@ from pydantic_ai import (
     ModelMessage,
     RunContext,
 )
-from pydantic_ai.messages import ModelMessage
 from ..model import ModelWrapper
 from pydantic import BaseModel
 from typing import AsyncGenerator
@@ -70,7 +69,7 @@ class AgentWrapper[T]:
         )
 
     def _need_compress(self, total_tokens: int) -> bool:
-        # 预留出summary_tokens和压缩工具上下文的空间，超过则需要压缩历史消息
+        """判断是否需要压缩，预留出summary_tokens和压缩工具上下文的空间，超过则需要压缩历史消息"""
         max_history_tokens = self.context_window - self.summary_tokens - 10000
         return total_tokens > max_history_tokens
 
@@ -79,6 +78,7 @@ class AgentWrapper[T]:
         ctx: RunContext[T],
         messages: list[ModelMessage],
     ) -> list[ModelMessage]:
+        """如果消息总Token数超过上下文窗口限制，则直接丢弃部分历史消息，保留最新的消息。"""
         total_tokens = estimate_pydantic_ai_tokens(messages)
         if self._need_compress(total_tokens):
             return messages
@@ -90,6 +90,7 @@ class AgentWrapper[T]:
         ctx: RunContext[T],
         messages: list[ModelMessage],
     ) -> list[ModelMessage]:
+        """如果消息总Token数超过上下文窗口限制，则对部分历史消息进行总结压缩，保留总结后的消息和最新的消息。"""
         total_tokens = estimate_pydantic_ai_tokens(messages)
         if self._need_compress(total_tokens):
             num_summary_messages = int(len(messages) * self.percent_summary / 100)
