@@ -27,9 +27,10 @@ from ..utils.async_util import ensure_async
 from dataclasses import dataclass
 from ..utils.token_util import estimate_pydantic_ai_tokens
 from .compress.summary_agent import create_summary
-from pydantic_ai.capabilities import Thinking
+from pydantic_ai.capabilities import Thinking, WebFetch, WebSearch
 from pathlib import Path
 from .tool.filesystem import FilesystemTools
+from pydantic_ai_harness import CodeMode
 from pydantic_ai.capabilities import ThreadExecutor
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
@@ -85,6 +86,9 @@ class AgentWrapper[T]:
             capabilities=[
                 Thinking(effort=thinking),
                 ThreadExecutor(executor),
+                WebFetch(),  # 网页爬取
+                WebSearch(),  # 网页搜索
+                CodeMode(),  # 代码把工具串起来
             ],
             history_processors=[
                 self._context_tool_result_budget_processor,

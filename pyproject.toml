@@ -9,6 +9,7 @@ dependencies = [
     "asyncer>=0.0.17",
     "loguru>=0.7.3",
     "pydantic-ai>=1.88.0",
+    "pydantic-ai-harness[code-mode]>=0.2.0",
 ]
 
 [[tool.uv.index]]
