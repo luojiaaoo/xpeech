@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from ..utils.token_util import estimate_pydantic_ai_tokens
 from .compress.summary_agent import create_summary
 from pydantic_ai.capabilities import Thinking
+from pathlib import Path
+from .tool.filesystem import FilesystemTools
 
 
 class MissingAgentError(Exception):
@@ -48,11 +50,27 @@ class AgentWrapper[T]:
         summary_tokens: int = 8192,  # 历史消息数量超过该阈值时进行总结
         percent_summary: int = 70,  # 按照百分比去选取需要压缩历史消息
         context_window: int = 200000,  # 上下文窗口token数
+        workspace: Path | None = None,  # 工作空间，用于文件系统工具
     ):
         self.message_history_calls = message_history_calls
         self.summary_tokens = summary_tokens
         self.percent_summary = percent_summary
         self.context_window = context_window
+        self.workspace = workspace
+        fs_tools = FilesystemTools(workspace)
+
+        tools = [
+            *(
+                [
+                    fs_tools.read_file,
+                    fs_tools.write_file,
+                    fs_tools.edit_file,
+                    fs_tools.list_dir,
+                ]
+                if workspace is not None
+                else []
+            ),  # 只有提供了工作空间才启用文件系统工具
+        ]
         self.agent = Agent[deps_type, str](
             model_wrapper.model,
             deps_type=deps_type,
@@ -67,6 +85,7 @@ class AgentWrapper[T]:
                 self._context_light_processor,
                 self._context_summary_processor,
             ],
+            tools=tools,
         )
 
     def _need_compress(self, total_tokens: int) -> bool:

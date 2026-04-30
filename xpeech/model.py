@@ -17,7 +17,7 @@ class OpenAIChatModelWrapper(ModelWrapper):
         self._model = OpenAIChatModel(
             model_name,
             provider=OpenAIProvider(
-                client=create_retrying_client(),
+                http_client=create_retrying_client(),
                 base_url=base_url,
                 api_key=api_key,
             ),
