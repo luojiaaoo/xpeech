@@ -2,7 +2,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models import Model
 from abc import ABC, abstractmethod
-from .utils.retry_util import create_retrying_client
+from ..utils.retry_util import create_retrying_client
 
 
 class ModelWrapper(ABC):

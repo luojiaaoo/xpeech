@@ -1,4 +1,4 @@
-from xpeech.model import OpenAIChatModelWrapper
+from xpeech.agent.model import OpenAIChatModelWrapper
 from xpeech.agent.agent import AgentWrapper, MessageHistoryCalls
 from asyncer import runnify
 from settings import settings
@@ -32,9 +32,9 @@ async def main():
         print(output)
         ...
 
-    # async for output in aw.run(user_prompt="我刚刚说了什么", output_type=str):
-    #     # print(output)
-    #     ...
+    async for output in aw.run(user_prompt="往文件里写入123", output_type=str):
+        print(output)
+        ...
 
     # async for output in aw.run(user_prompt="说个笑话", output_type=str):
     #     # print(output)

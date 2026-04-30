@@ -12,7 +12,7 @@ from pydantic_ai import (
     ModelMessage,
     RunContext,
 )
-from ..model import ModelWrapper
+from .model import ModelWrapper
 from pydantic import BaseModel
 from typing import AsyncGenerator
 from typing import Callable, Literal
@@ -23,6 +23,7 @@ from .compress.summary_agent import create_summary
 from pydantic_ai.capabilities import Thinking
 from pathlib import Path
 from .tool.filesystem import FilesystemTools
+
 
 
 class MissingAgentError(Exception):
