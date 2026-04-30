@@ -69,7 +69,6 @@ class AgentWrapper[T]:
         self.percent_summary = percent_summary
         self.context_window = context_window
         self.workspace = workspace
-        fs_tools = FilesystemTools(workspace)
 
         self.agent = Agent[deps_type, str](
             model_wrapper.model,
