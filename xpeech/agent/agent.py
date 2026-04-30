@@ -86,9 +86,9 @@ class AgentWrapper[T]:
             capabilities=[
                 Thinking(effort=thinking),
                 ThreadExecutor(executor),
-                WebFetch(),  # 网页爬取
-                WebSearch(),  # 网页搜索
-                CodeMode(),  # 代码把工具串起来
+                # WebFetch(),  # 网页爬取
+                # WebSearch(),  # 网页搜索
+                # CodeMode(),  # 代码把工具串起来
             ],
             history_processors=[
                 self._context_tool_result_budget_processor,
