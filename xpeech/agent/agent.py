@@ -26,6 +26,10 @@ from .compress.summary_agent import create_summary
 from pydantic_ai.capabilities import Thinking
 from pathlib import Path
 from .tool.filesystem import FilesystemTools
+from pydantic_ai.capabilities import ThreadExecutor
+from concurrent.futures import ThreadPoolExecutor
+
+executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="agent-worker")
 
 
 class MissingAgentError(Exception):
@@ -87,7 +91,10 @@ class AgentWrapper[T]:
                 parallel_tool_calls=True,
                 max_tokens=max_tokens,
             ),
-            capabilities=[Thinking(effort=thinking)],
+            capabilities=[
+                Thinking(effort=thinking),
+                ThreadExecutor(executor),
+            ],
             history_processors=[
                 self._context_light_processor,
                 self._context_summary_processor,

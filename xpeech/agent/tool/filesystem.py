@@ -24,10 +24,19 @@ class FilesystemTools:
         limit: int | None = 200,
     ) -> str:
         """
-        Read a file (text).
-        Text output format: LINE_NUM|CONTENT.
-        Use offset and limit for large text files.
-        Reads exceeding ~128K chars are truncated.
+        读取文本文件内容，按行编号输出。
+
+        Args:
+            path: 相对于 workspace 的文件路径。
+            offset: 起始行号（从 1 开始），用于分页读取大文件。
+            limit: 最多读取的行数，默认 200 行。
+
+        Returns:
+            格式为 "行号| 内容" 的文本，末尾附带总行数提示。
+            若 offset 超出文件末尾，返回错误提示。
+
+        Raises:
+            FileNotFoundError: 路径不是文件或文件不存在。
         """
         fp = self._resolve(path)
         if not fp.is_file():
@@ -48,8 +57,17 @@ class FilesystemTools:
 
     def write_file(self, path: str, content: str) -> str:
         """
-        Write content to a file. Overwrites if the file already exists;
-        For partial edits, prefer rearch_replace instead.
+        将内容完整写入已有文件（覆盖写入）。
+
+        Args:
+            path: 相对于 workspace 的文件路径，文件必须已存在。
+            content: 要写入的文本内容，编码为 UTF-8。
+
+        Returns:
+            操作结果提示，包含写入的字符数。
+
+        Raises:
+            FileNotFoundError: 文件不存在（需要先 create_file）。
         """
         fp = self._resolve(path)
         if not fp.exists():
@@ -59,17 +77,36 @@ class FilesystemTools:
 
     def create_file(self, path: str) -> str:
         """
-        Create a new file.
+        创建一个空文件。若父目录不存在会自动递归创建。
+
+        Args:
+            path: 相对于 workspace 的文件路径，文件必须不存在。
+
+        Returns:
+            操作结果提示。
+
+        Raises:
+            FileExistsError: 文件已存在。
         """
         fp = self._resolve(path)
         if fp.exists():
             raise FileExistsError(f"File already exists: {path}")
+        fp.parent.mkdir(parents=True, exist_ok=True)
         fp.touch()
         return f"Successfully created {path}"
 
     def delete_file(self, path: str) -> str:
         """
-        Delete a file.
+        删除一个文件。
+
+        Args:
+            path: 相对于 workspace 的文件路径，必须是文件（不能是目录）。
+
+        Returns:
+            操作结果提示。
+
+        Raises:
+            FileNotFoundError: 路径不是文件或文件不存在。
         """
         fp = self._resolve(path)
         if not fp.is_file():
@@ -79,7 +116,18 @@ class FilesystemTools:
     
     def move_file(self, src: str, dst: str) -> str:
         """
-        Move or rename a file from src to dst.
+        移动或重命名文件。若目标父目录不存在会自动递归创建。
+
+        Args:
+            src: 源文件路径（相对于 workspace）。
+            dst: 目标文件路径（相对于 workspace），目标文件必须不存在。
+
+        Returns:
+            操作结果提示。
+
+        Raises:
+            FileNotFoundError: 源文件不存在。
+            FileExistsError: 目标文件已存在。
         """
         src_fp = self._resolve(src)
         dst_fp = self._resolve(dst)
@@ -93,7 +141,18 @@ class FilesystemTools:
     
     def copy_file(self, src: str, dst: str) -> str:
         """
-        Copy a file from src to dst.
+        复制文件。若目标父目录不存在会自动递归创建。
+
+        Args:
+            src: 源文件路径（相对于 workspace）。
+            dst: 目标文件路径（相对于 workspace），目标文件必须不存在。
+
+        Returns:
+            操作结果提示。
+
+        Raises:
+            FileNotFoundError: 源文件不存在。
+            FileExistsError: 目标文件已存在。
         """
         src_fp = self._resolve(src)
         dst_fp = self._resolve(dst)
@@ -107,8 +166,14 @@ class FilesystemTools:
 
     def search_files(self, pattern: str) -> str:
         """
-        Search for files matching a pattern.
-        Glob pattern to match (example: '**/*.txt' to find all txt files).
+        在 workspace 中递归搜索匹配 glob 模式的文件。
+
+        Args:
+            pattern: glob 匹配模式，例如 '**/*.txt' 查找所有 txt 文件，
+                     '*.py' 查找根目录下的 py 文件。
+
+        Returns:
+            匹配文件的相对路径列表（每行一个），无匹配时返回提示信息。
         """
         matches = list(self.workspace.rglob(pattern))
         if not matches:
@@ -119,9 +184,21 @@ class FilesystemTools:
         self, path: str, old_text: str, new_text: str, replace_all: bool = False
     ) -> str:
         """
-        Edit a file by replacing old_text with new_text.
-        If old_text matches multiple times, you must provide more context
-        or set replace_all=true. Shows a diff of the closest match on failure.
+        通过精确匹配替换来编辑文件内容。
+
+        Args:
+            path: 相对于 workspace 的文件路径。
+            old_text: 要被替换的原始文本（必须精确匹配）。
+            new_text: 替换后的新文本。
+            replace_all: 当 old_text 出现多次时，设为 True 替换所有匹配，
+                         否则需提供更多上下文使 old_text 唯一。
+
+        Returns:
+            操作结果提示。
+
+        Raises:
+            FileNotFoundError: 文件不存在。
+            ValueError: old_text 在文件中未找到，或出现多次但未设置 replace_all。
         """
         fp = self._resolve(path)
         if not fp.is_file():
@@ -148,9 +225,19 @@ class FilesystemTools:
         self, path: str = ".", recursive: bool = False, max_entries: int = 200
     ) -> str:
         """
-        List the contents of a directory.
-        Set recursive=true to explore nested structure.
-        Common noise directories (.git, node_modules, __pycache__, etc.) are auto-ignored.
+        列出目录内容。
+
+        Args:
+            path: 相对于 workspace 的目录路径，默认为 workspace 根目录。
+            recursive: 是否递归列出子目录内容，默认 False。
+            max_entries: 最多返回的条目数，默认 200，超出时截断并提示。
+
+        Returns:
+            目录条目列表。非递归模式下条目前带图标前缀（📁 目录 / 📄 文件），
+            递归模式下显示相对路径。自动忽略 .git、node_modules、__pycache__ 等目录。
+
+        Raises:
+            NotADirectoryError: 路径不是目录。
         """
         fp = self._resolve(path)
         if not fp.is_dir():
