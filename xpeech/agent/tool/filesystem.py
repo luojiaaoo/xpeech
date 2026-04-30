@@ -1,12 +1,12 @@
 from pathlib import Path
 from pydantic_ai import RunContext
-from ...utils.helper import format_exception
+from ...utils.helper import format_exception, ensure_dirpath
 
 
 class FilesystemTools:
     def __init__(self, workspace: str | Path):
         self.workspace = Path(workspace).resolve()
-        self.workspace.mkdir(parents=True, exist_ok=True)
+        ensure_dirpath(self.workspace)
 
     def _resolve(self, path: str) -> Path:
         """只接受相对路径，解析后必须位于 workspace 内。"""
@@ -100,8 +100,7 @@ class FilesystemTools:
             fp = self._resolve(path)
             if fp.exists():
                 raise FileExistsError(f"File already exists: {path}")
-            fp.parent.mkdir(parents=True, exist_ok=True)
-            fp.touch()
+            ensure_dirpath(fp).touch()
             return f"Successfully created {path}"
         except Exception as e:
             return format_exception(e)
@@ -150,8 +149,7 @@ class FilesystemTools:
                 raise FileNotFoundError(f"Source not found: {src}")
             if dst_fp.exists():
                 raise FileExistsError(f"Destination already exists: {dst}")
-            dst_fp.parent.mkdir(parents=True, exist_ok=True)
-            src_fp.rename(dst_fp)
+            src_fp.rename(ensure_dirpath(dst_fp))
             return f"Successfully moved {src} to {dst}"
         except Exception as e:
             return format_exception(e)
@@ -178,8 +176,7 @@ class FilesystemTools:
                 raise FileNotFoundError(f"Source not found: {src}")
             if dst_fp.exists():
                 raise FileExistsError(f"Destination already exists: {dst}")
-            dst_fp.parent.mkdir(parents=True, exist_ok=True)
-            dst_fp.write_bytes(src_fp.read_bytes())
+            ensure_dirpath(dst_fp).write_bytes(src_fp.read_bytes())
             return f"Successfully copied {src} to {dst}"
         except Exception as e:
             return format_exception(e)

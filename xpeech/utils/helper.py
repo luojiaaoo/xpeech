@@ -2,6 +2,7 @@ from asyncer import asyncify
 import inspect
 import tiktoken
 from pydantic_ai.messages import ModelMessage
+from pathlib import Path
 
 
 def ensure_async(func):
@@ -9,6 +10,14 @@ def ensure_async(func):
         return func
     else:
         return asyncify(func)
+
+
+def ensure_dirpath(path: Path):
+    if path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def format_exception(e: Exception) -> str:
