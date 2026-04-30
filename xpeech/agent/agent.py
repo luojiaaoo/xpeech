@@ -14,6 +14,7 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ToolReturnPart,
+    ModelResponse,
 )
 from textwrap import dedent
 import json
@@ -62,7 +63,7 @@ class AgentWrapper[T]:
         max_tokens: int = 8192,  # 最大响应token数
         summary_tokens: int = 8192,  # 历史消息数量超过该阈值时进行总结
         percent_summary: int = 70,  # 按照百分比去选取需要压缩历史消息
-        context_window: int = 30000,  # 上下文窗口token数
+        context_window: int = 200000,  # 上下文窗口token数
         workspace: Path | None = None,  # 工作空间，用于文件系统工具
     ):
         self.message_history_calls = message_history_calls
@@ -179,6 +180,13 @@ class AgentWrapper[T]:
         total_tokens = estimate_pydantic_ai_tokens(messages)
         if self._need_compress(total_tokens):
             num_summary_messages = int(len(messages) * self.percent_summary / 100)
+            # 按一问一答去截断
+            for i in range(
+                num_summary_messages, max(num_summary_messages + 1, len(messages) - 4)
+            ):
+                if isinstance(messages[i], ModelResponse):
+                    num_summary_messages = i
+                    break
             summary = await create_summary(
                 self.agent.model, messages[:num_summary_messages]
             )
