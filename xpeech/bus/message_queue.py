@@ -2,7 +2,7 @@
 
 import asyncio
 
-from nanobot.bus.events import InboundMessage, OutboundMessage
+from ..model.message import InboundMessage, OutboundMessage
 
 
 class MessageBus:
