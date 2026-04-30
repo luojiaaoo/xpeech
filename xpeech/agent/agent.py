@@ -20,6 +20,7 @@ from ..utils.async_util import ensure_async
 from dataclasses import dataclass
 from ..utils.token_util import estimate_pydantic_ai_tokens
 from .compress.summary_agent import create_summary
+from pydantic_ai.capabilities import Thinking
 
 
 class MissingAgentError(Exception):
@@ -41,7 +42,7 @@ class AgentWrapper[T]:
         message_history_calls: MessageHistoryCalls,  # 消息历史调用
         top_p: float = 0.5,  # top_p参数
         thinking: Literal[
-            "minimal", "low", "medium", "high", "xhigh"
+            "minimal", "low", "medium", "high", "xhigh", False
         ] = "medium",  # 思考级别
         max_tokens: int = 8192,  # 最大响应token数
         summary_tokens: int = 8192,  # 历史消息数量超过该阈值时进行总结
@@ -59,9 +60,9 @@ class AgentWrapper[T]:
             model_settings=ModelSettings(
                 top_p=top_p,
                 parallel_tool_calls=True,
-                thinking=thinking,
                 max_tokens=max_tokens,
             ),
+            capabilities=[Thinking(effort=thinking)],
             history_processors=[
                 self._context_light_processor,
                 self._context_summary_processor,

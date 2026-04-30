@@ -21,5 +21,5 @@ def estimate_pydantic_ai_tokens(messages: list[ModelMessage], model="gpt-4o") ->
         else:
             total_tokens += 3
             for part in msg["parts"]:
-                total_tokens += len(enc.encode(part["content"]))
+                total_tokens += len(enc.encode(str(part["content"])))
     return total_tokens
