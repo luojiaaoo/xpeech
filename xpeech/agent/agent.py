@@ -12,7 +12,10 @@ from pydantic_ai import (
     ModelMessage,
     RunContext,
     ModelMessagesTypeAdapter,
+    ModelRequest,
+    ToolReturnPart,
 )
+from textwrap import dedent
 import json
 from pydantic_core import to_jsonable_python
 from .model import ModelWrapper
@@ -28,6 +31,8 @@ from pathlib import Path
 from .tool.filesystem import FilesystemTools
 from pydantic_ai.capabilities import ThreadExecutor
 from concurrent.futures import ThreadPoolExecutor
+from uuid import uuid4
+from datetime import timedelta
 
 executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="agent-worker")
 
@@ -80,7 +85,8 @@ class AgentWrapper[T]:
                 ThreadExecutor(executor),
             ],
             history_processors=[
-                self._context_light_processor,
+                self._context_tool_result_budget_processor,
+                self._context_tool_result_timeout_processor,
                 self._context_summary_processor,
             ],
         )
@@ -90,29 +96,69 @@ class AgentWrapper[T]:
             require_parameter_descriptions=True,
         )
         if self.workspace:
-            fs_tools = FilesystemTools(workspace)
-            self.agent.tool(fs_tools.read_file, **tool_parameter)
-            self.agent.tool(fs_tools.write_file, **tool_parameter)
-            self.agent.tool(fs_tools.create_file, **tool_parameter)
-            self.agent.tool(fs_tools.delete_file, **tool_parameter)
-            self.agent.tool(fs_tools.move_file, **tool_parameter)
-            self.agent.tool(fs_tools.copy_file, **tool_parameter)
-            self.agent.tool(fs_tools.search_files, **tool_parameter)
-            self.agent.tool(fs_tools.list_dir, **tool_parameter)
+            self.fs_tools = FilesystemTools(workspace)
+            self.agent.tool_plain(self.fs_tools.read_file, **tool_parameter)
+            self.agent.tool_plain(self.fs_tools.write_file, **tool_parameter)
+            self.agent.tool_plain(self.fs_tools.create_file, **tool_parameter)
+            self.agent.tool_plain(self.fs_tools.delete_file, **tool_parameter)
+            self.agent.tool_plain(self.fs_tools.move_file, **tool_parameter)
+            self.agent.tool_plain(self.fs_tools.copy_file, **tool_parameter)
+            self.agent.tool_plain(self.fs_tools.search_files, **tool_parameter)
+            self.agent.tool_plain(self.fs_tools.list_dir, **tool_parameter)
 
     def _need_compress(self, total_tokens: int) -> bool:
         """判断是否需要压缩，预留出summary_tokens和压缩工具上下文的空间，超过则需要压缩历史消息"""
         max_history_tokens = self.context_window - self.summary_tokens - 10000
         return total_tokens > max_history_tokens
 
-    def _context_light_processor(
+    def _context_tool_result_budget_processor(
         self,
         ctx: RunContext[T],
         messages: list[ModelMessage],
     ) -> list[ModelMessage]:
-        """如果消息总Token数超过上下文窗口限制，则直接丢弃部分历史消息，保留最新的消息。"""
+        """把超大的tool结果保存到文件，只返回一个提示文本，避免占用过多上下文窗口"""
         total_tokens = estimate_pydantic_ai_tokens(messages)
         if self._need_compress(total_tokens):
+            for m in messages:
+                if not isinstance(m, ModelRequest):
+                    continue
+                for part in m.parts:
+                    if not isinstance(part, ToolReturnPart):
+                        continue
+                    content = str(part.content)
+                    if len(content) > 4000:
+                        save_path = f"tool_results/{uuid4().hex}.txt"
+                        self.fs_tools.write_file(save_path, content)
+                        part.content = dedent(f"""
+                            <persisted-output>
+                                Output too large ({len(content)} char). Full output saved to: {save_path}
+
+                                Preview:
+                                {content[:2000]}
+                            </persisted-output>
+                        """).lstrip()
+            return messages
+        else:
+            return messages
+
+    def _context_tool_result_timeout_processor(
+        self,
+        ctx: RunContext[T],
+        messages: list[ModelMessage],
+    ) -> list[ModelMessage]:
+        """删除过期的tool调用内容，避免占用上下文窗口"""
+        total_tokens = estimate_pydantic_ai_tokens(messages)
+        if self._need_compress(total_tokens):
+            newest_time = messages[-1].timestamp
+            for m in messages:
+                if not isinstance(m, ModelRequest):
+                    continue
+                if m.timestamp > newest_time - timedelta(hours=1):
+                    continue
+                for part in m.parts:
+                    if not isinstance(part, ToolReturnPart):
+                        continue
+                    part.content = "[Old tool result content cleared]"
             return messages
         else:
             return messages

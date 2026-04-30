@@ -21,7 +21,6 @@ class FilesystemTools:
 
     def read_file(
         self,
-        ctx: RunContext[str],
         path: str | None = None,
         offset: int = 1,
         limit: int | None = 200,
@@ -61,7 +60,7 @@ class FilesystemTools:
         except Exception as e:
             return format_exception(e)
 
-    def write_file(self, ctx: RunContext[str], path: str, content: str) -> str:
+    def write_file(self, path: str, content: str) -> str:
         """
         将内容完整写入已有文件（覆盖写入）。
 
@@ -84,7 +83,7 @@ class FilesystemTools:
         except Exception as e:
             return format_exception(e)
 
-    def create_file(self, ctx: RunContext[str], path: str) -> str:
+    def create_file(self, path: str) -> str:
         """
         创建一个空文件。若父目录不存在会自动递归创建。
 
@@ -107,7 +106,7 @@ class FilesystemTools:
         except Exception as e:
             return format_exception(e)
 
-    def delete_file(self, ctx: RunContext[str], path: str) -> str:
+    def delete_file(self, path: str) -> str:
         """
         删除一个文件。
 
@@ -129,7 +128,7 @@ class FilesystemTools:
         except Exception as e:
             return format_exception(e)
 
-    def move_file(self, ctx: RunContext[str], src: str, dst: str) -> str:
+    def move_file(self, src: str, dst: str) -> str:
         """
         移动或重命名文件。若目标父目录不存在会自动递归创建。
 
@@ -157,7 +156,7 @@ class FilesystemTools:
         except Exception as e:
             return format_exception(e)
 
-    def copy_file(self, ctx: RunContext[str], src: str, dst: str) -> str:
+    def copy_file(self, src: str, dst: str) -> str:
         """
         复制文件。若目标父目录不存在会自动递归创建。
 
@@ -185,7 +184,7 @@ class FilesystemTools:
         except Exception as e:
             return format_exception(e)
 
-    def search_files(self, ctx: RunContext[str], pattern: str) -> str:
+    def search_files(self, pattern: str) -> str:
         """
         在 workspace 中递归搜索匹配 glob 模式的文件。
 
@@ -205,7 +204,7 @@ class FilesystemTools:
             return format_exception(e)
 
     def search_replace(
-        self, ctx: RunContext[str], path: str, old_text: str, new_text: str, replace_all: bool = False
+        self, path: str, old_text: str, new_text: str, replace_all: bool = False
     ) -> str:
         """
         通过精确匹配替换来编辑文件内容。
@@ -242,14 +241,16 @@ class FilesystemTools:
                     "Provide more context or set replace_all=True."
                 )
 
-            result = text.replace(old, new) if replace_all else text.replace(old, new, 1)
+            result = (
+                text.replace(old, new) if replace_all else text.replace(old, new, 1)
+            )
             fp.write_text(result, encoding="utf-8")
             return f"Successfully edited {path}"
         except Exception as e:
             return format_exception(e)
 
     def list_dir(
-        self, ctx: RunContext[str], path: str = ".", recursive: bool = False, max_entries: int = 200
+        self, path: str = ".", recursive: bool = False, max_entries: int = 200
     ) -> str:
         """
         列出目录内容。
@@ -305,7 +306,9 @@ class FilesystemTools:
 
             result = "\n".join(items)
             if total > max_entries:
-                result += f"\n\n(truncated, showing first {max_entries} of {total} entries)"
+                result += (
+                    f"\n\n(truncated, showing first {max_entries} of {total} entries)"
+                )
             return result
         except Exception as e:
             return format_exception(e)
