@@ -1,5 +1,6 @@
 from pathlib import Path
 from pydantic_ai import RunContext
+from ...utils.log_util import format_exception
 
 
 class FilesystemTools:
@@ -40,22 +41,25 @@ class FilesystemTools:
         Raises:
             FileNotFoundError: 路径不是文件或文件不存在。
         """
-        fp = self._resolve(path)
-        if not fp.is_file():
-            raise FileNotFoundError(f"Not a file: {path}")
-        text = fp.read_text(encoding="utf-8").replace("\r\n", "\n")
-        lines = text.splitlines()
-        total = len(lines)
-        start = max(0, offset - 1)
-        if start >= total:
-            return f"Error: offset {offset} is beyond end of file ({total} lines)"
-        end = min(start + limit, total)
-        out = "\n".join(f"{i + 1}| {lines[i]}" for i in range(start, end))
-        if end < total:
-            out += f"\n\n(Showing lines {offset}-{end} of {total}. Use offset={end + 1} to continue.)"
-        else:
-            out += f"\n\n(End of file — {total} lines total)"
-        return out
+        try:
+            fp = self._resolve(path)
+            if not fp.is_file():
+                raise FileNotFoundError(f"Not a file: {path}")
+            text = fp.read_text(encoding="utf-8").replace("\r\n", "\n")
+            lines = text.splitlines()
+            total = len(lines)
+            start = max(0, offset - 1)
+            if start >= total:
+                return f"Error: offset {offset} is beyond end of file ({total} lines)"
+            end = min(start + limit, total)
+            out = "\n".join(f"{i + 1}| {lines[i]}" for i in range(start, end))
+            if end < total:
+                out += f"\n\n(Showing lines {offset}-{end} of {total}. Use offset={end + 1} to continue.)"
+            else:
+                out += f"\n\n(End of file — {total} lines total)"
+            return out
+        except Exception as e:
+            return format_exception(e)
 
     def write_file(self, ctx: RunContext[str], path: str, content: str) -> str:
         """
@@ -71,11 +75,14 @@ class FilesystemTools:
         Raises:
             FileNotFoundError: 文件不存在（需要先 create_file）。
         """
-        fp = self._resolve(path)
-        if not fp.exists():
-            raise FileNotFoundError(f"File does not exist: {path}")
-        fp.write_text(content, encoding="utf-8")
-        return f"Successfully wrote {len(content)} characters to {path}"
+        try:
+            fp = self._resolve(path)
+            if not fp.exists():
+                raise FileNotFoundError(f"File does not exist: {path}")
+            fp.write_text(content, encoding="utf-8")
+            return f"Successfully wrote {len(content)} characters to {path}"
+        except Exception as e:
+            return format_exception(e)
 
     def create_file(self, ctx: RunContext[str], path: str) -> str:
         """
@@ -90,14 +97,17 @@ class FilesystemTools:
         Raises:
             FileExistsError: 文件已存在。
         """
-        fp = self._resolve(path)
-        if fp.exists():
-            raise FileExistsError(f"File already exists: {path}")
-        fp.parent.mkdir(parents=True, exist_ok=True)
-        fp.touch()
-        return f"Successfully created {path}"
+        try:
+            fp = self._resolve(path)
+            if fp.exists():
+                raise FileExistsError(f"File already exists: {path}")
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.touch()
+            return f"Successfully created {path}"
+        except Exception as e:
+            return format_exception(e)
 
-    def delete_file(self, ctx: RunContext[str],path: str) -> str:
+    def delete_file(self, ctx: RunContext[str], path: str) -> str:
         """
         删除一个文件。
 
@@ -110,12 +120,15 @@ class FilesystemTools:
         Raises:
             FileNotFoundError: 路径不是文件或文件不存在。
         """
-        fp = self._resolve(path)
-        if not fp.is_file():
-            raise FileNotFoundError(f"Not a file: {path}")
-        fp.unlink()
-        return f"Successfully deleted {path}"
-    
+        try:
+            fp = self._resolve(path)
+            if not fp.is_file():
+                raise FileNotFoundError(f"Not a file: {path}")
+            fp.unlink()
+            return f"Successfully deleted {path}"
+        except Exception as e:
+            return format_exception(e)
+
     def move_file(self, ctx: RunContext[str], src: str, dst: str) -> str:
         """
         移动或重命名文件。若目标父目录不存在会自动递归创建。
@@ -131,16 +144,19 @@ class FilesystemTools:
             FileNotFoundError: 源文件不存在。
             FileExistsError: 目标文件已存在。
         """
-        src_fp = self._resolve(src)
-        dst_fp = self._resolve(dst)
-        if not src_fp.is_file():
-            raise FileNotFoundError(f"Source not found: {src}")
-        if dst_fp.exists():
-            raise FileExistsError(f"Destination already exists: {dst}")
-        dst_fp.parent.mkdir(parents=True, exist_ok=True)
-        src_fp.rename(dst_fp)
-        return f"Successfully moved {src} to {dst}"
-    
+        try:
+            src_fp = self._resolve(src)
+            dst_fp = self._resolve(dst)
+            if not src_fp.is_file():
+                raise FileNotFoundError(f"Source not found: {src}")
+            if dst_fp.exists():
+                raise FileExistsError(f"Destination already exists: {dst}")
+            dst_fp.parent.mkdir(parents=True, exist_ok=True)
+            src_fp.rename(dst_fp)
+            return f"Successfully moved {src} to {dst}"
+        except Exception as e:
+            return format_exception(e)
+
     def copy_file(self, ctx: RunContext[str], src: str, dst: str) -> str:
         """
         复制文件。若目标父目录不存在会自动递归创建。
@@ -156,15 +172,18 @@ class FilesystemTools:
             FileNotFoundError: 源文件不存在。
             FileExistsError: 目标文件已存在。
         """
-        src_fp = self._resolve(src)
-        dst_fp = self._resolve(dst)
-        if not src_fp.is_file():
-            raise FileNotFoundError(f"Source not found: {src}")
-        if dst_fp.exists():
-            raise FileExistsError(f"Destination already exists: {dst}")
-        dst_fp.parent.mkdir(parents=True, exist_ok=True)
-        dst_fp.write_bytes(src_fp.read_bytes())
-        return f"Successfully copied {src} to {dst}"
+        try:
+            src_fp = self._resolve(src)
+            dst_fp = self._resolve(dst)
+            if not src_fp.is_file():
+                raise FileNotFoundError(f"Source not found: {src}")
+            if dst_fp.exists():
+                raise FileExistsError(f"Destination already exists: {dst}")
+            dst_fp.parent.mkdir(parents=True, exist_ok=True)
+            dst_fp.write_bytes(src_fp.read_bytes())
+            return f"Successfully copied {src} to {dst}"
+        except Exception as e:
+            return format_exception(e)
 
     def search_files(self, ctx: RunContext[str], pattern: str) -> str:
         """
@@ -177,10 +196,13 @@ class FilesystemTools:
         Returns:
             匹配文件的相对路径列表（每行一个），无匹配时返回提示信息。
         """
-        matches = list(self.workspace.rglob(pattern))
-        if not matches:
-            return f"No files found matching: {pattern}"
-        return "\n".join(str(m.relative_to(self.workspace)) for m in matches)
+        try:
+            matches = list(self.workspace.rglob(pattern))
+            if not matches:
+                return f"No files found matching: {pattern}"
+            return "\n".join(str(m.relative_to(self.workspace)) for m in matches)
+        except Exception as e:
+            return format_exception(e)
 
     def search_replace(
         self, ctx: RunContext[str], path: str, old_text: str, new_text: str, replace_all: bool = False
@@ -202,26 +224,29 @@ class FilesystemTools:
             FileNotFoundError: 文件不存在。
             ValueError: old_text 在文件中未找到，或出现多次但未设置 replace_all。
         """
-        fp = self._resolve(path)
-        if not fp.is_file():
-            raise FileNotFoundError(f"Not a file: {path}")
+        try:
+            fp = self._resolve(path)
+            if not fp.is_file():
+                raise FileNotFoundError(f"Not a file: {path}")
 
-        text = fp.read_text(encoding="utf-8").replace("\r\n", "\n")
-        old = old_text.replace("\r\n", "\n")
-        new = new_text.replace("\r\n", "\n")
+            text = fp.read_text(encoding="utf-8").replace("\r\n", "\n")
+            old = old_text.replace("\r\n", "\n")
+            new = new_text.replace("\r\n", "\n")
 
-        count = text.count(old)
-        if count == 0:
-            raise ValueError(f"old_text not found in {path}")
-        if count > 1 and not replace_all:
-            raise ValueError(
-                f"old_text appears {count} times in {path}. "
-                "Provide more context or set replace_all=True."
-            )
+            count = text.count(old)
+            if count == 0:
+                raise ValueError(f"old_text not found in {path}")
+            if count > 1 and not replace_all:
+                raise ValueError(
+                    f"old_text appears {count} times in {path}. "
+                    "Provide more context or set replace_all=True."
+                )
 
-        result = text.replace(old, new) if replace_all else text.replace(old, new, 1)
-        fp.write_text(result, encoding="utf-8")
-        return f"Successfully edited {path}"
+            result = text.replace(old, new) if replace_all else text.replace(old, new, 1)
+            fp.write_text(result, encoding="utf-8")
+            return f"Successfully edited {path}"
+        except Exception as e:
+            return format_exception(e)
 
     def list_dir(
         self, ctx: RunContext[str], path: str = ".", recursive: bool = False, max_entries: int = 200
@@ -241,43 +266,46 @@ class FilesystemTools:
         Raises:
             NotADirectoryError: 路径不是目录。
         """
-        fp = self._resolve(path)
-        if not fp.is_dir():
-            raise NotADirectoryError(f"Not a directory: {path}")
+        try:
+            fp = self._resolve(path)
+            if not fp.is_dir():
+                raise NotADirectoryError(f"Not a directory: {path}")
 
-        ignore = {
-            ".git",
-            "node_modules",
-            "__pycache__",
-            ".venv",
-            "venv",
-            "dist",
-            "build",
-        }
-        items = []
-        total = 0
+            ignore = {
+                ".git",
+                "node_modules",
+                "__pycache__",
+                ".venv",
+                "venv",
+                "dist",
+                "build",
+            }
+            items = []
+            total = 0
 
-        if recursive:
-            for item in sorted(fp.rglob("*")):
-                if any(p in ignore for p in item.parts):
-                    continue
-                total += 1
-                if len(items) < max_entries:
-                    rel = item.relative_to(fp)
-                    items.append(f"{rel}/" if item.is_dir() else str(rel))
-        else:
-            for item in sorted(fp.iterdir()):
-                if item.name in ignore:
-                    continue
-                total += 1
-                if len(items) < max_entries:
-                    prefix = "📁 " if item.is_dir() else "📄 "
-                    items.append(f"{prefix}{item.name}")
+            if recursive:
+                for item in sorted(fp.rglob("*")):
+                    if any(p in ignore for p in item.parts):
+                        continue
+                    total += 1
+                    if len(items) < max_entries:
+                        rel = item.relative_to(fp)
+                        items.append(f"{rel}/" if item.is_dir() else str(rel))
+            else:
+                for item in sorted(fp.iterdir()):
+                    if item.name in ignore:
+                        continue
+                    total += 1
+                    if len(items) < max_entries:
+                        prefix = "📁 " if item.is_dir() else "📄 "
+                        items.append(f"{prefix}{item.name}")
 
-        if not items:
-            return f"Directory {path} is empty"
+            if not items:
+                return f"Directory {path} is empty"
 
-        result = "\n".join(items)
-        if total > max_entries:
-            result += f"\n\n(truncated, showing first {max_entries} of {total} entries)"
-        return result
+            result = "\n".join(items)
+            if total > max_entries:
+                result += f"\n\n(truncated, showing first {max_entries} of {total} entries)"
+            return result
+        except Exception as e:
+            return format_exception(e)

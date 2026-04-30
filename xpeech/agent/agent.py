@@ -84,16 +84,21 @@ class AgentWrapper[T]:
                 self._context_summary_processor,
             ],
         )
+        tool_parameter = dict(
+            defer_loading=True,
+            docstring_format="google",
+            require_parameter_descriptions=True,
+        )
         if self.workspace:
             fs_tools = FilesystemTools(workspace)
-            self.agent.tool(fs_tools.read_file, defer_loading=True)
-            self.agent.tool(fs_tools.write_file, defer_loading=True)
-            self.agent.tool(fs_tools.create_file, defer_loading=True)
-            self.agent.tool(fs_tools.delete_file, defer_loading=True)
-            self.agent.tool(fs_tools.move_file, defer_loading=True)
-            self.agent.tool(fs_tools.copy_file, defer_loading=True)
-            self.agent.tool(fs_tools.search_files, defer_loading=True)
-            self.agent.tool(fs_tools.list_dir, defer_loading=True)
+            self.agent.tool(fs_tools.read_file, **tool_parameter)
+            self.agent.tool(fs_tools.write_file, **tool_parameter)
+            self.agent.tool(fs_tools.create_file, **tool_parameter)
+            self.agent.tool(fs_tools.delete_file, **tool_parameter)
+            self.agent.tool(fs_tools.move_file, **tool_parameter)
+            self.agent.tool(fs_tools.copy_file, **tool_parameter)
+            self.agent.tool(fs_tools.search_files, **tool_parameter)
+            self.agent.tool(fs_tools.list_dir, **tool_parameter)
 
     def _need_compress(self, total_tokens: int) -> bool:
         """判断是否需要压缩，预留出summary_tokens和压缩工具上下文的空间，超过则需要压缩历史消息"""
