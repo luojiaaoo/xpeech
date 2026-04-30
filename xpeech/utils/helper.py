@@ -1,5 +1,18 @@
+from asyncer import asyncify
+import inspect
 import tiktoken
 from pydantic_ai.messages import ModelMessage
+
+
+def ensure_async(func):
+    if inspect.iscoroutinefunction(func):
+        return func
+    else:
+        return asyncify(func)
+
+
+def format_exception(e: Exception) -> str:
+    return f"{type(e).__name__}: {e}"
 
 
 def estimate_pydantic_ai_tokens(messages: list[ModelMessage], model="gpt-4o") -> int:
