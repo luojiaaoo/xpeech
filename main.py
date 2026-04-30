@@ -26,7 +26,6 @@ async def main():
             get_message_history=lambda: message_history,
             set_message_history=set_message_history,
         ),
-        workspace="./workspace/luoja",
     )
     async for output in aw.run(user_prompt="创建一个叫a.txt的文件，如果有了则不用操作", output_type=str):
         # print(output)

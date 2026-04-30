@@ -70,8 +70,9 @@ class AgentWrapper[T]:
         self.summary_tokens = summary_tokens
         self.percent_summary = percent_summary
         self.context_window = context_window
-        self.workspace = workspace
-
+        self.workspace = (
+            workspace if workspace is not None else f"./workspace/{uuid4().hex}"
+        )
         self.agent = Agent[deps_type, str](
             model_wrapper.model,
             deps_type=deps_type,
@@ -96,16 +97,17 @@ class AgentWrapper[T]:
             docstring_format="google",
             require_parameter_descriptions=True,
         )
-        if self.workspace:
-            self.fs_tools = FilesystemTools(workspace)
-            self.agent.tool_plain(self.fs_tools.read_file, **tool_parameter)
-            self.agent.tool_plain(self.fs_tools.write_file, **tool_parameter)
-            self.agent.tool_plain(self.fs_tools.create_file, **tool_parameter)
-            self.agent.tool_plain(self.fs_tools.delete_file, **tool_parameter)
-            self.agent.tool_plain(self.fs_tools.move_file, **tool_parameter)
-            self.agent.tool_plain(self.fs_tools.copy_file, **tool_parameter)
-            self.agent.tool_plain(self.fs_tools.search_files, **tool_parameter)
-            self.agent.tool_plain(self.fs_tools.list_dir, **tool_parameter)
+
+        # 添加工具
+        self.fs_tools = FilesystemTools(workspace)
+        self.agent.tool_plain(self.fs_tools.read_file, **tool_parameter)
+        self.agent.tool_plain(self.fs_tools.write_file, **tool_parameter)
+        self.agent.tool_plain(self.fs_tools.create_file, **tool_parameter)
+        self.agent.tool_plain(self.fs_tools.delete_file, **tool_parameter)
+        self.agent.tool_plain(self.fs_tools.move_file, **tool_parameter)
+        self.agent.tool_plain(self.fs_tools.copy_file, **tool_parameter)
+        self.agent.tool_plain(self.fs_tools.search_files, **tool_parameter)
+        self.agent.tool_plain(self.fs_tools.list_dir, **tool_parameter)
 
     def _need_compress(self, total_tokens: int) -> bool:
         """判断是否需要压缩，预留出summary_tokens和压缩工具上下文的空间，超过则需要压缩历史消息"""
