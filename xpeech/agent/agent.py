@@ -11,7 +11,10 @@ from pydantic_ai import (
     ModelSettings,
     ModelMessage,
     RunContext,
+    ModelMessagesTypeAdapter,
 )
+import json
+from pydantic_core import to_jsonable_python
 from .model import ModelWrapper
 from pydantic import BaseModel
 from typing import AsyncGenerator
@@ -25,15 +28,14 @@ from pathlib import Path
 from .tool.filesystem import FilesystemTools
 
 
-
 class MissingAgentError(Exception):
     """Raised when the agent has not been initialized before calling run."""
 
 
 @dataclass
 class MessageHistoryCalls:
-    set_message_history: Callable[[list[ModelMessage]], None]
-    get_message_history: Callable[[], list[ModelMessage]]
+    set_message_history: Callable[[str], None]
+    get_message_history: Callable[[], str]
 
 
 class AgentWrapper[T]:
@@ -65,7 +67,11 @@ class AgentWrapper[T]:
                 [
                     fs_tools.read_file,
                     fs_tools.write_file,
-                    fs_tools.edit_file,
+                    fs_tools.create_file,
+                    fs_tools.delete_file,
+                    fs_tools.move_file,
+                    fs_tools.copy_file,
+                    fs_tools.search_files,
                     fs_tools.list_dir,
                 ]
                 if workspace is not None
@@ -128,9 +134,12 @@ class AgentWrapper[T]:
                 "Agent has not been initialized. Call set_agent() first."
             )
         # 获取历史消息
-        message_history = await ensure_async(
+        message_history_json: str = await ensure_async(
             self.message_history_calls.get_message_history
         )()
+        message_history: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(
+            json.loads(message_history_json) if message_history_json.strip() else []
+        )
         async with self.agent.iter(
             user_prompt=user_prompt,
             output_type=output_type,
@@ -180,5 +189,8 @@ class AgentWrapper[T]:
                     yield f"=== Final Agent Output: {run.result.output} ==="
                 # 存储对话历史
                 await ensure_async(self.message_history_calls.set_message_history)(
-                    run.all_messages()
+                    json.dumps(
+                        to_jsonable_python(run.all_messages()),
+                        ensure_ascii=False,
+                    )
                 )

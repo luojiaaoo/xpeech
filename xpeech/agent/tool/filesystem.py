@@ -21,7 +21,7 @@ class FilesystemTools:
         self,
         path: str | None = None,
         offset: int = 1,
-        limit: int | None = None,
+        limit: int | None = 200,
     ) -> str:
         """
         Read a file (text).
@@ -49,20 +49,77 @@ class FilesystemTools:
     def write_file(self, path: str, content: str) -> str:
         """
         Write content to a file. Overwrites if the file already exists;
-        creates parent directories as needed.
-        For partial edits, prefer edit_file instead.
+        For partial edits, prefer rearch_replace instead.
         """
         fp = self._resolve(path)
-        fp.parent.mkdir(parents=True, exist_ok=True)
+        if not fp.exists():
+            raise FileNotFoundError(f"File does not exist: {path}")
         fp.write_text(content, encoding="utf-8")
         return f"Successfully wrote {len(content)} characters to {path}"
 
-    def edit_file(
+    def create_file(self, path: str) -> str:
+        """
+        Create a new file.
+        """
+        fp = self._resolve(path)
+        if fp.exists():
+            raise FileExistsError(f"File already exists: {path}")
+        fp.touch()
+        return f"Successfully created {path}"
+
+    def delete_file(self, path: str) -> str:
+        """
+        Delete a file.
+        """
+        fp = self._resolve(path)
+        if not fp.is_file():
+            raise FileNotFoundError(f"Not a file: {path}")
+        fp.unlink()
+        return f"Successfully deleted {path}"
+    
+    def move_file(self, src: str, dst: str) -> str:
+        """
+        Move or rename a file from src to dst.
+        """
+        src_fp = self._resolve(src)
+        dst_fp = self._resolve(dst)
+        if not src_fp.is_file():
+            raise FileNotFoundError(f"Source not found: {src}")
+        if dst_fp.exists():
+            raise FileExistsError(f"Destination already exists: {dst}")
+        dst_fp.parent.mkdir(parents=True, exist_ok=True)
+        src_fp.rename(dst_fp)
+        return f"Successfully moved {src} to {dst}"
+    
+    def copy_file(self, src: str, dst: str) -> str:
+        """
+        Copy a file from src to dst.
+        """
+        src_fp = self._resolve(src)
+        dst_fp = self._resolve(dst)
+        if not src_fp.is_file():
+            raise FileNotFoundError(f"Source not found: {src}")
+        if dst_fp.exists():
+            raise FileExistsError(f"Destination already exists: {dst}")
+        dst_fp.parent.mkdir(parents=True, exist_ok=True)
+        dst_fp.write_bytes(src_fp.read_bytes())
+        return f"Successfully copied {src} to {dst}"
+
+    def search_files(self, pattern: str) -> str:
+        """
+        Search for files matching a pattern.
+        Glob pattern to match (example: '**/*.txt' to find all txt files).
+        """
+        matches = list(self.workspace.rglob(pattern))
+        if not matches:
+            return f"No files found matching: {pattern}"
+        return "\n".join(str(m.relative_to(self.workspace)) for m in matches)
+
+    def rearch_replace(
         self, path: str, old_text: str, new_text: str, replace_all: bool = False
     ) -> str:
         """
         Edit a file by replacing old_text with new_text.
-        Tolerates minor whitespace/indentation differences and curly/straight quote mismatches.
         If old_text matches multiple times, you must provide more context
         or set replace_all=true. Shows a diff of the closest match on failure.
         """

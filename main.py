@@ -4,7 +4,12 @@ from asyncer import runnify
 from settings import settings
 
 
-message_history = []
+message_history = ""
+
+
+def set_message_history(new_history: str):
+    global message_history
+    message_history = new_history
 
 
 async def main():
@@ -19,20 +24,23 @@ async def main():
         system_prompt="You are a helpful assistant.",
         message_history_calls=MessageHistoryCalls(
             get_message_history=lambda: message_history,
-            set_message_history=lambda new_history: (
-                message_history.clear(),
-                message_history.extend(new_history),
-            ),
+            set_message_history=set_message_history,
         ),
         workspace="./workspace/luoja",
     )
-    async for output in aw.run(
-        user_prompt="创建一个叫a.txt的文件", output_type=str
-    ):
+    async for output in aw.run(user_prompt="创建一个叫a.txt的文件，如果有了则不用操作", output_type=str):
         print(output)
         ...
 
-    async for output in aw.run(user_prompt="往文件里写入123", output_type=str):
+    async for output in aw.run(user_prompt="往文件里追加123", output_type=str):
+        print(output)
+        ...
+
+    async for output in aw.run(user_prompt="把a.txt复制到b.txt", output_type=str):
+        print(output)
+        ...
+
+    async for output in aw.run(user_prompt="删除", output_type=str):
         print(output)
         ...
 
