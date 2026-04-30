@@ -29,28 +29,28 @@ async def main():
         workspace="./workspace/luoja",
     )
     async for output in aw.run(user_prompt="创建一个叫a.txt的文件，如果有了则不用操作", output_type=str):
-        print(output)
+        # print(output)
         ...
 
     async for output in aw.run(user_prompt="往文件里追加123", output_type=str):
-        print(output)
+        # print(output)
         ...
 
     async for output in aw.run(user_prompt="把a.txt复制到sub/b.txt", output_type=str):
-        print(output)
+        # print(output)
         ...
 
     async for output in aw.run(user_prompt="删除a.txt", output_type=str):
-        print(output)
+        # print(output)
         ...
 
-    # async for output in aw.run(user_prompt="说个笑话", output_type=str):
-    #     # print(output)
-    #     ...
-
-    # async for output in aw.run(user_prompt="再说个笑话", output_type=str):
-    #     # print(output)
-    #     ...
+    async for output in aw.run(user_prompt="说个笑话", output_type=str):
+        # print(output)
+        ...
+    for i in range(10):
+        async for output in aw.run(user_prompt="再说个笑话", output_type=str):
+            # print(output)
+            ...
 
 
 runnify(main)()

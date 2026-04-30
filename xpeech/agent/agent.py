@@ -33,6 +33,7 @@ from pydantic_ai.capabilities import ThreadExecutor
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 from datetime import timedelta
+from loguru import logger
 
 executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="agent-worker")
 
@@ -61,7 +62,7 @@ class AgentWrapper[T]:
         max_tokens: int = 8192,  # 最大响应token数
         summary_tokens: int = 8192,  # 历史消息数量超过该阈值时进行总结
         percent_summary: int = 70,  # 按照百分比去选取需要压缩历史消息
-        context_window: int = 200000,  # 上下文窗口token数
+        context_window: int = 30000,  # 上下文窗口token数
         workspace: Path | None = None,  # 工作空间，用于文件系统工具
     ):
         self.message_history_calls = message_history_calls
@@ -136,6 +137,9 @@ class AgentWrapper[T]:
                                 {content[:2000]}
                             </persisted-output>
                         """).lstrip()
+            logger.info(
+                f"一级压缩-将过大的tool结果保存到文件: {total_tokens} to {estimate_pydantic_ai_tokens(messages)}"
+            )
             return messages
         else:
             return messages
@@ -148,21 +152,25 @@ class AgentWrapper[T]:
         """删除过期的tool调用内容，避免占用上下文窗口"""
         total_tokens = estimate_pydantic_ai_tokens(messages)
         if self._need_compress(total_tokens):
+            timeout_hours = 1
             newest_time = messages[-1].timestamp
             for m in messages:
                 if not isinstance(m, ModelRequest):
                     continue
-                if m.timestamp > newest_time - timedelta(hours=1):
+                if m.timestamp > newest_time - timedelta(hours=timeout_hours):
                     continue
                 for part in m.parts:
                     if not isinstance(part, ToolReturnPart):
                         continue
                     part.content = "[Old tool result content cleared]"
+            logger.info(
+                f"二级压缩-清除超过{timeout_hours}小时的tool结果: {total_tokens} to {estimate_pydantic_ai_tokens(messages)}"
+            )
             return messages
         else:
             return messages
 
-    def _context_summary_processor(
+    async def _context_summary_processor(
         self,
         ctx: RunContext[T],
         messages: list[ModelMessage],
@@ -171,8 +179,14 @@ class AgentWrapper[T]:
         total_tokens = estimate_pydantic_ai_tokens(messages)
         if self._need_compress(total_tokens):
             num_summary_messages = int(len(messages) * self.percent_summary / 100)
-            summary = create_summary(self.agent.model, messages[:num_summary_messages])
-            return [*summary, *messages[num_summary_messages:]]
+            summary = await create_summary(
+                self.agent.model, messages[:num_summary_messages]
+            )
+            messages = [*summary, *messages[num_summary_messages:]]
+            logger.info(
+                f"三级压缩-总结{num_summary_messages}条历史消息: {total_tokens} to {estimate_pydantic_ai_tokens(messages)}"
+            )
+            return messages
         else:
             return messages
 
