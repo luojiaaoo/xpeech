@@ -99,7 +99,7 @@ class AgentWrapper[T]:
         )
 
         # 添加工具
-        self.fs_tools = FilesystemTools(workspace)
+        self.fs_tools = FilesystemTools(self.workspace)
         self.agent.tool_plain(self.fs_tools.read_file, **tool_parameter)
         self.agent.tool_plain(self.fs_tools.write_file, **tool_parameter)
         self.agent.tool_plain(self.fs_tools.create_file, **tool_parameter)
