@@ -42,3 +42,6 @@ class MessageBus:
     def outbound_size(self) -> int:
         """Number of pending outbound messages."""
         return self.outbound.qsize()
+
+
+message_bus = MessageBus()

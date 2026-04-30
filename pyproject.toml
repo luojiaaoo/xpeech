@@ -11,6 +11,7 @@ dependencies = [
     "loguru>=0.7.3",
     "pydantic-ai>=1.88.0",
     "pydantic-ai-harness[code-mode]>=0.2.0",
+    "rich>=15.0.0",
     "uvicorn>=0.46.0",
 ]
 
