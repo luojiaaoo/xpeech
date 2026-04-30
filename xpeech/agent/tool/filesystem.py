@@ -1,4 +1,5 @@
 from pathlib import Path
+from pydantic_ai import RunContext
 
 
 class FilesystemTools:
@@ -19,6 +20,7 @@ class FilesystemTools:
 
     def read_file(
         self,
+        ctx: RunContext[str],
         path: str | None = None,
         offset: int = 1,
         limit: int | None = 200,
@@ -55,7 +57,7 @@ class FilesystemTools:
             out += f"\n\n(End of file — {total} lines total)"
         return out
 
-    def write_file(self, path: str, content: str) -> str:
+    def write_file(self, ctx: RunContext[str], path: str, content: str) -> str:
         """
         将内容完整写入已有文件（覆盖写入）。
 
@@ -75,7 +77,7 @@ class FilesystemTools:
         fp.write_text(content, encoding="utf-8")
         return f"Successfully wrote {len(content)} characters to {path}"
 
-    def create_file(self, path: str) -> str:
+    def create_file(self, ctx: RunContext[str], path: str) -> str:
         """
         创建一个空文件。若父目录不存在会自动递归创建。
 
@@ -95,7 +97,7 @@ class FilesystemTools:
         fp.touch()
         return f"Successfully created {path}"
 
-    def delete_file(self, path: str) -> str:
+    def delete_file(self, ctx: RunContext[str],path: str) -> str:
         """
         删除一个文件。
 
@@ -114,7 +116,7 @@ class FilesystemTools:
         fp.unlink()
         return f"Successfully deleted {path}"
     
-    def move_file(self, src: str, dst: str) -> str:
+    def move_file(self, ctx: RunContext[str], src: str, dst: str) -> str:
         """
         移动或重命名文件。若目标父目录不存在会自动递归创建。
 
@@ -139,7 +141,7 @@ class FilesystemTools:
         src_fp.rename(dst_fp)
         return f"Successfully moved {src} to {dst}"
     
-    def copy_file(self, src: str, dst: str) -> str:
+    def copy_file(self, ctx: RunContext[str], src: str, dst: str) -> str:
         """
         复制文件。若目标父目录不存在会自动递归创建。
 
@@ -164,7 +166,7 @@ class FilesystemTools:
         dst_fp.write_bytes(src_fp.read_bytes())
         return f"Successfully copied {src} to {dst}"
 
-    def search_files(self, pattern: str) -> str:
+    def search_files(self, ctx: RunContext[str], pattern: str) -> str:
         """
         在 workspace 中递归搜索匹配 glob 模式的文件。
 
@@ -180,8 +182,8 @@ class FilesystemTools:
             return f"No files found matching: {pattern}"
         return "\n".join(str(m.relative_to(self.workspace)) for m in matches)
 
-    def rearch_replace(
-        self, path: str, old_text: str, new_text: str, replace_all: bool = False
+    def search_replace(
+        self, ctx: RunContext[str], path: str, old_text: str, new_text: str, replace_all: bool = False
     ) -> str:
         """
         通过精确匹配替换来编辑文件内容。
@@ -222,7 +224,7 @@ class FilesystemTools:
         return f"Successfully edited {path}"
 
     def list_dir(
-        self, path: str = ".", recursive: bool = False, max_entries: int = 200
+        self, ctx: RunContext[str], path: str = ".", recursive: bool = False, max_entries: int = 200
     ) -> str:
         """
         列出目录内容。

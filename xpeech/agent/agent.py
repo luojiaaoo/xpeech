@@ -99,8 +99,9 @@ class AgentWrapper[T]:
                 self._context_light_processor,
                 self._context_summary_processor,
             ],
-            tools=tools,
         )
+        for tool in tools:
+            self.agent.tool(tool, defer_loading=True)
 
     def _need_compress(self, total_tokens: int) -> bool:
         """判断是否需要压缩，预留出summary_tokens和压缩工具上下文的空间，超过则需要压缩历史消息"""
