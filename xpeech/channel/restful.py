@@ -1,11 +1,10 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
-
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from loguru import logger
+from fastapi import FastAPI
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
+import uvicorn
 
 
 @asynccontextmanager
@@ -26,3 +25,9 @@ async def span(app: FastAPI):
 
 
 app = FastAPI(title='Xpeech Agent', lifespan=span)
+config = uvicorn.Config(app, host='0.0.0.0', port=8000)
+server = uvicorn.Server(config)
+
+
+async def run():
+    await server.serve()

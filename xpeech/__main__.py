@@ -1,5 +1,10 @@
-from .app import app
-if __name__ == '__main__':
-    import uvicorn
+from .channel import restful
+from asyncer import runnify
 
-    uvicorn.run(app, host='0.0.0.0', port=8000)
+
+async def main():
+    await restful.run()
+
+
+if __name__ == '__main__':
+    runnify(main)()
