@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def ensure_async(func):
-    """ 函数异步化 """
+    """ 确保函数是异步的 """
     if inspect.iscoroutinefunction(func):
         return func
     else:
