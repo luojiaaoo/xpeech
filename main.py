@@ -36,11 +36,11 @@ async def main():
         print(output)
         ...
 
-    async for output in aw.run(user_prompt="把a.txt复制到b.txt", output_type=str):
+    async for output in aw.run(user_prompt="把a.txt复制到sub/b.txt", output_type=str):
         print(output)
         ...
 
-    async for output in aw.run(user_prompt="删除", output_type=str):
+    async for output in aw.run(user_prompt="删除a.txt", output_type=str):
         print(output)
         ...
 
