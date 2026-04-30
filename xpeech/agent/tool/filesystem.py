@@ -1,6 +1,6 @@
 from pathlib import Path
 from pydantic_ai import RunContext
-from ...utils.helper import format_exception, ensure_dirpath
+from ...utils.helper import format_exception2llm, ensure_dirpath
 
 
 class FilesystemTools:
@@ -58,7 +58,7 @@ class FilesystemTools:
                 out += f"\n\n(End of file — {total} lines total)"
             return out
         except Exception as e:
-            return format_exception(e)
+            return format_exception2llm(e)
 
     def write_file(self, path: str, content: str) -> str:
         """
@@ -81,7 +81,7 @@ class FilesystemTools:
             fp.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} characters to {path}"
         except Exception as e:
-            return format_exception(e)
+            return format_exception2llm(e)
 
     def create_file(self, path: str) -> str:
         """
@@ -103,7 +103,7 @@ class FilesystemTools:
             ensure_dirpath(fp).touch()
             return f"Successfully created {path}"
         except Exception as e:
-            return format_exception(e)
+            return format_exception2llm(e)
 
     def delete_file(self, path: str) -> str:
         """
@@ -125,7 +125,7 @@ class FilesystemTools:
             fp.unlink()
             return f"Successfully deleted {path}"
         except Exception as e:
-            return format_exception(e)
+            return format_exception2llm(e)
 
     def move_file(self, src: str, dst: str) -> str:
         """
@@ -152,7 +152,7 @@ class FilesystemTools:
             src_fp.rename(ensure_dirpath(dst_fp))
             return f"Successfully moved {src} to {dst}"
         except Exception as e:
-            return format_exception(e)
+            return format_exception2llm(e)
 
     def copy_file(self, src: str, dst: str) -> str:
         """
@@ -179,7 +179,7 @@ class FilesystemTools:
             ensure_dirpath(dst_fp).write_bytes(src_fp.read_bytes())
             return f"Successfully copied {src} to {dst}"
         except Exception as e:
-            return format_exception(e)
+            return format_exception2llm(e)
 
     def search_files(self, pattern: str) -> str:
         """
@@ -198,7 +198,7 @@ class FilesystemTools:
                 return f"No files found matching: {pattern}"
             return "\n".join(str(m.relative_to(self.workspace)) for m in matches)
         except Exception as e:
-            return format_exception(e)
+            return format_exception2llm(e)
 
     def search_replace(
         self, path: str, old_text: str, new_text: str, replace_all: bool = False
@@ -244,7 +244,7 @@ class FilesystemTools:
             fp.write_text(result, encoding="utf-8")
             return f"Successfully edited {path}"
         except Exception as e:
-            return format_exception(e)
+            return format_exception2llm(e)
 
     def list_dir(
         self, path: str = ".", recursive: bool = False, max_entries: int = 200
@@ -308,4 +308,4 @@ class FilesystemTools:
                 )
             return result
         except Exception as e:
-            return format_exception(e)
+            return format_exception2llm(e)

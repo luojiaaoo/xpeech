@@ -6,13 +6,15 @@ from pathlib import Path
 
 
 def ensure_async(func):
+    """ 函数异步化 """
     if inspect.iscoroutinefunction(func):
         return func
     else:
         return asyncify(func)
 
 
-def ensure_dirpath(path: Path):
+def ensure_dirpath(path: Path) -> Path:
+    """确保路径的父目录存在。若路径指向文件则创建其父目录，否则创建路径本身（视为目录）。"""
     if path.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
     else:
@@ -20,7 +22,8 @@ def ensure_dirpath(path: Path):
     return path
 
 
-def format_exception(e: Exception) -> str:
+def format_exception2llm(e: Exception) -> str:
+    """ 给大模型看的异常内容 """
     return f"{type(e).__name__}: {e}"
 
 
