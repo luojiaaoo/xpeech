@@ -2,6 +2,7 @@ from typing import Annotated, TypeAlias
 from pydantic import BaseModel, Field
 
 
+# ------------------ 输入内容块 ------------------
 class InputText(BaseModel):
     """文本输入内容块。"""
 
@@ -20,6 +21,7 @@ class InputContent(BaseModel):
     content: Annotated[list[InputText | InputImage], Field(description="消息内容")]
 
 
+# ------------------ 输出内容块 ------------------
 class OutputText(BaseModel):
     """文本输出内容块。"""
 
