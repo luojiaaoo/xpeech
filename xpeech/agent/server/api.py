@@ -1,10 +1,10 @@
 from .server import app
-from .model import OutboundMessage
+from .schema import OutboundMessage
 from fastapi import Depends
 from typing import Annotated
 from datetime import datetime
 from fastapi import File, Form, UploadFile, HTTPException, status
-from .model import InputContent
+from .schema import InputContent
 import json
 
 
@@ -40,7 +40,7 @@ def content(
 
 
 @app.post("/chat", response_model=OutboundMessage)
-def chat(
+async def chat(
     session_id: Annotated[str, Form(description="会话的ID")],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],
