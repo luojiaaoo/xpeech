@@ -1,7 +1,5 @@
 from typing import Annotated, TypeAlias
-import json
 from pydantic import BaseModel, Field
-from fastapi import Form
 
 
 class InputText(BaseModel):
@@ -16,15 +14,10 @@ class InputImage(BaseModel):
     image_url: Annotated[str, Field(description="base64 格式图片")]
 
 
-InputContent: TypeAlias = InputText | InputImage
+class InputContent(BaseModel):
+    """输入内容块。"""
 
-
-def session_metadata(session_metadata: Annotated[str, Form(description="会话的元数据")] = "{}") -> dict[str, str]:
-    return json.loads(session_metadata)
-
-
-def content(content: Annotated[str, Form(description="消息内容列表")]) -> list[InputContent]:
-    return json.loads(content)
+    content: Annotated[list[InputText | InputImage], Field(description="消息内容")]
 
 
 class OutputText(BaseModel):
