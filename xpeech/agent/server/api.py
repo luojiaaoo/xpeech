@@ -6,7 +6,6 @@ from datetime import datetime
 from fastapi import File, Form, UploadFile, HTTPException, status
 from .model import InputContent
 import json
-from pydantic import ValidationError
 
 
 def session_metadata(
