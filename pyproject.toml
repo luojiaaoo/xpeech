@@ -5,16 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "anyio>=4.13.0",
-    "asyncer>=0.0.17",
     "fastapi>=0.136.1",
-    "loguru>=0.7.3",
-    "pydantic-ai>=1.88.0",
-    "pydantic-ai-harness[code-mode]>=0.2.0",
-    "rich>=15.0.0",
-    "uvicorn>=0.46.0",
+    "pydantic-settings>=2.14.0",
+    "uvicorn[standard]>=0.46.0",
 ]
-
-[[tool.uv.index]]
-name = "tsinghua"
-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
