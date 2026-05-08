@@ -16,12 +16,10 @@ def session_metadata(
             description='会话的元数据，JSON 格式字符串，如：{"sender_id": "xxxx","channel": "feishu"}',
         ),
     ] = "{}",
-) -> dict[str, str]:
+):
     """将会话元数据的 JSON 字符串解析为字典。"""
     try:
         parsed_dict = json.loads(session_metadata)
-        if not isinstance(parsed_dict, dict):
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid JSON format")
         return parsed_dict
     except json.JSONDecodeError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid JSON format")
@@ -34,16 +32,12 @@ def content(
             description='消息内容列表，JSON 格式字符串。支持文本和图片：{"content": [{"text": "你好"}, {"image_url": "data:image/png;base64,iVBOR..."}]}',
         ),
     ],
-) -> InputContent:
+):
     """将消息内容列表的 JSON 字符串解析为 InputContent 列表。"""
     try:
-        parsed_dict = json.loads(content)
+        return json.loads(content)
     except json.JSONDecodeError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid JSON format")
-    try:
-        return InputContent.model_validate(parsed_dict)
-    except ValidationError as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=e.errors())
 
 
 @app.post("/chat", response_model=OutboundMessage)
