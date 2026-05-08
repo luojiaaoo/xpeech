@@ -1,4 +1,5 @@
 from .server import app
+from . import api # noqa
 
 import uvicorn
 

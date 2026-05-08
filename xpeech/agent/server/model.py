@@ -1,7 +1,7 @@
-from datetime import datetime
 from typing import Annotated, TypeAlias
-from fastapi import File, UploadFile
+import json
 from pydantic import BaseModel, Field
+from fastapi import Form
 
 
 class InputText(BaseModel):
@@ -19,14 +19,12 @@ class InputImage(BaseModel):
 InputContent: TypeAlias = InputText | InputImage
 
 
-class InboundMessage(BaseModel):
-    """收到的消息 schema。"""
+def session_metadata(session_metadata: Annotated[str, Form(description="会话的元数据")] = "{}") -> dict[str, str]:
+    return json.loads(session_metadata)
 
-    session_id: Annotated[str, Field(description="会话的ID")]
-    session_metadata: Annotated[dict[str, str], Field(default_factory=dict, description="会话的元数据")]
-    content: Annotated[list[InputContent], Field(description="消息内容列表")]
-    files: Annotated[list[UploadFile], File(description="消息附件列表")]
-    timestamp: Annotated[datetime, Field(default_factory=datetime.now, description="消息的时间戳")]
+
+def content(content: Annotated[str, Form(description="消息内容列表")]) -> list[InputContent]:
+    return json.loads(content)
 
 
 class OutputText(BaseModel):
@@ -45,7 +43,7 @@ class OutputFile(BaseModel):
     """文件输出内容块。"""
 
     file_name: Annotated[str, Field(description="文件名")]
-    file_content: Annotated[UploadFile, File(description="base64 格式文件")]
+    file_content: Annotated[str, Field(description="base64 格式文件")]
 
 
 OutputContent: TypeAlias = OutputText | OutputImage | OutputFile
