@@ -1,6 +1,9 @@
 import litellm
+from collections.abc import Callable
 from typing import Any
+import functools
 from .schema import LLMResponse, ToolCallRequest
+from ..agent.tools.helper import as_tool
 
 # 禁用调试信息
 litellm.suppress_debug_info = True
@@ -22,6 +25,19 @@ class LiteLLMProvider:
         self.default_model = default_model
         self.default_max_tokens = default_max_tokens
         self.default_top_p = default_top_p
+        self.tools: list[dict[str, Any]] = []
+
+    def register_tool(self):
+        """用带自定义参数的函数装饰器来注册工具。"""
+
+        def decorator(func: Callable[..., Any] | None = None):
+            @functools.wraps(func)
+            def wrapper() -> Callable[..., Any]:
+                self.tools.append(as_tool(func))
+
+            return wrapper
+
+        return decorator
 
     async def chat(
         self,
@@ -35,19 +51,23 @@ class LiteLLMProvider:
         model = model or self.default_model
         max_tokens = max_tokens or self.default_max_tokens
         top_p = top_p or self.default_top_p
+        tools = [self.tools, tools] if tools is not None else self.tools
 
         # 发起请求
         try:
-            response = litellm.acompletion(
-                model=model,
-                api_base=self.api_base,
-                api_key=self.api_key,
-                messages=messages,
-                max_tokens=max_tokens,
-                top_p=top_p,
-                tools=tools,
-                tool_choice="auto",
-            )
+            completion_kwargs = {
+                "model": model,
+                "api_base": self.api_base,
+                "api_key": self.api_key,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "top_p": top_p,
+            }
+            if tools:
+                completion_kwargs["tools"] = tools
+                completion_kwargs["tool_choice"] = "auto"
+
+            response = await litellm.acompletion(**completion_kwargs)
         except Exception as e:
             return LLMResponse(
                 content=f"Error calling LLM: {str(e)}",

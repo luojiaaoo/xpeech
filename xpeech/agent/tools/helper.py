@@ -1,6 +1,6 @@
 import inspect
 from typing import Callable, get_type_hints
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 def as_tool(func: Callable, name_suffix: str = "") -> dict:
@@ -71,64 +71,3 @@ def as_tool(func: Callable, name_suffix: str = "") -> dict:
             "parameters": parameters,
         },
     }
-
-
-# # =================== 用法示例 1：有参数 ===================
-# class SearchArgs(BaseModel):
-#     """搜索网页"""
-#     query: str = Field(description="搜索关键词")
-#     topn: int = Field(default=5, description="返回条数")
-
-
-# def search(args: SearchArgs):
-#     """执行搜索并返回结果"""
-#     return f"搜索 {args.query} 的结果"
-
-
-# tool1 = as_tool(search, name_suffix="_v1")
-# print(tool1)
-
-
-# # =================== 用法示例 2：无参数 ===================
-# def ping():
-#     """健康检查"""
-#     return "pong"
-
-
-# tool2 = as_tool(ping, name_suffix="_v1")
-# print(tool2)
-
-
-
-class EditFileArgs(BaseModel):
-    path: str = Field(description="The file path to edit")
-    old_text: str = Field(description="The exact text to find and replace")
-    new_text: str = Field(description="The text to replace with")
-from pathlib import Path
-class A:
-    @classmethod
-    async def edit_file(cls, args: EditFileArgs) -> str:
-        """Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."""
-        path = args.path
-        old_text = args.old_text
-        new_text = args.new_text
-        try:
-            file_path = Path(path).expanduser()
-            if not file_path.exists():
-                return f"Error: File not found: {path}"
-            content = file_path.read_text(encoding="utf-8")
-            if old_text not in content:
-                return "Error: old_text not found in file. Make sure it matches exactly."
-            count = content.count(old_text)
-            if count > 1:
-                return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
-            new_content = content.replace(old_text, new_text, 1)
-            file_path.write_text(new_content, encoding="utf-8")
-            return f"Successfully edited {path}"
-        except PermissionError:
-            return f"Error: Permission denied: {path}"
-        except Exception as e:
-            return f"Error editing file: {str(e)}"
-
-tool3 = as_tool(A.edit_file, name_suffix="_v1")
-print(tool3)
