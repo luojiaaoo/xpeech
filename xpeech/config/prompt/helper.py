@@ -63,17 +63,18 @@ def build_user_prompt(message: InboundMessage, workspace: Path, support_image: b
     # 文件提示词
     for file in message.files:
         files_paths += f"- {file.relative_to(workspace).as_posix()}"
-    parts.append(
-        {
-            "type": "text",
-            "text": dedent(f"""
-                ## Attachments
-                The user has uploaded {len(files_paths)} file(s). You may reference them:
+    if files_paths:
+        parts.append(
+            {
+                "type": "text",
+                "text": dedent(f"""
+                    ## Attachments
+                    The user has uploaded {len(files_paths)} file(s). You may reference them:
 
-            """).lstrip()
-            + files_paths,
-        }
-    )
+                """).lstrip()
+                + files_paths,
+            }
+        )
     return {
         "role": "user",
         "content": parts,

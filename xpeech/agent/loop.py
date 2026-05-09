@@ -49,7 +49,7 @@ class AgentLoop:
 
         file = settings.path.session_history_path / f"{session_id}.json"
         async with aiofiles.open(file, "w", encoding="utf-8") as f:
-            await f.write(json.dumps(history, ensure_ascii=False))
+            await f.write(json.dumps(history, indent=4, ensure_ascii=False))
 
     async def load_history_json(self, session_id: str) -> list[dict[str, Any]]:
         """从json文件加载历史记录。"""
@@ -60,8 +60,7 @@ class AgentLoop:
         async with aiofiles.open(file, "r", encoding="utf-8") as f:
             content: list[dict[str, Any]] = json.loads(await f.read())
         # 剔除系统提示词
-        if content[0]["role"] == "system":
-            content = content[1:]
+        content = [i for i in content if i["role"] != "system"]
         return content
 
     async def run(self, message: InboundMessage):
@@ -71,8 +70,7 @@ class AgentLoop:
         # 拼接系统提示词
         messages_json.insert(0, build_system_prompt(self.workspace))
         # 拼接用户消息
-        messages_json.insert(
-            -1,
+        messages_json.append(
             build_user_prompt(
                 message=message,
                 workspace=self.workspace,
@@ -95,11 +93,17 @@ class AgentLoop:
             )
             # 输出思考内容
             yield "data: {}\n\n".format(
-                json.dumps({"event": "thinking", "context": response.reasoning_content}, ensure_ascii=False)
+                json.dumps({"event": "thinking", "context": response.reasoning_content or ""}, ensure_ascii=False)
             )
             # 如果有工具调用
             if response.has_tool_calls:
                 # 输出工具调用内容
+                yield "data: {}\n\n".format(
+                    json.dumps(
+                        {"event": "assistant", "context": response.content}, ensure_ascii=False
+                    )
+                )
+                # 输出助手消息
                 yield "data: {}\n\n".format(
                     json.dumps(
                         {"event": "tool_call", "context": [i.name for i in response.tool_calls]}, ensure_ascii=False
