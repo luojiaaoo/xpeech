@@ -14,6 +14,7 @@ class LLMResponse(BaseModel):
     """Response from an LLM provider."""
 
     content: str | None
+    reasoning_content: str | None = None
     tool_calls: list[ToolCallRequest] = Field(default_factory=list)
     finish_reason: str = "stop"
     usage: dict[str, int] = Field(default_factory=dict)

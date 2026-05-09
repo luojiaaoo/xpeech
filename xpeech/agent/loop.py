@@ -68,7 +68,7 @@ class AgentLoop:
         """运行一次Agent循环，处理一次用户消息。"""
 
         messages_json = await self.load_history_json(message.session_id)
-        # 拼接系统提示词    
+        # 拼接系统提示词
         messages_json.insert(0, build_system_prompt(self.workspace))
         # 拼接用户消息
         messages_json.insert(
@@ -93,8 +93,18 @@ class AgentLoop:
                 tools=[],
                 **self.provider_chat_kwargs,
             )
+            # 输出思考内容
+            yield "data: {}\n\n".format(
+                json.dumps({"event": "thinking", "context": response.reasoning_content}, ensure_ascii=False)
+            )
             # 如果有工具调用
             if response.has_tool_calls:
+                # 输出工具调用内容
+                yield "data: {}\n\n".format(
+                    json.dumps(
+                        {"event": "tool_call", "context": [i.name for i in response.tool_calls]}, ensure_ascii=False
+                    )
+                )
                 # 还原工具调用格式
                 tool_call_dicts = [
                     {
@@ -144,6 +154,7 @@ class AgentLoop:
 
         # 拼接助手消息
         messages_json.append({"role": "assistant", "content": final_content})
-        print(messages_json)
+        # 输出助手消息
+        yield "data: {}\n\n".format(json.dumps({"event": "assistant", "context": final_content}, ensure_ascii=False))
         # 保存历史记录
         await self.save_history_json(message.session_id, messages_json)

@@ -108,10 +108,9 @@ class LiteLLMProvider:
                 "top_p": top_p,
             }
             # 注入工具
-            if tools:
+            if tool_jsons:
                 completion_kwargs["tools"] = tool_jsons
                 completion_kwargs["tool_choice"] = "auto"
-
             response = await litellm.acompletion(**completion_kwargs)
         except Exception as e:
             return LLMResponse(
@@ -133,6 +132,15 @@ class LiteLLMProvider:
         choice = response.choices[0]
         message = choice.message
 
+        # 提取思考内容
+        reasoning_content = None
+        if hasattr(message, "reasoning_content"):
+            reasoning_content = message.reasoning_content
+        elif hasattr(message, "model_extra") and message.model_extra:
+            # 某些模型可能将 reasoning_content 放在额外字段中
+            reasoning_content = message.model_extra.get("reasoning_content")
+
+        # 提取工具调用信息
         tool_calls = []
         if hasattr(message, "tool_calls") and message.tool_calls:
             for tc in message.tool_calls:
@@ -154,6 +162,7 @@ class LiteLLMProvider:
                     )
                 )
 
+        # 提取使用情况信息
         usage = {}
         if hasattr(response, "usage") and response.usage:
             usage = {
@@ -164,6 +173,7 @@ class LiteLLMProvider:
 
         return LLMResponse(
             content=message.content,
+            reasoning_content=reasoning_content,
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason or "stop",
             usage=usage,

@@ -10,6 +10,7 @@ from ...config.settings import settings
 from ...utils.helper import save_to_workspace, ensure_path
 from ...provider.litellm_provider import LiteLLMProvider
 from ..loop import AgentLoop
+from fastapi.responses import StreamingResponse
 
 
 def session_metadata(
@@ -63,7 +64,7 @@ async def chat(
         files_.append(file_path)
 
     # 创建消息对象
-    messsage = InboundMessage(
+    message = InboundMessage(
         session_id=session_id,
         session_metadata=session_metadata,
         content=content,
@@ -73,11 +74,19 @@ async def chat(
 
     # 开启Agent Loop
     provider = LiteLLMProvider(
-        api_key="1cda8e1a-03exxxe50-d1af",
-        api_base="https://ark.cn-beijing.volces.com/api/coding",
-        default_model="openai/glm-5.1",
+        api_key="1cda8e1xxxx415985dbf",
+        api_base="https://ark.cn-beijing.volces.com/api/coding/v1",
+        default_model="zai/glm-5.1",
     )
-    await AgentLoop(provider=provider, workspace=workspace, max_iterations=30).run(messsage)
-
-    print(f"messsage: {messsage}")
-    return OutboundMessage(content={"text": "你好"})
+    return StreamingResponse(
+        AgentLoop(
+            provider=provider,
+            workspace=workspace,
+            max_iterations=30,
+        ).run(message=message),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
