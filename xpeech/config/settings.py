@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from .helper import TomlConfigSettingsSource
 from pathlib import Path
+from ..utils.helper import ensure_path
 
 env_conf = dict(
     env_prefix="XPEECH_",
@@ -17,6 +18,7 @@ conf_env_path = ".env"  # Configuration environment file path
 class PathConfig(BaseModel):
     session_path: Path
     session_history_path: Path
+    workspace_base_path: Path
 
 
 class Settings(BaseSettings):
@@ -47,3 +49,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+ensure_path(settings.path.session_path)
+ensure_path(settings.path.session_history_path)
+ensure_path(settings.path.workspace_base_path)

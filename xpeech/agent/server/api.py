@@ -6,6 +6,8 @@ from datetime import datetime
 from fastapi import File, Form, UploadFile, HTTPException, status
 from .schema import InputContent, InboundMessage
 import json
+from config.settings import settings
+from ...utils.helper import save_to_workspace
 
 
 def session_metadata(
@@ -48,16 +50,19 @@ async def chat(
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
 ):
     """Receive a message and return a response."""
-    print(f"Session ID: {session_id}")
-    print(f"Session metadata: {session_metadata}")
-    print(f"Received message: {content}")
-    print(f"Timestamp: {timestamp}")
-    print(f"Files: {files}")
-    InboundMessage(
+    # 用session_id去区分工作目录
+    workspace = settings.path.workspace_base_path / session_id
+    # 把files都保存到工作目录
+    files_ = []
+    for file in files:
+        file_path = save_to_workspace(file=file, workspace=workspace)
+        files_.append(file_path)
+    messsage = InboundMessage(
         session_id=session_id,
         session_metadata=session_metadata,
         content=content,
         timestamp=timestamp,
-        files=files,
+        files=files_,
     )
+    print(f"messsage: {messsage}")
     return OutboundMessage(content={"text": "你好"})

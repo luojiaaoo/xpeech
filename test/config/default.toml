@@ -13,4 +13,4 @@ tools = ["filesystem", "${EXTRA_TOOL:-shell}"]
 
 [history]
 enabled = true
-path = "history.jsonl"
+path = "history.json"

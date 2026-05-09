@@ -56,7 +56,7 @@ def test_merges_default_and_local_toml_from_left_to_right() -> None:
     assert config["llm"]["model"] == "local-model"
     assert config["llm"]["timeout"] == 60
     assert config["llm"]["api_key"] == "sk-test+/=:with$symbols"
-    assert config["history"] == {"enabled": True, "path": "history.jsonl"}
+    assert config["history"] == {"enabled": True, "path": "history.json"}
     assert config["server"] == {"host": "127.0.0.1", "port": 9000}
 
 

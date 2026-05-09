@@ -1,7 +1,7 @@
 from typing import Annotated, TypeAlias
 from pydantic import BaseModel, Field
 from datetime import datetime
-from fastapi import UploadFile
+from pathlib import Path
 
 
 # ------------------ 输入内容块 ------------------
@@ -29,7 +29,7 @@ class InboundMessage(InputContent):
     session_id: Annotated[str, Field(description="会话ID")]
     session_metadata: Annotated[dict[str, str], Field(description="会话元数据")]
     timestamp: Annotated[datetime, Field(description="消息时间戳")]
-    files: Annotated[list[UploadFile], Field(description="消息附件")]
+    files: Annotated[list[Path], Field(description="消息附件")]
 
 
 # ------------------ 输出内容块 ------------------

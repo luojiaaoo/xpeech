@@ -27,12 +27,13 @@ class LiteLLMProvider:
         self.default_max_tokens = default_max_tokens
         self.default_top_p = default_top_p
         self.tools: list[dict[str, Any]] = []
-        self.support_image = support_image
+        self._support_image = support_image
 
-    def supports_image(self) -> bool:
+    @property
+    def support_image(self) -> bool:
         """是否支持图片输入。"""
         
-        return self.support_image
+        return self._support_image
 
     def register_tool(self):
         """用带自定义参数的函数装饰器来注册工具。"""

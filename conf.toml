@@ -1,3 +1,4 @@
 [path]
 session_path = "session"
 session_history_path = "session/history"
+workspace_base_path = "workspace_base"
