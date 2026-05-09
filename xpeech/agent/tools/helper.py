@@ -1,9 +1,33 @@
 import inspect
-from typing import Callable, get_type_hints
+from typing import Callable, get_type_hints, Type
 from pydantic import BaseModel
 
 
-def as_tool(func: Callable, name_suffix: str = "") -> dict:
+def get_tool_model_cls(func: Callable[Type[BaseModel] | None, str | dict]) -> type[BaseModel]:
+    """
+    获取工具函数的参数类型注解。
+    """
+    sig = inspect.signature(func)
+    hints = get_type_hints(func)
+    params = list(sig.parameters.values())
+    if len(params) == 1:
+        param = params[0]
+        model_cls = hints.get(param.name)
+
+        if model_cls is None:
+            raise TypeError(f"Parameter '{param.name}' in '{func.__name__}' must have a type annotation")
+
+        if not inspect.isclass(model_cls) or not issubclass(model_cls, BaseModel):
+            raise TypeError(
+                f"Parameter '{param.name}' in '{func.__name__}' must be annotated "
+                f"with a BaseModel subclass, got {model_cls!r}"
+            )
+        return model_cls
+    elif len(params) == 0:
+        return None
+
+
+def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str = "") -> dict:
     """
     将函数转换为 OpenAI Tool Schema。
 
@@ -38,9 +62,7 @@ def as_tool(func: Callable, name_suffix: str = "") -> dict:
         model_cls = hints.get(param.name)
 
         if model_cls is None:
-            raise TypeError(
-                f"Parameter '{param.name}' in '{func.__name__}' must have a type annotation"
-            )
+            raise TypeError(f"Parameter '{param.name}' in '{func.__name__}' must have a type annotation")
 
         if not inspect.isclass(model_cls) or not issubclass(model_cls, BaseModel):
             raise TypeError(

@@ -2,13 +2,19 @@ from pathlib import Path
 import base64
 import mimetypes
 import re
-import uuid
 from typing import Union
 import aiohttp
 import aiofiles
 from fastapi import UploadFile
 from ..agent.server.schema import InputImage
+import inspect
+from asyncer import asyncify
 
+def ensure_async(func):
+    if inspect.iscoroutinefunction(func):
+        return func
+    else:
+        return asyncify(func)
 
 def ensure_path(path_: Path):
     path_.mkdir(parents=True, exist_ok=True)

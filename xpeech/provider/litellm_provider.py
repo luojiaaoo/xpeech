@@ -1,7 +1,8 @@
+import json
 import litellm
-from collections.abc import Callable
-from typing import Any
+from typing import Any, Callable, Type, TypedDict
 import functools
+from pydantic import BaseModel
 from .schema import LLMResponse, ToolCallRequest
 from ..agent.tools.helper import as_tool
 
@@ -26,31 +27,61 @@ class LiteLLMProvider:
         self.default_model = default_model
         self.default_max_tokens = default_max_tokens
         self.default_top_p = default_top_p
-        self.tools: list[dict[str, Any]] = []
+        self.default_tool_jsons: list[dict[str, Any]] = []
+        self.default_mapping_tool_calls: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
+        self.temp_tool_jsons: list[dict[str, Any]] = []
+        self.temp_mapping_tool_calls: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
         self._support_image = support_image
 
     @property
     def support_image(self) -> bool:
         """是否支持图片输入。"""
-        
+
         return self._support_image
 
-    def register_tool(self):
+    def register_tool(self, is_temp: bool = False):
         """用带自定义参数的函数装饰器来注册工具。"""
 
-        def decorator(func: Callable[..., Any]):
-            @functools.wraps(func)
-            def wrapper() -> Callable[..., Any]:
-                self.tools.append(as_tool(func))
+        def decorator(func: Callable[[Type[BaseModel] | None], str | dict]):
+            # 添加工具json
+            if not is_temp:
+                self.default_tool_jsons.append(as_tool(func))
+            else:
+                self.temp_tool_jsons.append(as_tool(func))
 
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs) -> str:
+                rt = func(*args, **kwargs)
+                if isinstance(rt, str):
+                    return rt
+                elif isinstance(rt, dict):
+                    return json.dumps(rt, indent=4, ensure_ascii=False)
+                else:
+                    raise TypeError(f"Invalid return type: {type(rt)}")
+
+            # 注册工具函数
+            if not is_temp:
+                self.default_mapping_tool_calls[func.__name__] = wrapper
+            else:
+                self.temp_mapping_tool_calls[func.__name__] = wrapper
             return wrapper
 
         return decorator
 
+    @property
+    def mapping_tool_calls(self) -> dict[str, Callable[[Type[BaseModel] | None], str]]:
+        """获取工具函数映射。"""
+
+        return self.default_mapping_tool_calls | self.temp_mapping_tool_calls
+
+    def _reset_temp_tools(self):
+        self.temp_tool_jsons.clear()
+        self.temp_mapping_tool_calls.clear()
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[Callable[Type[BaseModel] | None, str | dict]] | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
@@ -59,7 +90,12 @@ class LiteLLMProvider:
         model = model or self.default_model
         max_tokens = max_tokens or self.default_max_tokens
         top_p = top_p or self.default_top_p
-        tools = [self.tools, tools] if tools is not None else self.tools
+
+        # 添加临时工具
+        self._reset_temp_tools()
+        for func in tools or []:
+            self.register_tool(is_temp=True)(func)
+        tool_jsons = self.default_tool_jsons + self.temp_tool_jsons
 
         # 发起请求
         try:
@@ -71,8 +107,9 @@ class LiteLLMProvider:
                 "max_tokens": max_tokens,
                 "top_p": top_p,
             }
+            # 注入工具
             if tools:
-                completion_kwargs["tools"] = tools
+                completion_kwargs["tools"] = tool_jsons
                 completion_kwargs["tool_choice"] = "auto"
 
             response = await litellm.acompletion(**completion_kwargs)

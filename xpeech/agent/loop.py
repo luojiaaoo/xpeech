@@ -10,6 +10,9 @@ from .server.schema import InboundMessage
 import aiofiles
 from ..config.prompt.system import build_system_prompt
 from ..config.prompt.helper import build_user_prompt
+from ..agent.tools.helper import get_tool_model_cls
+from ..utils.helper import ensure_async
+from ..provider.schema import ToolCallRequest
 
 
 class AgentLoop:
@@ -31,9 +34,6 @@ class AgentLoop:
         # 注册默认工具
         self.register_default_tools()
 
-        # 添加一个标志位，表示Agent是否正在运行
-        self._running = False
-
     def register_default_tools(self):
         """注册默认工具。"""
 
@@ -45,12 +45,14 @@ class AgentLoop:
 
     async def save_history_json(self, session_id: str, history: list[dict[str, Any]]):
         """保存历史记录到json文件。"""
+
         file = settings.path.session_history_path / f"{session_id}.json"
         async with aiofiles.open(file, "w", encoding="utf-8") as f:
             await f.write(json.dumps(history, ensure_ascii=False))
 
     async def load_history_json(self, session_id: str) -> list[dict[str, Any]]:
         """从json文件加载历史记录。"""
+
         file = settings.path.session_history_path / f"{session_id}.json"
         if not file.exists():
             return []
@@ -62,7 +64,7 @@ class AgentLoop:
         return content
 
     async def run(self, message: InboundMessage):
-        """运行Agent循环。"""
+        """运行一次Agent循环，处理一次用户消息。"""
 
         messages_json = await self.load_history_json(message.session_id)
         # 拼接系统提示词
@@ -77,10 +79,53 @@ class AgentLoop:
             ),
         )
 
-        self._running = True
+        final_content = None
         for loop_count in count():
-            if not self._running:
-                break
             if self.max_iterations and loop_count >= self.max_iterations:
                 break
-            self.provider.chat(messages=messages_json)
+
+            response = await self.provider.chat(messages=messages_json)
+            # 如果有工具调用
+            if response.has_tool_calls:
+                # 还原工具调用格式
+                tool_call_dicts = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                    }
+                    for tc in response.tool_calls
+                ]
+                # 创建助手消息
+                msg: dict[str, Any] = {"role": "assistant", "content": response.content or ""}
+                if tool_call_dicts:
+                    msg["tool_calls"] = tool_call_dicts
+                messages_json.append(msg)
+
+                # 执行工具调用
+                for tool_call in response.tool_calls:
+                    tool_call: ToolCallRequest = tool_call
+                    model_cls = get_tool_model_cls(tool_call := self.provider.mapping_tool_calls[tool_call.name])
+                    result = await ensure_async(tool_call)(model_cls(**tool_call.arguments))
+                    # 创建工具调用结果消息
+                    messages_json.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": tool_call.name,
+                            "content": result,
+                        }
+                    )
+            else:
+                # 没有工具，结束循环
+                final_content = response.content
+                break
+
+        if final_content is None:
+            final_content = "I've completed processing but have no response to give."
+
+        # 拼接助手消息
+        messages_json.append({"role": "assistant", "content": final_content})
+
+        # 保存历史记录
+        await self.save_history_json(message.session_id, messages_json)
