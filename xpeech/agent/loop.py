@@ -14,6 +14,8 @@ from ..config.prompt.helper import build_user_prompt
 from ..agent.tools.helper import get_tool_model_cls
 from ..provider.schema import ToolCallRequest
 import yaml
+from ..utils.helper import LiteralDumper
+
 
 class AgentLoop:
     """Agent循环处理逻辑。"""
@@ -48,7 +50,17 @@ class AgentLoop:
 
         file = settings.path.session_history_path / f"{session_id}.yaml"
         async with aiofiles.open(file, "w", encoding="utf-8") as f:
-            await f.write(yaml.dump(history, default_flow_style=False, allow_unicode=True))
+            await f.write(
+                yaml.dump(
+                    history,
+                    Dumper=LiteralDumper,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                    indent=4,
+                    sort_keys=False,
+                    width=1000,
+                )
+            )
 
     async def load_history_yaml(self, session_id: str) -> list[dict[str, Any]]:
         """从yaml文件加载历史记录。"""
@@ -98,9 +110,7 @@ class AgentLoop:
             if response.has_tool_calls:
                 # 输出工具调用内容
                 yield "data: {}\n\n".format(
-                    json.dumps(
-                        {"event": "assistant", "context": response.content}, ensure_ascii=False
-                    )
+                    json.dumps({"event": "assistant", "context": response.content}, ensure_ascii=False)
                 )
                 # 输出助手消息
                 yield "data: {}\n\n".format(
@@ -126,7 +136,9 @@ class AgentLoop:
                 # 执行工具调用
                 for tool_call in response.tool_calls:
                     tool_call: ToolCallRequest = tool_call
-                    model_cls = get_tool_model_cls(tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name])
+                    model_cls = get_tool_model_cls(
+                        tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name]
+                    )
                     result = await tool_call_func(model_cls(**tool_call.arguments))
                     # 创建工具调用结果消息
                     messages_yaml.append(

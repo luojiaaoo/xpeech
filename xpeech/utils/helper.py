@@ -9,12 +9,15 @@ from fastapi import UploadFile
 from ..agent.server.schema import InputImage
 import inspect
 from asyncer import asyncify
+import yaml
+
 
 def ensure_async(func):
     if inspect.iscoroutinefunction(func):
         return func
     else:
         return asyncify(func)
+
 
 def ensure_path(path_: Path):
     path_.mkdir(parents=True, exist_ok=True)
@@ -76,6 +79,19 @@ async def _save_image_url(file: InputImage, output_dir: Union[str, Path], stem: 
         return file_path
     else:
         raise ValueError(f"Unsupported image_url scheme: {image_url[:60]}...")
+
+
+class LiteralDumper(yaml.SafeDumper):
+    pass
+
+
+def literal_str_representer(dumper, data):
+    if "\n" in data:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+
+LiteralDumper.add_representer(str, literal_str_representer)
 
 
 # async def save_llm_images(
