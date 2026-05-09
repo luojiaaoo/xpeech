@@ -3,6 +3,9 @@ from ..provider.schema import ProviderChatKwargs
 from pathlib import Path
 from .tools.filesystem import build_file_tools
 from itertools import count
+from ..config.settings import settings
+from typing import Any
+import json
 
 
 class AgentLoop:
@@ -31,18 +34,20 @@ class AgentLoop:
         """注册默认工具。"""
 
         read_file, write_file, edit_file, list_dir = build_file_tools(self.workspace)
-        self.provider.register_tool(read_file)
-        self.provider.register_tool(write_file)
-        self.provider.register_tool(edit_file)
-        self.provider.register_tool(list_dir)
+        self.provider.register_tool()(read_file)
+        self.provider.register_tool()(write_file)
+        self.provider.register_tool()(edit_file)
+        self.provider.register_tool()(list_dir)
 
-    async def save_history_jsonl(self, history):
+    async def save_history_jsonl(self, session_id: str, history: list[dict[str, Any]]):
         """保存历史记录到JSONL文件。"""
-        pass
+        file = settings.path.session_history_path / f"{session_id}.jsonl"
+        file.write_text(json.dumps(history, ensure_ascii=False))
 
-    async def load_history_jsonl(self):
+    async def load_history_jsonl(self, session_id):
         """从JSONL文件加载历史记录。"""
-        pass
+        file = settings.path.session_history_path / f"{session_id}.jsonl"
+        return json.loads(file.read_text())
 
     async def run(self):
         """运行Agent循环。"""

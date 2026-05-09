@@ -1,0 +1,3 @@
+[path]
+session_path = "session"
+session_history_path = "session/history"
