@@ -6,6 +6,7 @@ from itertools import count
 from ..config.settings import settings
 from typing import Any
 import json
+from .server.schema import InboundMessage
 
 
 class AgentLoop:
@@ -47,9 +48,11 @@ class AgentLoop:
     async def load_history_jsonl(self, session_id):
         """从JSONL文件加载历史记录。"""
         file = settings.path.session_history_path / f"{session_id}.jsonl"
+        if not file.exists():
+            return []
         return json.loads(file.read_text())
 
-    async def run(self):
+    async def run(self, message: InboundMessage):
         """运行Agent循环。"""
         self._running = True
         for loop_count in count():

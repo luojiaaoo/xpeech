@@ -19,6 +19,7 @@ class LiteLLMProvider:
         default_model: str,
         default_max_tokens: int = 4096,
         default_top_p: float = 0.5,
+        support_image: bool = False,
     ):
         self.api_key = api_key
         self.api_base = api_base
@@ -26,11 +27,17 @@ class LiteLLMProvider:
         self.default_max_tokens = default_max_tokens
         self.default_top_p = default_top_p
         self.tools: list[dict[str, Any]] = []
+        self.support_image = support_image
+
+    def supports_image(self) -> bool:
+        """是否支持图片输入。"""
+        
+        return self.support_image
 
     def register_tool(self):
         """用带自定义参数的函数装饰器来注册工具。"""
 
-        def decorator(func: Callable[..., Any] | None = None):
+        def decorator(func: Callable[..., Any]):
             @functools.wraps(func)
             def wrapper() -> Callable[..., Any]:
                 self.tools.append(as_tool(func))

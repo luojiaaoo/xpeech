@@ -4,7 +4,7 @@ from fastapi import Depends
 from typing import Annotated
 from datetime import datetime
 from fastapi import File, Form, UploadFile, HTTPException, status
-from .schema import InputContent
+from .schema import InputContent, InboundMessage
 import json
 
 
@@ -45,7 +45,7 @@ async def chat(
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],
     timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
-    files: Annotated[list[UploadFile] | None, File(description="消息附件列表")] = None,
+    files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
 ):
     """Receive a message and return a response."""
     print(f"Session ID: {session_id}")
@@ -53,4 +53,11 @@ async def chat(
     print(f"Received message: {content}")
     print(f"Timestamp: {timestamp}")
     print(f"Files: {files}")
+    InboundMessage(
+        session_id=session_id,
+        session_metadata=session_metadata,
+        content=content,
+        timestamp=timestamp,
+        files=files,
+    )
     return OutboundMessage(content={"text": "你好"})
