@@ -81,7 +81,8 @@ class AgentLoop:
 
         final_content = None
         for loop_count in count():
-            if self.max_iterations and loop_count >= self.max_iterations:
+            if self.max_iterations is not None and loop_count >= self.max_iterations:
+                final_content = f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
                 break
 
             response = await self.provider.chat(messages=messages_json)
@@ -116,6 +117,16 @@ class AgentLoop:
                             "content": result,
                         }
                     )
+                
+                # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
+                if self.max_iterations is not None and loop_count == self.max_iterations - 2:
+                    messages_json.append(
+                        {
+                            "role": "user",
+                            "content": "You have reached the maximum number of iterations and must stop calling tools.",
+                        }
+                    )
+                
             else:
                 # 没有工具，结束循环
                 final_content = response.content
