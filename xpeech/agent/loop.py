@@ -123,8 +123,8 @@ class AgentLoop:
                 # 执行工具调用
                 for tool_call in response.tool_calls:
                     tool_call: ToolCallRequest = tool_call
-                    model_cls = get_tool_model_cls(tool_call := self.provider.mapping_tool_calls[tool_call.name])
-                    result = await ensure_async(tool_call)(model_cls(**tool_call.arguments))
+                    model_cls = get_tool_model_cls(tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name])
+                    result = await tool_call_func(model_cls(**tool_call.arguments))
                     # 创建工具调用结果消息
                     messages_json.append(
                         {

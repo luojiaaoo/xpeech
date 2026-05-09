@@ -1,10 +1,11 @@
 import json
 import litellm
-from typing import Any, Callable, Type, TypedDict
+from typing import Any, Callable, Type
 import functools
 from pydantic import BaseModel
 from .schema import LLMResponse, ToolCallRequest
 from ..agent.tools.helper import as_tool
+import inspect
 
 # 禁用调试信息
 litellm.suppress_debug_info = True
@@ -28,9 +29,9 @@ class LiteLLMProvider:
         self.default_max_tokens = default_max_tokens
         self.default_top_p = default_top_p
         self.default_tool_jsons: list[dict[str, Any]] = []
-        self.default_mapping_tool_calls: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
+        self.default_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
         self.temp_tool_jsons: list[dict[str, Any]] = []
-        self.temp_mapping_tool_calls: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
+        self.temp_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
         self._support_image = support_image
 
     @property
@@ -40,43 +41,42 @@ class LiteLLMProvider:
         return self._support_image
 
     def register_tool(self, is_temp: bool = False):
-        """用带自定义参数的函数装饰器来注册工具。"""
-
+        """注册工具，统一返回 async wrapper。"""
         def decorator(func: Callable[[Type[BaseModel] | None], str | dict]):
-            # 添加工具json
             if not is_temp:
                 self.default_tool_jsons.append(as_tool(func))
             else:
                 self.temp_tool_jsons.append(as_tool(func))
-
-            @functools.wraps(func)
-            def wrapper(*args, **kwargs) -> str:
-                rt = func(*args, **kwargs)
+            def format_result(rt) -> str:
                 if isinstance(rt, str):
                     return rt
                 elif isinstance(rt, dict):
                     return json.dumps(rt, indent=4, ensure_ascii=False)
                 else:
                     raise TypeError(f"Invalid return type: {type(rt)}")
-
-            # 注册工具函数
+            @functools.wraps(func)
+            async def wrapper(*args, **kwargs) -> str:
+                if inspect.iscoroutinefunction(func):
+                    rt = await func(*args, **kwargs)
+                else:
+                    rt = func(*args, **kwargs)
+                return format_result(rt)
             if not is_temp:
-                self.default_mapping_tool_calls[func.__name__] = wrapper
+                self.default_mapping_tool_call_funcs[func.__name__] = wrapper
             else:
-                self.temp_mapping_tool_calls[func.__name__] = wrapper
+                self.temp_mapping_tool_call_funcs[func.__name__] = wrapper
             return wrapper
-
         return decorator
 
     @property
-    def mapping_tool_calls(self) -> dict[str, Callable[[Type[BaseModel] | None], str]]:
+    def mapping_tool_call_funcs(self) -> dict[str, Callable[[Type[BaseModel] | None], str]]:
         """获取工具函数映射。"""
 
-        return self.default_mapping_tool_calls | self.temp_mapping_tool_calls
+        return self.default_mapping_tool_call_funcs | self.temp_mapping_tool_call_funcs
 
     def _reset_temp_tools(self):
         self.temp_tool_jsons.clear()
-        self.temp_mapping_tool_calls.clear()
+        self.temp_mapping_tool_call_funcs.clear()
 
     async def chat(
         self,
