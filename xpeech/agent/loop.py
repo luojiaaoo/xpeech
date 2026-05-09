@@ -12,9 +12,8 @@ import aiofiles
 from ..config.prompt.system import build_system_prompt
 from ..config.prompt.helper import build_user_prompt
 from ..agent.tools.helper import get_tool_model_cls
-from ..utils.helper import ensure_async
 from ..provider.schema import ToolCallRequest
-
+import yaml
 
 class AgentLoop:
     """Agent循环处理逻辑。"""
@@ -44,33 +43,33 @@ class AgentLoop:
         self.provider.register_tool()(edit_file)
         self.provider.register_tool()(list_dir)
 
-    async def save_history_json(self, session_id: str, history: list[dict[str, Any]]):
-        """保存历史记录到json文件。"""
+    async def save_history_yaml(self, session_id: str, history: list[dict[str, Any]]):
+        """保存历史记录到yaml文件。"""
 
-        file = settings.path.session_history_path / f"{session_id}.json"
+        file = settings.path.session_history_path / f"{session_id}.yaml"
         async with aiofiles.open(file, "w", encoding="utf-8") as f:
-            await f.write(json.dumps(history, indent=4, ensure_ascii=False))
+            await f.write(yaml.dump(history, default_flow_style=False, allow_unicode=True))
 
-    async def load_history_json(self, session_id: str) -> list[dict[str, Any]]:
-        """从json文件加载历史记录。"""
+    async def load_history_yaml(self, session_id: str) -> list[dict[str, Any]]:
+        """从yaml文件加载历史记录。"""
 
-        file = settings.path.session_history_path / f"{session_id}.json"
+        file = settings.path.session_history_path / f"{session_id}.yaml"
         if not file.exists():
             return []
         async with aiofiles.open(file, "r", encoding="utf-8") as f:
-            content: list[dict[str, Any]] = json.loads(await f.read())
+            content: list[dict[str, Any]] = yaml.safe_load(await f.read()) or []
         # 剔除系统提示词
-        content = [i for i in content if i["role"] != "system"]
+        content = [i for i in content if i.get("role") != "system"]
         return content
 
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
 
-        messages_json = await self.load_history_json(message.session_id)
+        messages_yaml = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
-        messages_json.insert(0, build_system_prompt(self.workspace))
+        messages_yaml.insert(0, build_system_prompt(self.workspace))
         # 拼接用户消息
-        messages_json.append(
+        messages_yaml.append(
             build_user_prompt(
                 message=message,
                 workspace=self.workspace,
@@ -87,7 +86,7 @@ class AgentLoop:
                 break
 
             response = await self.provider.chat(
-                messages=messages_json,
+                messages=messages_yaml,
                 tools=[],
                 **self.provider_chat_kwargs,
             )
@@ -122,7 +121,7 @@ class AgentLoop:
                 msg: dict[str, Any] = {"role": "assistant", "content": response.content or ""}
                 if tool_call_dicts:
                     msg["tool_calls"] = tool_call_dicts
-                messages_json.append(msg)
+                messages_yaml.append(msg)
 
                 # 执行工具调用
                 for tool_call in response.tool_calls:
@@ -130,7 +129,7 @@ class AgentLoop:
                     model_cls = get_tool_model_cls(tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name])
                     result = await tool_call_func(model_cls(**tool_call.arguments))
                     # 创建工具调用结果消息
-                    messages_json.append(
+                    messages_yaml.append(
                         {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -141,7 +140,7 @@ class AgentLoop:
 
                 # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
                 if self.max_iterations is not None and loop_count == self.max_iterations - 2:
-                    messages_json.append(
+                    messages_yaml.append(
                         {
                             "role": "user",
                             "content": "You have reached the maximum number of iterations and must stop calling tools.",
@@ -157,8 +156,8 @@ class AgentLoop:
             final_content = "I've completed processing but have no response to give."
 
         # 拼接助手消息
-        messages_json.append({"role": "assistant", "content": final_content})
+        messages_yaml.append({"role": "assistant", "content": final_content})
         # 输出助手消息
         yield "data: {}\n\n".format(json.dumps({"event": "assistant", "context": final_content}, ensure_ascii=False))
         # 保存历史记录
-        await self.save_history_json(message.session_id, messages_json)
+        await self.save_history_yaml(message.session_id, messages_yaml)
