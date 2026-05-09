@@ -74,4 +74,7 @@ def build_user_prompt(message: InboundMessage, workspace: Path, support_image: b
             + files_paths,
         }
     )
-    return parts
+    return {
+        "role": "user",
+        "content": parts,
+    }

@@ -6,8 +6,10 @@ from datetime import datetime
 from fastapi import File, Form, UploadFile, HTTPException, status
 from .schema import InputContent, InboundMessage
 import json
-from config.settings import settings
-from ...utils.helper import save_to_workspace
+from ...config.settings import settings
+from ...utils.helper import save_to_workspace, ensure_path
+from ...provider.litellm_provider import LiteLLMProvider
+from ..loop import AgentLoop
 
 
 def session_metadata(
@@ -30,7 +32,7 @@ def content(
     content: Annotated[
         str,
         Form(
-            description='消息内容列表，JSON 格式字符串。支持文本和图片：{"content": [{"text": "你好"}, {"image_url": "data:image/png;base64,iVBOR..."}]}',
+            description='消息内容列表，JSON 格式字符串。支持文本和图片：[{"text": "你好"}, {"image_url": "data:image/png;base64,iVBOR..."}]',
         ),
     ],
 ):
@@ -50,13 +52,17 @@ async def chat(
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
 ):
     """Receive a message and return a response."""
+
     # 用session_id去区分工作目录
-    workspace = settings.path.workspace_base_path / session_id
+    workspace = ensure_path(settings.path.workspace_base_path / session_id)
+
     # 把files都保存到工作目录
     files_ = []
     for file in files:
         file_path = save_to_workspace(file=file, workspace=workspace)
         files_.append(file_path)
+
+    # 创建消息对象
     messsage = InboundMessage(
         session_id=session_id,
         session_metadata=session_metadata,
@@ -64,5 +70,14 @@ async def chat(
         timestamp=timestamp,
         files=files_,
     )
+
+    # 开启Agent Loop
+    provider = LiteLLMProvider(
+        api_key="1cda8e1a-03exxxe50-d1af",
+        api_base="https://ark.cn-beijing.volces.com/api/coding",
+        default_model="openai/glm-5.1",
+    )
+    await AgentLoop(provider=provider, workspace=workspace, max_iterations=30).run(messsage)
+
     print(f"messsage: {messsage}")
     return OutboundMessage(content={"text": "你好"})

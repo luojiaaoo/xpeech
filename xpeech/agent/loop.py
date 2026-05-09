@@ -1,3 +1,4 @@
+from tkinter import N
 from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import ProviderChatKwargs
 from pathlib import Path
@@ -22,13 +23,13 @@ class AgentLoop:
         self,
         provider: LiteLLMProvider,
         workspace: Path,
-        provider_chat_kwargs: ProviderChatKwargs,
-        max_iterations: int = None,
+        provider_chat_kwargs: ProviderChatKwargs | None = None,
+        max_iterations: int | None = None,
     ):
 
         self.provider = provider
         self.workspace = workspace
-        self.provider_chat_kwargs = provider_chat_kwargs.to_dict()
+        self.provider_chat_kwargs = {} if provider_chat_kwargs is None else provider_chat_kwargs.to_dict()
         self.max_iterations = max_iterations
 
         # 注册默认工具
@@ -57,7 +58,7 @@ class AgentLoop:
         if not file.exists():
             return []
         async with aiofiles.open(file, "r", encoding="utf-8") as f:
-            content: list[dict[str, Any]] = await f.read()
+            content: list[dict[str, Any]] = json.loads(await f.read())
         # 剔除系统提示词
         if content[0]["role"] == "system":
             content = content[1:]
@@ -67,8 +68,8 @@ class AgentLoop:
         """运行一次Agent循环，处理一次用户消息。"""
 
         messages_json = await self.load_history_json(message.session_id)
-        # 拼接系统提示词
-        messages_json.insert(0, build_system_prompt())
+        # 拼接系统提示词    
+        messages_json.insert(0, build_system_prompt(self.workspace))
         # 拼接用户消息
         messages_json.insert(
             -1,
@@ -82,10 +83,16 @@ class AgentLoop:
         final_content = None
         for loop_count in count():
             if self.max_iterations is not None and loop_count >= self.max_iterations:
-                final_content = f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
+                final_content = (
+                    f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
+                )
                 break
 
-            response = await self.provider.chat(messages=messages_json)
+            response = await self.provider.chat(
+                messages=messages_json,
+                tools=[],
+                **self.provider_chat_kwargs,
+            )
             # 如果有工具调用
             if response.has_tool_calls:
                 # 还原工具调用格式
@@ -117,7 +124,7 @@ class AgentLoop:
                             "content": result,
                         }
                     )
-                
+
                 # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
                 if self.max_iterations is not None and loop_count == self.max_iterations - 2:
                     messages_json.append(
@@ -126,7 +133,7 @@ class AgentLoop:
                             "content": "You have reached the maximum number of iterations and must stop calling tools.",
                         }
                     )
-                
+
             else:
                 # 没有工具，结束循环
                 final_content = response.content
@@ -137,6 +144,6 @@ class AgentLoop:
 
         # 拼接助手消息
         messages_json.append({"role": "assistant", "content": final_content})
-
+        print(messages_json)
         # 保存历史记录
         await self.save_history_json(message.session_id, messages_json)

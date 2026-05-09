@@ -1,5 +1,5 @@
 from typing import Annotated, TypeAlias
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 from datetime import datetime
 from pathlib import Path
 
@@ -17,17 +17,17 @@ class InputImage(BaseModel):
     image_url: Annotated[str, Field(description="base64 格式图片")]
 
 
-class InputContent(BaseModel):
+class InputContent(RootModel[list[InputText | InputImage]]):
     """输入内容块。"""
+    pass
 
-    content: Annotated[list[InputText | InputImage], Field(description="消息内容")]
 
-
-class InboundMessage(InputContent):
+class InboundMessage(BaseModel):
     """请求的消息的 schema。"""
 
     session_id: Annotated[str, Field(description="会话ID")]
     session_metadata: Annotated[dict[str, str], Field(description="会话元数据")]
+    content: Annotated[list[InputText | InputImage], Field(description="消息内容")]
     timestamp: Annotated[datetime, Field(description="消息时间戳")]
     files: Annotated[list[Path], Field(description="消息附件")]
 

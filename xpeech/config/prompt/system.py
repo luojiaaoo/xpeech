@@ -23,12 +23,12 @@ def _get_identity(workspace) -> str:
     ).lstrip()
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(workspace) -> str:
     return {
         "role": "system",
         "content": dedent(
             f"""
-                {_get_identity()}
+                {_get_identity(workspace)}
             """
         ).lstrip(),
     }
