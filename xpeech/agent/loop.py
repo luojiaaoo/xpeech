@@ -115,10 +115,14 @@ class AgentLoop:
                 yield "data: {}\n\n".format(
                     json.dumps({"event": "assistant", "context": response.content}, ensure_ascii=False)
                 )
-                # 输出助手消息
+                # 输出工具调用消息
                 yield "data: {}\n\n".format(
                     json.dumps(
-                        {"event": "tool_call", "context": [i.name for i in response.tool_calls]}, ensure_ascii=False
+                        {
+                            "event": "tool_call",
+                            "context": json.dumps([(i.id, i.name, i.arguments) for i in response.tool_calls]),
+                        },
+                        ensure_ascii=False,
                     )
                 )
                 # 还原工具调用格式
@@ -137,6 +141,7 @@ class AgentLoop:
                 messages_yaml.append(msg)
 
                 # 执行工具调用
+                tool_call_result = []
                 for tool_call in response.tool_calls:
                     tool_call: ToolCallRequest = tool_call
                     model_cls = get_tool_model_cls(
@@ -152,6 +157,13 @@ class AgentLoop:
                             "content": result,
                         }
                     )
+                    tool_call_result.append((tool_call.id, tool_call.name, result))
+                # 输出工具调用结果消息
+                yield "data: {}\n\n".format(
+                    json.dumps(
+                        {"event": "tool_call_result", "context": json.dumps(tool_call_result)}, ensure_ascii=False
+                    )
+                )
 
                 # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
                 if self.max_iterations is not None and loop_count == self.max_iterations - 2:

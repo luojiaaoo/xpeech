@@ -29,7 +29,7 @@ def build_file_tools(workspace: str):
     def safe_resolve(user_path: str) -> Path:
         """Resolve a user path safely inside the workspace."""
         # 检查必须为相对路径
-        if Path(user_path).is_absolute():
+        if Path(user_path).is_absolute() or user_path.startswith("/"):
             raise PermissionError(f"Path must be relative: {user_path}")
         # 相对路径是相对用户工作路径的路径
         ops_path = (base/user_path).resolve()
