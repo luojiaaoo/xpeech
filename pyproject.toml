@@ -9,6 +9,7 @@ dependencies = [
     "asyncer>=0.0.17",
     "fastapi>=0.136.1",
     "litellm>=1.83.0",
+    "loguru>=0.7.3",
     "openai>=2.36.0",
     "pydantic-settings>=2.14.0",
     "python-multipart>=0.0.27",

@@ -3,6 +3,7 @@ from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import ProviderChatKwargs
 from pathlib import Path
 from .tools.filesystem import build_file_tools
+from .tools.shell import build_shell_tools
 from itertools import count
 from ..config.settings import settings
 from typing import Any
@@ -44,6 +45,8 @@ class AgentLoop:
         self.provider.register_tool()(write_file)
         self.provider.register_tool()(edit_file)
         self.provider.register_tool()(list_dir)
+        exec = build_shell_tools(self.workspace)
+        self.provider.register_tool()(exec)
 
     async def save_history_yaml(self, session_id: str, history: list[dict[str, Any]]):
         """保存历史记录到yaml文件。"""

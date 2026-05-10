@@ -24,6 +24,14 @@ def ensure_path(path_: Path):
     return path_
 
 
+def is_relative_path(base: Path, path_target: Path):
+    try:
+        path_target.relative_to(base)
+    except ValueError:
+        return False
+    return True
+
+
 async def save_to_workspace(file: UploadFile | InputImage, workspace: Path, idx: int | None = None):
     if isinstance(file, UploadFile):
         file_path = workspace / Path(file.filename).name

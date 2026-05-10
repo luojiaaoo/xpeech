@@ -21,13 +21,13 @@ class ListDirArgs(BaseModel):
     path: str = Field(description="The directory path to list")
 
 
-def build_file_tools(workdir: str):
-    base = Path(workdir).expanduser().resolve()
+def build_file_tools(workspace: str):
+    base = Path(workspace).expanduser().resolve()
     if not base.exists() or not base.is_dir():
-        raise ValueError(f"Invalid workdir: {workdir}")
+        raise ValueError(f"Invalid workspace: {workspace}")
 
     def safe_resolve(user_path: str) -> Path:
-        """Resolve a user path safely inside the workdir."""
+        """Resolve a user path safely inside the workspace."""
         # 检查必须为相对路径
         if Path(user_path).is_absolute():
             raise PermissionError(f"Path must be relative: {user_path}")
@@ -37,12 +37,12 @@ def build_file_tools(workdir: str):
         try:
             ops_path.relative_to(base)
         except ValueError:
-            raise PermissionError(f"Path escapes workdir: {user_path}")
+            raise PermissionError(f"Path escapes workspace: {user_path}")
         return ops_path
 
 
     async def read_file(args: ReadFileArgs) -> str:
-        """Read the contents of a file inside the workdir."""
+        """Read the contents of a file inside the workspace."""
         path = args.path
         try:
             file_path = safe_resolve(path)
@@ -57,7 +57,7 @@ def build_file_tools(workdir: str):
             return f"Error reading file: {str(e)}"
 
     async def write_file(args: WriteFileArgs) -> str:
-        """Write content to a file inside the workdir, creating parent directories if needed."""
+        """Write content to a file inside the workspace, creating parent directories if needed."""
         path = args.path
         content = args.content
         try:
@@ -71,7 +71,7 @@ def build_file_tools(workdir: str):
             return f"Error writing file: {str(e)}"
 
     async def edit_file(args: EditFileArgs) -> str:
-        """Edit a file inside the workdir by replacing old_text with new_text."""
+        """Edit a file inside the workspace by replacing old_text with new_text."""
         path = args.path
         old_text = args.old_text
         new_text = args.new_text
@@ -96,7 +96,7 @@ def build_file_tools(workdir: str):
             return f"Error editing file: {str(e)}"
 
     async def list_dir(args: ListDirArgs) -> str:
-        """List the contents of a directory inside the workdir."""
+        """List the contents of a directory inside the workspace."""
         path = args.path
         try:
             dir_path = safe_resolve(path)
