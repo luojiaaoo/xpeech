@@ -3,22 +3,22 @@ from pydantic import BaseModel, Field
 
 
 class ReadFileArgs(BaseModel):
-    path: str = Field(description="The file relative path to read")
+    path: str = Field(description="The file relative path to read. Disallow absolute path")
 
 
 class WriteFileArgs(BaseModel):
-    path: str = Field(description="The file relative path to write to")
+    path: str = Field(description="The file relative path to write to. Disallow absolute path")
     content: str = Field(description="The content to write")
 
 
 class EditFileArgs(BaseModel):
-    path: str = Field(description="The file relative path to edit")
+    path: str = Field(description="The file relative path to edit. Disallow absolute path")
     old_text: str = Field(description="The exact text to find and replace")
     new_text: str = Field(description="The text to replace with")
 
 
 class ListDirArgs(BaseModel):
-    path: str = Field(description="The directory relative path to list")
+    path: str = Field(description="The directory relative path to list. Disallow absolute path")
 
 
 def build_file_tools(workspace: str):
