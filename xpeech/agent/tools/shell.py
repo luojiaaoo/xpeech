@@ -50,7 +50,7 @@ if platform.system() == "Windows":
     git_path = shutil.which("git")
     if git_path is None:
         raise Exception("Git Bash is not installed. Please install Git Bash and try again.")
-    bash_path = Path(git_path).parent / "bash"
+    bash_path = Path(git_path).parent.parent / "bin" / "bash"
 else:
     _IS_WINDOWS = False
     bash_path = Path(shutil.which("bash") or "/bin/bash")
@@ -88,7 +88,7 @@ def _extract_absolute_paths(command: str) -> list[str]:
     return win_paths + posix_paths + home_paths
 
 
-def _guard_command(self, command: str, workspace: str) -> str | None:
+def _guard_command(command: str, workspace: str) -> str | None:
     """Guard a command string from code injection attacks."""
     cmd = command.strip()
     lower = cmd.lower()
