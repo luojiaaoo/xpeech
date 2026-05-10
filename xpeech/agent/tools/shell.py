@@ -52,7 +52,7 @@ if platform.system() == "Windows":
     if git_path is None:
         raise Exception("Git Bash is not installed. Please install Git Bash and try again.")
     bash_path = Path(git_path).parent.parent / "bin" / "bash"
-    docstring_str = "the bash is msys2, a Windows version of bash, C:\\Users\\Test is /c/Users/Test"
+    docstring_str = "MSYS2 is a Bash emulator for Windows, and Linux-style paths are required (e.g., /c/Users/Test, not C:\\Users\\Test). Even if the user inputs a Windows-style path, you must automatically convert it to the Linux style."
 else:
     _IS_WINDOWS = False
     bash_path = Path(shutil.which("bash") or "/bin/bash")
@@ -117,11 +117,11 @@ def _msys_to_win(msys_path: str) -> str:
        /d/code        -> D:\\code
     """
     # 匹配 /c/ 开头的挂载路径
-    match = re.match(r"^/([A-Za-z])/(.*)", msys_path)
+    match = re.match(r"^/([A-Za-z])/(.*)", msys_path.replace("\\", "/"))
     if match:
         drive = match.group(1).upper()  # 盘符转大写 (Windows惯例)
-        rest = match.group(2).replace("/", "\\")  # 斜杠转反斜杠
-        return f"{drive}:\\{rest}"
+        rest = match.group(2)  # 斜杠转反斜杠
+        return f"{drive}:/{rest}"
 
     # 如果不符合 MSYS2 挂载格式，直接返回
     return msys_path
@@ -151,16 +151,17 @@ def _guard_command(command: str, workspace: str) -> str | None:
             if not _IS_WINDOWS:
                 p = Path(expanded).expanduser().resolve()
             else:
-                # windows系统resolve会把linux路径破坏，所以这里不使用resolve
+                # windows系统resolve会把linux路径破坏
                 if expanded.startswith("~"):
                     p = Path(expanded).expanduser().resolve()
                 else:
-                    p = Path(_msys_to_win(str(Path(expanded)).replace("\\", "/"))).resolve()
+                    p = Path(_msys_to_win(expanded)).resolve()
         except Exception:
             continue
 
         if _is_benign_device_path(str(p)):
             continue
+
         if not is_relative_path(base=workspace, path_target=p):
             return "Error: Command blocked by safety guard (path outside working dir)" + _WORKSPACE_BOUNDARY_NOTE
 
