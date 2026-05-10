@@ -106,15 +106,17 @@ class AgentLoop:
                 **self.provider_chat_kwargs,
             )
             # 输出思考内容
-            yield "data: {}\n\n".format(
-                json.dumps({"event": "thinking", "context": response.reasoning_content or ""}, ensure_ascii=False)
-            )
+            if response.reasoning_content:
+                yield "data: {}\n\n".format(
+                    json.dumps({"event": "thinking", "context": response.reasoning_content}, ensure_ascii=False)
+                )
             # 如果有工具调用
             if response.has_tool_calls:
                 # 输出工具调用内容
-                yield "data: {}\n\n".format(
-                    json.dumps({"event": "assistant", "context": response.content}, ensure_ascii=False)
-                )
+                if response.content:
+                    yield "data: {}\n\n".format(
+                        json.dumps({"event": "assistant", "context": response.content}, ensure_ascii=False)
+                    )
                 # 输出工具调用消息
                 yield "data: {}\n\n".format(
                     json.dumps(
