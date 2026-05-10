@@ -79,7 +79,7 @@ class AgentLoop:
 
         messages_yaml = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
-        messages_yaml.insert(0, build_system_prompt(self.workspace))
+        messages_yaml.insert(0, build_system_prompt())
         # 拼接用户消息
         messages_yaml.append(
             build_user_prompt(

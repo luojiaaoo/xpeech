@@ -28,16 +28,18 @@ def build_file_tools(workdir: str):
 
     def safe_resolve(user_path: str) -> Path:
         """Resolve a user path safely inside the workdir."""
-        p = Path(user_path).expanduser()
-        target = p if p.is_absolute() else (base / p)
-        resolved = target.resolve(strict=False)
-
+        # 检查必须为相对路径
+        if Path(user_path).is_absolute():
+            raise PermissionError(f"Path must be relative: {user_path}")
+        # 相对路径是相对用户工作路径的路径
+        ops_path = (base/user_path).resolve()
+        # 检查是否逃逸
         try:
-            resolved.relative_to(base)
+            ops_path.relative_to(base)
         except ValueError:
             raise PermissionError(f"Path escapes workdir: {user_path}")
+        return ops_path
 
-        return resolved
 
     async def read_file(args: ReadFileArgs) -> str:
         """Read the contents of a file inside the workdir."""
