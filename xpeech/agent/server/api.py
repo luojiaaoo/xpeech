@@ -8,6 +8,7 @@ from .schema import InputContent, InboundMessage
 import json
 from ...config.settings import settings
 from ...utils.helper import save_to_workspace, ensure_path
+from ...utils.session import create_workspace_templates
 from ...provider.litellm_provider import LiteLLMProvider
 from ..loop import AgentLoop
 from fastapi.responses import StreamingResponse
@@ -54,8 +55,11 @@ async def chat(
 ):
     """Receive a message and return a response."""
 
-    # 用session_id去区分工作目录
-    workspace = ensure_path(settings.path.workspace_base_path / session_id)
+    workspace = settings.path.workspace_base_path / session_id
+
+    # 创建工作目录
+    if not workspace.exists():
+        create_workspace_templates(ensure_path(workspace))
 
     # 把files都保存到工作目录
     files_ = []
@@ -74,7 +78,7 @@ async def chat(
 
     # 开启Agent Loop
     provider = LiteLLMProvider(
-        api_key="1cda8e1xxxx415985dbf",
+        api_key="1cda1cda8e1xxxx415985dbf985dbf",
         api_base="https://ark.cn-beijing.volces.com/api/coding/v1",
         default_model="zai/glm-5.1",
     )
