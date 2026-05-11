@@ -42,7 +42,7 @@ class AgentLoop:
             Skip: code patterns derivable from source, git history, or anything already captured in existing memory.
 
             Output as concise bullet points, one fact per line. No preamble, no commentary. If nothing noteworthy happened, output: (nothing)
-            """
+        """
     ).lstrip()
 
     def __init__(
@@ -209,7 +209,7 @@ class AgentLoop:
         logger.info("Agent run started session_id={} workspace={}", message.session_id, self.workspace)
         messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
-        messages_yaml.insert(0, build_system_prompt(workspace=self.workspace.resolve()))
+        messages_yaml.insert(0, await build_system_prompt(workspace=self.workspace.resolve()))
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(
             build_user_prompt(
@@ -438,9 +438,7 @@ class AgentLoop:
         _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
         if not _clean_messages:
             return "[INFO] No messages to consolidate"
-        _system_prompt = dedent("""
-        ## Current Long-term Memory
-        """).lstrip() + (await memory_store.get_memory_context() or "(empty)")
+        _system_prompt = "## Current Long-term Memory\n" + (await memory_store.get_memory_context() or "(empty)")
         _clean_messages.insert(0, {"role": "system", "content": _system_prompt})
         _clean_messages.append(
             {

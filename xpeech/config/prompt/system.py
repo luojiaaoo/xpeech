@@ -24,7 +24,8 @@ def _get_identity(workspace: str) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
 
     return dedent(
-        f"""# xpeech 🍑
+        f"""
+            # xpeech 🍑
 
             You are xpeech, a helpful AI assistant.
             Why xpeech?
@@ -50,20 +51,13 @@ def _get_identity(workspace: str) -> str:
             - After writing or editing a file, re-read it if accuracy matters.
             - If a tool call fails, analyze the error before retrying with a different approach.
             - Ask for clarification when the request is ambiguous.
-            """
+        """
     ).lstrip()
 
 
-def build_system_prompt(workspace: str) -> str:
-    return {
-        "role": "system",
-        "content": dedent(
-            f"""
-                {_get_identity(workspace)}
-
-                {_load_bootstrap_files(workspace)}
-
-                {MemoryStore(workspace).get_memory_context()}
-            """
-        ).lstrip(),
-    }
+async def build_system_prompt(workspace: str) -> str:
+    parts = []
+    parts.append(_get_identity(workspace))
+    parts.append(_load_bootstrap_files(workspace))
+    parts.append(await MemoryStore(workspace).get_memory_context())
+    return {"role": "system", "content": "\n\n".join(parts)}

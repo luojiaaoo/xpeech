@@ -67,16 +67,18 @@ def build_user_prompt(message: InboundMessage, workspace: Path, support_image: b
         parts.append(
             {
                 "type": "text",
-                "text": dedent(f"""
-                    ## Attachments
-                    The user has uploaded {len(files_paths)} file(s). You may reference them:
+                "text": dedent(
+                    f"""
+                        ## Attachments
+                        The user has uploaded {len(files_paths)} file(s). You may reference them:
 
-                """).lstrip()
+                    """
+                ).lstrip()
                 + files_paths,
             }
         )
     return {
         "role": "user",
-        'timestamp': message.timestamp.timestamp(),
+        "timestamp": message.timestamp.timestamp(),
         "content": parts,
     }

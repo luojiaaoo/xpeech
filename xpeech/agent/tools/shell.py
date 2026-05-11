@@ -198,9 +198,11 @@ def build_shell_tools(workspace: str):
 
         return result
 
-    shell.__doc__ = dedent(f"""
-        Execute a bash command and return the output.
-        {docstring_str}
-        """).lstrip()
+    shell.__doc__ = dedent(
+        f"""
+            Execute a bash command and return the output.
+            {docstring_str}
+        """
+    ).lstrip()
 
     return shell
