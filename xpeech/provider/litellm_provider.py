@@ -104,6 +104,7 @@ class LiteLLMProvider:
         max_tokens: int | None = None,
         top_p: float | None = None,
         remove_all_tools: bool = False,
+        remove_default_tools: bool = False,
         json_output: bool = False,
     ) -> LLMResponse:
         # 使用提供的参数或默认参数
@@ -123,7 +124,17 @@ class LiteLLMProvider:
         self._reset_temp_tools()
         for func in tools or []:
             self.register_tool(is_temp=True)(func)
-        tool_jsons = self.default_tool_jsons + self.temp_tool_jsons
+
+        # 确定工具列表
+        if remove_default_tools and remove_all_tools:
+            raise ValueError("remove_default_tools and remove_all_tools cannot be True at the same time.")
+        if remove_default_tools:
+            tool_jsons = self.temp_tool_jsons
+        else:
+            tool_jsons = self.default_tool_jsons + self.temp_tool_jsons
+
+        if remove_all_tools:
+            tool_jsons = []
 
         # 发起请求
         try:
@@ -138,7 +149,7 @@ class LiteLLMProvider:
                 "extra_headers": self.extra_headers,
             }
             # 注入工具
-            if tool_jsons and not remove_all_tools:
+            if tool_jsons:
                 completion_kwargs["tools"] = tool_jsons
                 completion_kwargs["tool_choice"] = "auto"
             response = await litellm.acompletion(**completion_kwargs)
