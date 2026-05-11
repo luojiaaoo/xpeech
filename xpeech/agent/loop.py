@@ -1,4 +1,3 @@
-from tkinter import N
 from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import ProviderChatKwargs
 from pathlib import Path
@@ -20,6 +19,7 @@ from ..provider.schema import LLMResponse
 from litellm import token_counter
 from datetime import timedelta
 from textwrap import dedent
+from loguru import logger
 
 
 class AgentLoop:
@@ -88,6 +88,7 @@ class AgentLoop:
                     width=1000,
                 )
             )
+        logger.info("Session history saved session_id={}", session_id)
 
     async def load_history_yaml(self, session_id: str) -> list[dict[str, Any]]:
         """从yaml文件加载历史记录。"""
@@ -99,9 +100,11 @@ class AgentLoop:
             content: list[dict[str, Any]] = yaml.safe_load(await f.read()) or []
         # 剔除系统提示词
         content = [i for i in content if i["role"] != "system"]
+        logger.info("Session history loaded session_id={} messages={}", session_id, len(content))
         return content
 
     async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int):
+        logger.info("Processing tool calls loop_count={} count={}", loop_count, len(response.tool_calls))
         # 输出工具调用内容
         if response.content and response.content.strip():
             yield "data: {}\n\n".format(
@@ -140,7 +143,10 @@ class AgentLoop:
             try:
                 result = await tool_call_func(model_cls(**tool_call.arguments))
             except Exception as e:
+                logger.exception("Tool call failed loop_count={} tool_name={}", loop_count, tool_call.name)
                 result = format_exception2llm(e)
+            else:
+                logger.info("Tool call completed loop_count={} tool_name={}", loop_count, tool_call.name)
             # 创建工具调用结果消息
             messages_yaml.append(
                 {
@@ -158,6 +164,11 @@ class AgentLoop:
 
         # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
         if self.max_iterations is not None and loop_count == self.max_iterations - 2:
+            logger.warning(
+                "Approaching max iterations loop_count={} max_iterations={}",
+                loop_count,
+                self.max_iterations,
+            )
             messages_yaml.append(
                 {
                     "role": "user",
@@ -191,6 +202,7 @@ class AgentLoop:
         # 如果不需要压缩，返回原始消息
         if not self.need_compress(messages):
             return messages
+        logger.info("Compressing messages messages={}", len(messages))
 
         def truncate_tool_result(_messages: list, truncate_count: int):
             rt = []
@@ -205,14 +217,18 @@ class AgentLoop:
             system_messages = [i for i in _clean_messages if i["role"] == "system"]
             _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
             _clean_messages.insert(0, {"role": "system", "content": self.SUMMARY_PROMPT})
-            summary = (
-                await self.provider.chat(
-                    messages=_clean_messages,
-                    max_tokens=self.summary_tokens,
-                    top_p=0.1,
-                    remove_all_tools=True,
-                )
-            ).content
+            try:
+                summary = (
+                    await self.provider.chat(
+                        messages=_clean_messages,
+                        max_tokens=self.summary_tokens,
+                        top_p=0.1,
+                        remove_all_tools=True,
+                    )
+                ).content
+            except Exception:
+                logger.exception("Failed to summarize history")
+                raise
             _messages = [
                 *system_messages,
                 {"role": "assistant", "content": summary},
@@ -236,6 +252,7 @@ class AgentLoop:
 
         # 一级压缩：超过1000字的工具执行结果（保留最近4次对话消息的结果调用）
         keep_count = 4
+        keep_count = 4
         idx_split_keep = len(messages)
         count = 0
         for i in range(len(messages) - 1, -1, -1):
@@ -246,25 +263,33 @@ class AgentLoop:
                 idx_split_keep = i
         messages = truncate_tool_result(messages[:idx_split_keep], 1000) + messages[idx_split_keep:]
         if self.is_finish_compress(messages):
+            logger.info("Compression finished level=1 messages={}", len(messages))
             return messages
 
         # 二级压缩：只保留最后一条消息的时间戳，往前追溯7/6/5/4/3/2天的消息
         for days in range(7, 1, -1):
             messages = keep_messages_for_day(days, messages)
             if self.is_finish_compress(messages):
+                logger.info("Compression finished level=2 messages={}", len(messages))
                 return messages
 
         # 三级压缩：AI总结历史消息，只保留最近4次对话消息
         if self.is_finish_compress(messages[idx_split_keep:]):
-            messages = summary_messages(messages[:idx_split_keep]) + messages[idx_split_keep:]
+            logger.info("Compression level=3 summarizing history")
+            messages = await summary_messages(messages[:idx_split_keep]) + messages[idx_split_keep:]
+            logger.info("Compression finished level=3 messages={}", len(messages))
             return messages
 
         # 四级压缩：如果仍然不满足要求，则进行完全压缩
-        return summary_messages(messages)
+        logger.info("Compression level=4 summarizing all history")
+        compressed_messages = await summary_messages(messages)
+        logger.info("Compression finished level=4 messages={}", len(compressed_messages))
+        return compressed_messages
 
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
 
+        logger.info("Agent run started session_id={} workspace={}", message.session_id, self.workspace)
         messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
         messages_yaml.insert(0, build_system_prompt(workspace=self.workspace))
@@ -285,14 +310,35 @@ class AgentLoop:
                 final_content = (
                     f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
                 )
+                logger.warning(
+                    "Agent loop reached max iterations session_id={} loop_count={} max_iterations={}",
+                    message.session_id,
+                    loop_count,
+                    self.max_iterations,
+                )
                 break
 
             # 清理用户消息中的时间戳，开始对话
             _clean_messages = self.clear_role_user_timestamp(messages_yaml)
-            response = await self.provider.chat(
-                messages=_clean_messages,
-                tools=[],
-                **self.provider_chat_kwargs,
+            logger.info("Calling provider chat session_id={} loop_count={}", message.session_id, loop_count)
+            try:
+                response = await self.provider.chat(
+                    messages=_clean_messages,
+                    tools=[],
+                    **self.provider_chat_kwargs,
+                )
+            except Exception:
+                logger.exception(
+                    "Provider chat failed session_id={} loop_count={}",
+                    message.session_id,
+                    loop_count,
+                )
+                raise
+            logger.info(
+                "Provider chat completed session_id={} loop_count={} has_tool_calls={}",
+                message.session_id,
+                loop_count,
+                response.has_tool_calls,
             )
 
             # 输出思考内容
@@ -312,6 +358,7 @@ class AgentLoop:
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
+            logger.warning("Agent loop finished without final content session_id={}", message.session_id)
 
         # 拼接助手消息
         messages_yaml.append({"role": "assistant", "content": final_content})
@@ -321,3 +368,4 @@ class AgentLoop:
 
         # 保存历史记录
         await self.save_history_yaml(message.session_id, messages_yaml)
+        logger.info("Agent run completed session_id={}", message.session_id)
