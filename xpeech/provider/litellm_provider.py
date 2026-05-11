@@ -22,6 +22,7 @@ class LiteLLMProvider:
         default_max_tokens: int = 4096,
         default_top_p: float = 0.5,
         support_image: bool = False,
+        extra_headers: dict = None,
     ):
         self.api_key = api_key
         self.api_base = api_base
@@ -33,6 +34,7 @@ class LiteLLMProvider:
         self.temp_tool_jsons: list[dict[str, Any]] = []
         self.temp_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
         self._support_image = support_image
+        self.extra_headers = extra_headers
 
     @property
     def support_image(self) -> bool:
@@ -42,11 +44,13 @@ class LiteLLMProvider:
 
     def register_tool(self, is_temp: bool = False):
         """注册工具，统一返回 async wrapper。"""
+
         def decorator(func: Callable[[Type[BaseModel] | None], str | dict]):
             if not is_temp:
                 self.default_tool_jsons.append(as_tool(func))
             else:
                 self.temp_tool_jsons.append(as_tool(func))
+
             def format_result(rt) -> str:
                 if isinstance(rt, str):
                     return rt
@@ -54,6 +58,7 @@ class LiteLLMProvider:
                     return json.dumps(rt, indent=4, ensure_ascii=False)
                 else:
                     raise TypeError(f"Invalid return type: {type(rt)}")
+
             @functools.wraps(func)
             async def wrapper(*args, **kwargs) -> str:
                 if inspect.iscoroutinefunction(func):
@@ -61,11 +66,13 @@ class LiteLLMProvider:
                 else:
                     rt = func(*args, **kwargs)
                 return format_result(rt)
+
             if not is_temp:
                 self.default_mapping_tool_call_funcs[func.__name__] = wrapper
             else:
                 self.temp_mapping_tool_call_funcs[func.__name__] = wrapper
             return wrapper
+
         return decorator
 
     @property
@@ -106,6 +113,7 @@ class LiteLLMProvider:
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "top_p": top_p,
+                "extra_headers": self.extra_headers,
             }
             # 注入工具
             if tool_jsons:
