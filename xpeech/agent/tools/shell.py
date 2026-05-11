@@ -8,7 +8,7 @@ import os
 from contextlib import suppress
 import re
 from ...utils.security.network import contains_internal_url
-from ...utils.helper import is_relative_path
+from ...utils.helper import is_relative_path, msys_to_win
 from textwrap import dedent
 
 EXEC_TIMEOUT = 60
@@ -52,7 +52,7 @@ if platform.system() == "Windows":
     if git_path is None:
         raise Exception("Git Bash is not installed. Please install Git Bash and try again.")
     bash_path = Path(git_path).parent.parent / "bin" / "bash"
-    docstring_str = "MSYS2 is a Bash emulator for Windows, and Linux-style paths are required (e.g., /c/Users/Test, not C:\\Users\\Test). Even if the user inputs a Windows-style path, you must automatically convert it to the Linux style."
+    docstring_str = "MSYS2 is a Bash emulator for Windows. It supports both Windows-style and Linux-style paths. To avoid escaping issues, use forward slashes (/) in Windows paths."
 else:
     _IS_WINDOWS = False
     bash_path = Path(shutil.which("bash") or "/bin/bash")
@@ -86,45 +86,10 @@ async def _kill_process(process: asyncio.subprocess.Process) -> None:
 
 def _extract_absolute_paths(command: str) -> list[str]:
     win_paths = re.findall(r"[A-Za-z]:\\[^\s\"'|><;]*", command)
+    win_paths += re.findall(r"[A-Za-z]:/[^\s\"'|><;]*", command)
     posix_paths = re.findall(r"(?:^|[\s|>'\"])(/[^\s\"'>;|<]+)", command)
     home_paths = re.findall(r"(?:^|[\s>'\"])(~[^\s\"'>;|<]*)", command)
     return win_paths + posix_paths + home_paths
-
-
-def _win_to_msys(win_path: str) -> str:
-    """将 Windows 路径转换为 MSYS2 路径
-    例: C:\\Users\\Test -> /c/Users/Test
-       D:/code        -> /d/code
-    """
-    # 1. 统一将反斜杠替换为正斜杠
-    path = win_path.replace("\\", "/")
-    # 2. 匹配盘符 (如 C: 或 c:)，将其转换为 /c/
-    # ^([A-Za-z]): 匹配开头的字母和冒号
-    # (?:/|$) 确保冒号后面是斜杠或字符串结尾，防止误杀类似 "http:" 的路径
-    match = re.match(r"^([A-Za-z]):(?:/|$)(.*)", path)
-    if match:
-        drive = match.group(1).lower()  # 盘符转小写
-        rest = match.group(2)
-        return f"/{drive}/{rest}"
-
-    # 如果没有盘符，直接返回（可能是相对路径）
-    return path
-
-
-def _msys_to_win(msys_path: str) -> str:
-    """将 MSYS2 路径转换为 Windows 路径
-    例: /c/Users/Test -> C:\\Users\\Test
-       /d/code        -> D:\\code
-    """
-    # 匹配 /c/ 开头的挂载路径
-    match = re.match(r"^/([A-Za-z])/(.*)", msys_path.replace("\\", "/"))
-    if match:
-        drive = match.group(1).upper()  # 盘符转大写 (Windows惯例)
-        rest = match.group(2)  # 斜杠转反斜杠
-        return f"{drive}:/{rest}"
-
-    # 如果不符合 MSYS2 挂载格式，直接返回
-    return msys_path
 
 
 def _guard_command(command: str, workspace: str) -> str | None:
@@ -134,14 +99,14 @@ def _guard_command(command: str, workspace: str) -> str | None:
     # 正则判断
     for pattern in DENY_PATTERNS:
         if re.search(pattern, lower):
-            return "Error: Command blocked by deny pattern filter"
+            raise RuntimeError("Command blocked by deny pattern filter")
     # 判断是否恶意访问内网接口
     if contains_internal_url(cmd):
-        return "Error: Command blocked by safety guard (internal/private URL detected)"
+        raise RuntimeError("Command blocked by safety guard (internal/private URL detected)")
     # 拦截非工作路径下的文件操作
     ## 拦截 .. 符号
     if "..\\" in cmd or "../" in cmd:
-        return "Error: Command blocked by safety guard (path traversal detected)" + _WORKSPACE_BOUNDARY_NOTE
+        raise RuntimeError("Command blocked by safety guard (path traversal detected)" + _WORKSPACE_BOUNDARY_NOTE)
     ## 提取所有路径，判断是否在工作路径下
     for i in _extract_absolute_paths(cmd):
         try:
@@ -151,11 +116,11 @@ def _guard_command(command: str, workspace: str) -> str | None:
             if not _IS_WINDOWS:
                 p = Path(expanded).expanduser().resolve()
             else:
-                # windows系统resolve会把linux路径破坏
                 if expanded.startswith("~"):
                     p = Path(expanded).expanduser().resolve()
                 else:
-                    p = Path(_msys_to_win(expanded)).resolve()
+                    # windows系统下，需要将 MSYS2 路径转换为 Windows 路径
+                    p = Path(msys_to_win(expanded)).resolve()
         except Exception:
             continue
 
@@ -163,7 +128,7 @@ def _guard_command(command: str, workspace: str) -> str | None:
             continue
 
         if not is_relative_path(base=workspace, path_target=p):
-            return "Error: Command blocked by safety guard (path outside working dir)" + _WORKSPACE_BOUNDARY_NOTE
+            raise RuntimeError("Command blocked by safety guard (path outside working dir)" + _WORKSPACE_BOUNDARY_NOTE)
 
     return None
 
@@ -175,9 +140,10 @@ def build_shell_tools(workspace: str):
 
     async def shell(args: ShellArgs) -> str:
         command = args.command
-        guard_error = _guard_command(command, workspace)
-        if guard_error:
-            return guard_error
+        try:
+            _guard_command(command, workspace)
+        except RuntimeError as e:
+            return f"Error: {e}"
         process = await asyncio.create_subprocess_exec(
             bash_path,
             "-l",

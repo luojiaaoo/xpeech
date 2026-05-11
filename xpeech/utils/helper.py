@@ -31,6 +31,25 @@ def is_relative_path(base: Path, path_target: Path):
         return False
     return True
 
+def format_exception2llm(e: Exception) -> str:
+    """ 给大模型看的异常内容 """
+    return f"{type(e).__name__}: {e}"
+
+def msys_to_win(msys_path: str) -> str:
+    """将 MSYS2 路径转换为 Windows 路径
+    例: /c/Users/Test -> C:/Users/Test
+       /d/code        -> D:/code
+    """
+    # 匹配 /c/ 开头的挂载路径
+    match = re.match(r"^/([A-Za-z])/(.*)", msys_path.replace("\\", "/"))
+    if match:
+        drive = match.group(1).upper()  # 盘符转大写 (Windows惯例)
+        rest = match.group(2)  # 斜杠转反斜杠
+        return f"{drive}:/{rest}"
+
+    # 如果不符合 MSYS2 挂载格式，直接返回
+    return msys_path
+
 
 async def save_to_workspace(file: UploadFile | InputImage, workspace: Path, idx: int | None = None):
     if isinstance(file, UploadFile):

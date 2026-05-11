@@ -15,7 +15,7 @@ from ..config.prompt.helper import build_user_prompt
 from ..agent.tools.helper import get_tool_model_cls
 from ..provider.schema import ToolCallRequest
 import yaml
-from ..utils.helper import LiteralDumper
+from ..utils.helper import LiteralDumper, format_exception2llm
 
 
 class AgentLoop:
@@ -82,7 +82,7 @@ class AgentLoop:
 
         messages_yaml = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
-        messages_yaml.insert(0, build_system_prompt())
+        messages_yaml.insert(0, build_system_prompt(workspace=self.workspace))
         # 拼接用户消息
         messages_yaml.append(
             build_user_prompt(
@@ -149,7 +149,10 @@ class AgentLoop:
                     model_cls = get_tool_model_cls(
                         tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name]
                     )
-                    result = await tool_call_func(model_cls(**tool_call.arguments))
+                    try:
+                        result = await tool_call_func(model_cls(**tool_call.arguments))
+                    except Exception as e:
+                        result = format_exception2llm(e)
                     # 创建工具调用结果消息
                     messages_yaml.append(
                         {

@@ -2,7 +2,7 @@ from textwrap import dedent
 from datetime import datetime
 
 
-def _get_identity() -> str:
+def _get_identity(workspace: str) -> str:
     """Get the core identity section."""
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
@@ -21,16 +21,19 @@ def _get_identity() -> str:
             ## Current Time
             {now}
 
+            ## Workspace
+            Your workspace is at: {workspace}
+
             """
     ).lstrip()
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(workspace: str) -> str:
     return {
         "role": "system",
         "content": dedent(
             f"""
-                {_get_identity()}
+                {_get_identity(workspace)}
             """
         ).lstrip(),
     }
