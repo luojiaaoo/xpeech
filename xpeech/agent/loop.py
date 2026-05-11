@@ -61,6 +61,8 @@ class AgentLoop:
         # 注册默认工具
         self.register_default_tools()
 
+    # ----------------- 默认工具 -----------------
+
     def register_default_tools(self):
         """注册默认工具。"""
 
@@ -71,6 +73,8 @@ class AgentLoop:
         self.provider.register_tool()(list_dir)
         exec = build_shell_tools(self.workspace)
         self.provider.register_tool()(exec)
+
+    # ----------------- history会话读写 -----------------
 
     async def save_history_yaml(self, session_id: str, history: list[dict[str, Any]]):
         """保存历史记录到yaml文件。"""
@@ -103,8 +107,15 @@ class AgentLoop:
         logger.info("Session history loaded session_id={} messages={}", session_id, len(content))
         return content
 
+    # ----------------- agent loop -----------------
+
     async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str):
-        logger.info("Processing tool calls session_id={} loop_count={} count={}", session_id, loop_count, len(response.tool_calls))
+        logger.info(
+            "Processing tool calls session_id={} loop_count={} count={}",
+            session_id,
+            loop_count,
+            len(response.tool_calls),
+        )
         # 输出工具调用内容
         if response.content and response.content.strip():
             yield "data: {}\n\n".format(
@@ -143,10 +154,17 @@ class AgentLoop:
             try:
                 result = await tool_call_func(model_cls(**tool_call.arguments))
             except Exception as e:
-                logger.exception("Tool call failed session_id={} loop_count={} tool_name={}", session_id, loop_count, tool_call.name)
+                logger.exception(
+                    "Tool call failed session_id={} loop_count={} tool_name={}", session_id, loop_count, tool_call.name
+                )
                 result = format_exception2llm(e)
             else:
-                logger.info("Tool call completed session_id={} loop_count={} tool_name={}", session_id, loop_count, tool_call.name)
+                logger.info(
+                    "Tool call completed session_id={} loop_count={} tool_name={}",
+                    session_id,
+                    loop_count,
+                    tool_call.name,
+                )
             # 创建工具调用结果消息
             messages_yaml.append(
                 {
@@ -175,6 +193,93 @@ class AgentLoop:
                     "content": self.INTERATION_STOP_PROPT,
                 }
             )
+
+    async def run(self, message: InboundMessage):
+        """运行一次Agent循环，处理一次用户消息。"""
+
+        logger.info("Agent run started session_id={} workspace={}", message.session_id, self.workspace)
+        messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
+        # 拼接系统提示词
+        messages_yaml.insert(0, build_system_prompt(workspace=self.workspace))
+        # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
+        messages_yaml.append(
+            build_user_prompt(
+                message=message,
+                workspace=self.workspace,
+                support_image=self.provider.support_image,
+            ),
+        )
+        # 进行压缩
+        messages_yaml = await self.compress(messages_yaml)
+
+        final_content = None
+        for loop_count in count():
+            if self.max_iterations is not None and loop_count >= self.max_iterations:
+                final_content = (
+                    f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
+                )
+                logger.warning(
+                    "Agent loop reached max iterations session_id={} loop_count={} max_iterations={}",
+                    message.session_id,
+                    loop_count,
+                    self.max_iterations,
+                )
+                break
+
+            # 清理用户消息中的时间戳，开始对话
+            _clean_messages = self.clear_role_user_timestamp(messages_yaml)
+            logger.info("Calling provider chat session_id={} loop_count={}", message.session_id, loop_count)
+            try:
+                response = await self.provider.chat(
+                    messages=_clean_messages,
+                    tools=[],
+                    **self.provider_chat_kwargs,
+                )
+            except Exception:
+                logger.exception(
+                    "Provider chat failed session_id={} loop_count={}",
+                    message.session_id,
+                    loop_count,
+                )
+                raise
+            logger.info(
+                "Provider chat completed session_id={} loop_count={} has_tool_calls={}",
+                message.session_id,
+                loop_count,
+                response.has_tool_calls,
+            )
+
+            # 输出思考内容
+            if response.reasoning_content and response.reasoning_content.strip():
+                yield "data: {}\n\n".format(
+                    json.dumps({"event": "thinking", "context": response.reasoning_content}, ensure_ascii=False)
+                )
+
+            # 如果有工具调用
+            if response.has_tool_calls:
+                async for i in self.tool_call(response, messages_yaml, loop_count, message.session_id):
+                    yield i
+            else:
+                # 没有工具，结束循环
+                final_content = response.content
+                break
+
+        if final_content is None:
+            final_content = "I've completed processing but have no response to give."
+            logger.warning("Agent loop finished without final content session_id={}", message.session_id)
+
+        # 拼接助手消息
+        messages_yaml.append({"role": "assistant", "content": final_content})
+
+        # 输出助手消息
+        yield "data: {}\n\n".format(json.dumps({"event": "assistant", "context": final_content}, ensure_ascii=False))
+
+        # 保存历史记录
+        await self.save_history_yaml(message.session_id, messages_yaml)
+        logger.info("Agent run completed session_id={}", message.session_id)
+
+
+    # ----------------- 压缩 -----------------
 
     def need_compress(self, messages):
         totol_token = token_counter(model="gpt-4o", messages=messages)
@@ -286,86 +391,4 @@ class AgentLoop:
         logger.info("Compression finished level=4 messages={}", len(compressed_messages))
         return compressed_messages
 
-    async def run(self, message: InboundMessage):
-        """运行一次Agent循环，处理一次用户消息。"""
-
-        logger.info("Agent run started session_id={} workspace={}", message.session_id, self.workspace)
-        messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
-        # 拼接系统提示词
-        messages_yaml.insert(0, build_system_prompt(workspace=self.workspace))
-        # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
-        messages_yaml.append(
-            build_user_prompt(
-                message=message,
-                workspace=self.workspace,
-                support_image=self.provider.support_image,
-            ),
-        )
-        # 进行压缩
-        messages_yaml = await self.compress(messages_yaml)
-
-        final_content = None
-        for loop_count in count():
-            if self.max_iterations is not None and loop_count >= self.max_iterations:
-                final_content = (
-                    f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
-                )
-                logger.warning(
-                    "Agent loop reached max iterations session_id={} loop_count={} max_iterations={}",
-                    message.session_id,
-                    loop_count,
-                    self.max_iterations,
-                )
-                break
-
-            # 清理用户消息中的时间戳，开始对话
-            _clean_messages = self.clear_role_user_timestamp(messages_yaml)
-            logger.info("Calling provider chat session_id={} loop_count={}", message.session_id, loop_count)
-            try:
-                response = await self.provider.chat(
-                    messages=_clean_messages,
-                    tools=[],
-                    **self.provider_chat_kwargs,
-                )
-            except Exception:
-                logger.exception(
-                    "Provider chat failed session_id={} loop_count={}",
-                    message.session_id,
-                    loop_count,
-                )
-                raise
-            logger.info(
-                "Provider chat completed session_id={} loop_count={} has_tool_calls={}",
-                message.session_id,
-                loop_count,
-                response.has_tool_calls,
-            )
-
-            # 输出思考内容
-            if response.reasoning_content and response.reasoning_content.strip():
-                yield "data: {}\n\n".format(
-                    json.dumps({"event": "thinking", "context": response.reasoning_content}, ensure_ascii=False)
-                )
-
-            # 如果有工具调用
-            if response.has_tool_calls:
-                async for i in self.tool_call(response, messages_yaml, loop_count, message.session_id):
-                    yield i
-            else:
-                # 没有工具，结束循环
-                final_content = response.content
-                break
-
-        if final_content is None:
-            final_content = "I've completed processing but have no response to give."
-            logger.warning("Agent loop finished without final content session_id={}", message.session_id)
-
-        # 拼接助手消息
-        messages_yaml.append({"role": "assistant", "content": final_content})
-
-        # 输出助手消息
-        yield "data: {}\n\n".format(json.dumps({"event": "assistant", "context": final_content}, ensure_ascii=False))
-
-        # 保存历史记录
-        await self.save_history_yaml(message.session_id, messages_yaml)
-        logger.info("Agent run completed session_id={}", message.session_id)
+    # ----------------- 记忆和历史 -----------------
