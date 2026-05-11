@@ -103,8 +103,8 @@ class AgentLoop:
         logger.info("Session history loaded session_id={} messages={}", session_id, len(content))
         return content
 
-    async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int):
-        logger.info("Processing tool calls loop_count={} count={}", loop_count, len(response.tool_calls))
+    async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str):
+        logger.info("Processing tool calls session_id={} loop_count={} count={}", session_id, loop_count, len(response.tool_calls))
         # 输出工具调用内容
         if response.content and response.content.strip():
             yield "data: {}\n\n".format(
@@ -143,10 +143,10 @@ class AgentLoop:
             try:
                 result = await tool_call_func(model_cls(**tool_call.arguments))
             except Exception as e:
-                logger.exception("Tool call failed loop_count={} tool_name={}", loop_count, tool_call.name)
+                logger.exception("Tool call failed session_id={} loop_count={} tool_name={}", session_id, loop_count, tool_call.name)
                 result = format_exception2llm(e)
             else:
-                logger.info("Tool call completed loop_count={} tool_name={}", loop_count, tool_call.name)
+                logger.info("Tool call completed session_id={} loop_count={} tool_name={}", session_id, loop_count, tool_call.name)
             # 创建工具调用结果消息
             messages_yaml.append(
                 {
@@ -349,7 +349,7 @@ class AgentLoop:
 
             # 如果有工具调用
             if response.has_tool_calls:
-                async for i in self.tool_call(response, messages_yaml, loop_count):
+                async for i in self.tool_call(response, messages_yaml, loop_count, message.session_id):
                     yield i
             else:
                 # 没有工具，结束循环
