@@ -23,6 +23,8 @@ from litellm import token_counter
 class AgentLoop:
     """Agent循环处理逻辑。"""
 
+    INTERATION_STOP_PROPT = "You have reached the maximum number of iterations and MUST stop calling tools."
+
     def __init__(
         self,
         provider: LiteLLMProvider,
@@ -141,16 +143,47 @@ class AgentLoop:
             messages_yaml.append(
                 {
                     "role": "user",
-                    "content": "You have reached the maximum number of iterations and must stop calling tools.",
+                    "content": self.INTERATION_STOP_PROPT,
                 }
             )
 
-    def compress(self, messages):
+    def need_compress(self, messages):
         totol_token = token_counter(model="gpt-4o", messages=messages)
         max_accept_token = self.provider.defaulr_context_token * 0.9 - self.summary_tokens
-        if totol_token >= max_accept_token:
-            ...
-        return messages
+        return totol_token >= max_accept_token
+
+    def is_finish_compress(self, messages):
+        totol_token = token_counter(model="gpt-4o", messages=messages)
+        max_accept_token = self.provider.defaulr_context_token * 0.4
+        return totol_token < max_accept_token
+
+    def compress(self, messages):
+        def truncate_tool_result(messages: list, truncate_count: int):
+            rt = []
+            for i in messages:
+                if i["role"] == "tool":
+                    i["content"] = i["content"][:truncate_count]
+                rt.append(i)
+            return rt
+
+        # 如果不需要压缩，返回原始消息
+        if not self.need_compress(messages):
+            return messages
+
+        # 一级压缩：超过1000字的工具执行结果（保留最近4次对话消息的结果调用）
+        idx_split = None
+        count = 0
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i]["role"] == "user" and messages[i]["content"] != self.INTERATION_STOP_PROPT:
+                count += 1
+                if count == 4:  # 保留4次对话
+                    idx_split = i
+        messages = truncate_tool_result(messages[:idx_split], 1000) + messages[idx_split:]
+        if self.is_finish_compress(messages):
+            return messages
+
+        # 二级压缩：AI总结（保留最近4次对话消息）
+        ...
 
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
