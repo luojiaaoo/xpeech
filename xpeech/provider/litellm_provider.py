@@ -92,7 +92,7 @@ class LiteLLMProvider:
         model: str | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
-    ):
+    ) -> LLMResponse:
         # 使用提供的参数或默认参数
         model = model or self.default_model
         max_tokens = max_tokens or self.default_max_tokens

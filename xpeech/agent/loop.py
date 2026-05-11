@@ -16,6 +16,7 @@ from ..agent.tools.helper import get_tool_model_cls
 from ..provider.schema import ToolCallRequest
 import yaml
 from ..utils.helper import LiteralDumper, format_exception2llm
+from ..provider.schema import LLMResponse
 
 
 class AgentLoop:
@@ -77,6 +78,70 @@ class AgentLoop:
         content = [i for i in content if i.get("role") != "system"]
         return content
 
+    async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int):
+        # 输出工具调用内容
+        if response.content and response.content.strip():
+            yield "data: {}\n\n".format(
+                json.dumps({"event": "assistant", "context": response.content}, ensure_ascii=False)
+            )
+        # 输出工具调用消息
+        yield "data: {}\n\n".format(
+            json.dumps(
+                {
+                    "event": "tool_call",
+                    "context": json.dumps([(i.id, i.name, i.arguments) for i in response.tool_calls]),
+                },
+                ensure_ascii=False,
+            )
+        )
+        # 还原工具调用格式
+        tool_call_dicts = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+            }
+            for tc in response.tool_calls
+        ]
+        # 创建助手消息
+        msg: dict[str, Any] = {"role": "assistant", "content": response.content or ""}
+        if tool_call_dicts:
+            msg["tool_calls"] = tool_call_dicts
+        messages_yaml.append(msg)
+
+        # 执行工具调用
+        tool_call_result = []
+        for tool_call in response.tool_calls:
+            tool_call: ToolCallRequest = tool_call
+            model_cls = get_tool_model_cls(tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name])
+            try:
+                result = await tool_call_func(model_cls(**tool_call.arguments))
+            except Exception as e:
+                result = format_exception2llm(e)
+            # 创建工具调用结果消息
+            messages_yaml.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "content": result,
+                }
+            )
+            tool_call_result.append((tool_call.id, tool_call.name, result))
+        # 输出工具调用结果消息
+        yield "data: {}\n\n".format(
+            json.dumps({"event": "tool_call_result", "context": json.dumps(tool_call_result)}, ensure_ascii=False)
+        )
+
+        # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
+        if self.max_iterations is not None and loop_count == self.max_iterations - 2:
+            messages_yaml.append(
+                {
+                    "role": "user",
+                    "content": "You have reached the maximum number of iterations and must stop calling tools.",
+                }
+            )
+
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
 
@@ -112,73 +177,8 @@ class AgentLoop:
                 )
             # 如果有工具调用
             if response.has_tool_calls:
-                # 输出工具调用内容
-                if response.content and response.content.strip():
-                    yield "data: {}\n\n".format(
-                        json.dumps({"event": "assistant", "context": response.content}, ensure_ascii=False)
-                    )
-                # 输出工具调用消息
-                yield "data: {}\n\n".format(
-                    json.dumps(
-                        {
-                            "event": "tool_call",
-                            "context": json.dumps([(i.id, i.name, i.arguments) for i in response.tool_calls]),
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-                # 还原工具调用格式
-                tool_call_dicts = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
-                    }
-                    for tc in response.tool_calls
-                ]
-                # 创建助手消息
-                msg: dict[str, Any] = {"role": "assistant", "content": response.content or ""}
-                if tool_call_dicts:
-                    msg["tool_calls"] = tool_call_dicts
-                messages_yaml.append(msg)
-
-                # 执行工具调用
-                tool_call_result = []
-                for tool_call in response.tool_calls:
-                    tool_call: ToolCallRequest = tool_call
-                    model_cls = get_tool_model_cls(
-                        tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name]
-                    )
-                    try:
-                        result = await tool_call_func(model_cls(**tool_call.arguments))
-                    except Exception as e:
-                        result = format_exception2llm(e)
-                    # 创建工具调用结果消息
-                    messages_yaml.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": tool_call.name,
-                            "content": result,
-                        }
-                    )
-                    tool_call_result.append((tool_call.id, tool_call.name, result))
-                # 输出工具调用结果消息
-                yield "data: {}\n\n".format(
-                    json.dumps(
-                        {"event": "tool_call_result", "context": json.dumps(tool_call_result)}, ensure_ascii=False
-                    )
-                )
-
-                # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
-                if self.max_iterations is not None and loop_count == self.max_iterations - 2:
-                    messages_yaml.append(
-                        {
-                            "role": "user",
-                            "content": "You have reached the maximum number of iterations and must stop calling tools.",
-                        }
-                    )
-
+                async for i in self.tool_call(response, messages_yaml, loop_count):
+                    yield i
             else:
                 # 没有工具，结束循环
                 final_content = response.content
