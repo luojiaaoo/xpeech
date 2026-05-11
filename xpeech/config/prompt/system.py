@@ -1,5 +1,21 @@
 from textwrap import dedent
 from datetime import datetime
+from ...agent.memory import MemoryStore
+
+BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
+
+
+def _load_bootstrap_files(workspace) -> str:
+    """Load all bootstrap files from workspace."""
+    parts = []
+
+    for filename in BOOTSTRAP_FILES:
+        file_path = workspace / filename
+        if file_path.exists():
+            content = file_path.read_text(encoding="utf-8")
+            parts.append(f"## {filename}\n\n{content}")
+
+    return "\n\n".join(parts) if parts else ""
 
 
 def _get_identity(workspace: str) -> str:
@@ -44,6 +60,10 @@ def build_system_prompt(workspace: str) -> str:
         "content": dedent(
             f"""
                 {_get_identity(workspace)}
+
+                {_load_bootstrap_files(workspace)}
+
+                {MemoryStore(workspace).get_memory_context()}
             """
         ).lstrip(),
     }
