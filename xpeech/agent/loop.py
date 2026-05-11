@@ -21,6 +21,7 @@ from datetime import timedelta
 from textwrap import dedent
 from loguru import logger
 from ..agent.server.schema import InputText
+from .memory import MemoryStore
 
 
 class AgentLoop:
@@ -198,27 +199,6 @@ class AgentLoop:
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
 
-        # 用户命令拦截器
-        if (
-            len(message.content) == 1
-            and isinstance(message.content[0], InputText)
-            and (command := message.content[0].text).startswith("/")
-        ):
-            command = command.strip()
-            if command == "/new":
-                yield "data: {}\n\n".format(json.dumps({"event": "command", "context": command}, ensure_ascii=False))
-                return
-            yield "data: {}\n\n".format(
-                json.dumps(
-                    {
-                        "event": "command",
-                        "context": f"Oops! I don't recognize {command}. Try entering /help for a list of commands.",
-                    },
-                    ensure_ascii=False,
-                )
-            )
-            return
-
         logger.info("Agent run started session_id={} workspace={}", message.session_id, self.workspace)
         messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
@@ -231,8 +211,38 @@ class AgentLoop:
                 support_image=self.provider.support_image,
             ),
         )
+
+        # 用户命令拦截器
+        if (
+            len(message.content) == 1
+            and isinstance(message.content[0], InputText)
+            and (command := message.content[0].text).startswith("/")
+        ):
+            command = command.strip()
+            if command == "/new":
+                yield "data: {}\n\n".format(
+                    json.dumps(
+                        {
+                            "event": "command",
+                            "context": await self.consolidate_memory(messages_yaml, message.session_id),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                return
+            yield "data: {}\n\n".format(
+                json.dumps(
+                    {
+                        "event": "command",
+                        "context": f"Oops! I don't recognize {command}. Try entering /help for a list of commands.",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return
+
         # 进行压缩
-        messages_yaml = await self.compress(messages_yaml)
+        messages_yaml = await self.compress(messages_yaml, message.session_id)
 
         final_content = None
         for loop_count in count():
@@ -324,11 +334,13 @@ class AgentLoop:
             rt.append(i)
         return rt
 
-    async def compress(self, messages):
+    async def compress(self, messages, session_id):
         # 如果不需要压缩，返回原始消息
         if not self.need_compress(messages):
             return messages
-        logger.info("Compressing messages messages={}", len(messages))
+        logger.info("Compressing messages session_id={} messages={}", session_id, len(messages))
+
+        await self.consolidate_memory(messages, session_id)
 
         def truncate_tool_result(_messages: list, truncate_count: int):
             rt = []
@@ -343,6 +355,7 @@ class AgentLoop:
             system_messages = [i for i in _clean_messages if i["role"] == "system"]
             _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
             _clean_messages.insert(0, {"role": "system", "content": self.SUMMARY_PROMPT})
+            _clean_messages.append({"role": "user", "content": "Please summarize the history messages."})
             try:
                 summary = (
                     await self.provider.chat(
@@ -353,7 +366,7 @@ class AgentLoop:
                     )
                 ).content
             except Exception:
-                logger.exception("Failed to summarize history")
+                logger.exception("Failed to summarize history session_id={}", session_id)
                 raise
             _messages = [
                 *system_messages,
@@ -389,27 +402,60 @@ class AgentLoop:
                 idx_split_keep = i
         messages = truncate_tool_result(messages[:idx_split_keep], 1000) + messages[idx_split_keep:]
         if self.is_finish_compress(messages):
-            logger.info("Compression finished level=1 messages={}", len(messages))
+            logger.info("Compression finished level=1 session_id={} messages={}", session_id, len(messages))
             return messages
 
         # 二级压缩：只保留最后一条消息的时间戳，往前追溯7/6/5/4/3/2天的消息
         for days in range(7, 1, -1):
             messages = keep_messages_for_day(days, messages)
             if self.is_finish_compress(messages):
-                logger.info("Compression finished level=2 messages={}", len(messages))
+                logger.info("Compression finished level=2 session_id={} messages={}", session_id, len(messages))
                 return messages
 
         # 三级压缩：AI总结历史消息，只保留最近4次对话消息
         if self.is_finish_compress(messages[idx_split_keep:]):
-            logger.info("Compression level=3 summarizing history")
+            logger.info("Compression level=3 summarizing history session_id={}", session_id)
             messages = await summary_messages(messages[:idx_split_keep]) + messages[idx_split_keep:]
-            logger.info("Compression finished level=3 messages={}", len(messages))
+            logger.info("Compression finished level=3 session_id={} messages={}", session_id, len(messages))
             return messages
 
         # 四级压缩：如果仍然不满足要求，则进行完全压缩
-        logger.info("Compression level=4 summarizing all history")
+        logger.info("Compression level=4 summarizing all history session_id={}", session_id)
         compressed_messages = await summary_messages(messages)
-        logger.info("Compression finished level=4 messages={}", len(compressed_messages))
+        logger.info("Compression finished level=4 session_id={} messages={}", session_id, len(compressed_messages))
         return compressed_messages
 
     # ----------------- 记忆和历史(在/new 或者 压缩的时候触发) -----------------
+    async def consolidate_memory(self, mesages, session_id):
+        _clean_messages = self.clear_role_user_timestamp(mesages)
+        _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
+        if not _clean_messages:
+            return "[INFO] No messages to consolidate"
+        _system_prompt = dedent("""
+        ## Current Long-term Memory
+        """).lstrip() + (MemoryStore.get_memory_context() or "(empty)")
+        _clean_messages.insert(0, {"role": "system", "content": _system_prompt})
+        _clean_messages.append(
+            {
+                "role": "user",
+                "content": "Process this conversation and MUST call the save_memory tool with your consolidation.",
+            }
+        )
+        logger.info("Consolidating memory session_id={}", session_id)
+        response = await self.provider.chat(
+            messages=mesages,
+            max_tokens=self.summary_tokens,
+            top_p=0.7,
+            tools=[MemoryStore.save_memory],
+            remove_default_tools=True,
+        )
+        if response.tool_calls:
+            for tool_call in response.tool_calls:
+                tool_call: ToolCallRequest = tool_call
+                model_cls = get_tool_model_cls(tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name])
+                await tool_call_func(model_cls(**tool_call.arguments))
+            logger.info("Consolidating memory finished session_id={}", session_id)
+            return "[INFO] Consolidating memory finished"
+        else:
+            logger.warning("Consolidating memory failed session_id={}", session_id)
+            return "[WARNING] Consolidating memory failed"
