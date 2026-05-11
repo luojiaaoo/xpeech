@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from .schema import LLMResponse, ToolCallRequest
 from ..agent.tools.helper import as_tool
 import inspect
+from loguru import logger
 
 # 禁用调试信息
 litellm.suppress_debug_info = True
@@ -23,6 +24,7 @@ class LiteLLMProvider:
         defaulr_context_token: int = 200000,
         default_top_p: float = 0.5,
         support_image: bool = False,
+        support_json_output: bool = False,
         extra_headers: dict = None,
     ):
         self.api_key = api_key
@@ -36,6 +38,7 @@ class LiteLLMProvider:
         self.temp_tool_jsons: list[dict[str, Any]] = []
         self.temp_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
         self._support_image = support_image
+        self._support_json_output = support_json_output
         self.extra_headers = extra_headers
 
     @property
@@ -43,6 +46,12 @@ class LiteLLMProvider:
         """是否支持图片输入。"""
 
         return self._support_image
+
+    @property
+    def support_json_output(self) -> bool:
+        """是否支持JSON输出。"""
+
+        return self._support_json_output
 
     def register_tool(self, is_temp: bool = False):
         """注册工具，统一返回 async wrapper。"""
@@ -95,11 +104,20 @@ class LiteLLMProvider:
         max_tokens: int | None = None,
         top_p: float | None = None,
         remove_all_tools: bool = False,
+        json_output: bool = False,
     ) -> LLMResponse:
         # 使用提供的参数或默认参数
         model = model or self.default_model
         max_tokens = max_tokens or self.default_max_tokens
         top_p = top_p or self.default_top_p
+        if json_output:
+            if self.support_json_output:
+                json_output = True
+            else:
+                logger.warning("LLM does not support JSON output, ignoring json_output parameter.")
+                json_output = False
+        else:
+            json_output = False
 
         # 添加临时工具
         self._reset_temp_tools()
@@ -116,6 +134,7 @@ class LiteLLMProvider:
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "top_p": top_p,
+                "response_format": {"type": "json_object"} if json_output else None,
                 "extra_headers": self.extra_headers,
             }
             # 注入工具
