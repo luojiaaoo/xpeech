@@ -1,5 +1,11 @@
-from typing import Any
+from typing import Any, TypedDict
 from pydantic import BaseModel, Field
+
+
+class Usage(TypedDict):
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 class ToolCallRequest(BaseModel):
@@ -17,7 +23,7 @@ class LLMResponse(BaseModel):
     reasoning_content: str | None = None
     tool_calls: list[ToolCallRequest] = Field(default_factory=list)
     finish_reason: str = "stop"
-    usage: dict[str, int] = Field(default_factory=dict)
+    usage: Usage = Field(default_factory=dict)
 
     @property
     def has_tool_calls(self) -> bool:

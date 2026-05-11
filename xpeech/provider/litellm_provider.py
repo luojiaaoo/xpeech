@@ -20,6 +20,7 @@ class LiteLLMProvider:
         api_base: str,
         default_model: str,
         default_max_tokens: int = 4096,
+        defaulr_context_token:int = 200000,
         default_top_p: float = 0.5,
         support_image: bool = False,
         extra_headers: dict = None,
@@ -28,6 +29,7 @@ class LiteLLMProvider:
         self.api_base = api_base
         self.default_model = default_model
         self.default_max_tokens = default_max_tokens
+        self.defaulr_context_token = defaulr_context_token
         self.default_top_p = default_top_p
         self.default_tool_jsons: list[dict[str, Any]] = []
         self.default_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}

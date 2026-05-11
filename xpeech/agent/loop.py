@@ -17,6 +17,7 @@ from ..provider.schema import ToolCallRequest
 import yaml
 from ..utils.helper import LiteralDumper, format_exception2llm
 from ..provider.schema import LLMResponse
+from litellm import token_counter
 
 
 class AgentLoop:
@@ -26,12 +27,14 @@ class AgentLoop:
         self,
         provider: LiteLLMProvider,
         workspace: Path,
+        summary_tokens: int = 8195,
         provider_chat_kwargs: ProviderChatKwargs | None = None,
         max_iterations: int | None = None,
     ):
 
         self.provider = provider
         self.workspace = workspace
+        self.summary_tokens = summary_tokens
         self.provider_chat_kwargs = {} if provider_chat_kwargs is None else provider_chat_kwargs.to_dict()
         self.max_iterations = max_iterations
 
@@ -142,6 +145,13 @@ class AgentLoop:
                 }
             )
 
+    def compress(self, messages):
+        totol_token = token_counter(model="gpt-4o", messages=messages)
+        max_accept_token = self.provider.defaulr_context_token * 0.9 - self.summary_tokens
+        if totol_token >= max_accept_token:
+            ...
+        return messages
+
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
 
@@ -156,6 +166,8 @@ class AgentLoop:
                 support_image=self.provider.support_image,
             ),
         )
+        # 进行压缩
+        messages_yaml = self.compress(messages_yaml)
 
         final_content = None
         for loop_count in count():
