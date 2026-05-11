@@ -2,6 +2,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from ...utils.helper import msys_to_win
 import platform
+from ...config.settings import settings
 
 if platform.system() == "Windows":
     _IS_WINDOWS = True
@@ -34,21 +35,22 @@ def build_file_tools(workspace: str):
         raise ValueError(f"Invalid workspace: {workspace}")
 
     def safe_resolve(user_path: str) -> Path:
-        """Resolve a user path safely inside the workspace."""
+        """Resolve a user path safely."""
         if _IS_WINDOWS:
             # 可能是 MSYS2 路径，转换为 Windows 路径
             user_path = msys_to_win(user_path)
         # 相对路径是相对用户工作路径的路径
         ops_path = (base / user_path).resolve()
-        # 检查是否逃逸
-        try:
-            ops_path.relative_to(base)
-        except ValueError:
-            raise PermissionError(f"Path escapes workspace: {user_path}")
-        return ops_path
+        if settings.path.restrict_tools_to_workspace:
+            # 检查是否逃逸
+            try:
+                ops_path.relative_to(base)
+            except ValueError:
+                raise PermissionError(f"Path escapes workspace: {user_path}")
+            return ops_path
 
     async def read_file(args: ReadFileArgs) -> str:
-        """Read the contents of a file inside the workspace."""
+        """Read the contents of a file."""
         path = args.path
         file_path = safe_resolve(path)
         if not file_path.exists():
@@ -58,7 +60,7 @@ def build_file_tools(workspace: str):
         return file_path.read_text(encoding="utf-8")
 
     async def write_file(args: WriteFileArgs) -> str:
-        """Write content to a file inside the workspace, creating parent directories if needed."""
+        """Write content to a file, creating parent directories if needed."""
         path = args.path
         content = args.content
         file_path = safe_resolve(path)
@@ -67,7 +69,7 @@ def build_file_tools(workspace: str):
         return f"Successfully wrote {len(content)} bytes to {path}"
 
     async def edit_file(args: EditFileArgs) -> str:
-        """Edit a file inside the workspace by replacing old_text with new_text."""
+        """Edit a file by replacing old_text with new_text."""
         path = args.path
         old_text = args.old_text
         new_text = args.new_text
@@ -87,7 +89,7 @@ def build_file_tools(workspace: str):
         return f"Successfully edited {path}"
 
     async def list_dir(args: ListDirArgs) -> str:
-        """List the contents of a directory inside the workspace."""
+        """List the contents of a directory."""
         path = args.path
         dir_path = safe_resolve(path)
         if not dir_path.exists():

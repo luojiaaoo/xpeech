@@ -16,9 +16,11 @@ conf_env_path = ".env"  # Configuration environment file path
 
 
 class PathConfig(BaseModel):
+    """Path configuration settings."""
     session_path: Path
     session_history_path: Path
     workspace_base_path: Path
+    restrict_tools_to_workspace: bool = True
 
 
 class Settings(BaseSettings):

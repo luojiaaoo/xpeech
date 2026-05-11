@@ -10,6 +10,7 @@ import re
 from ...utils.security.network import contains_internal_url
 from ...utils.helper import is_relative_path, msys_to_win
 from textwrap import dedent
+from ...config.settings import settings
 
 EXEC_TIMEOUT = 60
 _MAX_OUTPUT = 10000
@@ -103,32 +104,36 @@ def _guard_command(command: str, workspace: str) -> str | None:
     # 判断是否恶意访问内网接口
     if contains_internal_url(cmd):
         raise RuntimeError("Command blocked by safety guard (internal/private URL detected)")
-    # 拦截非工作路径下的文件操作
-    ## 拦截 .. 符号
-    if "..\\" in cmd or "../" in cmd:
-        raise RuntimeError("Command blocked by safety guard (path traversal detected)" + _WORKSPACE_BOUNDARY_NOTE)
-    ## 提取所有路径，判断是否在工作路径下
-    for i in _extract_absolute_paths(cmd):
-        try:
-            expanded = os.path.expandvars(i.strip())
-            if _is_benign_device_path(expanded):
-                continue
-            if not _IS_WINDOWS:
-                p = Path(expanded).expanduser().resolve()
-            else:
-                if expanded.startswith("~"):
+
+    if settings.path.restrict_tools_to_workspace:
+        # 拦截非工作路径下的文件操作
+        ## 拦截 .. 符号
+        if "..\\" in cmd or "../" in cmd:
+            raise RuntimeError("Command blocked by safety guard (path traversal detected)" + _WORKSPACE_BOUNDARY_NOTE)
+        ## 提取所有路径，判断是否在工作路径下
+        for i in _extract_absolute_paths(cmd):
+            try:
+                expanded = os.path.expandvars(i.strip())
+                if _is_benign_device_path(expanded):
+                    continue
+                if not _IS_WINDOWS:
                     p = Path(expanded).expanduser().resolve()
                 else:
-                    # windows系统下，需要将 MSYS2 路径转换为 Windows 路径
-                    p = Path(msys_to_win(expanded)).resolve()
-        except Exception:
-            continue
+                    if expanded.startswith("~"):
+                        p = Path(expanded).expanduser().resolve()
+                    else:
+                        # windows系统下，需要将 MSYS2 路径转换为 Windows 路径
+                        p = Path(msys_to_win(expanded)).resolve()
+            except Exception:
+                continue
 
-        if _is_benign_device_path(str(p)):
-            continue
+            if _is_benign_device_path(str(p)):
+                continue
 
-        if not is_relative_path(base=workspace, path_target=p):
-            raise RuntimeError("Command blocked by safety guard (path outside working dir)" + _WORKSPACE_BOUNDARY_NOTE)
+            if not is_relative_path(base=workspace, path_target=p):
+                raise RuntimeError(
+                    "Command blocked by safety guard (path outside working dir)" + _WORKSPACE_BOUNDARY_NOTE
+                )
 
     return None
 
