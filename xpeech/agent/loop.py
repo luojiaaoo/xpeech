@@ -116,7 +116,7 @@ class AgentLoop:
         logger.info("Session history loaded session_id={} messages={}", session_id, len(content))
         return content
 
-    # ----------------- agent loop -----------------
+    # ----------------- agent loop tool call -----------------
 
     async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str):
         logger.info(
@@ -203,6 +203,8 @@ class AgentLoop:
                 }
             )
 
+    # ----------------- agent loop run -----------------
+
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
 
@@ -234,7 +236,9 @@ class AgentLoop:
             elif command == "/new":
                 rt = await self.consolidate_memory(messages_yaml[:-1], message.session_id)
                 await self.del_history_yaml(message.session_id)
-                yield "data: {}\n\n".format(json.dumps({"event": "command", "context": rt}, ensure_ascii=False))
+                yield "data: {}\n\n".format(
+                    json.dumps({"event": "command", "context": f"NEW SESSION, {rt}"}, ensure_ascii=False)
+                )
                 return
             yield "data: {}\n\n".format(
                 json.dumps(
@@ -432,6 +436,7 @@ class AgentLoop:
         return compressed_messages
 
     # ----------------- 记忆和历史(在/new 或者 压缩的时候触发) -----------------
+
     async def consolidate_memory(self, mesages, session_id):
         memory_store = MemoryStore(workspace=self.workspace)
         _clean_messages = self.clear_role_user_timestamp(mesages)
