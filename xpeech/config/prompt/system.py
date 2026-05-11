@@ -29,7 +29,7 @@ def _get_identity(workspace: str) -> str:
             - Custom skills: {workspace}/skills/{{skill-name}}/SKILL.md
 
             Always be helpful, accurate, and concise. When using tools, explain what you're doing.
-            When remembering something, write to {workspace}/memory/MEMORY.md"""
+            When remembering something, write to {workspace}/memory/MEMORY.md
             """
     ).lstrip()
 
