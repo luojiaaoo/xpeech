@@ -1,8 +1,9 @@
 from pathlib import Path
 from textwrap import dedent
+import aiofiles
 
 
-def create_workspace_templates(workspace: Path):
+async def create_workspace_templates(workspace: Path):
     """Create default workspace template files."""
     templates = {
         "AGENTS.md": dedent(
@@ -56,43 +57,48 @@ def create_workspace_templates(workspace: Path):
     for filename, content in templates.items():
         file_path = workspace / filename
         if not file_path.exists():
-            file_path.write_text(content)
+            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+                await f.write(content)
 
     # Create memory directory and MEMORY.md
     memory_dir = workspace / "memory"
     memory_dir.mkdir(exist_ok=True)
     memory_file = memory_dir / "MEMORY.md"
     if not memory_file.exists():
-        memory_file.write_text(
-            """
-                # Long-term Memory
+        async with aiofiles.open(memory_file, "w", encoding="utf-8") as f:
+            await f.write(
+                dedent(
+                    """
+                        # Long-term Memory
 
-                This file stores important information that should persist across sessions.
+                        This file stores important information that should persist across sessions.
 
-                ## User Information
+                        ## User Information
 
-                (Important facts about the user)
+                        (Important facts about the user)
 
-                ## Preferences
+                        ## Preferences
 
-                (User preferences learned over time)
+                        (User preferences learned over time)
 
-                ## Project Context
+                        ## Project Context
 
-                (Information about ongoing projects)
+                        (Information about ongoing projects)
 
-                ## Important Notes
+                        ## Important Notes
 
-                (Things to remember)
+                        (Things to remember)
 
-                ---
+                        ---
 
-                *This file is automatically updated by xpeech when important information should be remembered.*
-            """
-        )
+                        *This file is automatically updated by xpeech when important information should be remembered.*
+                    """
+                ).lstrip()
+            )
     history_file = memory_dir / "HISTORY.md"
     if not history_file.exists():
-        history_file.write_text("")
+        async with aiofiles.open(history_file, "w", encoding="utf-8") as f:
+            await f.write("")
 
     # Create skills directory for custom user skills
     skills_dir = workspace / "skills"

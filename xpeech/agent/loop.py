@@ -427,13 +427,14 @@ class AgentLoop:
 
     # ----------------- 记忆和历史(在/new 或者 压缩的时候触发) -----------------
     async def consolidate_memory(self, mesages, session_id):
+        memory_store = MemoryStore(workspace=self.workspace)
         _clean_messages = self.clear_role_user_timestamp(mesages)
         _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
         if not _clean_messages:
             return "[INFO] No messages to consolidate"
         _system_prompt = dedent("""
         ## Current Long-term Memory
-        """).lstrip() + (MemoryStore.get_memory_context() or "(empty)")
+        """).lstrip() + (await memory_store.get_memory_context() or "(empty)")
         _clean_messages.insert(0, {"role": "system", "content": _system_prompt})
         _clean_messages.append(
             {
@@ -446,7 +447,7 @@ class AgentLoop:
             messages=mesages,
             max_tokens=self.summary_tokens,
             top_p=0.7,
-            tools=[MemoryStore.save_memory],
+            tools=[memory_store.save_memory],
             remove_default_tools=True,
         )
         if response.tool_calls:
