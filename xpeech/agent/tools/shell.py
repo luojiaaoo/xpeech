@@ -53,7 +53,14 @@ if platform.system() == "Windows":
     if git_path is None:
         raise Exception("Git Bash is not installed. Please install Git Bash and try again.")
     bash_path = Path(git_path).parent.parent / "bin" / "bash"
-    docstring_str = "MSYS2 is a Bash emulator for Windows. It supports both Windows-style and Linux-style paths. To avoid escaping issues, use forward slashes (/) in Windows paths."
+    docstring_str = (
+        "MSYS2 is a Bash emulator for Windows. It supports Windows-style paths. All absolute paths MUST follow the D:/dir1/dir2/file format (Drive letter + colon + forward slash). The /d/dir1/dir2/file format is STRICTLY FORBIDDEN.\n"
+        "To avoid escaping issues, All paths MUST unconditionally use forward slashes (/). You MUST automatically convert any backslashes (\\) to forward slashes (/) without exception.\n"
+        "example:\n"
+        "ls -l D:/dir1/dir2/file\n"
+        "ls -l dir3/file\n"
+        "cat D:/dir1/dir2/file.txt"
+    )
 else:
     _IS_WINDOWS = False
     bash_path = Path(shutil.which("bash") or "/bin/bash")
