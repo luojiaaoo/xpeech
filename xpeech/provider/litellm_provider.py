@@ -136,9 +136,6 @@ class LiteLLMProvider:
         reasoning_content = None
         if hasattr(message, "reasoning_content"):
             reasoning_content = message.reasoning_content
-        elif hasattr(message, "model_extra") and message.model_extra:
-            # 某些模型可能将 reasoning_content 放在额外字段中
-            reasoning_content = message.model_extra.get("reasoning_content")
 
         # 提取工具调用信息
         tool_calls = []
