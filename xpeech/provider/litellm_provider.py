@@ -20,7 +20,7 @@ class LiteLLMProvider:
         api_base: str,
         default_model: str,
         default_max_tokens: int = 4096,
-        defaulr_context_token:int = 200000,
+        defaulr_context_token: int = 200000,
         default_top_p: float = 0.5,
         support_image: bool = False,
         extra_headers: dict = None,
@@ -94,6 +94,7 @@ class LiteLLMProvider:
         model: str | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
+        remove_all_tools: bool = False,
     ) -> LLMResponse:
         # 使用提供的参数或默认参数
         model = model or self.default_model
@@ -118,7 +119,7 @@ class LiteLLMProvider:
                 "extra_headers": self.extra_headers,
             }
             # 注入工具
-            if tool_jsons:
+            if tool_jsons and not remove_all_tools:
                 completion_kwargs["tools"] = tool_jsons
                 completion_kwargs["tool_choice"] = "auto"
             response = await litellm.acompletion(**completion_kwargs)

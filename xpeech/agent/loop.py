@@ -19,12 +19,29 @@ from ..utils.helper import LiteralDumper, format_exception2llm
 from ..provider.schema import LLMResponse
 from litellm import token_counter
 from datetime import timedelta
+from textwrap import dedent
 
 
 class AgentLoop:
     """Agent循环处理逻辑。"""
 
     INTERATION_STOP_PROPT = "You have reached the maximum number of iterations and MUST stop calling tools."
+    SUMMARY_PROMPT = dedent(
+        """
+            Extract key facts from this conversation. Only output items matching these categories, skip everything else:
+
+            User facts: personal info, preferences, stated opinions, habits
+            Decisions: choices made, conclusions reached
+            Solutions: working approaches discovered through trial and error, especially non-obvious methods that succeeded after failed attempts
+            Events: plans, deadlines, notable occurrences
+            Preferences: communication style, tool preferences
+            Priority: user corrections and preferences > solutions > decisions > events > environment facts. The most valuable memory prevents the user from having to repeat themselves.
+
+            Skip: code patterns derivable from source, git history, or anything already captured in existing memory.
+
+            Output as concise bullet points, one fact per line. No preamble, no commentary. If nothing noteworthy happened, output: (nothing)
+            """
+    ).lstrip()
 
     def __init__(
         self,
@@ -81,7 +98,7 @@ class AgentLoop:
         async with aiofiles.open(file, "r", encoding="utf-8") as f:
             content: list[dict[str, Any]] = yaml.safe_load(await f.read()) or []
         # 剔除系统提示词
-        content = [i for i in content if i.get("role") != "system"]
+        content = [i for i in content if i["role"] != "system"]
         return content
 
     async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int):
@@ -170,48 +187,80 @@ class AgentLoop:
             rt.append(i)
         return rt
 
-    def compress(self, messages):
-        def truncate_tool_result(messages: list, truncate_count: int):
+    async def compress(self, messages):
+        # 如果不需要压缩，返回原始消息
+        if not self.need_compress(messages):
+            return messages
+
+        def truncate_tool_result(_messages: list, truncate_count: int):
             rt = []
-            for i in messages:
+            for i in _messages:
                 if i["role"] == "tool":
                     i["content"] = i["content"][:truncate_count]
                 rt.append(i)
             return rt
 
-        # 如果不需要压缩，返回原始消息
-        if not self.need_compress(messages):
-            return messages
+        async def summary_messages(_messages: list[dict]):
+            _clean_messages = self.clear_role_user_timestamp(_messages)
+            system_messages = [i for i in _clean_messages if i["role"] == "system"]
+            _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
+            _clean_messages.insert(0, {"role": "system", "content": self.SUMMARY_PROMPT})
+            summary = (
+                await self.provider.chat(
+                    messages=_clean_messages,
+                    max_tokens=self.summary_tokens,
+                    top_p=0.1,
+                    remove_all_tools=True,
+                )
+            ).content
+            _messages = [
+                *system_messages,
+                {"role": "assistant", "content": summary},
+            ]
+            return _messages
+
+        def keep_messages_for_day(days, _messages):
+            last_timestamp = None
+            idx_split = 0
+            for i in range(len(_messages) - 1, -1, -1):
+                if not (_messages[i]["role"] == "user" and _messages[i]["content"] != self.INTERATION_STOP_PROPT):
+                    continue
+                if last_timestamp is None:
+                    last_timestamp = _messages[i]["timestamp"]
+                _timestamp = _messages[i]["timestamp"]
+                if last_timestamp - _timestamp > timedelta(days=days).total_seconds():
+                    break
+                idx_split = i
+            _messages = _messages[idx_split:]
+            return _messages
 
         # 一级压缩：超过1000字的工具执行结果（保留最近4次对话消息的结果调用）
-        idx_split = None
+        keep_count = 4
+        idx_split_keep = len(messages)
         count = 0
         for i in range(len(messages) - 1, -1, -1):
             if not (messages[i]["role"] == "user" and messages[i]["content"] != self.INTERATION_STOP_PROPT):
                 continue
             count += 1
-            if count == 4:  # 保留4次对话
-                idx_split = i
-        messages = truncate_tool_result(messages[:idx_split], 1000) + messages[idx_split:]
+            if count == keep_count:  # 保留4次对话
+                idx_split_keep = i
+        messages = truncate_tool_result(messages[:idx_split_keep], 1000) + messages[idx_split_keep:]
         if self.is_finish_compress(messages):
             return messages
 
-        # 二级压缩：只保留最后一条消息的时间戳，往前追溯1天的消息
-        last_timestamp = None
-        idx_split = None
-        for i in range(len(messages) - 1, -1, -1):
-            if not (messages[i]["role"] == "user" and messages[i]["content"] != self.INTERATION_STOP_PROPT):
-                continue
-            if last_timestamp is None:
-                last_timestamp = messages[i]["timestamp"]
-            _timestamp = messages[i]["timestamp"]
-            if last_timestamp - _timestamp > timedelta(days=1).total_seconds():
-                break
-            idx_split = i
-        messages = messages[idx_split:]
+        # 二级压缩：只保留最后一条消息的时间戳，往前追溯7/6/5/4/3/2天的消息
+        for days in range(7, 1, -1):
+            messages = keep_messages_for_day(days, messages)
+            if self.is_finish_compress(messages):
+                return messages
 
-        # 三级压缩：AI总结（保留最近4次对话消息）
-        ...
+        # 三级压缩：AI总结历史消息，只保留最近4次对话消息
+        if self.is_finish_compress(messages[idx_split_keep:]):
+            messages = summary_messages(messages[:idx_split_keep]) + messages[idx_split_keep:]
+            return messages
+
+        # 四级压缩：如果仍然不满足要求，则进行完全压缩
+        return summary_messages(messages)
 
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
@@ -228,7 +277,7 @@ class AgentLoop:
             ),
         )
         # 进行压缩
-        messages_yaml = self.compress(messages_yaml)
+        messages_yaml = await self.compress(messages_yaml)
 
         final_content = None
         for loop_count in count():
