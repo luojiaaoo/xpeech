@@ -412,4 +412,4 @@ class AgentLoop:
         logger.info("Compression finished level=4 messages={}", len(compressed_messages))
         return compressed_messages
 
-    # ----------------- 记忆和历史 -----------------
+    # ----------------- 记忆和历史(在/new 或者 压缩的时候触发) -----------------

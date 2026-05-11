@@ -24,12 +24,16 @@ def _get_identity(workspace: str) -> str:
 
             ## Workspace
             Your workspace is at: {workspace}
-            - Memory files: {workspace}/memory/MEMORY.md
-            - Daily notes: {workspace}/memory/YYYY-MM-DD.md
+            - Long-term memory: {workspace}/memory/MEMORY.md (write important facts here)
+            - History log: {workspace}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
             - Custom skills: {workspace}/skills/{{skill-name}}/SKILL.md
 
-            Always be helpful, accurate, and concise. When using tools, explain what you're doing.
-            When remembering something, write to {workspace}/memory/MEMORY.md
+            ## Guidelines
+            - State intent before tool calls, but NEVER predict or claim results before receiving them.
+            - Before modifying a file, read it first. Do not assume files or directories exist.
+            - After writing or editing a file, re-read it if accuracy matters.
+            - If a tool call fails, analyze the error before retrying with a different approach.
+            - Ask for clarification when the request is ambiguous.
             """
     ).lstrip()
 

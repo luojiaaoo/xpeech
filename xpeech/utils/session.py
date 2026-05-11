@@ -1,46 +1,56 @@
 from pathlib import Path
+from textwrap import dedent
 
 
 def create_workspace_templates(workspace: Path):
     """Create default workspace template files."""
     templates = {
-        "AGENTS.md": """# Agent Instructions
+        "AGENTS.md": dedent(
+            """
+                # Agent Instructions
 
-You are a helpful AI assistant. Be concise, accurate, and friendly.
+                You are a helpful AI assistant. Be concise, accurate, and friendly.
 
-## Guidelines
+                ## Guidelines
 
-- Always explain what you're doing before taking actions
-- Ask for clarification when the request is ambiguous
-- Use tools to help accomplish tasks
-- Remember important information in memory/MEMORY.md; past events are logged in memory/HISTORY.md
-""",
-        "SOUL.md": """# Soul
+                - Always explain what you're doing before taking actions
+                - Ask for clarification when the request is ambiguous
+                - Use tools to help accomplish tasks
+                - Remember important information in memory/MEMORY.md; past events are logged in memory/history.jsonl
+            """
+        ).lstrip(),
+        "SOUL.md": dedent(
+            """
+                # Soul
 
-I am nanobot, a lightweight AI assistant.
+                I am xpeech, a lightweight AI assistant.
 
-## Personality
+                ## Personality
 
-- Helpful and friendly
-- Concise and to the point
-- Curious and eager to learn
+                - Helpful and friendly
+                - Concise and to the point
+                - Curious and eager to learn
 
-## Values
+                ## Values
 
-- Accuracy over speed
-- User privacy and safety
-- Transparency in actions
-""",
-        "USER.md": """# User
+                - Accuracy over speed
+                - User privacy and safety
+                - Transparency in actions
+            """
+        ).lstrip(),
+        "USER.md": dedent(
+            """
+                # User
 
-Information about the user goes here.
+                Information about the user goes here.
 
-## Preferences
+                ## Preferences
 
-- Communication style: (casual/formal)
-- Timezone: (your timezone)
-- Language: (your preferred language)
-""",
+                - Communication style: (casual/formal)
+                - Timezone: (your timezone)
+                - Language: (your preferred language)
+            """
+        ).lstrip(),
     }
 
     for filename, content in templates.items():
@@ -53,23 +63,33 @@ Information about the user goes here.
     memory_dir.mkdir(exist_ok=True)
     memory_file = memory_dir / "MEMORY.md"
     if not memory_file.exists():
-        memory_file.write_text("""# Long-term Memory
+        memory_file.write_text(
+            """
+                # Long-term Memory
 
-This file stores important information that should persist across sessions.
+                This file stores important information that should persist across sessions.
 
-## User Information
+                ## User Information
 
-(Important facts about the user)
+                (Important facts about the user)
 
-## Preferences
+                ## Preferences
 
-(User preferences learned over time)
+                (User preferences learned over time)
 
-## Important Notes
+                ## Project Context
 
-(Things to remember)
-""")
+                (Information about ongoing projects)
 
+                ## Important Notes
+
+                (Things to remember)
+
+                ---
+
+                *This file is automatically updated by xpeech when important information should be remembered.*
+            """
+        )
     history_file = memory_dir / "HISTORY.md"
     if not history_file.exists():
         history_file.write_text("")
