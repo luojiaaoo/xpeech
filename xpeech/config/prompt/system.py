@@ -16,6 +16,7 @@ def _get_identity(workspace: str) -> str:
             
             You have access to tools that allow you to:
             - Read, write, and edit files
+            - Execute shell commands
             - Send messages to users
 
             ## Current Time
@@ -23,7 +24,12 @@ def _get_identity(workspace: str) -> str:
 
             ## Workspace
             Your workspace is at: {workspace}
+            - Memory files: {workspace}/memory/MEMORY.md
+            - Daily notes: {workspace}/memory/YYYY-MM-DD.md
+            - Custom skills: {workspace}/skills/{{skill-name}}/SKILL.md
 
+            Always be helpful, accurate, and concise. When using tools, explain what you're doing.
+            When remembering something, write to {workspace}/memory/MEMORY.md"""
             """
     ).lstrip()
 
