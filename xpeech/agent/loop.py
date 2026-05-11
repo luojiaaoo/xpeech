@@ -18,6 +18,7 @@ import yaml
 from ..utils.helper import LiteralDumper, format_exception2llm
 from ..provider.schema import LLMResponse
 from litellm import token_counter
+from datetime import timedelta
 
 
 class AgentLoop:
@@ -157,6 +158,18 @@ class AgentLoop:
         max_accept_token = self.provider.defaulr_context_token * 0.4
         return totol_token < max_accept_token
 
+    @classmethod
+    def clear_role_user_timestamp(cls, messages: list[dict]):
+        rt = []
+        for i in messages:
+            if i["role"] == "user" and i["content"] != cls.INTERATION_STOP_PROPT:
+                # 不修改原始消息
+                i = i.copy()
+                # 剔除时间戳
+                i.pop("timestamp", None)
+            rt.append(i)
+        return rt
+
     def compress(self, messages):
         def truncate_tool_result(messages: list, truncate_count: int):
             rt = []
@@ -174,24 +187,39 @@ class AgentLoop:
         idx_split = None
         count = 0
         for i in range(len(messages) - 1, -1, -1):
-            if messages[i]["role"] == "user" and messages[i]["content"] != self.INTERATION_STOP_PROPT:
-                count += 1
-                if count == 4:  # 保留4次对话
-                    idx_split = i
+            if not (messages[i]["role"] == "user" and messages[i]["content"] != self.INTERATION_STOP_PROPT):
+                continue
+            count += 1
+            if count == 4:  # 保留4次对话
+                idx_split = i
         messages = truncate_tool_result(messages[:idx_split], 1000) + messages[idx_split:]
         if self.is_finish_compress(messages):
             return messages
 
-        # 二级压缩：AI总结（保留最近4次对话消息）
+        # 二级压缩：只保留最后一条消息的时间戳，往前追溯1天的消息
+        last_timestamp = None
+        idx_split = None
+        for i in range(len(messages) - 1, -1, -1):
+            if not (messages[i]["role"] == "user" and messages[i]["content"] != self.INTERATION_STOP_PROPT):
+                continue
+            if last_timestamp is None:
+                last_timestamp = messages[i]["timestamp"]
+            _timestamp = messages[i]["timestamp"]
+            if last_timestamp - _timestamp > timedelta(days=1).total_seconds():
+                break
+            idx_split = i
+        messages = messages[idx_split:]
+
+        # 三级压缩：AI总结（保留最近4次对话消息）
         ...
 
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
 
-        messages_yaml = await self.load_history_yaml(message.session_id)
+        messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
         messages_yaml.insert(0, build_system_prompt(workspace=self.workspace))
-        # 拼接用户消息
+        # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(
             build_user_prompt(
                 message=message,
@@ -210,16 +238,20 @@ class AgentLoop:
                 )
                 break
 
+            # 清理用户消息中的时间戳，开始对话
+            _clean_messages = self.clear_role_user_timestamp(messages_yaml)
             response = await self.provider.chat(
-                messages=messages_yaml,
+                messages=_clean_messages,
                 tools=[],
                 **self.provider_chat_kwargs,
             )
+
             # 输出思考内容
             if response.reasoning_content and response.reasoning_content.strip():
                 yield "data: {}\n\n".format(
                     json.dumps({"event": "thinking", "context": response.reasoning_content}, ensure_ascii=False)
                 )
+
             # 如果有工具调用
             if response.has_tool_calls:
                 async for i in self.tool_call(response, messages_yaml, loop_count):
@@ -234,7 +266,9 @@ class AgentLoop:
 
         # 拼接助手消息
         messages_yaml.append({"role": "assistant", "content": final_content})
+
         # 输出助手消息
         yield "data: {}\n\n".format(json.dumps({"event": "assistant", "context": final_content}, ensure_ascii=False))
+
         # 保存历史记录
         await self.save_history_yaml(message.session_id, messages_yaml)

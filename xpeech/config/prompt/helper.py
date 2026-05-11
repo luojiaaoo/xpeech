@@ -77,5 +77,6 @@ def build_user_prompt(message: InboundMessage, workspace: Path, support_image: b
         )
     return {
         "role": "user",
+        'timestamp': message.timestamp.timestamp(),
         "content": parts,
     }
