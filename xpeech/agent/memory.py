@@ -48,3 +48,4 @@ class MemoryStore:
         """Save the memory consolidation result to persistent storage."""
         await self.append_history(args.history_entry.strip())
         await self.write_long_term(args.memory_update)
+        return 'Memory saved successfully.'

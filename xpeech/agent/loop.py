@@ -78,6 +78,13 @@ class AgentLoop:
 
     # ----------------- history会话读写 -----------------
 
+    async def del_history_yaml(self, session_id: str):
+        """删除历史记录文件。"""
+        file = settings.path.session_history_path / f"{session_id}.yaml"
+        if file.exists():
+            file.unlink()
+        logger.info("Session history deleted session_id={}", session_id)
+
     async def save_history_yaml(self, session_id: str, history: list[dict[str, Any]]):
         """保存历史记录到yaml文件。"""
 
@@ -219,16 +226,15 @@ class AgentLoop:
             and (command := message.content[0].text).startswith("/")
         ):
             command = command.strip()
-            if command == "/new":
+            if command == "/help":
                 yield "data: {}\n\n".format(
-                    json.dumps(
-                        {
-                            "event": "command",
-                            "context": await self.consolidate_memory(messages_yaml, message.session_id),
-                        },
-                        ensure_ascii=False,
-                    )
+                    json.dumps({"event": "command", "context": "/new -> start a new session"}, ensure_ascii=False)
                 )
+                return
+            elif command == "/new":
+                rt = await self.consolidate_memory(messages_yaml[:-1], message.session_id)
+                await self.del_history_yaml(message.session_id)
+                yield "data: {}\n\n".format(json.dumps({"event": "command", "context": rt}, ensure_ascii=False))
                 return
             yield "data: {}\n\n".format(
                 json.dumps(
@@ -444,7 +450,7 @@ class AgentLoop:
         )
         logger.info("Consolidating memory session_id={}", session_id)
         response = await self.provider.chat(
-            messages=mesages,
+            messages=_clean_messages,
             max_tokens=self.summary_tokens,
             top_p=0.7,
             tools=[memory_store.save_memory],
