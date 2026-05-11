@@ -20,6 +20,7 @@ from litellm import token_counter
 from datetime import timedelta
 from textwrap import dedent
 from loguru import logger
+from ..agent.server.schema import InputText
 
 
 class AgentLoop:
@@ -197,6 +198,27 @@ class AgentLoop:
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
 
+        # 用户命令拦截器
+        if (
+            len(message.content) == 1
+            and isinstance(message.content[0], InputText)
+            and (command := message.content[0].text).startswith("/")
+        ):
+            command = command.strip()
+            if command == "/new":
+                yield "data: {}\n\n".format(json.dumps({"event": "command", "context": command}, ensure_ascii=False))
+                return
+            yield "data: {}\n\n".format(
+                json.dumps(
+                    {
+                        "event": "command",
+                        "context": f"Oops! I don't recognize {command}. Try entering /help for a list of commands.",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return
+
         logger.info("Agent run started session_id={} workspace={}", message.session_id, self.workspace)
         messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
@@ -277,7 +299,6 @@ class AgentLoop:
         # 保存历史记录
         await self.save_history_yaml(message.session_id, messages_yaml)
         logger.info("Agent run completed session_id={}", message.session_id)
-
 
     # ----------------- 压缩 -----------------
 
