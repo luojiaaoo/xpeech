@@ -4,7 +4,7 @@ from textwrap import dedent
 from ...utils.helper import save_to_workspace
 
 
-def build_metadata(*metas: dict[str, str], tag: str = "metadata", sort: bool = False) -> str:
+def build_inbound_message_metadata(*metas: dict[str, str], tag: str = "metadata", sort: bool = False) -> str:
     """将 dict[str,str] 元属性转为适合 AI 阅读的字符串。
 
     Args:
@@ -39,7 +39,7 @@ def build_user_prompt(message: InboundMessage, workspace: Path, support_image: b
     parts = [
         {
             "type": "text",
-            "text": build_metadata(
+            "text": build_inbound_message_metadata(
                 message.session_metadata, {"timestamp": message.timestamp.strftime("%Y-%m-%d %H:%M (%A)")}
             ),
         }

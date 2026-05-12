@@ -1,6 +1,8 @@
 from textwrap import dedent
 from datetime import datetime
 from ...agent.memory import MemoryStore
+from ...agent.skills.skill import SkillsLoader
+
 
 BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
 
@@ -45,6 +47,10 @@ def _get_identity(workspace: str) -> str:
             - History log: {workspace}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
             - Custom skills: {workspace}/skills/{{skill-name}}/SKILL.md
 
+            ## Platform Policy
+            - Prefer UTF-8 and standard shell tools.
+            - Use file tools when they are simpler or more reliable than shell commands.
+
             ## Guidelines
             - State intent before tool calls, but NEVER predict or claim results before receiving them.
             - Before modifying a file, read it first. Do not assume files or directories exist.
@@ -57,7 +63,35 @@ def _get_identity(workspace: str) -> str:
 
 async def build_system_prompt(workspace: str) -> str:
     parts = []
+
+    # Identity
     parts.append(_get_identity(workspace))
+
+    # AGENT.md/ SOUL.md/ USER.md/ TOOLS.md
     parts.append(_load_bootstrap_files(workspace))
+
+    # Memory
     parts.append(await MemoryStore(workspace).get_memory_context())
-    return {"role": "system", "content": "\n\n".join(parts)}
+
+    # Skills
+    skill_loader = SkillsLoader(workspace)
+    skills_summary = await skill_loader.build_skills_summary()
+    always_skills = await skill_loader.get_always_skills()
+    if always_skills:
+        always_content = await skill_loader.load_skills_for_context(always_skills)
+        if always_content:
+            parts.append(f"# Active Skills\n\n{always_content}")
+    if skills_summary:
+        _template = dedent(
+            """
+                    # Skills
+
+                    The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+                    Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
+
+                    {skills_summary}
+                """
+        ).lstrip()
+        _template = _template.format(skills_summary=skills_summary)
+
+    return {"role": "system", "content": "\n\n---\n\n".join(parts)}
