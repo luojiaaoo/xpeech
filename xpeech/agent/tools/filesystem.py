@@ -238,7 +238,9 @@ def build_file_tools(workspace: str):
         new_content = content.replace(match, norm_new) if replace_all else content.replace(match, norm_new, 1)
         if uses_crlf:
             new_content = new_content.replace("\n", "\r\n")
-
+        # 原本是纯英文，后面加了中文，encoding会变成utf-8
+        if encoding == 'ascii':
+            encoding = 'utf-8'
         async with aiofiles.open(file_path, "w", encoding=encoding) as f:
             await f.write(new_content)
         return f"Successfully edited {path}"
