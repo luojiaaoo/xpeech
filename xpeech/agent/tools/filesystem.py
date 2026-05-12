@@ -18,6 +18,10 @@ _MAX_CHARS = 128_000
 _DEFAULT_LIMIT = 2000
 
 
+class ReadImageArgs(BaseModel):
+    path: str = Field(description="The image path to read")
+
+
 class ReadFileArgs(BaseModel):
     path: str = Field(description="The file path to read")
     offset: int = Field(description="The offset line to start reading from")
@@ -39,7 +43,7 @@ class ListDirArgs(BaseModel):
     path: str = Field(description="The directory  path to list")
 
 
-def build_file_tools(workspace: str, support_image: bool):
+def build_file_tools(workspace: str):
     base = Path(workspace).expanduser().resolve()
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
@@ -61,6 +65,26 @@ def build_file_tools(workspace: str, support_image: bool):
             else:
                 raise PermissionError(f"Path escapes workspace: {user_path}")
 
+    async def read_image(args: ReadImageArgs) -> str:
+        """Read the an image file."""
+        path = args.path
+        file_path = safe_resolve(path, include_buildin_skills_path=True)
+        if not file_path.exists():
+            return f"Error: File not found: {path}"
+        if not file_path.is_file():
+            return f"Error: Not a file: {path}"
+
+        async with aiofiles.open(file_path, "r+b") as f:
+            raw = await f.read()
+        if not raw:
+            return f"(Empty file: {path})"
+
+        mime = detect_image_mime(raw) or mimetypes.guess_type(file_path)[0]
+        if not mime or not mime.startswith("image/"):
+            return f"Error: Not an image file: {path} (MIME: {mime or 'unknown'})"
+
+        return build_image_content_blocks(raw, mime, path, f"(Image file: {path})")
+
     async def read_file(args: ReadFileArgs) -> str:
         """Read the contents of a file."""
         path = args.path
@@ -77,15 +101,10 @@ def build_file_tools(workspace: str, support_image: bool):
             raw = await f.read()
         if not raw:
             return f"(Empty file: {path})"
-        
-        mime = detect_image_mime(raw) or mimetypes.guess_type(file_path)[0]
-        if support_image:
-            if mime and mime.startswith("image/"):
-                return build_image_content_blocks(raw, mime, path, f"(Image file: {path})")
-        
-        text_content = super_read_text(file_path)
+
+        text_content: str | None = super_read_text(file_path)
         if text_content is None:
-            return f"Error: Cannot read binary file {path} (MIME: {mime or 'unknown'})."
+            return f"Error: Cannot read binary file {path}."
 
         all_lines = text_content.splitlines()
         total = len(all_lines)
@@ -165,4 +184,4 @@ def build_file_tools(workspace: str, support_image: bool):
 
         return f"Directory {path} is empty" if not items else "\n".join(items)
 
-    return read_file, write_file, edit_file, list_dir
+    return read_image, read_file, write_file, edit_file, list_dir

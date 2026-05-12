@@ -52,7 +52,9 @@ class AgentLoop:
     def register_default_tools(self):
         """注册默认工具。"""
 
-        read_file, write_file, edit_file, list_dir = build_file_tools(self.workspace)
+        read_image, read_file, write_file, edit_file, list_dir = build_file_tools(self.workspace)
+        if self.provider.support_image:
+            self.provider.register_tool()(read_image)
         self.provider.register_tool()(read_file)
         self.provider.register_tool()(write_file)
         self.provider.register_tool()(edit_file)
@@ -148,7 +150,11 @@ class AgentLoop:
                 result = await tool_call_func(model_cls(**tool_call.arguments))
             except Exception as e:
                 logger.warning(
-                    "Tool call failed session_id={} loop_count={} tool_name={} args={}", session_id, loop_count, tool_call.name, tool_call.arguments
+                    "Tool call failed session_id={} loop_count={} tool_name={} args={}",
+                    session_id,
+                    loop_count,
+                    tool_call.name,
+                    tool_call.arguments,
                 )
                 result = format_exception2llm(e)
             else:
