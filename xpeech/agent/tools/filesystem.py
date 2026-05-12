@@ -1,8 +1,10 @@
 from pathlib import Path
+from re import escape
 from pydantic import BaseModel, Field
-from ...utils.helper import msys_to_win
+from ...utils.helper import msys_to_win, is_relative_path
 import platform
 from ...config.settings import settings
+from ...agent.skills.skill import BUILTIN_SKILLS_DIR
 
 if platform.system() == "Windows":
     _IS_WINDOWS = True
@@ -34,7 +36,7 @@ def build_file_tools(workspace: str):
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
 
-    def safe_resolve(user_path: str) -> Path:
+    def safe_resolve(user_path: str, include_buildin_skills_path: bool = False) -> Path:
         """Resolve a user path safely."""
         if _IS_WINDOWS:
             # 可能是 MSYS2 路径，转换为 Windows 路径
@@ -43,16 +45,18 @@ def build_file_tools(workspace: str):
         ops_path = (base / user_path).resolve()
         if settings.path.restrict_tools_to_workspace:
             # 检查是否逃逸
-            try:
-                ops_path.relative_to(base)
-            except ValueError:
+            if include_buildin_skills_path and is_relative_path(ops_path, BUILTIN_SKILLS_DIR):
+                return ops_path
+
+            if is_relative_path(ops_path, base):
+                return ops_path
+            else:
                 raise PermissionError(f"Path escapes workspace: {user_path}")
-            return ops_path
 
     async def read_file(args: ReadFileArgs) -> str:
         """Read the contents of a file."""
         path = args.path
-        file_path = safe_resolve(path)
+        file_path = safe_resolve(path, include_buildin_skills_path=True)
         if not file_path.exists():
             return f"Error: File not found: {path}"
         if not file_path.is_file():
@@ -91,7 +95,7 @@ def build_file_tools(workspace: str):
     async def list_dir(args: ListDirArgs) -> str:
         """List the contents of a directory."""
         path = args.path
-        dir_path = safe_resolve(path)
+        dir_path = safe_resolve(path, include_buildin_skills_path=True)
         if not dir_path.exists():
             return f"Error: Directory not found: {path}"
         if not dir_path.is_dir():

@@ -92,6 +92,6 @@ async def build_system_prompt(workspace: str) -> str:
                     {skills_summary}
                 """
         ).lstrip()
-        _template = _template.format(skills_summary=skills_summary)
+        parts.append(_template.format(skills_summary=skills_summary))
 
     return {"role": "system", "content": "\n\n---\n\n".join(parts)}
