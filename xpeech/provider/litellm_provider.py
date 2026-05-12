@@ -63,8 +63,10 @@ class LiteLLMProvider:
                 self.temp_tool_jsons.append(as_tool(func))
 
             def format_result(rt) -> str:
-                if isinstance(rt, str) or isinstance(rt, list):
+                if isinstance(rt, str):
                     return rt
+                if isinstance(rt, list) and all("type" in item for item in rt): # 必须是合法的消息JSON
+                    return json.dumps(rt, indent=4, ensure_ascii=False)
                 else:
                     raise TypeError(f"Invalid return type: {type(rt)}")
 

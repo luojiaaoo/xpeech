@@ -77,11 +77,12 @@ def build_file_tools(workspace: str, support_image: bool):
             raw = await f.read()
         if not raw:
             return f"(Empty file: {path})"
+        
+        mime = detect_image_mime(raw) or mimetypes.guess_type(file_path)[0]
         if support_image:
-            mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
             if mime and mime.startswith("image/"):
                 return build_image_content_blocks(raw, mime, path, f"(Image file: {path})")
-
+        
         text_content = super_read_text(file_path)
         if text_content is None:
             return f"Error: Cannot read binary file {path} (MIME: {mime or 'unknown'})."
