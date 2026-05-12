@@ -80,13 +80,17 @@ def detect_image_mime(data: bytes) -> str | None:
     return None
 
 
-async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> str | None:
+async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> tuple[str | None, str | None]:
     if not (file_path or file_bytes):
         raise ValueError("Internal error: No file path or bytes provided")
     if file_path:
-        return (await asyncify(from_path)(file_path)).best().__str__()
+        content = (await asyncify(from_path)(file_path)).best()
     elif file_bytes:
-        return (await asyncify(from_bytes)(file_bytes)).best().__str__()
+        content = (await asyncify(from_bytes)(file_bytes)).best()
+    if content is not None:
+        return content.__str__(), content.encoding
+    else:
+        return None, None
 
 
 async def _save_image_url(file: InputImage, output_dir: Union[str, Path], stem: str) -> Path:

@@ -1,4 +1,5 @@
 from pathlib import Path
+from tkinter import W
 from pydantic import BaseModel, Field
 from ...utils.helper import msys_to_win, is_relative_path, detect_image_mime, super_read_text
 import platform
@@ -7,15 +8,13 @@ from ...agent.skills.skill import BUILTIN_SKILLS_DIR
 import aiofiles
 import mimetypes
 from ..prompt.helper import build_image_content_blocks
+import difflib
 
 
 if platform.system() == "Windows":
     _IS_WINDOWS = True
 else:
     _IS_WINDOWS = False
-
-_MAX_CHARS = 128_000
-_DEFAULT_LIMIT = 2000
 
 
 class ReadImageArgs(BaseModel):
@@ -37,10 +36,13 @@ class EditFileArgs(BaseModel):
     path: str = Field(description="The file  path to edit")
     old_text: str = Field(description="The exact text to find and replace")
     new_text: str = Field(description="The text to replace with")
+    replace_all: bool = Field(description="Whether to replace all occurrences of old_text")
 
 
 class ListDirArgs(BaseModel):
-    path: str = Field(description="The directory  path to list")
+    path: str = Field(description="The directory path to list")
+    recursive: bool = Field(description="Recursively list all files")
+    max_entries: int = Field(description="The maximum number of entries to return")
 
 
 def build_file_tools(workspace: str):
@@ -86,7 +88,12 @@ def build_file_tools(workspace: str):
         return build_image_content_blocks(raw, mime, path, f"(Image file: {path})")
 
     async def read_file(args: ReadFileArgs) -> str:
-        """Read the contents of a file."""
+        """
+        Read the contents of a file. Returns numbered lines.
+        Use offset and limit to paginate through large files.
+        """
+        _MAX_CHARS = 128_000
+        _DEFAULT_LIMIT = 2000
         path = args.path
         offset = args.offset
         limit = args.limit
@@ -102,7 +109,7 @@ def build_file_tools(workspace: str):
         if not raw:
             return f"(Empty file: {path})"
 
-        text_content: str | None = await super_read_text(file_path)
+        text_content, _ = await super_read_text(file_path)
 
         if text_content is None:
             return f"Error: Cannot read binary file {path}."
@@ -137,7 +144,7 @@ def build_file_tools(workspace: str):
         return result
 
     async def write_file(args: WriteFileArgs) -> str:
-        """Write content to a file, creating parent directories if needed."""
+        """Write content to a file at the given path. Creates parent directories if needed."""
         path = args.path
         content = args.content
         file_path = safe_resolve(path)
@@ -147,42 +154,149 @@ def build_file_tools(workspace: str):
         return f"Successfully wrote {len(content)} bytes to {path}"
 
     async def edit_file(args: EditFileArgs) -> str:
-        """Edit a file by replacing old_text with new_text."""
+        """
+        Edit a file by replacing old_text with new_text.
+        Supports minor whitespace/line-ending differences.
+        Set replace_all=true to replace every occurrence.
+        """
+
+        def _not_found_msg(old_text: str, content: str, path: str) -> str:
+            lines = content.splitlines(keepends=True)
+            old_lines = old_text.splitlines(keepends=True)
+            window = len(old_lines)
+
+            best_ratio, best_start = 0.0, 0
+            for i in range(max(1, len(lines) - window + 1)):
+                ratio = difflib.SequenceMatcher(None, old_lines, lines[i : i + window]).ratio()
+                if ratio > best_ratio:
+                    best_ratio, best_start = ratio, i
+
+            if best_ratio > 0.5:
+                diff = "\n".join(
+                    difflib.unified_diff(
+                        old_lines,
+                        lines[best_start : best_start + window],
+                        fromfile="old_text (provided)",
+                        tofile=f"{path} (actual, line {best_start + 1})",
+                        lineterm="",
+                    )
+                )
+                return f"Error: old_text not found in {path}.\nBest match ({best_ratio:.0%} similar) at line {best_start + 1}:\n{diff}"
+            return f"Error: old_text not found in {path}. No similar text found. Verify the file content."
+
+        def _find_match(content: str, old_text: str) -> tuple[str | None, int]:
+            """Locate old_text in content: exact first, then line-trimmed sliding window.
+
+            Both inputs should use LF line endings (caller normalises CRLF).
+            Returns (matched_fragment, count) or (None, 0).
+            """
+            if old_text in content:
+                return old_text, content.count(old_text)
+
+            old_lines = old_text.splitlines()
+            if not old_lines:
+                return None, 0
+            stripped_old = [l.strip() for l in old_lines]
+            content_lines = content.splitlines()
+
+            candidates = []
+            for i in range(len(content_lines) - len(stripped_old) + 1):
+                window = content_lines[i : i + len(stripped_old)]
+                if [l.strip() for l in window] == stripped_old:
+                    candidates.append("\n".join(window))
+
+            if candidates:
+                return candidates[0], len(candidates)
+            return None, 0
+
         path = args.path
         old_text = args.old_text
         new_text = args.new_text
+        replace_all = args.replace_all
         file_path = safe_resolve(path)
         if not file_path.exists():
             return f"Error: File not found: {path}"
 
-        async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
-            content = await f.read()
+        content, encoding = await super_read_text(file_path=file_path)
+        uses_crlf = "\r\n" in content
+        if uses_crlf:
+            content = content.replace("\r\n", "\n")
+        match, count = _find_match(content, old_text.replace("\r\n", "\n"))
+        if match is None:
+            return _not_found_msg(old_text, content, path)
+        if count > 1 and not replace_all:
+            return (
+                f"Warning: old_text appears {count} times. "
+                "Provide more context to make it unique, or set replace_all=true."
+            )
 
-        if old_text not in content:
-            return "Error: old_text not found in file. Make sure it matches exactly."
+        norm_new = new_text.replace("\r\n", "\n")
+        new_content = content.replace(match, norm_new) if replace_all else content.replace(match, norm_new, 1)
+        if uses_crlf:
+            new_content = new_content.replace("\n", "\r\n")
 
-        count = content.count(old_text)
-        if count > 1:
-            return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
-
-        async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
-            await f.write(content.replace(old_text, new_text, 1))
+        async with aiofiles.open(file_path, "w", encoding=encoding) as f:
+            await f.write(new_content)
         return f"Successfully edited {path}"
 
     async def list_dir(args: ListDirArgs) -> str:
-        """List the contents of a directory."""
+        """
+        List the contents of a directory.
+        Set recursive=true to explore nested structure.
+        Common noise directories (.git, node_modules, __pycache__, etc.) are auto-ignored.
+        """
+        _DEFAULT_MAX = 200
+        _IGNORE_DIRS = {
+            ".git",
+            "node_modules",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "dist",
+            "build",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".coverage",
+            "htmlcov",
+        }
         path = args.path
+        max_entries = args.max_entries
+        recursive = args.recursive
         dir_path = safe_resolve(path, include_buildin_skills_path=True)
         if not dir_path.exists():
             return f"Error: Directory not found: {path}"
         if not dir_path.is_dir():
             return f"Error: Not a directory: {path}"
 
-        items = []
-        for item in sorted(dir_path.iterdir()):
-            prefix = "📁 " if item.is_dir() else "📄 "
-            items.append(f"{prefix}{item.name}")
+        cap = max_entries or _DEFAULT_MAX
+        items: list[str] = []
+        total = 0
 
-        return f"Directory {path} is empty" if not items else "\n".join(items)
+        if recursive:
+            for item in sorted(dir_path.rglob("*")):
+                if any(p in _IGNORE_DIRS for p in item.parts):
+                    continue
+                total += 1
+                if len(items) < cap:
+                    rel = item.relative_to(dir_path)
+                    items.append(f"{rel}/" if item.is_dir() else str(rel))
+        else:
+            for item in sorted(dir_path.iterdir()):
+                if item.name in _IGNORE_DIRS:
+                    continue
+                total += 1
+                if len(items) < cap:
+                    pfx = "📁 " if item.is_dir() else "📄 "
+                    items.append(f"{pfx}{item.name}")
+
+        if not items and total == 0:
+            return f"Directory {path} is empty"
+
+        result = "\n".join(items)
+        if total > cap:
+            result += f"\n\n(truncated, showing first {cap} of {total} entries)"
+        return result
 
     return read_image, read_file, write_file, edit_file, list_dir
