@@ -47,3 +47,8 @@ curl -s "https://api.open-meteo.com/v1/forecast?latitude=51.5&longitude=-0.12&cu
 Find coordinates for a city, then query. Returns JSON with temp, windspeed, weathercode.
 
 Docs: https://open-meteo.com/en/docs
+
+## IP location fallback
+When the user asks for weather but does not specify a location, first try to infer the user's approximate location from their IP:
+```bash
+curl -s https://ipwho.is/
