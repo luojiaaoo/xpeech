@@ -55,8 +55,11 @@ def build_file_tools(workspace: str):
         if _IS_WINDOWS:
             # 可能是 MSYS2 路径，转换为 Windows 路径
             user_path = msys_to_win(user_path)
-        # 相对路径是相对用户工作路径的路径
-        ops_path = (base / user_path).resolve()
+        # 如果不是绝对路径，则相对路径是相对用户工作路径的路径
+        if not Path(user_path).is_absolute():
+            ops_path = (base / user_path).resolve()
+        else:
+            ops_path = Path(user_path).resolve()
         if settings.path.restrict_tools_to_workspace:
             # 检查是否逃逸
             if include_buildin_skills_path and is_relative_path(path_target=ops_path, base=BUILTIN_SKILLS_DIR):
@@ -66,6 +69,7 @@ def build_file_tools(workspace: str):
                 return ops_path
             else:
                 raise PermissionError(f"Path escapes workspace: {user_path}")
+        return ops_path
 
     async def read_image(args: ReadImageArgs) -> str:
         """Read the an image file."""
