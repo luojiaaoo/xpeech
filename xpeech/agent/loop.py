@@ -201,7 +201,7 @@ class AgentLoop:
         logger.info("Agent run started session_id={} workspace={}", message.session_id, self.workspace)
         messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
-        messages_yaml.insert(0, await build_system_prompt(workspace=self.workspace.resolve()))
+        messages_yaml.insert(0, await build_system_prompt(workspace=self.workspace))
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(
             await build_user_prompt(

@@ -115,7 +115,9 @@ def _guard_command(command: str, workspace: str) -> str | None:
         # 拦截非工作路径下的文件操作
         ## 拦截 .. 符号
         if "..\\" in cmd or "../" in cmd:
-            raise RuntimeError(f"Command blocked by safety guard (path traversal detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE)
+            raise RuntimeError(
+                f"Command blocked by safety guard (path traversal detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE
+            )
         ## 提取所有路径，判断是否在工作路径下
         for i in _extract_absolute_paths(cmd):
             try:

@@ -55,7 +55,7 @@ async def chat(
 ):
     """Receive a message and return a response."""
 
-    workspace = settings.path.workspace_base_path / session_id
+    workspace = (settings.path.workspace_base_path / session_id).resolve()
 
     # 创建工作目录
     if not workspace.exists():
@@ -78,10 +78,10 @@ async def chat(
 
     # 开启Agent Loop
     provider = LiteLLMProvider(
-        api_key="1cxxx5dbf",
+        api_key="1cdxdbf",
         api_base="https://ark.cn-beijing.volces.com/api/coding/v1",
         default_model="openai/kimi-k2.6",
-        support_image=False,
+        support_image=True,
         support_json_output=True,
     )
     return StreamingResponse(
