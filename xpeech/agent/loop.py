@@ -308,12 +308,12 @@ class AgentLoop:
 
     def need_compress(self, messages):
         totol_token = token_counter(model="gpt-4o", messages=messages)
-        max_accept_token = self.provider.defaulr_context_token * 0.9 - self.summary_tokens
+        max_accept_token = self.provider.default_context_token * 0.9 - self.summary_tokens
         return totol_token >= max_accept_token
 
     def is_finish_compress(self, messages):
         totol_token = token_counter(model="gpt-4o", messages=messages)
-        max_accept_token = self.provider.defaulr_context_token * 0.4
+        max_accept_token = self.provider.default_context_token * 0.4
         return totol_token < max_accept_token
 
     @classmethod
