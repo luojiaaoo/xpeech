@@ -64,7 +64,7 @@ async def chat(
     # 把files都保存到工作目录
     files_ = []
     for file in files:
-        file_path = save_to_workspace(file=file, workspace=workspace)
+        file_path = await save_to_workspace(file=file, workspace=workspace)
         files_.append(file_path)
 
     # 创建消息对象
@@ -78,9 +78,11 @@ async def chat(
 
     # 开启Agent Loop
     provider = LiteLLMProvider(
-        api_key="1cda8xxx5985dbf",
+        api_key="1cxxx5dbf",
         api_base="https://ark.cn-beijing.volces.com/api/coding/v1",
-        default_model="zai/glm-5.1",
+        default_model="openai/kimi-k2.6",
+        support_image=False,
+        support_json_output=True,
     )
     return StreamingResponse(
         AgentLoop(

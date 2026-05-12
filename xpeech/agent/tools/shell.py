@@ -106,16 +106,16 @@ def _guard_command(command: str, workspace: str) -> str | None:
     # 正则判断
     for pattern in DENY_PATTERNS:
         if re.search(pattern, lower):
-            raise RuntimeError("Command blocked by deny pattern filter")
+            raise RuntimeError(f"Command blocked by deny pattern filter: {cmd}")
     # 判断是否恶意访问内网接口
     if contains_internal_url(cmd):
-        raise RuntimeError("Command blocked by safety guard (internal/private URL detected)")
+        raise RuntimeError(f"Command blocked by safety guard (internal/private URL detected): {cmd}")
 
     if settings.path.restrict_tools_to_workspace:
         # 拦截非工作路径下的文件操作
         ## 拦截 .. 符号
         if "..\\" in cmd or "../" in cmd:
-            raise RuntimeError("Command blocked by safety guard (path traversal detected)" + _WORKSPACE_BOUNDARY_NOTE)
+            raise RuntimeError(f"Command blocked by safety guard (path traversal detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE)
         ## 提取所有路径，判断是否在工作路径下
         for i in _extract_absolute_paths(cmd):
             try:
@@ -138,7 +138,7 @@ def _guard_command(command: str, workspace: str) -> str | None:
 
             if not is_relative_path(path_target=p, base=workspace):
                 raise RuntimeError(
-                    "Command blocked by safety guard (path outside working dir)" + _WORKSPACE_BOUNDARY_NOTE
+                    f"Command blocked by safety guard (path outside working dir): {p}" + _WORKSPACE_BOUNDARY_NOTE
                 )
 
     return None
