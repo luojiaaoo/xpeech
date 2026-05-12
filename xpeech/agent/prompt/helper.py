@@ -33,7 +33,7 @@ def build_inbound_message_metadata(*metas: dict[str, str], tag: str = "metadata"
     return body
 
 
-def build_user_prompt(message: InboundMessage, workspace: Path, support_image: bool):
+async def build_user_prompt(message: InboundMessage, workspace: Path, support_image: bool):
 
     # 时间和元数据
     parts = [
@@ -45,7 +45,7 @@ def build_user_prompt(message: InboundMessage, workspace: Path, support_image: b
         }
     ]
 
-    files_paths = ""
+    files: list[Path] = []
 
     # 多模态消息
     image_idx = 1
@@ -57,24 +57,25 @@ def build_user_prompt(message: InboundMessage, workspace: Path, support_image: b
                 parts.append({"type": "image_url", "image_url": {"url": input.image_url, "detail": "auto"}})
             else:
                 # 不支持图片以文件形式存储，再让工具去解析
-                files_paths += save_to_workspace(input, workspace=workspace, idx=image_idx)
+                files.append(await save_to_workspace(input, workspace=workspace, idx=image_idx))
                 image_idx += 1
-
+    files.extend(message.files)
     # 文件提示词
-    for file in message.files:
-        files_paths += f"- {file.relative_to(workspace).as_posix()}"
-    if files_paths:
+    file_paths: str = ""
+    for file in files:
+        file_paths += f"- {file.relative_to(workspace).as_posix()}"
+    if file_paths:
         parts.append(
             {
                 "type": "text",
                 "text": dedent(
                     f"""
                         ## Attachments
-                        The user has uploaded {len(files_paths)} file(s). You may reference them:
+                        The user has uploaded {len(files)} file(s). You may reference them:
 
                     """
                 ).lstrip()
-                + files_paths,
+                + file_paths,
             }
         )
     return {

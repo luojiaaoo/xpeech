@@ -198,7 +198,7 @@ class AgentLoop:
         messages_yaml.insert(0, await build_system_prompt(workspace=self.workspace.resolve()))
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(
-            build_user_prompt(
+            await build_user_prompt(
                 message=message,
                 workspace=self.workspace,
                 support_image=self.provider.support_image,
