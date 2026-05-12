@@ -9,8 +9,8 @@ from typing import Any
 import json
 from .server.schema import InboundMessage
 import aiofiles
-from ..config.prompt.system import build_system_prompt
-from ..config.prompt.helper import build_user_prompt
+from .prompt.system import build_system_prompt
+from .prompt.helper import build_user_prompt
 from ..agent.tools.helper import get_tool_model_cls
 from ..provider.schema import ToolCallRequest
 import yaml
