@@ -102,7 +102,8 @@ def build_file_tools(workspace: str):
         if not raw:
             return f"(Empty file: {path})"
 
-        text_content: str | None = super_read_text(file_path)
+        text_content: str | None = await super_read_text(file_path)
+
         if text_content is None:
             return f"Error: Cannot read binary file {path}."
 

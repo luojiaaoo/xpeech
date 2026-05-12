@@ -82,9 +82,9 @@ async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> s
     if not (file_path or file_bytes):
         raise ValueError("Internal error: No file path or bytes provided")
     if file_path:
-        return (await asyncify(from_path)(file_path)).best()
+        return (await asyncify(from_path)(file_path)).best().__str__()
     elif file_bytes:
-        return (await asyncify(from_bytes)(file_bytes)).best()
+        return (await asyncify(from_bytes)(file_bytes)).best().__str__()
 
 
 async def _save_image_url(file: InputImage, output_dir: Union[str, Path], stem: str) -> Path:
