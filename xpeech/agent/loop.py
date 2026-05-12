@@ -18,32 +18,16 @@ from ..utils.helper import LiteralDumper, format_exception2llm
 from ..provider.schema import LLMResponse
 from litellm import token_counter
 from datetime import timedelta
-from textwrap import dedent
 from loguru import logger
 from ..agent.server.schema import InputText
 from .memory import MemoryStore
+from .prompt.compress import SUMMARY_PROMPT
 
 
 class AgentLoop:
     """Agent循环处理逻辑。"""
 
-    INTERATION_STOP_PROPT = "You have reached the maximum number of iterations and MUST stop calling tools."
-    SUMMARY_PROMPT = dedent(
-        """
-            Extract key facts from this conversation. Only output items matching these categories, skip everything else:
-
-            User facts: personal info, preferences, stated opinions, habits
-            Decisions: choices made, conclusions reached
-            Solutions: working approaches discovered through trial and error, especially non-obvious methods that succeeded after failed attempts
-            Events: plans, deadlines, notable occurrences
-            Preferences: communication style, tool preferences
-            Priority: user corrections and preferences > solutions > decisions > events > environment facts. The most valuable memory prevents the user from having to repeat themselves.
-
-            Skip: code patterns derivable from source, git history, or anything already captured in existing memory.
-
-            Output as concise bullet points, one fact per line. No preamble, no commentary. If nothing noteworthy happened, output: (nothing)
-        """
-    ).lstrip()
+    INTERATION_STOP_PROMPT = "You have reached the maximum number of iterations and MUST stop calling tools."
 
     def __init__(
         self,
@@ -199,7 +183,7 @@ class AgentLoop:
             messages_yaml.append(
                 {
                     "role": "user",
-                    "content": self.INTERATION_STOP_PROPT,
+                    "content": self.INTERATION_STOP_PROMPT,
                 }
             )
 
@@ -333,10 +317,14 @@ class AgentLoop:
         return totol_token < max_accept_token
 
     @classmethod
+    def is_iterations_stop_user_message(cls, message: dict):
+        return message["role"] == "user" and message["content"] == cls.INTERATION_STOP_PROMPT
+
+    @classmethod
     def clear_role_user_timestamp(cls, messages: list[dict]):
         rt = []
         for i in messages:
-            if i["role"] == "user" and i["content"] != cls.INTERATION_STOP_PROPT:
+            if i["role"] == "user" and not cls.is_iterations_stop_user_message(i):
                 # 不修改原始消息
                 i = i.copy()
                 # 剔除时间戳
@@ -364,7 +352,7 @@ class AgentLoop:
             _clean_messages = self.clear_role_user_timestamp(_messages)
             system_messages = [i for i in _clean_messages if i["role"] == "system"]
             _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
-            _clean_messages.insert(0, {"role": "system", "content": self.SUMMARY_PROMPT})
+            _clean_messages.insert(0, {"role": "system", "content": SUMMARY_PROMPT})
             _clean_messages.append({"role": "user", "content": "Please summarize the history messages."})
             try:
                 summary = (
@@ -388,7 +376,7 @@ class AgentLoop:
             last_timestamp = None
             idx_split = 0
             for i in range(len(_messages) - 1, -1, -1):
-                if not (_messages[i]["role"] == "user" and _messages[i]["content"] != self.INTERATION_STOP_PROPT):
+                if not (_messages[i]["role"] == "user" and not self.is_iterations_stop_user_message(_messages[i])):
                     continue
                 if last_timestamp is None:
                     last_timestamp = _messages[i]["timestamp"]
@@ -405,7 +393,7 @@ class AgentLoop:
         idx_split_keep = len(messages)
         count = 0
         for i in range(len(messages) - 1, -1, -1):
-            if not (messages[i]["role"] == "user" and messages[i]["content"] != self.INTERATION_STOP_PROPT):
+            if not (messages[i]["role"] == "user" and not self.is_iterations_stop_user_message(messages[i])):
                 continue
             count += 1
             if count == keep_count:  # 保留4次对话
