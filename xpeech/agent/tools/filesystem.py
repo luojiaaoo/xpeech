@@ -43,7 +43,6 @@ def build_file_tools(workspace: str):
             user_path = msys_to_win(user_path)
         # 相对路径是相对用户工作路径的路径
         ops_path = (base / user_path).resolve()
-        print(f"Resolved path: {ops_path}, {base}")
         if settings.path.restrict_tools_to_workspace:
             # 检查是否逃逸
             if include_buildin_skills_path and is_relative_path(path_target=ops_path, base=BUILTIN_SKILLS_DIR):

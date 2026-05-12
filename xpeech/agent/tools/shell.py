@@ -93,8 +93,7 @@ async def _kill_process(process: asyncio.subprocess.Process) -> None:
 
 
 def _extract_absolute_paths(command: str) -> list[str]:
-    win_paths = re.findall(r"[A-Za-z]:\\[^\s\"'|><;]*", command)
-    win_paths += re.findall(r"[A-Za-z]:/[^\s\"'|><;]*", command)
+    win_paths = re.findall(r"\b[A-Za-z]:[\\/][^\s\"'|><;]*", command)
     posix_paths = re.findall(r"(?:^|[\s|>'\"])(/[^\s\"'>;|<]+)", command)
     home_paths = re.findall(r"(?:^|[\s>'\"])(~[^\s\"'>;|<]*)", command)
     return win_paths + posix_paths + home_paths
