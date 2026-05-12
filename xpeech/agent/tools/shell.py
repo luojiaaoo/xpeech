@@ -137,7 +137,7 @@ def _guard_command(command: str, workspace: str) -> str | None:
             if _is_benign_device_path(str(p)):
                 continue
 
-            if not is_relative_path(base=workspace, path_target=p):
+            if not is_relative_path(path_target=p, base=workspace):
                 raise RuntimeError(
                     "Command blocked by safety guard (path outside working dir)" + _WORKSPACE_BOUNDARY_NOTE
                 )

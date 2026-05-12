@@ -24,7 +24,7 @@ def ensure_path(path_: Path):
     return path_
 
 
-def is_relative_path(base: Path, path_target: Path):
+def is_relative_path(path_target: Path, base: Path):
     try:
         path_target.relative_to(base)
     except ValueError:
