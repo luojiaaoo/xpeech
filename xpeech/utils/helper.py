@@ -10,6 +10,7 @@ from ..agent.server.schema import InputImage
 import inspect
 from asyncer import asyncify
 import yaml
+from charset_normalizer import from_bytes, from_path
 
 
 def ensure_async(func):
@@ -31,9 +32,11 @@ def is_relative_path(path_target: Path, base: Path):
         return False
     return True
 
+
 def format_exception2llm(e: Exception) -> str:
-    """ 给大模型看的异常内容 """
+    """给大模型看的异常内容"""
     return f"{type(e).__name__}: {e}"
+
 
 def msys_to_win(msys_path: str) -> str:
     """将 MSYS2 路径转换为 Windows 路径
@@ -60,6 +63,28 @@ async def save_to_workspace(file: UploadFile | InputImage, workspace: Path, idx:
         return file_path
     elif isinstance(file, InputImage):
         return await _save_image_url(file, workspace, str(idx))
+
+
+def detect_image_mime(data: bytes) -> str | None:
+    """Detect image MIME type from magic bytes, ignoring file extension."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> str | None:
+    if not (file_path or file_bytes):
+        raise ValueError("Internal error: No file path or bytes provided")
+    if file_path:
+        return (await asyncify(from_path)(file_path)).best()
+    elif file_bytes:
+        return (await asyncify(from_bytes)(file_bytes)).best()
 
 
 async def _save_image_url(file: InputImage, output_dir: Union[str, Path], stem: str) -> Path:

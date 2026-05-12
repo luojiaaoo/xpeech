@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aiofiles>=25.1.0",
     "asyncer>=0.0.17",
+    "charset-normalizer>=3.4.7",
     "fastapi>=0.136.1",
     "litellm>=1.83.0",
     "loguru>=0.7.3",
