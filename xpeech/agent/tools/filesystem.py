@@ -36,13 +36,13 @@ class EditFileArgs(BaseModel):
     path: str = Field(description="The file  path to edit")
     old_text: str = Field(description="The exact text to find and replace")
     new_text: str = Field(description="The text to replace with")
-    replace_all: bool = Field(description="Whether to replace all occurrences of old_text")
+    replace_all: bool = Field(description="Whether to replace all occurrences of old_text (default false)", default=False)
 
 
 class ListDirArgs(BaseModel):
     path: str = Field(description="The directory path to list")
-    recursive: bool = Field(description="Recursively list all files")
-    max_entries: int = Field(description="The maximum number of entries to return")
+    recursive: bool = Field(description="Recursively list all files (default false)", default=False)
+    max_entries: int = Field(description="The maximum number of entries to return (default 200)", default=200)
 
 
 def build_file_tools(workspace: str):
