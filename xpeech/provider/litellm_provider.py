@@ -119,7 +119,7 @@ class LiteLLMProvider:
         else:
             json_output = False
 
-        temp_tool_jsons, temp_mapping_tool_call_funcs = self._parse_temp_tools([tools or []])
+        temp_tool_jsons, temp_mapping_tool_call_funcs = self._parse_temp_tools(tools or [])
 
         # 确定工具列表
         if remove_default_tools and remove_all_tools:

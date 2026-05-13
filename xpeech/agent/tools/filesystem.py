@@ -72,7 +72,12 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         return ops_path
 
     async def read_image(args: ReadImageArgs) -> str:
-        """Read the an image file."""
+        """
+        Reads an image from a local file path. 
+        Call this tool only if the user refers to an image that must be loaded from the filesystem. 
+        If the image is already provided in the conversation (for example, as an attachment or inline image input). 
+        do not call this tool and analyze the image directly.
+        """
         path = args.path
         file_path = safe_resolve(path, include_buildin_skills_path=True)
         if not file_path.exists():
