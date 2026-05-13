@@ -144,6 +144,11 @@ def question_radio(args: RadioQuestionArgs):
     - Confirming deployment environment (staging/production)
     - Selecting a theme (light/dark/auto)
 
+    ⚠️ CRITICAL RULE: You can ONLY call question_radio, question_checkbox, or question_input tools together.
+    DO NOT call any other tools (like read_file, write_file, shell, etc.) in the same turn as these question tools.
+    Mixing question tools with other tools will cause all non-question tools to be IGNORED.
+    Wait for the user's response before proceeding with other actions.
+    
     IMPORTANT: Only use when you genuinely need user input. Do not use for rhetorical questions.
     """
     return args.json
@@ -161,6 +166,11 @@ def question_checkbox(args: CheckboxQuestionArgs):
     - Choosing platforms to support (web, iOS, Android)
     - Picking notification preferences (email, SMS, push)
 
+    ⚠️ CRITICAL RULE: You can ONLY call question_radio, question_checkbox, or question_input tools together.
+    DO NOT call any other tools (like read_file, write_file, shell, etc.) in the same turn as these question tools.
+    Mixing question tools with other tools will cause all non-question tools to be IGNORED.
+    Wait for the user's response before proceeding with other actions.
+    
     IMPORTANT: Only use when you need multiple selections. For single choice, use question_radio instead.
     """
     return args.json
@@ -179,6 +189,11 @@ def question_input(args: InputQuestionArgs):
     - Getting a custom configuration value
     - Collecting user feedback or comments
 
+    ⚠️ CRITICAL RULE: You can ONLY call question_radio, question_checkbox, or question_input tools together.
+    DO NOT call any other tools (like read_file, write_file, shell, etc.) in the same turn as these question tools.
+    Mixing question tools with other tools will cause all non-question tools to be IGNORED.
+    Wait for the user's response before proceeding with other actions.
+    
     IMPORTANT: Only use when you need unstructured text. For structured choices, use question_radio or question_checkbox instead.
     """
     return args.json
