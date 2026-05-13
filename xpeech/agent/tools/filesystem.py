@@ -1,9 +1,7 @@
 from pathlib import Path
-from tkinter import W
 from pydantic import BaseModel, Field
 from ...utils.helper import msys_to_win, is_relative_path, detect_image_mime, super_read_text
 import platform
-from ...config.settings import settings
 from ...agent.skills.skill import BUILTIN_SKILLS_DIR
 import aiofiles
 import mimetypes
@@ -36,7 +34,9 @@ class EditFileArgs(BaseModel):
     path: str = Field(description="The file  path to edit")
     old_text: str = Field(description="The exact text to find and replace")
     new_text: str = Field(description="The text to replace with")
-    replace_all: bool = Field(description="Whether to replace all occurrences of old_text (default false)", default=False)
+    replace_all: bool = Field(
+        description="Whether to replace all occurrences of old_text (default false)", default=False
+    )
 
 
 class ListDirArgs(BaseModel):
@@ -45,7 +45,7 @@ class ListDirArgs(BaseModel):
     max_entries: int = Field(description="The maximum number of entries to return (default 200)", default=200)
 
 
-def build_file_tools(workspace: str):
+def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
     base = Path(workspace).expanduser().resolve()
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
@@ -60,7 +60,7 @@ def build_file_tools(workspace: str):
             ops_path = (base / user_path).resolve()
         else:
             ops_path = Path(user_path).resolve()
-        if settings.path.restrict_tools_to_workspace:
+        if restrict_tools_to_workspace:
             # 检查是否逃逸
             if include_buildin_skills_path and is_relative_path(path_target=ops_path, base=BUILTIN_SKILLS_DIR):
                 return ops_path
@@ -239,8 +239,8 @@ def build_file_tools(workspace: str):
         if uses_crlf:
             new_content = new_content.replace("\n", "\r\n")
         # 原本是纯英文，后面加了中文，encoding会变成utf-8
-        if encoding == 'ascii':
-            encoding = 'utf-8'
+        if encoding == "ascii":
+            encoding = "utf-8"
         async with aiofiles.open(file_path, "w", encoding=encoding) as f:
             await f.write(new_content)
         return f"Successfully edited {path}"

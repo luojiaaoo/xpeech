@@ -10,7 +10,6 @@ import re
 from ...utils.security.network import contains_internal_url
 from ...utils.helper import is_relative_path, msys_to_win
 from textwrap import dedent
-from ...config.settings import settings
 
 EXEC_TIMEOUT = 60
 _MAX_OUTPUT = 10000
@@ -99,7 +98,7 @@ def _extract_absolute_paths(command: str) -> list[str]:
     return win_paths + posix_paths + home_paths
 
 
-def _guard_command(command: str, workspace: str) -> str | None:
+def _guard_command(command: str, workspace: str, restrict_tools_to_workspace: bool) -> str | None:
     """Guard a command string from code injection attacks."""
     cmd = command.strip()
     lower = cmd.lower()
@@ -111,7 +110,7 @@ def _guard_command(command: str, workspace: str) -> str | None:
     if contains_internal_url(cmd):
         raise RuntimeError(f"Command blocked by safety guard (internal/private URL detected): {cmd}")
 
-    if settings.path.restrict_tools_to_workspace:
+    if restrict_tools_to_workspace:
         # 拦截非工作路径下的文件操作
         ## 拦截 .. 符号
         if "..\\" in cmd or "../" in cmd:
@@ -146,7 +145,7 @@ def _guard_command(command: str, workspace: str) -> str | None:
     return None
 
 
-def build_shell_tools(workspace: str):
+def build_shell_tools(workspace: str, restrict_tools_to_workspace: bool):
     base = Path(workspace).expanduser().resolve()
     if not base.exists() or not base.is_dir():
         raise ValueError(f"Invalid workspace: {workspace}")
@@ -154,7 +153,7 @@ def build_shell_tools(workspace: str):
     async def shell(args: ShellArgs) -> str:
         command = args.command
         try:
-            _guard_command(command, workspace)
+            _guard_command(command, workspace, restrict_tools_to_workspace)
         except RuntimeError as e:
             return f"Error: {e}"
         process = await asyncio.create_subprocess_exec(
