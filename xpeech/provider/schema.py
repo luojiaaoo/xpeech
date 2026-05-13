@@ -1,5 +1,8 @@
-from typing import Any, TypedDict, Callable, Type
+from typing import Any, Callable, Literal, Type, TypedDict
 from pydantic import BaseModel, Field
+
+
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "default"]
 
 
 class Usage(TypedDict):
@@ -35,9 +38,10 @@ class LLMResponse(BaseModel):
 class ProviderChatKwargs(BaseModel):
     """Keyword arguments for provider chat method."""
 
-    model: float | None = None
+    model: str | None = None
     max_tokens: int | None = None
     top_p: float | None = None
+    reasoning_effort: ReasoningEffort | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary with None values removed."""

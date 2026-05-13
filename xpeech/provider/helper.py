@@ -1,5 +1,6 @@
 import asyncio
 import random
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -28,14 +29,21 @@ class LiteLLMRetryClient:
         self.initial_delay = initial_delay
         self.max_delay = max_delay
         self.jitter = jitter
-        self._completion_func = acompletion
 
     async def acompletion(self, **kwargs: Any) -> Any:
         """Retry only recoverable rate-limit failures."""
+        start_time = time.time()
 
         for attempt in range(self.max_retries + 1):
             try:
-                return await self._completion_func(**kwargs)
+                result = await acompletion(**kwargs)
+                elapsed = time.time() - start_time
+                logger.info(
+                    "LiteLLM request succeeded in {:.2f}s (attempts: {})",
+                    elapsed,
+                    attempt + 1,
+                )
+                return result
             except RateLimitError as exc:
                 if attempt >= self.max_retries:
                     raise

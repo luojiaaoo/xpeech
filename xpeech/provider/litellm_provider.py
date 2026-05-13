@@ -3,7 +3,7 @@ import litellm
 from typing import Any, Callable, Type
 import functools
 from pydantic import BaseModel
-from .schema import LLMResponse, ToolCallRequest
+from .schema import LLMResponse, ReasoningEffort, ToolCallRequest
 from .helper import LiteLLMRetryClient
 from ..agent.tools.helper import as_tool
 import inspect
@@ -24,6 +24,7 @@ class LiteLLMProvider:
         default_max_tokens: int = 4096,
         default_context_token: int = 200000,
         default_top_p: float = 0.5,
+        default_reasoning_effort: ReasoningEffort | None = None,
         support_image: bool = False,
         support_json_output: bool = False,
         extra_headers: dict = None,
@@ -34,6 +35,7 @@ class LiteLLMProvider:
         self.default_max_tokens = default_max_tokens
         self.default_context_token = default_context_token
         self.default_top_p = default_top_p
+        self.default_reasoning_effort = default_reasoning_effort
         self.default_tool_jsons: list[dict[str, Any]] = []
         self.default_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
         self._support_image = support_image
@@ -104,6 +106,7 @@ class LiteLLMProvider:
         model: str | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
         remove_all_tools: bool = False,
         remove_default_tools: bool = False,
         json_output: bool = False,
@@ -112,6 +115,7 @@ class LiteLLMProvider:
         model = model or self.default_model
         max_tokens = max_tokens or self.default_max_tokens
         top_p = top_p or self.default_top_p
+        reasoning_effort = reasoning_effort or self.default_reasoning_effort
         if json_output:
             if self.support_json_output:
                 json_output = True
@@ -143,7 +147,9 @@ class LiteLLMProvider:
             "top_p": top_p,
             "response_format": {"type": "json_object"} if json_output else None,
             "extra_headers": self.extra_headers,
+            "reasoning_effort": reasoning_effort,
         }
+        
         # 注入工具
         if tool_jsons:
             completion_kwargs["tools"] = tool_jsons

@@ -78,17 +78,22 @@ async def chat(
 
     # 开启Agent Loop
     provider = LiteLLMProvider(
-        api_key="1cdxdbf",
-        api_base="https://ark.cn-beijing.volces.com/api/coding/v1",
-        default_model="openai/kimi-k2.6",
+        api_key="nvapi-7VDkihK",
+        api_base="https://integrate.api.nvidia.com/v1",
+        default_model="openai/moonshotai/kimi-k2.6",
+        default_reasoning_effort="default",
         support_image=True,
         support_json_output=True,
     )
+
     return StreamingResponse(
         AgentLoop(
             provider=provider,
             workspace=workspace,
             max_iterations=30,
+            provider_chat_kwargs=dict(
+                reasoning_effort="default",
+            ),
         ).run(message=message),
         media_type="text/event-stream",
         headers={
