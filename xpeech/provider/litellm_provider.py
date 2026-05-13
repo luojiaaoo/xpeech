@@ -4,6 +4,7 @@ from typing import Any, Callable, Type
 import functools
 from pydantic import BaseModel
 from .schema import LLMResponse, ToolCallRequest
+from .helper import LiteLLMRetryClient
 from ..agent.tools.helper import as_tool
 import inspect
 from loguru import logger
@@ -38,6 +39,7 @@ class LiteLLMProvider:
         self._support_image = support_image
         self._support_json_output = support_json_output
         self.extra_headers = extra_headers
+        self._retry_client = LiteLLMRetryClient()
 
     @property
     def support_image(self) -> bool:
@@ -132,28 +134,21 @@ class LiteLLMProvider:
         if remove_all_tools:
             tool_jsons = []
 
-        # 发起请求
-        try:
-            completion_kwargs = {
-                "model": model,
-                "api_base": self.api_base,
-                "api_key": self.api_key,
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "top_p": top_p,
-                "response_format": {"type": "json_object"} if json_output else None,
-                "extra_headers": self.extra_headers,
-            }
-            # 注入工具
-            if tool_jsons:
-                completion_kwargs["tools"] = tool_jsons
-                completion_kwargs["tool_choice"] = "auto"
-            response = await litellm.acompletion(**completion_kwargs)
-        except Exception as e:
-            return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
-                finish_reason="error",
-            )
+        completion_kwargs = {
+            "model": model,
+            "api_base": self.api_base,
+            "api_key": self.api_key,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "top_p": top_p,
+            "response_format": {"type": "json_object"} if json_output else None,
+            "extra_headers": self.extra_headers,
+        }
+        # 注入工具
+        if tool_jsons:
+            completion_kwargs["tools"] = tool_jsons
+            completion_kwargs["tool_choice"] = "auto"
+        response = await self._retry_client.acompletion(**completion_kwargs)
 
         # 解析响应
         try:
