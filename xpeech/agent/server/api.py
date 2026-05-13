@@ -12,6 +12,7 @@ from ...utils.session import create_workspace_templates
 from ...provider.litellm_provider import LiteLLMProvider
 from ..loop import AgentLoop
 from fastapi.responses import StreamingResponse
+from ...provider.schema import ProviderChatKwargs
 
 
 def session_metadata(
@@ -81,7 +82,7 @@ async def chat(
         api_key="nvapi-7VDkihK",
         api_base="https://integrate.api.nvidia.com/v1",
         default_model="openai/moonshotai/kimi-k2.6",
-        default_reasoning_effort="default",
+        default_reasoning_effort=None,
         support_image=True,
         support_json_output=True,
     )
@@ -91,8 +92,8 @@ async def chat(
             provider=provider,
             workspace=workspace,
             max_iterations=30,
-            provider_chat_kwargs=dict(
-                reasoning_effort="default",
+            provider_chat_kwargs=ProviderChatKwargs(
+                reasoning_effort=None,
             ),
         ).run(message=message),
         media_type="text/event-stream",
