@@ -1,4 +1,4 @@
-from typing import Any, TypedDict
+from typing import Any, TypedDict, Callable, Type
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +22,7 @@ class LLMResponse(BaseModel):
     content: str | None
     reasoning_content: str | None = None
     tool_calls: list[ToolCallRequest] = Field(default_factory=list)
+    mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str | list]] = Field(default_factory=dict)
     finish_reason: str = "stop"
     usage: Usage = Field(default_factory=dict)
 

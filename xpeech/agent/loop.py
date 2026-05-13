@@ -158,7 +158,7 @@ class AgentLoop:
         tool_call_result = []
         for tool_call in response.tool_calls:
             tool_call: ToolCallRequest = tool_call
-            model_cls = get_tool_model_cls(tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name])
+            model_cls = get_tool_model_cls(tool_call_func := response.mapping_tool_call_funcs[tool_call.name])
             try:
                 result = await tool_call_func(model_cls(**tool_call.arguments))
             except Exception as e:
@@ -472,7 +472,7 @@ class AgentLoop:
         if response.tool_calls:
             for tool_call in response.tool_calls:
                 tool_call: ToolCallRequest = tool_call
-                model_cls = get_tool_model_cls(tool_call_func := self.provider.mapping_tool_call_funcs[tool_call.name])
+                model_cls = get_tool_model_cls(tool_call_func := response.mapping_tool_call_funcs[tool_call.name])
                 await tool_call_func(model_cls(**tool_call.arguments))
             logger.info("Consolidating memory finished session_id={}", session_id)
             return "[INFO] Consolidating memory finished"

@@ -35,8 +35,6 @@ class LiteLLMProvider:
         self.default_top_p = default_top_p
         self.default_tool_jsons: list[dict[str, Any]] = []
         self.default_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
-        self.temp_tool_jsons: list[dict[str, Any]] = []
-        self.temp_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
         self._support_image = support_image
         self._support_json_output = support_json_output
         self.extra_headers = extra_headers
@@ -53,48 +51,49 @@ class LiteLLMProvider:
 
         return self._support_json_output
 
-    def register_tool(self, is_temp: bool = False):
+    def decorator_tool_func(
+        self, func_: Callable[[Type[BaseModel] | None], str | list], register_default: bool = False
+    ):
+
+        def format_result(rt) -> str:
+            if isinstance(rt, str):
+                return rt
+            elif isinstance(rt, list) and all("type" in item for item in rt):  # 必须是合法的消息
+                return rt
+            else:
+                raise TypeError(f"Invalid return type: {type(rt)}")
+
+        @functools.wraps(func_)
+        async def wrapper(*args, **kwargs) -> str:
+            if inspect.iscoroutinefunction(func_):
+                rt = await func_(*args, **kwargs)
+            else:
+                rt = func_(*args, **kwargs)
+            return format_result(rt)
+
+        if register_default:
+            self.default_tool_jsons.append(as_tool(func_))
+            self.default_mapping_tool_call_funcs[func_.__name__] = wrapper
+            return wrapper
+        else:
+            return as_tool(func_), wrapper
+
+    def register_tool(self):
         """注册工具，统一返回 async wrapper。"""
 
-        def decorator(func: Callable[[Type[BaseModel] | None], str | dict]):
-            if not is_temp:
-                self.default_tool_jsons.append(as_tool(func))
-            else:
-                self.temp_tool_jsons.append(as_tool(func))
+        return functools.partial(self.decorator_tool_func, register_default=True)
 
-            def format_result(rt) -> str:
-                if isinstance(rt, str):
-                    return rt
-                if isinstance(rt, list) and all("type" in item for item in rt): # 必须是合法的消息JSON
-                    return json.dumps(rt, indent=4, ensure_ascii=False)
-                else:
-                    raise TypeError(f"Invalid return type: {type(rt)}")
-
-            @functools.wraps(func)
-            async def wrapper(*args, **kwargs) -> str:
-                if inspect.iscoroutinefunction(func):
-                    rt = await func(*args, **kwargs)
-                else:
-                    rt = func(*args, **kwargs)
-                return format_result(rt)
-
-            if not is_temp:
-                self.default_mapping_tool_call_funcs[func.__name__] = wrapper
-            else:
-                self.temp_mapping_tool_call_funcs[func.__name__] = wrapper
-            return wrapper
-
-        return decorator
-
-    @property
-    def mapping_tool_call_funcs(self) -> dict[str, Callable[[Type[BaseModel] | None], str]]:
-        """获取工具函数映射。"""
-
-        return self.default_mapping_tool_call_funcs | self.temp_mapping_tool_call_funcs
-
-    def _reset_temp_tools(self):
-        self.temp_tool_jsons.clear()
-        self.temp_mapping_tool_call_funcs.clear()
+    def _parse_temp_tools(
+        self, funcs: list[Callable[[Type[BaseModel] | None], str | list]]
+    ) -> tuple[list[dict[str, Any]], dict[str, Callable[[Type[BaseModel] | None], str | list]]]:
+        """解析临时工具。"""
+        temp_as_tools = []
+        temp_mapping_tool_call_funcs = {}
+        for func in funcs:
+            _temp_as_tool, _temp_mapping_tool_call_func = self.decorator_tool_func(func, register_default=False)
+            temp_as_tools.append(_temp_as_tool)
+            temp_mapping_tool_call_funcs[func.__name__] = _temp_mapping_tool_call_func
+        return temp_as_tools, temp_mapping_tool_call_funcs
 
     async def chat(
         self,
@@ -120,18 +119,15 @@ class LiteLLMProvider:
         else:
             json_output = False
 
-        # 添加临时工具
-        self._reset_temp_tools()
-        for func in tools or []:
-            self.register_tool(is_temp=True)(func)
+        temp_tool_jsons, temp_mapping_tool_call_funcs = self._parse_temp_tools([tools or []])
 
         # 确定工具列表
         if remove_default_tools and remove_all_tools:
             raise ValueError("remove_default_tools and remove_all_tools cannot be True at the same time.")
         if remove_default_tools:
-            tool_jsons = self.temp_tool_jsons
+            tool_jsons = temp_tool_jsons
         else:
-            tool_jsons = self.default_tool_jsons + self.temp_tool_jsons
+            tool_jsons = self.default_tool_jsons + temp_tool_jsons
 
         if remove_all_tools:
             tool_jsons = []
@@ -161,14 +157,17 @@ class LiteLLMProvider:
 
         # 解析响应
         try:
-            return self._parse_response(response)
+            return self._parse_response(response, self.default_mapping_tool_call_funcs | temp_mapping_tool_call_funcs)
+
         except Exception as e:
             return LLMResponse(
                 content=f"Error parsing LLM response: {str(e)}",
                 finish_reason="error",
             )
 
-    def _parse_response(self, response: Any) -> LLMResponse:
+    def _parse_response(
+        self, response: Any, mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str | list]]
+    ) -> LLMResponse:
         """将 LiteLLM 的响应解析为 LLMResponse 标准格式。"""
         choice = response.choices[0]
         message = choice.message
@@ -213,6 +212,7 @@ class LiteLLMProvider:
             content=message.content,
             reasoning_content=reasoning_content,
             tool_calls=tool_calls,
+            mapping_tool_call_funcs=mapping_tool_call_funcs,
             finish_reason=choice.finish_reason or "stop",
             usage=usage,
         )
