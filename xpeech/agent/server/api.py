@@ -3,7 +3,7 @@ from .schema import OutboundMessage
 from fastapi import Depends
 from typing import Annotated
 from datetime import datetime
-from fastapi import File, Form, UploadFile, HTTPException, status
+from fastapi import File, Form, UploadFile, HTTPException, status, Header
 from .schema import InputContent, InboundMessage
 import json
 from ...config.settings import settings
@@ -48,7 +48,7 @@ def content(
 
 @app.post("/chat", response_model=OutboundMessage)
 async def chat(
-    session_id: Annotated[str, Form(description="会话的ID")],
+    session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],
     timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
@@ -79,7 +79,7 @@ async def chat(
 
     # 开启Agent Loop
     provider = LiteLLMProvider(
-        api_key="nvapi-7VDkihK",
+        api_key="nvapi-2H7VDkihK",
         api_base="https://integrate.api.nvidia.com/v1",
         default_model="openai/moonshotai/kimi-k2.6",
         default_reasoning_effort=None,
