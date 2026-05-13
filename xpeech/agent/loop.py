@@ -52,14 +52,23 @@ class AgentLoop:
     def register_default_tools(self):
         """注册默认工具。"""
 
-        read_image, read_file, write_file, edit_file, list_dir = build_file_tools(self.workspace)
+        # 文件读写
+        read_image, read_file, write_file, edit_file, list_dir = build_file_tools(
+            workspace=self.workspace,
+            restrict_tools_to_workspace=settings.path.restrict_tools_to_workspace,
+        )
         if self.provider.support_image:
             self.provider.register_tool()(read_image)
         self.provider.register_tool()(read_file)
         self.provider.register_tool()(write_file)
         self.provider.register_tool()(edit_file)
         self.provider.register_tool()(list_dir)
-        exec = build_shell_tools(self.workspace)
+
+        # shell执行
+        exec = build_shell_tools(
+            workspace=self.workspace,
+            restrict_tools_to_workspace=settings.path.restrict_tools_to_workspace,
+        )
         self.provider.register_tool()(exec)
 
     # ----------------- history会话读写 -----------------
@@ -111,11 +120,13 @@ class AgentLoop:
             loop_count,
             len(response.tool_calls),
         )
+
         # 输出工具调用内容
         if response.content and response.content.strip():
             yield "data: {}\n\n".format(
                 json.dumps({"event": "assistant", "context": response.content}, ensure_ascii=False)
             )
+
         # 输出工具调用消息
         yield "data: {}\n\n".format(
             json.dumps(
@@ -126,6 +137,7 @@ class AgentLoop:
                 ensure_ascii=False,
             )
         )
+
         # 还原工具调用格式
         tool_call_dicts = [
             {
@@ -135,6 +147,7 @@ class AgentLoop:
             }
             for tc in response.tool_calls
         ]
+
         # 创建助手消息
         msg: dict[str, Any] = {"role": "assistant", "content": response.content or ""}
         if tool_call_dicts:
@@ -164,6 +177,7 @@ class AgentLoop:
                     loop_count,
                     tool_call.name,
                 )
+
             # 创建工具调用结果消息
             messages_yaml.append(
                 {
@@ -174,6 +188,7 @@ class AgentLoop:
                 }
             )
             tool_call_result.append((tool_call.id, tool_call.name, result))
+
         # 输出工具调用结果消息
         yield "data: {}\n\n".format(
             json.dumps({"event": "tool_call_result", "context": json.dumps(tool_call_result)}, ensure_ascii=False)
@@ -291,6 +306,7 @@ class AgentLoop:
             if response.has_tool_calls:
                 async for i in self.tool_call(response, messages_yaml, loop_count, message.session_id):
                     yield i
+
             else:
                 # 没有工具，结束循环
                 final_content = response.content
