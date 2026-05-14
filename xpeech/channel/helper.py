@@ -36,3 +36,7 @@ def parse_sse_block(block: str) -> dict[str, Any] | None:
         logger.debug("Skipping malformed SSE payload: {}", raw[:200])
         return None
     return payload if isinstance(payload, dict) else None
+
+def bytes_to_base64(raw: bytes, mime: str) -> str:
+    f"data:{mime};base64,{b64}"
+    b64 = base64.b64encode(raw).decode()
