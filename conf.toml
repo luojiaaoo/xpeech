@@ -2,3 +2,9 @@
 session_path = "session"
 session_history_path = "session/history"
 workspace_base_path = "workspace_base"
+
+[llm]
+api_base = "https://api.siliconflow.cn/v1"
+default_model = "openai/Pro/moonshotai/Kimi-K2.6"
+support_image = true
+support_json_output = true

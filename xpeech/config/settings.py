@@ -1,53 +1,71 @@
-from pydantic import BaseModel
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from .helper import TomlConfigSettingsSource
 from pathlib import Path
-from ..utils.helper import ensure_path
 
-env_conf = dict(
-    env_prefix="XPEECH_",
-    env_nested_delimiter="__",
-    extra="ignore",
+from pydantic import BaseModel
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
 )
+
+from ..provider.schema import ReasoningEffort
+from ..utils.helper import ensure_path
 
 
 conf_toml_path = "conf.toml"  # Configuration TOML file path
 conf_env_path = ".env"  # Configuration environment file path
 
+env_conf = dict(
+    env_prefix="",
+    env_nested_delimiter="__",
+    env_file=conf_env_path,
+    extra="ignore",
+)
+
 
 class PathConfig(BaseModel):
     """Path configuration settings."""
+
     session_path: Path
     session_history_path: Path
     workspace_base_path: Path
     restrict_tools_to_workspace: bool = True
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(**env_conf)
+class LLMConfig(BaseModel):
+    """LLM provider configuration settings."""
 
+    api_key: str
+    api_base: str
+    default_model: str
+    default_reasoning_effort: ReasoningEffort | None = None
+    support_image: bool = False
+    support_json_output: bool = False
+
+
+class Settings(BaseSettings):
     path: PathConfig
+    llm: LLMConfig
 
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls,
-        init_settings,
-        env_settings,
-        dotenv_settings,
-        file_secret_settings,
-    ):
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,
-            env_settings,
             dotenv_settings,
             TomlConfigSettingsSource(
                 settings_cls,
-                conf_toml_path,
-                env_files=[conf_env_path],
+                toml_file=conf_toml_path,
             ),
-            file_secret_settings,
         )
+
+    model_config = SettingsConfigDict(**env_conf)
 
 
 settings = Settings()

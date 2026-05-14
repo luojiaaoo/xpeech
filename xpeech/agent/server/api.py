@@ -79,12 +79,12 @@ async def chat(
 
     # 开启Agent Loop
     provider = LiteLLMProvider(
-        api_key="nvapi-2H7VDkihK",
-        api_base="https://integrate.api.nvidia.com/v1",
-        default_model="openai/moonshotai/kimi-k2.6",
-        default_reasoning_effort=None,
-        support_image=True,
-        support_json_output=True,
+        api_key=settings.llm.api_key,
+        api_base=settings.llm.api_base,
+        default_model=settings.llm.default_model,
+        default_reasoning_effort=settings.llm.default_reasoning_effort,
+        support_image=settings.llm.support_image,
+        support_json_output=settings.llm.support_json_output,
     )
 
     return StreamingResponse(
