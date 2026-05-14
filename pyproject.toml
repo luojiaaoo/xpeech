@@ -9,6 +9,7 @@ dependencies = [
     "asyncer>=0.0.17",
     "charset-normalizer>=3.4.7",
     "fastapi>=0.136.1",
+    "lark-oapi>=1.6.5",
     "litellm>=1.83.0",
     "loguru>=0.7.3",
     "openai>=2.36.0",
@@ -16,6 +17,3 @@ dependencies = [
     "python-multipart>=0.0.27",
     "uvicorn[standard]>=0.46.0",
 ]
-
-[project.scripts]
-xpeech = "xpeech.agent.server.app:run"
