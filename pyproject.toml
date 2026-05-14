@@ -16,3 +16,6 @@ dependencies = [
     "python-multipart>=0.0.27",
     "uvicorn[standard]>=0.46.0",
 ]
+
+[project.scripts]
+xpeech = "xpeech.agent.server.app:run"
