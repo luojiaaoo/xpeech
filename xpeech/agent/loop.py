@@ -33,6 +33,7 @@ class AgentLoop:
         self,
         provider: LiteLLMProvider,
         workspace: Path,
+        tools: list[str],
         summary_tokens: int = 8195,
         provider_chat_kwargs: ProviderChatKwargs | None = None,
         max_iterations: int | None = None,
@@ -40,6 +41,7 @@ class AgentLoop:
 
         self.provider = provider
         self.workspace = workspace
+        self.tools = tools
         self.summary_tokens = summary_tokens
         self.provider_chat_kwargs = {} if provider_chat_kwargs is None else provider_chat_kwargs.to_dict()
         self.max_iterations = max_iterations
@@ -158,8 +160,13 @@ class AgentLoop:
         for tool_call in response.tool_calls:
             tool_call: ToolCallRequest = tool_call
             model_cls = get_tool_model_cls(tool_call_func := response.mapping_tool_call_funcs[tool_call.name])
+
+            # 如果没有参数，则直接调用工具函数
             try:
-                result = await tool_call_func(model_cls(**tool_call.arguments))
+                if model_cls is None:
+                    result = await tool_call_func()
+                else:
+                    result = await tool_call_func(model_cls(**tool_call.arguments))
             except Exception as e:
                 logger.warning(
                     "Tool call failed loop_count={} tool_name={} args={}",
@@ -272,10 +279,11 @@ class AgentLoop:
             # 清理用户消息中的时间戳，开始对话
             _clean_messages = self.clear_role_user_timestamp(messages_yaml)
             logger.info("Calling provider chat loop_count={}", loop_count)
+
             try:
                 response = await self.provider.chat(
                     messages=_clean_messages,
-                    tools=[],
+                    tools=self.tools,
                     **self.provider_chat_kwargs,
                 )
             except Exception:

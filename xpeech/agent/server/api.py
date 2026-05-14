@@ -91,6 +91,7 @@ async def chat(
         AgentLoop(
             provider=provider,
             workspace=workspace,
+            tools=settings.llm.default_tools,
             max_iterations=30,
             provider_chat_kwargs=ProviderChatKwargs(
                 reasoning_effort=None,

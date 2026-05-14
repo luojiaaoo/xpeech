@@ -38,6 +38,8 @@ class LLMConfig(BaseModel):
     api_key: str
     api_base: str
     default_model: str
+    tools_python_package: str
+    default_tools: list[str]
     default_reasoning_effort: ReasoningEffort | None = None
     support_image: bool = False
     support_json_output: bool = False

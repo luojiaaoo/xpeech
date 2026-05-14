@@ -1,6 +1,8 @@
 import inspect
 from typing import Callable, get_type_hints, Type
 from pydantic import BaseModel
+from ...utils.helper import dynamic_import
+from ...config.settings import settings
 
 
 def get_tool_model_cls(func: Callable[Type[BaseModel] | None, str | dict]) -> type[BaseModel]:
@@ -93,3 +95,24 @@ def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str
             "parameters": parameters,
         },
     }
+
+
+_MODULE_CUSTOM_CACHE = {}
+
+
+def get_custom_tool_func(function_name: str) -> list[dict]:
+    """
+    获取自定义工具函数。
+    """
+    function_name_paths = function_name.split(".")
+    _name = settings.llm.tools_python_package
+    module = dynamic_import(_name)
+    if _name not in _MODULE_CUSTOM_CACHE:
+        _MODULE_CUSTOM_CACHE[_name] = module
+    _temp = None
+    for i in function_name_paths:
+        if _temp is None:
+            _temp = getattr(_MODULE_CUSTOM_CACHE[_name], i)
+        else:
+            _temp = getattr(_temp, i)
+    return _temp

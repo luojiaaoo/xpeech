@@ -1,4 +1,4 @@
-import json
+from ..agent.tools.helper import get_custom_tool_func
 import litellm
 from typing import Any, Callable, Type
 import functools
@@ -102,7 +102,7 @@ class LiteLLMProvider:
     async def chat(
         self,
         messages: list[dict[str, Any]],
-        tools: list[Callable[Type[BaseModel] | None, str | dict]] | None = None,
+        tools: list[str] | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
@@ -125,7 +125,9 @@ class LiteLLMProvider:
         else:
             json_output = False
 
-        temp_tool_jsons, temp_mapping_tool_call_funcs = self._parse_temp_tools(tools or [])
+        # 根据工具名称获取自定义工具
+        tools = [get_custom_tool_func(tool) for tool in tools] if tools else []
+        temp_tool_jsons, temp_mapping_tool_call_funcs = self._parse_temp_tools(tools)
 
         # 确定工具列表
         if remove_default_tools and remove_all_tools:

@@ -6,5 +6,8 @@ workspace_base_path = "workspace_base"
 [llm]
 api_base = "https://api.siliconflow.cn/v1"
 default_model = "openai/Pro/moonshotai/Kimi-K2.6"
+tools_python_package = "custom_tools"
+default_tools = ["echo", "hello"]
+# default_reasoning_effort = "normal"
 support_image = true
 support_json_output = true
