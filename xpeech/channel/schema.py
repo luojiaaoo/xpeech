@@ -1,9 +1,14 @@
-from typing import Literal, TypeAlias
+from enum import Enum
 from pydantic import BaseModel
 from pathlib import Path
 
 
-ChatEventType: TypeAlias = Literal["assistant", "thinking", "tool_call", "tool_call_result", "command"]
+class ChatEventType(str, Enum):
+    ASSISTANT = "assistant"
+    THINKING = "thinking"
+    TOOL_CALL = "tool_call"
+    TOOL_CALL_RESULT = "tool_call_result"
+    COMMAND = "command"
 
 
 class TextData(BaseModel):

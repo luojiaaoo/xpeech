@@ -29,11 +29,11 @@ from loguru import logger
 from ..config.settings import settings
 
 OUTPUT_EVENT_TYPES: dict[ChatEventType, str | None | type(Ellipsis)] = {
-    "assistant": ...,
-    "command": ...,
-    "thinking": "我正在思考，稍等一下。",
-    "tool_call": "我需要调用工具处理一下。",
-    "tool_call_result": "工具处理完成，我继续整理结果。",
+    ChatEventType.ASSISTANT: ...,
+    ChatEventType.COMMAND: ...,
+    ChatEventType.THINKING: "我正在思考，稍等一下。",
+    ChatEventType.TOOL_CALL: "我需要调用工具处理一下。",
+    ChatEventType.TOOL_CALL_RESULT: "工具处理完成，我继续整理结果。",
 }
 
 _EMOJI_TYPES = """
@@ -118,7 +118,11 @@ class FeishuBridge:
                     continue
                 message = self._format_chat_event(event) if output is ... else output
                 if message:
-                    await self._send_markdown_reply(chat_id, message, reply_to)
+                    await self._send_markdown_reply(
+                        chat_id,
+                        message,
+                        reply_to if event.event == ChatEventType.ASSISTANT else None,
+                    )
         except Exception:
             logger.exception("Failed to consume Feishu messages session_id={}", session_id)
             await self._send_markdown_reply(chat_id, "这次处理消息时出错了，请稍后再试。", reply_to)
@@ -131,19 +135,19 @@ class FeishuBridge:
         await self.channel.send(
             chat_id,
             {"markdown": text},
-            {"reply_to": reply_to},
+            *([{"reply_to": reply_to}] if reply_to is not None else []),
         )
 
     def _format_chat_event(self, event: ChatEvent) -> str:
-        if event.event == "assistant":
+        if event.event == ChatEventType.ASSISTANT:
             return event.context
-        if event.event == "command":
+        if event.event == ChatEventType.COMMAND:
             return f"**[command]**\n{event.context}"
-        if event.event == "thinking":
+        if event.event == ChatEventType.THINKING:
             return f"**[thinking]**\n{event.context}"
-        if event.event == "tool_call":
+        if event.event == ChatEventType.TOOL_CALL:
             return f"**[tool_call]**\n{self._format_tool_call_event(event)}"
-        if event.event == "tool_call_result":
+        if event.event == ChatEventType.TOOL_CALL_RESULT:
             return f"**[tool_call_result]**\n{self._format_json_context(event.context)}"
         return f"[{event.event}]\n{event.context}"
 

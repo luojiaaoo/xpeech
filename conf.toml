@@ -14,5 +14,5 @@ support_json_output = true
 
 [feishu]
 app_id = "cli_a99b80eb143c9013"
-idle_timeout = 5
-parallel = 4
+idle_timeout = 3
+parallel = 3
