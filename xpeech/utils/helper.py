@@ -5,11 +5,11 @@ import re
 from typing import Union
 import aiohttp
 import aiofiles
-from fastapi import UploadFile
 from ..agent.server.schema import InputImage
 import inspect
 from asyncer import asyncify
 import yaml
+from starlette.datastructures import UploadFile
 from charset_normalizer import from_bytes, from_path
 from importlib.util import spec_from_file_location, module_from_spec
 import sys
