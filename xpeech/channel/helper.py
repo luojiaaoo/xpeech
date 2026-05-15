@@ -1,11 +1,16 @@
-from typing import Any, AsyncIterator
+from contextlib import ExitStack
+from datetime import datetime
+from pathlib import Path
+from typing import AsyncIterator
 import json
 import httpx
 import base64
 from loguru import logger
+from pydantic import ValidationError
 from ..utils.helper import detect_image_mime
 from io import BytesIO
 from PIL import Image
+from .schema import ChatEvent, FileData, ImageData, Message, TextData
 
 
 def compress_image_bytes_to_jpg(
@@ -39,7 +44,7 @@ def compress_image_bytes_to_jpg(
 
 async def iter_sse_payloads(
     response: httpx.Response,
-) -> AsyncIterator[dict[str, Any]]:
+) -> AsyncIterator[ChatEvent]:
     buffer = ""
     async for chunk in response.aiter_bytes():
         buffer += chunk.decode("utf-8", errors="ignore")
@@ -53,7 +58,7 @@ async def iter_sse_payloads(
         yield payload
 
 
-def _parse_sse_block(block: str) -> dict[str, Any] | None:
+def _parse_sse_block(block: str) -> ChatEvent | None:
     data_lines = [line.removeprefix("data:").strip() for line in block.splitlines() if line.startswith("data:")]
     if not data_lines:
         return None
@@ -65,7 +70,76 @@ def _parse_sse_block(block: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         logger.debug("Skipping malformed SSE payload: {}", raw[:200])
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return ChatEvent.model_validate(payload)
+    except ValidationError:
+        logger.debug("Skipping invalid SSE event payload: {}", payload)
+        return None
+
+
+async def iter_chat_events(
+    messages: list[Message],
+    chat_url: str,
+) -> AsyncIterator[ChatEvent]:
+    """Send channel messages to the chat endpoint and yield parsed SSE event dicts."""
+
+    if not messages:
+        return
+
+    session_id = messages[0].session_id
+    if any(message.session_id != session_id for message in messages):
+        raise ValueError("All messages must belong to the same session.")
+
+    content: list[dict[str, str]] = []
+    files: list[Path] = []
+    session_metadata: dict[str, str | int] = {}
+
+    for message in messages:
+        session_metadata.update(message.session_metadata)
+        for item in message.content:
+            if isinstance(item, TextData):
+                content.append({"text": item.text})
+            elif isinstance(item, ImageData):
+                content.append({"image_url": item.image_url})
+            elif isinstance(item, FileData):
+                files.append(item.file)
+            else:
+                raise TypeError(f"Unsupported message content type: {type(item)!r}")
+
+    data = {
+        "session_metadata": json.dumps(
+            {key: str(value) for key, value in session_metadata.items()},
+            ensure_ascii=False,
+        ),
+        "content": json.dumps(content, ensure_ascii=False),
+        "timestamp": _chat_timestamp(max(message.timestamp for message in messages)).isoformat(),
+    }
+    headers = {"x-session-id": session_id}
+
+    with ExitStack() as stack:
+        upload_files = [
+            ("files", (file_path.name, stack.enter_context(file_path.open("rb")), "application/octet-stream"))
+            for file_path in files
+        ]
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                chat_url,
+                headers=headers,
+                data=data,
+                files=upload_files,
+            ) as response:
+                response.raise_for_status()
+                async for payload in iter_sse_payloads(response):
+                    yield payload
+
+
+def _chat_timestamp(timestamp: int) -> datetime:
+    if timestamp > 100_000_000_000:
+        timestamp = timestamp // 1000
+    return datetime.fromtimestamp(timestamp)
 
 
 def bytes_to_image_url(raw: bytes) -> str:

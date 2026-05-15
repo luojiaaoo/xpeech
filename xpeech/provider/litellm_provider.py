@@ -102,7 +102,7 @@ class LiteLLMProvider:
     async def chat(
         self,
         messages: list[dict[str, Any]],
-        tools: list[str] | None = None,
+        tools: list[str | Callable[[Type[BaseModel] | None], str | list]] | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
@@ -125,8 +125,8 @@ class LiteLLMProvider:
         else:
             json_output = False
 
-        # 根据工具名称获取自定义工具
-        tools = [get_custom_tool_func(tool) for tool in tools] if tools else []
+        # 根据工具名称获取自定义工具，或使用工具函数
+        tools = [get_custom_tool_func(tool) if isinstance(tool, str) else tool for tool in tools] if tools else []
         temp_tool_jsons, temp_mapping_tool_call_funcs = self._parse_temp_tools(tools)
 
         # 确定工具列表
@@ -151,7 +151,7 @@ class LiteLLMProvider:
             "extra_headers": self.extra_headers,
             "reasoning_effort": reasoning_effort,
         }
-        
+
         # 注入工具
         if tool_jsons:
             completion_kwargs["tools"] = tool_jsons

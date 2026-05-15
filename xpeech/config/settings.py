@@ -45,9 +45,19 @@ class LLMConfig(BaseModel):
     support_json_output: bool = False
 
 
+class FeishuConfig(BaseModel):
+    """Feishu channel configuration settings."""
+
+    app_id: str
+    app_secret: str
+    idle_timeout: int = 5
+    parallel: int = 4
+
+
 class Settings(BaseSettings):
     path: PathConfig
     llm: LLMConfig
+    feishu: FeishuConfig
 
     @classmethod
     def settings_customise_sources(

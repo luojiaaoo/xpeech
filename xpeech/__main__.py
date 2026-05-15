@@ -14,8 +14,6 @@ def main() -> None:
 
     feishu_parser = subparsers.add_parser("feishu", help="Run the Feishu bridge.")
     feishu_parser.add_argument("--chat-url", default="http://127.0.0.1:7878/chat", help="Xpeech /chat endpoint.")
-    feishu_parser.add_argument("--app-id", default="cli_aa8fcbaccae41cba", help="Feishu app ID.")
-    feishu_parser.add_argument("--app-secret", default="a4TR1TMqrk1ZJPl3TV9QffgyQiWzu5YD", help="Feishu app secret.")
     feishu_parser.set_defaults(service="feishu")
 
     args = parser.parse_args()
@@ -30,7 +28,7 @@ def main() -> None:
     if service == "feishu":
         from .channel.feishu import run
 
-        run(chat_url=args.chat_url, app_id=args.app_id, app_secret=args.app_secret)
+        run(chat_url=args.chat_url)
         return
 
     parser.error(f"Unknown service: {service}")

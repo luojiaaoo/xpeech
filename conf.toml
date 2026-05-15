@@ -11,3 +11,8 @@ default_tools = ["echo", "hello"]
 # default_reasoning_effort = "normal"
 support_image = true
 support_json_output = true
+
+[feishu]
+app_id = "cli_a99b80eb143c9013"
+idle_timeout = 5
+parallel = 4
