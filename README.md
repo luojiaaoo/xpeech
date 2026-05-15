@@ -200,3 +200,9 @@ uv run -m xpeech api
 ```bash
 uv run python -c "from xpeech.config.settings import settings; print(settings.model_dump())"
 ```
+
+## TODO
+
+- [ ] 添加 cron
+- [ ] 添加心跳
+- [ ] 添加飞书 CLI
