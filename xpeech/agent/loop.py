@@ -335,11 +335,14 @@ class AgentLoop:
         await self.save_history_yaml(message.session_id, messages_yaml)
 
         # 输出token使用百分比
+        token_count = token_counter(messages_yaml)
+        token_percent = min(1, token_count / self.max_accept_token) * 100
+        token_notify = "♻️ 即将达到最大令牌数，强制压缩" if token_percent > 90 else ""
         yield "data: {}\n\n".format(
             json.dumps(
                 {
                     "event": "token_usage",
-                    "context": f"{min(1, (i := token_counter(messages_yaml)) / self.max_accept_token) * 100:.2f}% ({i // 1000}k / {self.max_accept_token // 1000}k)",
+                    "context": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}",
                 },
                 ensure_ascii=False,
             )
