@@ -383,6 +383,16 @@ class AgentLoop:
                 rt.append(i)
             return rt
 
+        def split_recent_user_messages(_messages: list[dict], keep_count: int) -> int:
+            count = 0
+            for i in range(len(_messages) - 1, -1, -1):
+                if not (_messages[i]["role"] == "user" and not self.is_iterations_stop_user_message(_messages[i])):
+                    continue
+                count += 1
+                if count == keep_count:
+                    return i
+            return 0
+
         async def summary_messages(_messages: list[dict]):
             _clean_messages = self.clear_role_user_timestamp(_messages)
             system_messages = [i for i in _clean_messages if i["role"] == "system"]
@@ -426,15 +436,7 @@ class AgentLoop:
 
         # 一级压缩：超过1000字的工具执行结果（保留最近4次对话消息的结果调用）
         keep_count = 4
-        keep_count = 4
-        idx_split_keep = len(messages)
-        count = 0
-        for i in range(len(messages) - 1, -1, -1):
-            if not (messages[i]["role"] == "user" and not self.is_iterations_stop_user_message(messages[i])):
-                continue
-            count += 1
-            if count == keep_count:  # 保留4次对话
-                idx_split_keep = -(len(messages) - i)
+        idx_split_keep = split_recent_user_messages(messages, keep_count)
         messages = truncate_tool_result(messages[:idx_split_keep], 1000) + messages[idx_split_keep:]
         if self.is_finish_compress(messages):
             logger.info("Compression finished level=1 messages={}", len(messages))
@@ -448,15 +450,18 @@ class AgentLoop:
                 return messages
 
         # 三级压缩：AI总结历史消息，只保留最近4次对话消息
-        if self.is_finish_compress(messages[idx_split_keep:]):
+        idx_split_keep = split_recent_user_messages(messages, keep_count)
+        recent_messages = messages[idx_split_keep:]
+        if idx_split_keep > 0 and self.is_finish_compress(recent_messages):
             logger.info("Compression level=3 summarizing history")
-            messages = await summary_messages(messages[:idx_split_keep]) + messages[idx_split_keep:]
+            messages = await summary_messages(messages[:idx_split_keep]) + recent_messages
             logger.info("Compression finished level=3 messages={}", len(messages))
             return messages
 
         # 四级压缩：如果仍然不满足要求，则进行完全压缩
         logger.info("Compression level=4 summarizing all history")
-        compressed_messages = await summary_messages(messages)
+        idx_split_keep = split_recent_user_messages(messages, 1)
+        compressed_messages = await summary_messages(messages[:idx_split_keep]) + messages[idx_split_keep:]
         logger.info("Compression finished level=4 messages={}", len(compressed_messages))
         return compressed_messages
 
