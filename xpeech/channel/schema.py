@@ -1,14 +1,15 @@
-from enum import Enum
+from enum import StrEnum
 from pydantic import BaseModel
 from pathlib import Path
 
 
-class ChatEventType(str, Enum):
+class ChatEventType(StrEnum):
     ASSISTANT = "assistant"
     THINKING = "thinking"
     TOOL_CALL = "tool_call"
     TOOL_CALL_RESULT = "tool_call_result"
     COMMAND = "command"
+    TOKEN_USAGE = "token_usage"
 
 
 class TextData(BaseModel):

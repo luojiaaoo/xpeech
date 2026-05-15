@@ -28,12 +28,14 @@ from datetime import datetime
 from loguru import logger
 from ..config.settings import settings
 
+
 OUTPUT_EVENT_TYPES: dict[ChatEventType, str | None | type(Ellipsis)] = {
     ChatEventType.ASSISTANT: ...,
     ChatEventType.COMMAND: ...,
     ChatEventType.THINKING: "我正在思考，稍等一下。",
     ChatEventType.TOOL_CALL: "我需要调用工具处理一下。",
     ChatEventType.TOOL_CALL_RESULT: "工具处理完成，我继续整理结果。",
+    ChatEventType.TOKEN_USAGE: ...,
 }
 
 _EMOJI_TYPES = """
@@ -141,14 +143,16 @@ class FeishuBridge:
     def _format_chat_event(self, event: ChatEvent) -> str:
         if event.event == ChatEventType.ASSISTANT:
             return event.context
-        if event.event == ChatEventType.COMMAND:
-            return f"**[command]**\n{event.context}"
-        if event.event == ChatEventType.THINKING:
-            return f"**[thinking]**\n{event.context}"
-        if event.event == ChatEventType.TOOL_CALL:
-            return f"**[tool_call]**\n{self._format_tool_call_event(event)}"
-        if event.event == ChatEventType.TOOL_CALL_RESULT:
-            return f"**[tool_call_result]**\n{self._format_json_context(event.context)}"
+        elif event.event == ChatEventType.COMMAND:
+            return f"**[command]** {event.context}"
+        elif event.event == ChatEventType.THINKING:
+            return f"**[thinking]** {event.context}"
+        elif event.event == ChatEventType.TOOL_CALL:
+            return f"**[tool_call]** {self._format_tool_call_event(event)}"
+        elif event.event == ChatEventType.TOOL_CALL_RESULT:
+            return f"**[tool_call_result]** {self._format_json_context(event.context)}"
+        elif event.event == ChatEventType.TOKEN_USAGE:
+            return f"**[token_usage]** {event.context}"
         return f"[{event.event}]\n{event.context}"
 
     def _format_tool_call_event(self, event: ChatEvent) -> str:

@@ -44,6 +44,7 @@ class AgentLoop:
         self.summary_tokens = summary_tokens
         self.provider_chat_kwargs = {} if provider_chat_kwargs is None else provider_chat_kwargs.to_dict()
         self.max_iterations = max_iterations
+        self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
 
         # 注册默认工具
         self.register_default_tools()
@@ -327,18 +328,29 @@ class AgentLoop:
 
         # 保存历史记录
         await self.save_history_yaml(message.session_id, messages_yaml)
+
+        # 输出token使用百分比
+        yield "data: {}\n\n".format(
+            json.dumps(
+                {
+                    "event": "token_usage",
+                    "context": f"{min(1, (i := token_counter(messages_yaml)) / self.max_accept_token) * 100:.2f}% ({i // 1000}k / {self.max_accept_token // 1000}k)",
+                },
+                ensure_ascii=False,
+            )
+        )
+
         logger.info("Agent run completed")
 
     # ----------------- 压缩 -----------------
 
     def need_compress(self, messages):
         totol_token = token_counter(messages=messages)
-        max_accept_token = self.provider.default_context_token * 0.9 - self.summary_tokens
-        return totol_token >= max_accept_token
+        return totol_token >= self.max_accept_token
 
     def is_finish_compress(self, messages):
         totol_token = token_counter(messages=messages)
-        max_accept_token = self.provider.default_context_token * 0.4
+        max_accept_token = int(self.provider.default_context_token * 0.4)
         return totol_token < max_accept_token
 
     @classmethod
@@ -396,6 +408,8 @@ class AgentLoop:
             return _messages
 
         def keep_messages_for_day(days, _messages):
+            system_messages = [i for i in _messages if i["role"] == "system"]
+            _messages = [i for i in _messages if i["role"] != "system"]
             last_timestamp = None
             idx_split = 0
             for i in range(len(_messages) - 1, -1, -1):
@@ -407,7 +421,7 @@ class AgentLoop:
                 if last_timestamp - _timestamp > timedelta(days=days).total_seconds():
                     break
                 idx_split = i
-            _messages = _messages[idx_split:]
+            _messages = [*system_messages, *_messages[idx_split:]]
             return _messages
 
         # 一级压缩：超过1000字的工具执行结果（保留最近4次对话消息的结果调用）
@@ -420,7 +434,7 @@ class AgentLoop:
                 continue
             count += 1
             if count == keep_count:  # 保留4次对话
-                idx_split_keep = i
+                idx_split_keep = -(len(messages) - i)
         messages = truncate_tool_result(messages[:idx_split_keep], 1000) + messages[idx_split_keep:]
         if self.is_finish_compress(messages):
             logger.info("Compression finished level=1 messages={}", len(messages))
