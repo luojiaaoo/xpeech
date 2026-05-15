@@ -21,7 +21,7 @@ class LiteLLMProvider:
         api_key: str,
         api_base: str,
         default_model: str,
-        default_max_tokens: int = 4096,
+        default_max_tokens: int = 8192,
         default_context_token: int = 200000,
         default_top_p: float = 0.5,
         default_reasoning_effort: ReasoningEffort | None = None,

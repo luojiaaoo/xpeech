@@ -34,7 +34,7 @@ class AgentLoop:
         provider: LiteLLMProvider,
         workspace: Path,
         tools: list[str],
-        summary_tokens: int = 8195,
+        summary_tokens: int = 8192,
         provider_chat_kwargs: ProviderChatKwargs | None = None,
         max_iterations: int | None = None,
     ):
