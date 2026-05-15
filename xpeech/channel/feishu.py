@@ -17,9 +17,11 @@ import asyncio
 from .schema import Message, TextMessage, ImageMessage, FileMessage
 import json
 import lark_oapi as lark
-from lark_oapi.api.im.v1 import GetImageRequest, GetImageResponse
+from lark_oapi.api.im.v1 import GetMessageResourceRequest, GetMessageResourceResponse
 from .helper import bytes_to_image_url
 import random
+from pathlib import Path
+import aiofiles
 
 _EMOJI_TYPES = """
 OK THUMBSUP THANKS MUSCLE FINGERHEART APPLAUSE FISTBUMP JIAYI DONE LOVE
@@ -28,6 +30,9 @@ SHAKE HIGHFIVE ROSE HEART PARTY GIFT Yes CheckMark Hundred AWESOMEN
 Trophy Fire FIREWORKS REDPACKET FORTUNE LUCK BeamingFace Delighted
 GoGoGo ThanksFace SaluteFace HappyDragon
 """.split()
+
+FEISHU_CACHE_DIR = Path("feishu_cache").resolve()
+FEISHU_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class FeishuBridge:
@@ -69,18 +74,36 @@ class FeishuBridge:
         #     {"reply_to": msg.message_id},
         # )
 
-    async def get_image_url_from_key(self, image_key: str) -> bytes:
-        client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).log_level(self.LOG_LEVEL).build()
-        request: GetImageRequest = GetImageRequest.builder().image_key(image_key).build()
-        response: GetImageResponse = client.im.v1.image.get(request)
-        if not response.success():
-            lark.logger.error(
-                f"client.im.v1.image.get failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}"
-            )
-            return
-        return bytes_to_image_url(response.file.read())
-
     async def _parse_msg(self, inbound_msg: InboundMessage) -> Message:
+        async def get_image_url_from_key(message_id: str, image_key: str) -> bytes:
+            client = self.channel.client
+            request: GetMessageResourceRequest = (
+                GetMessageResourceRequest.builder().message_id(message_id).file_key(image_key).type("image").build()
+            )
+            response: GetMessageResourceResponse = client.im.v1.message_resource.get(request)
+            if not response.success():
+                lark.logger.error(
+                    f"client.im.v1.message_resource.get failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}"
+                )
+                return
+            return bytes_to_image_url(response.file.read())
+
+        async def _save_file(message_id: str, file_key: str, save_filepath: Path) -> None:
+            client = self.channel.client
+            request: GetMessageResourceRequest = (
+                GetMessageResourceRequest.builder().message_id(message_id).file_key(file_key).type("file").build()
+            )
+            response: GetMessageResourceResponse = client.im.v1.message_resource.get(request)
+            if not response.success():
+                lark.logger.error(
+                    f"client.im.v1.message_resource.get failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}"
+                )
+                return
+            save_filepath.parent.mkdir(parents=True, exist_ok=True)
+            async with aiofiles.open(save_filepath, "wb") as f:
+                await f.write(response.file.read())
+            return save_filepath
+
         if inbound_msg.chat_type == "p2p":
             if isinstance(inbound_msg.content, TextContent):
                 return Message(
@@ -94,15 +117,30 @@ class FeishuBridge:
                 return Message(
                     message_id=inbound_msg.message_id,
                     session_id=f"{inbound_msg.chat_type}_{inbound_msg.chat_id}",
-                    content=[ImageMessage(image_url=await self.get_image_url_from_key(inbound_msg.content.image_key))],
+                    content=[
+                        ImageMessage(
+                            image_url=await get_image_url_from_key(
+                                inbound_msg.message_id, inbound_msg.content.image_key
+                            )
+                        )
+                    ],
                     timestamp=int(inbound_msg.create_time),
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
                 )
             elif isinstance(inbound_msg.content, FileContent):
+                save_filepath = (
+                    FEISHU_CACHE_DIR
+                    / f"{inbound_msg.sender_id}_{inbound_msg.sender_name}"
+                    / inbound_msg.content.file_name
+                )
                 return Message(
                     message_id=inbound_msg.message_id,
                     session_id=f"{inbound_msg.chat_type}_{inbound_msg.chat_id}",
-                    content=[FileMessage(file_path=inbound_msg.content.file_path)],
+                    content=[
+                        FileMessage(
+                            file=await _save_file(inbound_msg.message_id, inbound_msg.content.file_key, save_filepath)
+                        )
+                    ],
                     timestamp=int(inbound_msg.create_time),
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
                 )
