@@ -13,6 +13,7 @@ from starlette.datastructures import UploadFile
 from charset_normalizer import from_bytes, from_path
 from importlib.util import spec_from_file_location, module_from_spec
 import sys
+from litellm import token_counter as _token_counter
 
 
 def ensure_async(func):
@@ -105,6 +106,10 @@ def detect_image_mime(data: bytes) -> str | None:
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
     return None
+
+
+def token_counter(messages: list[dict]):
+    return _token_counter(model="gpt-4o", messages=messages)
 
 
 async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> tuple[str | None, str | None]:

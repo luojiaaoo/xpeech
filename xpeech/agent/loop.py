@@ -14,9 +14,8 @@ from .prompt.helper import build_user_prompt
 from ..agent.tools.helper import get_tool_model_cls
 from ..provider.schema import ToolCallRequest
 import yaml
-from ..utils.helper import LiteralDumper, format_exception2llm
+from ..utils.helper import LiteralDumper, format_exception2llm, token_counter
 from ..provider.schema import LLMResponse
-from litellm import token_counter
 from datetime import timedelta
 from loguru import logger
 from ..agent.server.schema import InputText
@@ -261,8 +260,9 @@ class AgentLoop:
             )
             return
 
-        # 进行压缩
-        messages_yaml = await self.compress(messages_yaml)
+        # 判断是否需要压缩
+        if self.need_compress(messages_yaml):
+            messages_yaml = await self.compress(messages_yaml)
 
         final_content = None
         for loop_count in count():
@@ -332,12 +332,12 @@ class AgentLoop:
     # ----------------- 压缩 -----------------
 
     def need_compress(self, messages):
-        totol_token = token_counter(model="gpt-4o", messages=messages)
+        totol_token = token_counter(messages=messages)
         max_accept_token = self.provider.default_context_token * 0.9 - self.summary_tokens
         return totol_token >= max_accept_token
 
     def is_finish_compress(self, messages):
-        totol_token = token_counter(model="gpt-4o", messages=messages)
+        totol_token = token_counter(messages=messages)
         max_accept_token = self.provider.default_context_token * 0.4
         return totol_token < max_accept_token
 
@@ -358,9 +358,7 @@ class AgentLoop:
         return rt
 
     async def compress(self, messages):
-        # 如果不需要压缩，返回原始消息
-        if not self.need_compress(messages):
-            return messages
+
         logger.info("Compressing messages messages={}", len(messages))
 
         await self.consolidate_memory(messages)
