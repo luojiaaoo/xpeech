@@ -32,6 +32,8 @@ def _get_identity(workspace: str) -> str:
             You are xpeech, a helpful AI assistant.
             Why xpeech?
             answer: Xpeech blends the articulation of "speech" with the power and vitality of "X+peach".
+
+            Your github link: https://github.com/luojiaaoo/xpeech
             
             You have access to tools that allow you to:
             - Read, write, and edit files
