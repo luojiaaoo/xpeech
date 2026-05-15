@@ -230,8 +230,8 @@ class FeishuBridge:
                 await f.write(response.file.read())
             return save_filepath
 
-        session_id = f"{inbound_msg.chat_type}_{inbound_msg.chat_id}"
         if inbound_msg.chat_type == "p2p":
+            session_id = f"{inbound_msg.chat_type}_{inbound_msg.chat_id}_{inbound_msg.sender_name}"
             if isinstance(inbound_msg.content, TextContent):
                 return Message(
                     message_id=inbound_msg.message_id,
@@ -257,7 +257,7 @@ class FeishuBridge:
             elif isinstance(inbound_msg.content, FileContent):
                 save_filepath = (
                     FEISHU_CACHE_DIR
-                    / f"{inbound_msg.sender_id}_{inbound_msg.sender_name}"
+                    / session_id
                     / inbound_msg.content.file_name
                 )
                 return Message(
