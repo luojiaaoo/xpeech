@@ -1,35 +1,34 @@
+from typing import Any, AsyncIterator
+import json
+import httpx
+import base64
+from loguru import logger
+from ..utils.helper import detect_image_mime
+
 
 async def iter_sse_payloads(
-    cls,
-    response: aiohttp.ClientResponse,
+    response: httpx.Response,
 ) -> AsyncIterator[dict[str, Any]]:
     buffer = ""
-    async for chunk in response.content.iter_any():
+    async for chunk in response.aiter_bytes():
         buffer += chunk.decode("utf-8", errors="ignore")
         while "\n\n" in buffer:
             block, buffer = buffer.split("\n\n", 1)
-            payload = cls._parse_sse_block(block)
+            payload = _parse_sse_block(block)
             if payload is not None:
                 yield payload
-
-    payload = cls._parse_sse_block(buffer)
+    payload = _parse_sse_block(buffer)
     if payload is not None:
         yield payload
 
 
-def parse_sse_block(block: str) -> dict[str, Any] | None:
-    data_lines = [
-        line.removeprefix("data:").strip()
-        for line in block.splitlines()
-        if line.startswith("data:")
-    ]
+def _parse_sse_block(block: str) -> dict[str, Any] | None:
+    data_lines = [line.removeprefix("data:").strip() for line in block.splitlines() if line.startswith("data:")]
     if not data_lines:
         return None
-
     raw = "\n".join(data_lines)
     if not raw:
         return None
-
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -37,6 +36,8 @@ def parse_sse_block(block: str) -> dict[str, Any] | None:
         return None
     return payload if isinstance(payload, dict) else None
 
-def bytes_to_base64(raw: bytes, mime: str) -> str:
-    f"data:{mime};base64,{b64}"
+
+def bytes_to_image_url(raw: bytes) -> str:
+    mime = detect_image_mime(raw)
     b64 = base64.b64encode(raw).decode()
+    return f"data:{mime};base64,{b64}"
