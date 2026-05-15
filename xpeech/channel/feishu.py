@@ -180,7 +180,7 @@ class FeishuBridge:
         return f"```json\n{self._format_json_value(value)}\n```"
 
     def _format_json_value(self, value) -> str:
-        return json.dumps(value, ensure_ascii=False, indent=2)
+        return json.dumps(value, ensure_ascii=False, indent=4)
 
     async def one_by_one_session_id(self):
         session_ids = list(self.receive_queues.keys())

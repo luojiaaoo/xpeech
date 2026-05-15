@@ -3,6 +3,7 @@ from ..provider.schema import ProviderChatKwargs
 from pathlib import Path
 from .tools.filesystem import build_file_tools
 from .tools.shell import build_shell_tools
+from .tools.web import web_fetch
 from itertools import count
 from ..config.settings import settings
 from typing import Any
@@ -72,6 +73,9 @@ class AgentLoop:
             restrict_tools_to_workspace=settings.path.restrict_tools_to_workspace,
         )
         self.provider.register_tool()(exec)
+
+        # web fetch
+        self.provider.register_tool()(web_fetch)
 
     # ----------------- history会话读写 -----------------
 

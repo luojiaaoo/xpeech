@@ -12,6 +12,7 @@ dependencies = [
     "lark-oapi>=1.6.5",
     "litellm>=1.83.0",
     "loguru>=0.7.3",
+    "markitdown>=0.1.5",
     "openai>=2.36.0",
     "pillow>=12.2.0",
     "pydantic-settings>=2.14.0",
