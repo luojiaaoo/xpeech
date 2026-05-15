@@ -33,7 +33,7 @@ class LiteLLMProvider:
         self.api_base = api_base
         self.default_model = default_model
         self.default_max_tokens = default_max_tokens
-        self.default_context_token = default_context_token
+        self._default_context_token = default_context_token
         self.default_top_p = default_top_p
         self.default_reasoning_effort = default_reasoning_effort
         self.default_tool_jsons: list[dict[str, Any]] = []
@@ -42,6 +42,12 @@ class LiteLLMProvider:
         self._support_json_output = support_json_output
         self.extra_headers = extra_headers
         self._retry_client = LiteLLMRetryClient()
+
+    @property
+    def default_context_token(self) -> int:
+        """默认的上下文令牌数。"""
+
+        return self._default_context_token
 
     @property
     def support_image(self) -> bool:

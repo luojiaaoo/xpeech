@@ -82,6 +82,8 @@ async def chat(
         api_key=settings.llm.api_key,
         api_base=settings.llm.api_base,
         default_model=settings.llm.default_model,
+        default_context_token=settings.llm.default_context_token,
+        default_top_p=settings.llm.default_top_p,
         default_reasoning_effort=settings.llm.default_reasoning_effort,
         support_image=settings.llm.support_image,
         support_json_output=settings.llm.support_json_output,

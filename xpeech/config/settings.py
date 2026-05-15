@@ -38,6 +38,8 @@ class LLMConfig(BaseModel):
     api_key: str
     api_base: str
     default_model: str
+    default_context_token: int
+    default_top_p: float
     tools_python_package: str
     default_tools: list[str]
     default_reasoning_effort: ReasoningEffort | None = None
