@@ -231,7 +231,7 @@ class FeishuBridge:
             return save_filepath
 
         if inbound_msg.chat_type == "p2p":
-            session_id = f"{inbound_msg.chat_type}_{inbound_msg.chat_id}_{inbound_msg.sender_name}"
+            session_id = f"{inbound_msg.chat_type}_{inbound_msg.chat_id}"
             if isinstance(inbound_msg.content, TextContent):
                 return Message(
                     message_id=inbound_msg.message_id,
