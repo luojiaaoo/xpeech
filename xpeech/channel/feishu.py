@@ -61,6 +61,7 @@ class FeishuBridge:
         self.app_id = app_id
         self.app_secret = app_secret
         self.receive_queues: dict[str, asyncio.Queue[Message]] = {}
+        self.session_tasks: dict[str, asyncio.Task] = {}
         # 初始化通道
         self.channel = FeishuChannel(
             log_level=self.LOG_LEVEL,
@@ -183,15 +184,23 @@ class FeishuBridge:
         return json.dumps(value, ensure_ascii=False, indent=4)
 
     async def one_by_one_session_id(self):
-        session_ids = list(self.receive_queues.keys())
+        for session_id, task in list(self.session_tasks.items()):
+            if not task.done():
+                continue
+            self.session_tasks.pop(session_id, None)
+            try:
+                task.result()
+            except Exception:
+                logger.exception("Feishu session task failed session_id={}", session_id)
 
-        async def _run(session_id):
-            async with self.semaphore:
-                await self.consume(session_id=session_id)
+        for session_id in list(self.receive_queues.keys()):
+            if session_id in self.session_tasks:
+                continue
+            self.session_tasks[session_id] = asyncio.create_task(self._run_session(session_id))
 
-        tasks = [asyncio.create_task(_run(session_id)) for session_id in session_ids]
-        if tasks:
-            await asyncio.gather(*tasks)
+    async def _run_session(self, session_id: str) -> None:
+        async with self.semaphore:
+            await self.consume(session_id=session_id)
 
     async def poll_sessions(self, interval: float = 1.0) -> None:
         while True:
@@ -306,7 +315,9 @@ class FeishuBridge:
         finally:
             await self.channel.disconnect()
             poll_task.cancel()
-            await asyncio.gather(poll_task, return_exceptions=True)
+            for task in self.session_tasks.values():
+                task.cancel()
+            await asyncio.gather(poll_task, *self.session_tasks.values(), return_exceptions=True)
 
 
 def run(chat_url: str) -> None:
