@@ -11,6 +11,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 支持多轮会话和独立工作区
 - 支持 LiteLLM 兼容的大模型服务
 - 支持内置工具和自定义 Python 工具
+- 支持飞书消息桥接
 - 使用 `conf.toml` 管理普通配置，使用 `.env` 管理密钥
 
 ## 安装
@@ -38,12 +39,18 @@ tools_python_package = "custom_tools"
 default_tools = ["echo", "hello"]
 support_image = true
 support_json_output = true
+
+[feishu]
+app_id = "cli_xxx"
+idle_timeout = 3
+parallel = 3
 ```
 
 密钥写在 `.env`：
 
 ```env
 LLM__API_KEY=your_api_key_here
+FEISHU__APP_SECRET=your_feishu_app_secret_here
 ```
 
 `.env.example` 可以作为模板复制：
@@ -54,11 +61,13 @@ cp .env.example .env
 
 ## 启动
 
+启动 API 服务：
+
 ```bash
-uv run xpeech
+uv run -m xpeech api
 ```
 
-也可以使用模块方式启动：
+如果不指定服务，默认也是启动 API：
 
 ```bash
 uv run -m xpeech
@@ -74,6 +83,24 @@ http://localhost:7878
 
 - Swagger UI: `http://localhost:7878/docs`
 - ReDoc: `http://localhost:7878/redoc`
+
+启动飞书桥接：
+
+```bash
+uv run -m xpeech feishu
+```
+
+飞书桥接会从配置中读取：
+
+- `feishu.app_id`：飞书应用 ID
+- `feishu.idle_timeout`：同一会话消息合并等待时间，单位秒
+- `FEISHU__APP_SECRET`：飞书应用密钥，建议放在 `.env`
+
+如需连接非默认 API 地址，可以传入 `/chat` 地址：
+
+```bash
+uv run -m xpeech feishu --chat-url http://127.0.0.1:7878/chat
+```
 
 ## 发送消息
 
@@ -163,7 +190,7 @@ session/history/       # 会话历史
 
 ```bash
 uv sync
-uv run xpeech
+uv run -m xpeech api
 ```
 
 如果需要检查配置是否能读取：
