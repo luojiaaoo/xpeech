@@ -12,6 +12,7 @@ from lark_oapi.channel import (
     TextContent,
     ImageContent,
     FileContent,
+    PostContent,
 )
 import asyncio
 from .schema import Message, TextMessage, ImageMessage, FileMessage
@@ -22,6 +23,7 @@ from .helper import bytes_to_image_url
 import random
 from pathlib import Path
 import aiofiles
+from itertools import chain
 
 _EMOJI_TYPES = """
 OK THUMBSUP THANKS MUSCLE FINGERHEART APPLAUSE FISTBUMP JIAYI DONE LOVE
@@ -104,11 +106,12 @@ class FeishuBridge:
                 await f.write(response.file.read())
             return save_filepath
 
+        session_id = f"{inbound_msg.chat_type}_{inbound_msg.chat_id}"
         if inbound_msg.chat_type == "p2p":
             if isinstance(inbound_msg.content, TextContent):
                 return Message(
                     message_id=inbound_msg.message_id,
-                    session_id=f"{inbound_msg.chat_type}_{inbound_msg.chat_id}",
+                    session_id=session_id,
                     content=[TextMessage(text=inbound_msg.content.text)],
                     timestamp=int(inbound_msg.create_time),
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
@@ -116,7 +119,7 @@ class FeishuBridge:
             elif isinstance(inbound_msg.content, ImageContent):
                 return Message(
                     message_id=inbound_msg.message_id,
-                    session_id=f"{inbound_msg.chat_type}_{inbound_msg.chat_id}",
+                    session_id=session_id,
                     content=[
                         ImageMessage(
                             image_url=await get_image_url_from_key(
@@ -135,12 +138,37 @@ class FeishuBridge:
                 )
                 return Message(
                     message_id=inbound_msg.message_id,
-                    session_id=f"{inbound_msg.chat_type}_{inbound_msg.chat_id}",
+                    session_id=session_id,
                     content=[
                         FileMessage(
                             file=await _save_file(inbound_msg.message_id, inbound_msg.content.file_key, save_filepath)
                         )
                     ],
+                    timestamp=int(inbound_msg.create_time),
+                    session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
+                )
+            elif isinstance(inbound_msg.content, PostContent):
+                parsed_content: list = []
+                text_buffer: list[str] = []
+                for item in chain.from_iterable(inbound_msg.content.post["content"]):
+                    tag = item["tag"]
+                    if tag == "text":
+                        text_buffer.append(item["text"])
+                        continue
+                    if text_buffer:
+                        parsed_content.append(TextMessage(text="\n".join(text_buffer)))
+                        text_buffer = []
+                    if tag == "img":
+                        image_url = await get_image_url_from_key(inbound_msg.message_id, item["image_key"])
+                        parsed_content.append(ImageMessage(image_url=image_url))
+                    else:
+                        raise ValueError(f"Unknown tag: {tag}")
+                if text_buffer:
+                    parsed_content.append(TextMessage(text="\n".join(text_buffer)))
+                return Message(
+                    message_id=inbound_msg.message_id,
+                    session_id=f"{inbound_msg.chat_type}_{inbound_msg.chat_id}",
+                    content=parsed_content,
                     timestamp=int(inbound_msg.create_time),
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
                 )
