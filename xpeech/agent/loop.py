@@ -169,10 +169,11 @@ class AgentLoop:
                     result = await tool_call_func(model_cls(**tool_call.arguments))
             except Exception as e:
                 logger.warning(
-                    "Tool call failed loop_count={} tool_name={} args={}",
+                    "Tool call failed loop_count={} tool_name={} args={} exception={}",
                     loop_count,
                     tool_call.name,
                     tool_call.arguments,
+                    format_exception2llm(e),
                 )
                 result = format_exception2llm(e)
             else:
