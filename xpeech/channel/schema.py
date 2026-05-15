@@ -29,7 +29,7 @@ class Message(BaseModel):
     message_id: str  # Unique identifier for the message.
     session_id: str  # Unique identifier for the session.
     content: list[TextData | ImageData | FileData]  # List of messages.
-    timestamp: int  # Timestamp of the message.
+    timestamp: int  # Unix timestamp of the message, in seconds.
     session_metadata: dict[str, str | int]  # Metadata for the session.
 
 

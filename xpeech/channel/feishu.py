@@ -95,7 +95,7 @@ class FeishuBridge:
         if qsize == 0:
             return
         last_message: Message = queue._queue[qsize - 1]
-        if datetime.now().timestamp() - last_message.timestamp / 1000 < idle_timeout:
+        if datetime.now().timestamp() - last_message.timestamp < idle_timeout:
             return
         # 取出全部数据并请求chat接口
         messages = [queue.get_nowait() for _ in range(qsize)]
@@ -201,6 +201,8 @@ class FeishuBridge:
                 await asyncio.sleep(interval)
 
     async def _parse_msg(self, inbound_msg: InboundMessage) -> Message:
+        timestamp = inbound_msg.create_time // 1000
+
         async def get_image_url_from_key(message_id: str, image_key: str) -> bytes:
             client = self.channel.client
             request: GetMessageResourceRequest = (
@@ -237,7 +239,7 @@ class FeishuBridge:
                     message_id=inbound_msg.message_id,
                     session_id=session_id,
                     content=[TextData(text=inbound_msg.content.text)],
-                    timestamp=int(inbound_msg.create_time),
+                    timestamp=timestamp,
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
                 )
             elif isinstance(inbound_msg.content, ImageContent):
@@ -251,15 +253,11 @@ class FeishuBridge:
                             )
                         )
                     ],
-                    timestamp=int(inbound_msg.create_time),
+                    timestamp=timestamp,
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
                 )
             elif isinstance(inbound_msg.content, FileContent):
-                save_filepath = (
-                    FEISHU_CACHE_DIR
-                    / session_id
-                    / inbound_msg.content.file_name
-                )
+                save_filepath = FEISHU_CACHE_DIR / session_id / inbound_msg.content.file_name
                 return Message(
                     message_id=inbound_msg.message_id,
                     session_id=session_id,
@@ -268,7 +266,7 @@ class FeishuBridge:
                             file=await _save_file(inbound_msg.message_id, inbound_msg.content.file_key, save_filepath)
                         )
                     ],
-                    timestamp=int(inbound_msg.create_time),
+                    timestamp=timestamp,
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
                 )
             elif isinstance(inbound_msg.content, PostContent):
@@ -293,7 +291,7 @@ class FeishuBridge:
                     message_id=inbound_msg.message_id,
                     session_id=f"{inbound_msg.chat_type}_{inbound_msg.chat_id}",
                     content=parsed_content,
-                    timestamp=int(inbound_msg.create_time),
+                    timestamp=timestamp,
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
                 )
 
