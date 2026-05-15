@@ -1,5 +1,7 @@
 # Xpeech
 
+![Xpeech screenshot](screenshot/PixPin_2026-05-15_16-47-46.jpg)
+
 Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口，可以接收文本、图片和文件，调用大模型生成流式回复，并在需要时调用工具完成任务。
 
 适合用来快速启动一个可扩展的 AI Agent API 服务。
