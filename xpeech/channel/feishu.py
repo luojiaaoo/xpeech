@@ -302,6 +302,7 @@ class FeishuBridge:
         try:
             await self.channel.connect()
         finally:
+            await self.channel.disconnect()
             poll_task.cancel()
             await asyncio.gather(poll_task, return_exceptions=True)
 
