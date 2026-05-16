@@ -19,10 +19,10 @@ class LiteLLMRetryClient:
 
     def __init__(
         self,
-        max_retries: int = 3,
+        max_retries: int = 4,
         initial_delay: float = 1.0,
         max_delay: float = 10.0,
-        jitter: float = 0.25,
+        jitter: float = 0.5,
     ):
         self.max_retries = max(0, max_retries)
         self.initial_delay = initial_delay
@@ -66,7 +66,7 @@ class LiteLLMRetryClient:
             except ValueError:
                 pass
 
-        delay = min(self.initial_delay * (2**attempt), self.max_delay)
+        delay = min(self.initial_delay * (3**attempt), self.max_delay)
         if self.jitter <= 0:
             return delay
 
