@@ -117,7 +117,8 @@ def detect_image_mime(data: bytes) -> str | None:
 
 
 def token_counter(messages: list[dict]):
-    return _token_counter(model="gpt-4o", messages=messages)
+    # TODO: Remove default_token_count=900 when litellm fixes the token counter (video_url doesn't support)
+    return _token_counter(model="gpt-4o", messages=messages, default_token_count=900)
 
 
 async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> tuple[str | None, str | None]:

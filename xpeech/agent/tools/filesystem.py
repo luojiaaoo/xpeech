@@ -40,6 +40,7 @@ class ReadVideoArgs(BaseModel):
         description="End time in seconds. Omit this value to read until the end of the video. If provided, it must be greater than start_time.",
         default=None,
         ge=1,
+        le=20,
     )
 
 
