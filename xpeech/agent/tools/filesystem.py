@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 from pydantic import BaseModel, Field
 from ...utils.helper import (
     msys_to_win,
@@ -25,40 +26,64 @@ else:
 
 
 class ReadImageArgs(BaseModel):
-    path: str = Field(description="The image path to read")
+    path: str = Field(description="The image file path to read")
+
 
 class ReadVideoArgs(BaseModel):
-    path: str = Field(description="The video path to read")
-    start_time: int = Field(description="The start time in seconds", default=0)
-    end_time: int = Field(description="The end time in seconds", default=0)
+    path: str = Field(description="The video file path to read")
+    start_time: int = Field(
+        description="Start time in seconds (default 0, start from the beginning)",
+        default=0,
+        ge=0,
+    )
+    end_time: int | None = Field(
+        description="End time in seconds. Omit this value to read until the end of the video. If provided, it must be greater than start_time.",
+        default=None,
+        ge=1,
+    )
+
 
 class ReadVideoInfoArgs(BaseModel):
-    path: str = Field(description="The video path to inspect")
+    path: str = Field(description="The video file path to inspect")
+
 
 class ReadFileArgs(BaseModel):
     path: str = Field(description="The file path to read")
-    offset: int = Field(description="The offset line to start reading from")
-    limit: int = Field(description="The maximum number of lines to read")
+    offset: int = Field(
+        description="Line number to start reading from (1-indexed, default 1)",
+        default=1,
+        ge=1,
+    )
+    limit: int = Field(
+        description="Maximum number of lines to read (default 2000)",
+        default=2000,
+        ge=1,
+    )
 
 
 class WriteFileArgs(BaseModel):
-    path: str = Field(description="The file  path to write to")
+    path: str = Field(description="The file path to write to")
     content: str = Field(description="The content to write")
 
 
 class EditFileArgs(BaseModel):
-    path: str = Field(description="The file  path to edit")
-    old_text: str = Field(description="The exact text to find and replace")
+    path: str = Field(description="The file path to edit")
+    old_text: str = Field(description="The text to find and replace")
     new_text: str = Field(description="The text to replace with")
     replace_all: bool = Field(
-        description="Whether to replace all occurrences of old_text (default false)", default=False
+        description="Replace all occurrences (default false)",
+        default=False,
     )
 
 
 class ListDirArgs(BaseModel):
     path: str = Field(description="The directory path to list")
     recursive: bool = Field(description="Recursively list all files (default false)", default=False)
-    max_entries: int = Field(description="The maximum number of entries to return (default 200)", default=200)
+    max_entries: int = Field(
+        description="Maximum entries to return (default 200)",
+        default=200,
+        ge=1,
+    )
 
 
 def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
@@ -87,11 +112,11 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
                 raise PermissionError(f"Path escapes workspace: {user_path}")
         return ops_path
 
-    async def read_image(args: ReadImageArgs) -> str:
+    async def read_image(args: ReadImageArgs) -> str | list[dict[str, Any]]:
         """
-        Reads an image from a local file path.
-        Call this tool only if the user refers to an image that must be loaded from the filesystem.
-        If the image is already provided in the conversation (for example, as an attachment or inline image input).
+        Read an image from a local file path.
+        Call this tool only when the image must be loaded from the filesystem.
+        If the image is already provided in the conversation (for example, as an attachment or inline image input),
         do not call this tool and analyze the image directly.
         """
         path = args.path
@@ -101,11 +126,15 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         if not file_path.is_file():
             return f"Error: Not a file: {path}"
 
-        async with aiofiles.open(file_path, "r+b") as f:
+        async with aiofiles.open(file_path, "rb") as f:
             raw = await f.read()
         if not raw:
             return f"(Empty file: {path})"
-        raw = compress_image_bytes_to_jpg(raw)
+
+        try:
+            raw = compress_image_bytes_to_jpg(raw)
+        except Exception as e:
+            return f"Error: Cannot read image file {path}: {e}"
 
         mime = detect_image_mime(raw) or mimetypes.guess_type(file_path)[0]
         if not mime or not mime.startswith("image/"):
@@ -113,10 +142,11 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
 
         return build_image_content_blocks(raw, mime, path, f"(Image file: {path})")
 
-    async def read_video(args: ReadVideoArgs) -> str:
+    async def read_video(args: ReadVideoArgs) -> str | list[dict[str, Any]]:
         """
-        Reads a video from a local file path.
-        Use read_video_info first to inspect the video's duration before choosing start_time and end_time.
+        Read a video from a local file path.
+        Use read_video_info first to inspect duration before choosing start_time and end_time.
+        start_time=0 starts at the beginning. Omit end_time to read until the end.
         """
         path = args.path
         file_path = safe_resolve(path, include_buildin_skills_path=True)
@@ -126,20 +156,23 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
             return f"Error: Not a file: {path}"
 
         start_time = args.start_time if args.start_time is not None and args.start_time >= 0 else 0
-        end_time = args.end_time if args.end_time and args.end_time > 0 else None
+        end_time = args.end_time
         if end_time is not None and end_time <= start_time:
             return f"Error: end_time must be greater than start_time: {path}"
 
-        with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
-            output_path = await compress_video_to_mp4(
-                input_path=file_path,
-                output_path=Path(temp_dir) / f"{file_path.stem}_compressed.mp4",
-                start_time=start_time,
-                end_time=end_time,
-            )
-            async with aiofiles.open(output_path, "rb") as f:
-                raw = await f.read()
-            mime = mimetypes.guess_type(output_path)[0] or "video/mp4"
+        try:
+            with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
+                output_path = await compress_video_to_mp4(
+                    input_path=file_path,
+                    output_path=Path(temp_dir) / f"{file_path.stem}_compressed.mp4",
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+                async with aiofiles.open(output_path, "rb") as f:
+                    raw = await f.read()
+                mime = mimetypes.guess_type(output_path)[0] or "video/mp4"
+        except Exception as e:
+            return f"Error: Cannot read video file {path}: {e}"
 
         if not raw:
             return f"(Empty video file: {path})"
@@ -151,7 +184,7 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
 
     async def read_video_info(args: ReadVideoInfoArgs) -> str:
         """
-        Reads basic metadata for a video file, including duration, dimensions, fps, and audio.
+        Read basic video metadata: duration, dimensions, fps, audio, and file size.
         Use this before read_video to choose start_time and end_time.
         """
         path = args.path
@@ -165,7 +198,10 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         if mime != "unknown" and not mime.startswith("video/"):
             return f"Error: Not a video file: {path} (MIME: {mime})"
 
-        info = await read_video_metadata(file_path)
+        try:
+            info = await read_video_metadata(file_path)
+        except Exception as e:
+            return f"Error: Cannot inspect video file {path}: {e}"
         duration = info.get("duration")
         fps = info.get("fps")
         width = info.get("width")
@@ -182,6 +218,7 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
             f"Audio: {'yes' if audio else 'no'}",
             f"Size: {size_bytes} bytes",
             "Use read_video with start_time and end_time in seconds to read a specific segment.",
+            "For read_video, start_time=0 means the beginning. Omit end_time to read until the end.",
         ]
         return "\n".join(lines)
 
@@ -191,7 +228,6 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         Use offset and limit to paginate through large files.
         """
         _MAX_CHARS = 128_000
-        _DEFAULT_LIMIT = 2000
         path = args.path
         offset = args.offset
         limit = args.limit
@@ -202,7 +238,7 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         if not file_path.is_file():
             return f"Error: Not a file: {path}"
 
-        async with aiofiles.open(file_path, "r+b") as f:
+        async with aiofiles.open(file_path, "rb") as f:
             raw = await f.read()
         if not raw:
             return f"(Empty file: {path})"
@@ -221,7 +257,7 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
             return f"Error: offset {offset} is beyond end of file ({total} lines)"
 
         start = offset - 1
-        end = min(start + (limit or _DEFAULT_LIMIT), total)
+        end = min(start + limit, total)
         numbered = [f"{start + i + 1}| {line}" for i, line in enumerate(all_lines[start:end])]
         result = "\n".join(numbered)
 
@@ -314,8 +350,12 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         file_path = safe_resolve(path)
         if not file_path.exists():
             return f"Error: File not found: {path}"
+        if not file_path.is_file():
+            return f"Error: Not a file: {path}"
 
         content, encoding = await super_read_text(file_path=file_path)
+        if content is None:
+            return f"Error: Cannot edit binary file {path}."
         uses_crlf = "\r\n" in content
         if uses_crlf:
             content = content.replace("\r\n", "\n")
@@ -388,8 +428,8 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
                     continue
                 total += 1
                 if len(items) < cap:
-                    pfx = "📁 " if item.is_dir() else "📄 "
-                    items.append(f"{pfx}{item.name}")
+                    kind = "[dir] " if item.is_dir() else "[file] "
+                    items.append(f"{kind}{item.name}")
 
         if not items and total == 0:
             return f"Directory {path} is empty"
