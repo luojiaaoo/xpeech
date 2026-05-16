@@ -1,6 +1,12 @@
 from pathlib import Path
 from pydantic import BaseModel, Field
-from ...utils.helper import msys_to_win, is_relative_path, detect_image_mime, super_read_text
+from ...utils.helper import (
+    msys_to_win,
+    is_relative_path,
+    detect_image_mime,
+    super_read_text,
+    compress_image_bytes_to_jpg,
+)
 import platform
 from ...agent.skills.skill import BUILTIN_SKILLS_DIR
 import aiofiles
@@ -73,9 +79,9 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
 
     async def read_image(args: ReadImageArgs) -> str:
         """
-        Reads an image from a local file path. 
-        Call this tool only if the user refers to an image that must be loaded from the filesystem. 
-        If the image is already provided in the conversation (for example, as an attachment or inline image input). 
+        Reads an image from a local file path.
+        Call this tool only if the user refers to an image that must be loaded from the filesystem.
+        If the image is already provided in the conversation (for example, as an attachment or inline image input).
         do not call this tool and analyze the image directly.
         """
         path = args.path
@@ -89,6 +95,7 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
             raw = await f.read()
         if not raw:
             return f"(Empty file: {path})"
+        raw = compress_image_bytes_to_jpg(raw)
 
         mime = detect_image_mime(raw) or mimetypes.guess_type(file_path)[0]
         if not mime or not mime.startswith("image/"):
