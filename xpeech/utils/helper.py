@@ -14,6 +14,8 @@ from charset_normalizer import from_bytes, from_path
 from importlib.util import spec_from_file_location, module_from_spec
 import sys
 from litellm import token_counter as _token_counter
+from io import BytesIO
+from PIL import Image
 
 
 def ensure_async(func):
@@ -169,6 +171,35 @@ async def _save_image_url(file: InputImage, output_dir: Union[str, Path], stem: 
         return file_path
     else:
         raise ValueError(f"Unsupported image_url scheme: {image_url[:60]}...")
+
+
+def compress_image_bytes_to_jpg(
+    input_bytes: bytes,
+    target_kb: int = 500,
+    min_quality: int = 10,
+    max_quality: int = 95,
+) -> bytes:
+    target_bytes = target_kb * 1024
+    img = Image.open(BytesIO(input_bytes))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    low, high = min_quality, max_quality
+    best_data = None
+    while low <= high:
+        quality = (low + high) // 2
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG", quality=quality, optimize=True)
+        data = buffer.getvalue()
+        if len(data) <= target_bytes:
+            best_data = data
+            low = quality + 1
+        else:
+            high = quality - 1
+    if best_data is None:
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG", quality=min_quality, optimize=True)
+        best_data = buffer.getvalue()
+    return best_data
 
 
 class LiteralDumper(yaml.SafeDumper):

@@ -1,5 +1,4 @@
 from contextlib import ExitStack
-from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
 import json
@@ -7,39 +6,8 @@ import httpx
 import base64
 from loguru import logger
 from pydantic import ValidationError
-from ..utils.helper import detect_image_mime
-from io import BytesIO
-from PIL import Image
+from ..utils.helper import detect_image_mime, compress_image_bytes_to_jpg
 from .schema import ChatEvent, FileData, ImageData, Message, TextData
-
-
-def compress_image_bytes_to_jpg(
-    input_bytes: bytes,
-    target_kb: int = 500,
-    min_quality: int = 10,
-    max_quality: int = 95,
-) -> bytes:
-    target_bytes = target_kb * 1024
-    img = Image.open(BytesIO(input_bytes))
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    low, high = min_quality, max_quality
-    best_data = None
-    while low <= high:
-        quality = (low + high) // 2
-        buffer = BytesIO()
-        img.save(buffer, format="JPEG", quality=quality, optimize=True)
-        data = buffer.getvalue()
-        if len(data) <= target_bytes:
-            best_data = data
-            low = quality + 1
-        else:
-            high = quality - 1
-    if best_data is None:
-        buffer = BytesIO()
-        img.save(buffer, format="JPEG", quality=min_quality, optimize=True)
-        best_data = buffer.getvalue()
-    return best_data
 
 
 async def iter_sse_payloads(
