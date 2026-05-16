@@ -26,6 +26,7 @@ class LiteLLMProvider:
         default_top_p: float = 0.5,
         default_reasoning_effort: ReasoningEffort | None = None,
         support_image: bool = False,
+        support_video: bool = False,
         support_json_output: bool = False,
         extra_headers: dict = None,
     ):
@@ -39,6 +40,7 @@ class LiteLLMProvider:
         self.default_tool_jsons: list[dict[str, Any]] = []
         self.default_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
         self._support_image = support_image
+        self._support_video = support_video
         self._support_json_output = support_json_output
         self.extra_headers = extra_headers
         self._retry_client = LiteLLMRetryClient()
@@ -54,6 +56,13 @@ class LiteLLMProvider:
         """是否支持图片输入。"""
 
         return self._support_image
+
+    @property
+    def support_video(self) -> bool:
+        """是否支持视频输入。"""
+
+        return self._support_video
+
 
     @property
     def support_json_output(self) -> bool:

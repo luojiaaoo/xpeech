@@ -12,6 +12,7 @@ from lark_oapi.channel import (
     TextContent,
     ImageContent,
     FileContent,
+    MediaContent,
     PostContent,
 )
 import asyncio
@@ -269,7 +270,7 @@ class FeishuBridge:
                     timestamp=timestamp,
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
                 )
-            elif isinstance(inbound_msg.content, FileContent):
+            elif isinstance(inbound_msg.content, FileContent) or isinstance(inbound_msg.content, MediaContent):
                 save_filepath = FEISHU_CACHE_DIR / session_id / inbound_msg.content.file_name
                 return Message(
                     message_id=inbound_msg.message_id,

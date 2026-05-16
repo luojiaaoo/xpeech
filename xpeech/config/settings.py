@@ -44,6 +44,7 @@ class LLMConfig(BaseModel):
     default_tools: list[str]
     default_reasoning_effort: ReasoningEffort | None = None
     support_image: bool = False
+    support_video: bool = False
     support_json_output: bool = False
 
 

@@ -40,6 +40,7 @@ default_model = "openai/Pro/moonshotai/Kimi-K2.6"
 tools_python_package = "custom_tools"
 default_tools = ["echo", "hello"]
 support_image = true
+support_video = true
 support_json_output = true
 
 [feishu]

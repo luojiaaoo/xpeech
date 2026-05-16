@@ -17,6 +17,12 @@ from litellm import token_counter as _token_counter
 from io import BytesIO
 from PIL import Image
 
+# PIL.Image.ANTIALIAS is deprecated, use PIL.Image.Resampling.LANCZOS instead
+if not hasattr(Image, "ANTIALIAS"):
+    Image.ANTIALIAS = Image.Resampling.LANCZOS
+
+from moviepy.editor import VideoFileClip
+
 
 def ensure_async(func):
     if inspect.iscoroutinefunction(func):
@@ -200,6 +206,106 @@ def compress_image_bytes_to_jpg(
         img.save(buffer, format="JPEG", quality=min_quality, optimize=True)
         best_data = buffer.getvalue()
     return best_data
+
+
+async def compress_video_to_mp4(
+    input_path: Union[str, Path],
+    output_path: Union[str, Path],
+    start_time: float | None = None,
+    end_time: float | None = None,
+    fps: int | None = None,
+    bitrate: str = "2000k",
+    max_width: int | None = 1920,
+    max_height: int | None = 1080,
+) -> Path:
+    """
+    压缩视频文件并转换为 MP4 格式，支持剪辑和时间段选择。
+
+    Args:
+        input_path: 输入视频文件路径
+        output_path: 输出视频文件路径
+        start_time: 起始时间（秒），如果为 None 则从视频开头开始
+        end_time: 结束时间（秒），如果为 None 则到视频结尾
+        fps: 目标帧率，如果为 None 则保持原帧率
+        bitrate: 视频比特率，默认 "2000k"
+        max_width: 最大宽度，如果视频超过此宽度则会缩放，默认 1920
+        max_height: 最大高度，如果视频超过此高度则会缩放，默认 1080
+
+    Returns:
+        输出视频文件的 Path 对象
+    """
+    input_path = Path(input_path)
+    output_path = Path(output_path).with_suffix(".mp4")
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input video file not found: {input_path}")
+
+    def _process_video():
+        # 加载视频
+        clip = VideoFileClip(str(input_path))
+
+        # 剪辑时间段
+        if start_time is not None or end_time is not None:
+            clip = clip.subclip(0 if start_time is None else start_time, end_time)
+
+        # 调整尺寸（如果需要）
+        if max_width or max_height:
+            original_width, original_height = clip.size
+            if max_width and original_width > max_width:
+                ratio = max_width / original_width
+                new_width = max_width
+                new_height = int(original_height * ratio)
+                clip = clip.resize((new_width, new_height))
+            elif max_height and original_height > max_height:
+                ratio = max_height / original_height
+                new_height = max_height
+                new_width = int(original_width * ratio)
+                clip = clip.resize((new_width, new_height))
+
+        # 设置帧率（如果需要）
+        output_fps = fps or getattr(clip, "fps", None) or getattr(getattr(clip, "reader", None), "fps", None) or 24
+        clip = clip.set_fps(output_fps)
+
+        # 写入输出文件
+        clip.write_videofile(
+            str(output_path),
+            codec="libx264",
+            bitrate=bitrate,
+            preset="medium",
+            fps=output_fps,
+            audio_codec="aac" if clip.audio is not None else None,
+            audio=clip.audio is not None,
+            logger=None,  # 不显示进度日志
+        )
+
+        clip.close()
+
+    # 异步执行视频处理
+    await asyncify(_process_video)()
+
+    return output_path
+
+
+async def read_video_metadata(input_path: Union[str, Path]) -> dict[str, object]:
+    """Read basic video metadata without loading the video into the LLM context."""
+    input_path = Path(input_path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input video file not found: {input_path}")
+
+    def _read_metadata():
+        clip = VideoFileClip(str(input_path))
+        try:
+            width, height = clip.size
+            return {
+                "duration": clip.duration,
+                "fps": getattr(clip, "fps", None),
+                "width": width,
+                "height": height,
+                "audio": clip.audio is not None,
+            }
+        finally:
+            clip.close()
+
+    return await asyncify(_read_metadata)()
 
 
 class LiteralDumper(yaml.SafeDumper):

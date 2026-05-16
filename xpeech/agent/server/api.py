@@ -1,5 +1,4 @@
 from .server import app
-from .schema import OutboundMessage
 from fastapi import Depends
 from typing import Annotated
 from datetime import datetime
@@ -46,7 +45,7 @@ def content(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid JSON format")
 
 
-@app.post("/chat", response_model=OutboundMessage)
+@app.post("/chat")
 async def chat(
     session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
@@ -86,6 +85,7 @@ async def chat(
         default_top_p=settings.llm.default_top_p,
         default_reasoning_effort=settings.llm.default_reasoning_effort,
         support_image=settings.llm.support_image,
+        support_video=settings.llm.support_video,
         support_json_output=settings.llm.support_json_output,
     )
 

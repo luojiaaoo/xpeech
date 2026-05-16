@@ -56,12 +56,15 @@ class AgentLoop:
         """注册默认工具。"""
 
         # 文件读写
-        read_image, read_file, write_file, edit_file, list_dir = build_file_tools(
+        read_image, read_video_info, read_video, read_file, write_file, edit_file, list_dir = build_file_tools(
             workspace=self.workspace,
             restrict_tools_to_workspace=settings.path.restrict_tools_to_workspace,
         )
         if self.provider.support_image:
             self.provider.register_tool()(read_image)
+        if self.provider.support_video:
+            self.provider.register_tool()(read_video_info)
+            self.provider.register_tool()(read_video)
         self.provider.register_tool()(read_file)
         self.provider.register_tool()(write_file)
         self.provider.register_tool()(edit_file)

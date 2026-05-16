@@ -5,13 +5,14 @@ workspace_base_path = "workspace_base"
 
 [llm]
 api_base = "https://api.siliconflow.cn/v1"
-default_model = "openai/Qwen/Qwen3.6-35B-A3B"
+default_model = "openai/Pro/moonshotai/Kimi-K2.6"
 default_context_token = 256000
 default_top_p = 0.7
 tools_python_package = "custom_tools"
 default_tools = ["echo", "hello"]
 # default_reasoning_effort = "normal"
 support_image = true
+support_video = true
 support_json_output = true
 
 [feishu]

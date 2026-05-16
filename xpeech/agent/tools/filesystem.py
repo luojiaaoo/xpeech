@@ -6,13 +6,16 @@ from ...utils.helper import (
     detect_image_mime,
     super_read_text,
     compress_image_bytes_to_jpg,
+    compress_video_to_mp4,
+    read_video_metadata,
 )
 import platform
 from ...agent.skills.skill import BUILTIN_SKILLS_DIR
 import aiofiles
 import mimetypes
-from ..prompt.helper import build_image_content_blocks
+from ..prompt.helper import build_image_content_blocks, build_video_content_blocks
 import difflib
+import tempfile
 
 
 if platform.system() == "Windows":
@@ -24,6 +27,13 @@ else:
 class ReadImageArgs(BaseModel):
     path: str = Field(description="The image path to read")
 
+class ReadVideoArgs(BaseModel):
+    path: str = Field(description="The video path to read")
+    start_time: int = Field(description="The start time in seconds", default=0)
+    end_time: int = Field(description="The end time in seconds", default=0)
+
+class ReadVideoInfoArgs(BaseModel):
+    path: str = Field(description="The video path to inspect")
 
 class ReadFileArgs(BaseModel):
     path: str = Field(description="The file path to read")
@@ -102,6 +112,78 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
             return f"Error: Not an image file: {path} (MIME: {mime or 'unknown'})"
 
         return build_image_content_blocks(raw, mime, path, f"(Image file: {path})")
+
+    async def read_video(args: ReadVideoArgs) -> str:
+        """
+        Reads a video from a local file path.
+        Use read_video_info first to inspect the video's duration before choosing start_time and end_time.
+        """
+        path = args.path
+        file_path = safe_resolve(path, include_buildin_skills_path=True)
+        if not file_path.exists():
+            return f"Error: File not found: {path}"
+        if not file_path.is_file():
+            return f"Error: Not a file: {path}"
+
+        start_time = args.start_time if args.start_time is not None and args.start_time >= 0 else 0
+        end_time = args.end_time if args.end_time and args.end_time > 0 else None
+        if end_time is not None and end_time <= start_time:
+            return f"Error: end_time must be greater than start_time: {path}"
+
+        with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
+            output_path = await compress_video_to_mp4(
+                input_path=file_path,
+                output_path=Path(temp_dir) / f"{file_path.stem}_compressed.mp4",
+                start_time=start_time,
+                end_time=end_time,
+            )
+            async with aiofiles.open(output_path, "rb") as f:
+                raw = await f.read()
+            mime = mimetypes.guess_type(output_path)[0] or "video/mp4"
+
+        if not raw:
+            return f"(Empty video file: {path})"
+
+        if not mime.startswith("video/"):
+            return f"Error: Not a video file: {path} (MIME: {mime or 'unknown'})"
+
+        return build_video_content_blocks(raw, mime, path, f"(Video file: {path})")
+
+    async def read_video_info(args: ReadVideoInfoArgs) -> str:
+        """
+        Reads basic metadata for a video file, including duration, dimensions, fps, and audio.
+        Use this before read_video to choose start_time and end_time.
+        """
+        path = args.path
+        file_path = safe_resolve(path, include_buildin_skills_path=True)
+        if not file_path.exists():
+            return f"Error: File not found: {path}"
+        if not file_path.is_file():
+            return f"Error: Not a file: {path}"
+
+        mime = mimetypes.guess_type(file_path)[0] or "unknown"
+        if mime != "unknown" and not mime.startswith("video/"):
+            return f"Error: Not a video file: {path} (MIME: {mime})"
+
+        info = await read_video_metadata(file_path)
+        duration = info.get("duration")
+        fps = info.get("fps")
+        width = info.get("width")
+        height = info.get("height")
+        audio = info.get("audio")
+        size_bytes = file_path.stat().st_size
+
+        lines = [
+            f"Video file: {path}",
+            f"MIME: {mime}",
+            f"Duration: {duration:.3f} seconds" if isinstance(duration, (int, float)) else "Duration: unknown",
+            f"Dimensions: {width}x{height}" if width and height else "Dimensions: unknown",
+            f"FPS: {fps:.3f}" if isinstance(fps, (int, float)) else "FPS: unknown",
+            f"Audio: {'yes' if audio else 'no'}",
+            f"Size: {size_bytes} bytes",
+            "Use read_video with start_time and end_time in seconds to read a specific segment.",
+        ]
+        return "\n".join(lines)
 
     async def read_file(args: ReadFileArgs) -> str:
         """
@@ -317,4 +399,4 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
             result += f"\n\n(truncated, showing first {cap} of {total} entries)"
         return result
 
-    return read_image, read_file, write_file, edit_file, list_dir
+    return read_image, read_video_info, read_video, read_file, write_file, edit_file, list_dir

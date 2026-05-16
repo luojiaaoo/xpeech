@@ -98,3 +98,15 @@ def build_image_content_blocks(raw: bytes, mime: str, path: str, label: str) -> 
         },
         {"type": "text", "text": label},
     ]
+
+def build_video_content_blocks(raw: bytes, mime: str, path: str, label: str) -> list[dict[str, Any]]:
+    """Build native video blocks plus a short text label."""
+    b64 = base64.b64encode(raw).decode()
+    return [
+        {
+            "type": "video_url",
+            "video_url": {"url": f"data:{mime};base64,{b64}"},
+            "_meta": {"path": path},
+        },
+        {"type": "text", "text": label},
+    ]
