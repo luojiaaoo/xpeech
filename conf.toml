@@ -12,7 +12,7 @@ tools_python_package = "custom_tools"
 default_tools = ["echo", "hello"]
 # default_reasoning_effort = "normal"
 support_image = true
-support_video = true
+support_video = false
 support_json_output = true
 
 [feishu]
