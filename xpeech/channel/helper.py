@@ -15,7 +15,7 @@ from .schema import ChatEvent, FileData, ImageData, Message, TextData
 
 def compress_image_bytes_to_jpg(
     input_bytes: bytes,
-    target_kb: int = 200,
+    target_kb: int = 500,
     min_quality: int = 10,
     max_quality: int = 95,
 ) -> bytes:
@@ -114,7 +114,6 @@ async def iter_chat_events(
             ensure_ascii=False,
         ),
         "content": json.dumps(content, ensure_ascii=False),
-        "timestamp": _chat_timestamp(max(message.timestamp for message in messages)).isoformat(),
     }
     headers = {"x-session-id": session_id}
 
@@ -134,12 +133,6 @@ async def iter_chat_events(
                 response.raise_for_status()
                 async for payload in iter_sse_payloads(response):
                     yield payload
-
-
-def _chat_timestamp(timestamp: int) -> datetime:
-    if timestamp > 100_000_000_000:
-        timestamp = timestamp // 1000
-    return datetime.fromtimestamp(timestamp)
 
 
 def bytes_to_image_url(raw: bytes) -> str:
