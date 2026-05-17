@@ -166,6 +166,14 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         height = video_info.get("height")
         if not isinstance(duration, (int, float)) or not isinstance(width, int) or not isinstance(height, int):
             return f"Error: Cannot read required video metadata {path}: {video_info}"
+        if start_time >= duration:
+            return f"Error: start_time must be less than video duration: {path} (total {duration} seconds)"
+        if end_time is not None and end_time > duration:
+            return f"Error: end_time must be less than video duration: {path} (total {duration} seconds)"
+        if end_time is not None:
+            effective_duration = end_time - start_time
+        else:
+            effective_duration = duration - start_time
 
         try:
             with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
@@ -189,7 +197,7 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
             output_mime,
             path,
             **{
-                "duration": duration,
+                "duration": effective_duration,
                 "width": width,
                 "height": height,
             },
