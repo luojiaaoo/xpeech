@@ -123,7 +123,7 @@ def token_counter(messages: list[dict]):
 
 
 def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[list[dict], int]:
-    from ..agent.prompt.helper import parse_video_metadata_content_block
+    from ..agent.prompt.helper import parse_video_metadata_content_blocks
 
     cleaned_messages = []
     video_tokens = 0
@@ -142,7 +142,7 @@ def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[list[dic
                 continue
 
             has_video = True
-            metadata = parse_video_metadata_content_block(content)
+            metadata = parse_video_metadata_content_blocks(content)
             video_tokens += math.ceil(metadata.duration * 100)
 
         if has_video:

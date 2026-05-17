@@ -101,7 +101,7 @@ def build_image_content_blocks(raw: bytes, mime: str, path: str, label: str) -> 
     ]
 
 
-def parse_video_metadata_content_block(video_content_blocks: list[dict[str, Any]]) -> VideoMetadata:
+def parse_video_metadata_content_blocks(video_content_blocks: list[dict[str, Any]]) -> VideoMetadata:
     """Parse video content blocks and return duration/width/height."""
     try:
         label = video_content_blocks[1]["text"]
