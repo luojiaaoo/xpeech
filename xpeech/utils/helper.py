@@ -1,5 +1,6 @@
 from pathlib import Path
 import base64
+import math
 import mimetypes
 import re
 from typing import Union
@@ -117,9 +118,39 @@ def detect_image_mime(data: bytes) -> str | None:
 
 
 def token_counter(messages: list[dict]):
-    # TODO: Remove default_token_count=900 when litellm fixes the token counter (video_url doesn't support)
-    return _token_counter(model="gpt-4o", messages=messages, default_token_count=900)
+    cleaned_messages, video_tokens = _strip_video_blocks_and_count_tokens(messages)
+    return _token_counter(model="gpt-4o", messages=cleaned_messages) + video_tokens
 
+
+def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[list[dict], int]:
+    from ..agent.prompt.helper import parse_video_metadata_content_block
+
+    cleaned_messages = []
+    video_tokens = 0
+
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            cleaned_messages.append(message)
+            continue
+
+        cleaned_content = []
+        has_video = False
+        for idx, block in enumerate(content):
+            if block.get("type") != "video_url":
+                cleaned_content.append(block)
+                continue
+
+            has_video = True
+            metadata = parse_video_metadata_content_block(content)
+            video_tokens += math.ceil(metadata.duration * 100)
+
+        if has_video:
+            cleaned_messages.append({**message, "content": cleaned_content})
+        else:
+            cleaned_messages.append(message)
+
+    return cleaned_messages, video_tokens
 
 async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> tuple[str | None, str | None]:
     if not (file_path or file_bytes):
@@ -298,10 +329,8 @@ async def read_video_metadata(input_path: Union[str, Path]) -> dict[str, object]
             width, height = clip.size
             return {
                 "duration": clip.duration,
-                "fps": getattr(clip, "fps", None),
                 "width": width,
                 "height": height,
-                "audio": clip.audio is not None,
             }
         finally:
             clip.close()

@@ -4,6 +4,7 @@ from textwrap import dedent
 from ...utils.helper import save_to_workspace
 import base64
 from typing import Any
+from .schema import VideoMetadata
 
 
 def build_inbound_message_metadata(*metas: dict[str, str], tag: str = "metadata", sort: bool = False) -> str:
@@ -99,14 +100,48 @@ def build_image_content_blocks(raw: bytes, mime: str, path: str, label: str) -> 
         {"type": "text", "text": label},
     ]
 
-def build_video_content_blocks(raw: bytes, mime: str, path: str, label: str) -> list[dict[str, Any]]:
-    """Build native video blocks plus a short text label."""
+
+def parse_video_metadata_content_block(video_content_blocks: list[dict[str, Any]]) -> VideoMetadata:
+    """Parse video content blocks and return duration/width/height."""
+    try:
+        label = video_content_blocks[1]["text"]
+        label = label.strip()[len("<label>") : -len("</label>")].strip()
+        parsed = {
+            key: value.replace("\\n", "\n") for key, value in (line.split(": ", 1) for line in label.splitlines())
+        }
+        return VideoMetadata.model_validate(parsed)
+    except Exception as e:
+        raise RuntimeError("Internal error: failed to parse video metadata content block") from e
+
+
+def build_video_content_blocks(
+    raw: bytes,
+    mime: str,
+    path: str,
+    *,
+    duration: float,
+    width: int,
+    height: int,
+) -> list[dict[str, Any]]:
+    """Build native video blocks plus a parseable text label."""
     b64 = base64.b64encode(raw).decode()
+    metadata = VideoMetadata.model_validate(
+        {
+            "duration": duration,
+            "width": width,
+            "height": height,
+        }
+    )
+    attrs = metadata.model_dump()
+    label = "<label>\n" + "\n".join(f"{key}: {value}" for key, value in attrs.items()) + "\n</label>"
     return [
         {
             "type": "video_url",
             "video_url": {"url": f"data:{mime};base64,{b64}"},
             "_meta": {"path": path},
         },
-        {"type": "text", "text": label},
+        {
+            "type": "text",
+            "text": label,
+        },
     ]
