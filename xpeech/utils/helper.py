@@ -19,7 +19,7 @@ from litellm import token_counter as _token_counter
 from io import BytesIO
 from PIL import Image
 import tempfile
-from functools import cache
+from async_lru import alru_cache
 
 # PIL.Image.ANTIALIAS is deprecated, use PIL.Image.Resampling.LANCZOS instead
 if not hasattr(Image, "ANTIALIAS"):
@@ -322,7 +322,7 @@ async def compress_video_to_mp4(
     return output_path
 
 
-@cache
+@alru_cache(maxsize=1000)
 async def read_video_metadata_by_bytes(raw: bytes) -> dict[str, object]:
     def _get(_path):
         clip = VideoFileClip(str(_path))
