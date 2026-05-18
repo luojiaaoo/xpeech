@@ -191,17 +191,9 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
 
         if not raw:
             return f"(Empty video file: {path})"
-
-        return build_video_content_blocks(
-            raw,
-            output_mime,
-            path,
-            **{
-                "duration": effective_duration,
-                "width": width,
-                "height": height,
-            },
-        )
+        video_info = dict(duration=effective_duration, width=width, height=height, path=path)
+        label = "\n".join(f"{key}: {value}" for key, value in video_info.items())
+        return build_video_content_blocks(raw, output_mime, path, label)
 
     async def read_file(args: ReadFileArgs) -> str:
         """

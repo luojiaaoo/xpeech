@@ -269,7 +269,7 @@ class AgentLoop:
             return
 
         # 判断是否需要压缩
-        if self.need_compress(messages_yaml):
+        if await self.need_compress(messages_yaml):
             messages_yaml = await self.compress(messages_yaml)
 
         final_content = None
@@ -337,7 +337,7 @@ class AgentLoop:
         await self.save_history_yaml(message.session_id, messages_yaml)
 
         # 输出token使用百分比
-        token_count = token_counter(messages_yaml)
+        token_count = await token_counter(messages_yaml)
         token_percent = min(1, token_count / self.max_accept_token) * 100
         token_notify = "♻️ 即将达到最大令牌数，强制压缩" if token_percent > 90 else ""
         yield "data: {}\n\n".format(
@@ -354,12 +354,12 @@ class AgentLoop:
 
     # ----------------- 压缩 -----------------
 
-    def need_compress(self, messages):
-        totol_token = token_counter(messages=messages)
+    async def need_compress(self, messages):
+        totol_token = await token_counter(messages=messages)
         return totol_token >= self.max_accept_token
 
-    def is_finish_compress(self, messages):
-        totol_token = token_counter(messages=messages)
+    async def is_finish_compress(self, messages):
+        totol_token = await token_counter(messages=messages)
         max_accept_token = int(self.provider.default_context_token * 0.4)
         return totol_token < max_accept_token
 
@@ -448,21 +448,21 @@ class AgentLoop:
         keep_count = 4
         idx_split_keep = split_recent_user_messages(messages, keep_count)
         messages = truncate_tool_result(messages[:idx_split_keep], 1000) + messages[idx_split_keep:]
-        if self.is_finish_compress(messages):
+        if await self.is_finish_compress(messages):
             logger.info("Compression finished level=1 messages={}", len(messages))
             return messages
 
         # 二级压缩：只保留最后一条消息的时间戳，往前追溯7/6/5/4/3/2天的消息
         for days in range(7, 1, -1):
             messages = keep_messages_for_day(days, messages)
-            if self.is_finish_compress(messages):
+            if await self.is_finish_compress(messages):
                 logger.info("Compression finished level=2 messages={}", len(messages))
                 return messages
 
         # 三级压缩：AI总结历史消息，只保留最近4次对话消息
         idx_split_keep = split_recent_user_messages(messages, keep_count)
         recent_messages = messages[idx_split_keep:]
-        if idx_split_keep > 0 and self.is_finish_compress(recent_messages):
+        if idx_split_keep > 0 and await self.is_finish_compress(recent_messages):
             logger.info("Compression level=3 summarizing history")
             messages = await summary_messages(messages[:idx_split_keep]) + recent_messages
             logger.info("Compression finished level=3 messages={}", len(messages))

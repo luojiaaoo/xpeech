@@ -4,6 +4,7 @@ import math
 import mimetypes
 import re
 from typing import Union
+from uuid import uuid4
 import aiohttp
 import aiofiles
 from ..agent.server.schema import InputImage
@@ -17,6 +18,8 @@ import sys
 from litellm import token_counter as _token_counter
 from io import BytesIO
 from PIL import Image
+import tempfile
+from functools import cache
 
 # PIL.Image.ANTIALIAS is deprecated, use PIL.Image.Resampling.LANCZOS instead
 if not hasattr(Image, "ANTIALIAS"):
@@ -117,14 +120,19 @@ def detect_image_mime(data: bytes) -> str | None:
     return None
 
 
-def token_counter(messages: list[dict]):
-    cleaned_messages, video_tokens = _strip_video_blocks_and_count_tokens(messages)
+async def token_counter(messages: list[dict]):
+    cleaned_messages, video_tokens = await _strip_video_blocks_and_count_tokens(messages)
     return _token_counter(model="gpt-4o", messages=cleaned_messages) + video_tokens
 
 
-def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[list[dict], int]:
-    from ..agent.prompt.helper import parse_video_metadata_content_blocks
+def _parse_base64_url(url: str):
+    match = re.match(r"data:(?P<mime>[\w/+-]+);base64,(?P<data>.+)", url)
+    if not match:
+        raise ValueError("Invalid base64 data URI format")
+    return match.group("mime"), base64.b64decode(match.group("data"))
 
+
+async def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[list[dict], int]:
     cleaned_messages = []
     video_tokens = 0
 
@@ -136,14 +144,14 @@ def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[list[dic
 
         cleaned_content = []
         has_video = False
-        for idx, block in enumerate(content):
-            if block.get("type") != "video_url":
+        for block in content:
+            if block["type"] != "video_url":
                 cleaned_content.append(block)
                 continue
-
+            _, _bytes = _parse_base64_url(block["video_url"]["url"])
+            duration = (await read_video_metadata_by_bytes(_bytes))["duration"]
+            video_tokens += math.ceil(duration * 100)
             has_video = True
-            metadata = parse_video_metadata_content_blocks(content)
-            video_tokens += math.ceil(metadata.duration * 100)
 
         if has_video:
             cleaned_messages.append({**message, "content": cleaned_content})
@@ -151,6 +159,7 @@ def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[list[dic
             cleaned_messages.append(message)
 
     return cleaned_messages, video_tokens
+
 
 async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> tuple[str | None, str | None]:
     if not (file_path or file_bytes):
@@ -177,11 +186,7 @@ async def _save_image_url(file: InputImage, output_dir: Union[str, Path], stem: 
     # 情况 A：Base64 Data URI
     # ═════════════════════════════════════════════════════
     if image_url.startswith("data:"):
-        match = re.match(r"data:(?P<mime>[\w/+-]+);base64,(?P<data>.+)", image_url)
-        if not match:
-            raise ValueError("Invalid base64 data URI format")
-        mime = match.group("mime")
-        image_bytes = base64.b64decode(match.group("data"))
+        mime, image_bytes = _parse_base64_url(url=image_url)
         ext = mimetypes.guess_extension(mime) or ".png"
         filename = f"{stem}{ext}"
         file_path = output_dir / filename
@@ -317,25 +322,29 @@ async def compress_video_to_mp4(
     return output_path
 
 
+@cache
+async def read_video_metadata_by_bytes(raw: bytes) -> dict[str, object]:
+    def _get(_path):
+        clip = VideoFileClip(str(_path))
+        width, height = clip.size
+        clip.close()
+        return {"duration": clip.duration, "width": width, "height": height}
+
+    with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
+        output_path = Path(temp_dir) / "video.mp4"
+        async with aiofiles.open(output_path, "wb") as out_file:
+            await out_file.write(raw)
+        return await asyncify(_get)(output_path)
+
+
 async def read_video_metadata(input_path: Union[str, Path]) -> dict[str, object]:
     """Read basic video metadata without loading the video into the LLM context."""
     input_path = Path(input_path)
     if not input_path.exists():
         raise FileNotFoundError(f"Input video file not found: {input_path}")
-
-    def _read_metadata():
-        clip = VideoFileClip(str(input_path))
-        try:
-            width, height = clip.size
-            return {
-                "duration": clip.duration,
-                "width": width,
-                "height": height,
-            }
-        finally:
-            clip.close()
-
-    return await asyncify(_read_metadata)()
+    async with aiofiles.open(input_path, "rb") as f:
+        raw = await f.read()
+    return await read_video_metadata_by_bytes(raw)
 
 
 class LiteralDumper(yaml.SafeDumper):

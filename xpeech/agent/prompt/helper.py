@@ -4,10 +4,9 @@ from textwrap import dedent
 from ...utils.helper import save_to_workspace
 import base64
 from typing import Any
-from .schema import VideoContentBlocks, VideoMetadata
 
 
-def build_inbound_message_metadata(*metas: dict[str, str], tag: str = "metadata", sort: bool = False) -> str:
+def build_inbound_message_metadata(*metas: dict[str, str], sort: bool = False) -> str:
     """将 dict[str,str] 元属性转为适合 AI 阅读的字符串。
 
     Args:
@@ -20,7 +19,7 @@ def build_inbound_message_metadata(*metas: dict[str, str], tag: str = "metadata"
 
     Examples:
         >>> build({"author": "tom", "size": "1KB"})
-        '<metadata>\nauthor: tom\nsize: 1KB\n</metadata>'
+        'author: tom\nsize: 1KB'
     """
     if not metas:
         body = ""
@@ -31,8 +30,6 @@ def build_inbound_message_metadata(*metas: dict[str, str], tag: str = "metadata"
         # 将值中的换行转义，防止破坏整体格式
         lines = [f"{k}: {v.replace(chr(10), '\\n')}" for k, v in items]
         body = "\n".join(lines)
-    if tag:
-        return f"<{tag}>\n{body}\n</{tag}>"
     return body
 
 
@@ -101,41 +98,10 @@ def build_image_content_blocks(raw: bytes, mime: str, path: str, label: str) -> 
     ]
 
 
-def parse_video_metadata_content_blocks(video_content_blocks: list[dict[str, Any]]) -> VideoMetadata:
-    """Parse video content blocks and return duration/width/height."""
-    try:
-        blocks = VideoContentBlocks.model_validate({"blocks": video_content_blocks}).blocks
-        label = blocks[1]["text"]
-        label = label.strip()[len("<label>") : -len("</label>")].strip()
-        parsed = {
-            key: value.replace("\\n", "\n") for key, value in (line.split(": ", 1) for line in label.splitlines())
-        }
-        return VideoMetadata.model_validate(parsed)
-    except Exception as e:
-        raise RuntimeError("Internal error: failed to parse video metadata content block") from e
-
-
-def build_video_content_blocks(
-    raw: bytes,
-    mime: str,
-    path: str,
-    *,
-    duration: float,
-    width: int,
-    height: int,
-) -> list[dict[str, Any]]:
+def build_video_content_blocks(raw: bytes, mime: str, path: str, label: str) -> list[dict[str, Any]]:
     """Build native video blocks plus a parseable text label."""
     b64 = base64.b64encode(raw).decode()
-    metadata = VideoMetadata.model_validate(
-        {
-            "duration": duration,
-            "width": width,
-            "height": height,
-        }
-    )
-    attrs = metadata.model_dump()
-    label = "<label>\n" + "\n".join(f"{key}: {value}" for key, value in attrs.items()) + "\n</label>"
-    blocks = [
+    return [
         {
             "type": "video_url",
             "video_url": {"url": f"data:{mime};base64,{b64}"},
@@ -146,4 +112,3 @@ def build_video_content_blocks(
             "text": label,
         },
     ]
-    return VideoContentBlocks.model_validate({"blocks": blocks}).blocks
