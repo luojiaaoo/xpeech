@@ -135,20 +135,13 @@ class AgentLoop:
 
         # 输出工具调用内容
         if response.content and response.content.strip():
-            yield "data: {}\n\n".format(
-                json.dumps({"event": "assistant", "context": response.content}, ensure_ascii=False)
-            )
+            yield {"event": "assistant", "context": response.content}
 
         # 输出工具调用消息
-        yield "data: {}\n\n".format(
-            json.dumps(
-                {
-                    "event": "tool_call",
-                    "context": json.dumps([(i.id, i.name, i.arguments) for i in response.tool_calls]),
-                },
-                ensure_ascii=False,
-            )
-        )
+        yield {
+            "event": "tool_call",
+            "context": json.dumps([(i.id, i.name, i.arguments) for i in response.tool_calls]),
+        }
 
         # 还原工具调用格式
         tool_call_dicts = [
@@ -206,9 +199,7 @@ class AgentLoop:
             tool_call_result.append((tool_call.id, tool_call.name, result))
 
         # 输出工具调用结果消息
-        yield "data: {}\n\n".format(
-            json.dumps({"event": "tool_call_result", "context": json.dumps(tool_call_result)}, ensure_ascii=False)
-        )
+        yield {"event": "tool_call_result", "context": json.dumps(tool_call_result)}
 
         # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
         if self.max_iterations is not None and loop_count == self.max_iterations - 2:
@@ -250,26 +241,17 @@ class AgentLoop:
         ):
             command = command.strip()
             if command == "/help":
-                yield "data: {}\n\n".format(
-                    json.dumps({"event": "command", "context": "/new -> start a new session"}, ensure_ascii=False)
-                )
+                yield {"event": "command", "context": "/new -> start a new session"}
                 return
             elif command == "/new":
                 rt = await self.consolidate_memory(messages_yaml[:-1])
                 await self.del_history_yaml(message.session_id)
-                yield "data: {}\n\n".format(
-                    json.dumps({"event": "command", "context": f"NEW SESSION, {rt}"}, ensure_ascii=False)
-                )
+                yield {"event": "command", "context": f"NEW SESSION, {rt}"}
                 return
-            yield "data: {}\n\n".format(
-                json.dumps(
-                    {
-                        "event": "command",
-                        "context": f"Oops! I don't recognize {command}. Try entering /help for a list of commands.",
-                    },
-                    ensure_ascii=False,
-                )
-            )
+            yield {
+                "event": "command",
+                "context": f"Oops! I don't recognize {command}. Try entering /help for a list of commands.",
+            }
             return
 
         # 判断是否需要压缩
@@ -313,9 +295,7 @@ class AgentLoop:
 
             # 输出思考内容
             if response.reasoning_content and response.reasoning_content.strip():
-                yield "data: {}\n\n".format(
-                    json.dumps({"event": "thinking", "context": response.reasoning_content}, ensure_ascii=False)
-                )
+                yield {"event": "thinking", "context": response.reasoning_content}
 
             # 如果有工具调用
             if response.has_tool_calls:
@@ -335,7 +315,7 @@ class AgentLoop:
         messages_yaml.append({"role": "assistant", "content": final_content})
 
         # 输出助手消息
-        yield "data: {}\n\n".format(json.dumps({"event": "assistant", "context": final_content}, ensure_ascii=False))
+        yield {"event": "assistant", "context": final_content}
 
         # 保存历史记录
         await self.save_history_yaml(message.session_id, messages_yaml)
@@ -344,15 +324,10 @@ class AgentLoop:
         token_count = await token_counter(messages_yaml)
         token_percent = min(1, token_count / self.max_accept_token) * 100
         token_notify = "♻️ 即将达到最大令牌数，强制压缩" if token_percent > 90 else ""
-        yield "data: {}\n\n".format(
-            json.dumps(
-                {
-                    "event": "token_usage",
-                    "context": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}",
-                },
-                ensure_ascii=False,
-            )
-        )
+        yield {
+            "event": "token_usage",
+            "context": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}",
+        }
 
         logger.info("Agent run completed")
 

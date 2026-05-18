@@ -10,8 +10,8 @@ from ...utils.helper import save_to_workspace, ensure_path
 from ...utils.session import create_workspace_templates
 from ...provider.litellm_provider import LiteLLMProvider
 from ..loop import AgentLoop
-from fastapi.responses import StreamingResponse
 from ...provider.schema import ProviderChatKwargs
+from fastapi.sse import EventSourceResponse
 
 
 def session_metadata(
@@ -45,7 +45,7 @@ def content(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid JSON format")
 
 
-@app.post("/chat")
+@app.post("/chat", response_class=EventSourceResponse)
 async def chat(
     session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
@@ -88,20 +88,13 @@ async def chat(
         support_video=settings.llm.support_video,
         support_json_output=settings.llm.support_json_output,
     )
-
-    return StreamingResponse(
-        AgentLoop(
-            provider=provider,
-            workspace=workspace,
-            tools=settings.llm.default_tools,
-            max_iterations=30,
-            provider_chat_kwargs=ProviderChatKwargs(
-                reasoning_effort=None,
-            ),
-        ).run(message=message),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
-    )
+    async for i in AgentLoop(
+        provider=provider,
+        workspace=workspace,
+        tools=settings.llm.default_tools,
+        max_iterations=30,
+        provider_chat_kwargs=ProviderChatKwargs(
+            reasoning_effort=None,
+        ),
+    ).run(message=message):
+        yield i
