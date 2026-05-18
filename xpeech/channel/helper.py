@@ -4,47 +4,11 @@ from typing import AsyncIterator
 import json
 import httpx
 import base64
+from httpx_sse import aconnect_sse
 from loguru import logger
 from pydantic import ValidationError
 from ..utils.helper import detect_image_mime, compress_image_bytes_to_jpg
 from .schema import ChatEvent, FileData, ImageData, Message, TextData
-
-
-async def iter_sse_payloads(
-    response: httpx.Response,
-) -> AsyncIterator[ChatEvent]:
-    buffer = ""
-    async for chunk in response.aiter_bytes():
-        buffer += chunk.decode("utf-8", errors="ignore")
-        while "\n\n" in buffer:
-            block, buffer = buffer.split("\n\n", 1)
-            payload = _parse_sse_block(block)
-            if payload is not None:
-                yield payload
-    payload = _parse_sse_block(buffer)
-    if payload is not None:
-        yield payload
-
-
-def _parse_sse_block(block: str) -> ChatEvent | None:
-    data_lines = [line.removeprefix("data:").strip() for line in block.splitlines() if line.startswith("data:")]
-    if not data_lines:
-        return None
-    raw = "\n".join(data_lines)
-    if not raw:
-        return None
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.debug("Skipping malformed SSE payload: {}", raw[:200])
-        return None
-    if not isinstance(payload, dict):
-        return None
-    try:
-        return ChatEvent.model_validate(payload)
-    except ValidationError:
-        logger.debug("Skipping invalid SSE event payload: {}", payload)
-        return None
 
 
 async def iter_chat_events(
@@ -91,16 +55,20 @@ async def iter_chat_events(
             for file_path in files
         ]
         async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream(
+            async with aconnect_sse(
+                client,
                 "POST",
                 chat_url,
                 headers=headers,
                 data=data,
                 files=upload_files,
-            ) as response:
-                response.raise_for_status()
-                async for payload in iter_sse_payloads(response):
-                    yield payload
+            ) as event_source:
+                event_source.response.raise_for_status()
+                async for event in event_source.aiter_sse():
+                    try:
+                        yield ChatEvent.model_validate_json(event.data)
+                    except ValidationError:
+                        logger.exception("Skipping invalid SSE event payload: {}", event.data[:200])
 
 
 def bytes_to_image_url(raw: bytes) -> str:
