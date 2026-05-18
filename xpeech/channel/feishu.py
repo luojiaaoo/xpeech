@@ -138,7 +138,22 @@ class FeishuBridge:
     async def _send_markdown_reply(self, chat_id: str, text: str, reply_to: str) -> None:
         await self.channel.send(
             chat_id,
-            {"markdown": text},
+            {
+                "card": {
+                    "schema": "2.0",
+                    "body": {
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "margin": "0px 0px 0px 0px",
+                                "content": text,
+                                "text_size": "normal",
+                                "text_align": "left",
+                            }
+                        ]
+                    },
+                }
+            },
             *([{"reply_to": reply_to}] if reply_to is not None else []),
         )
 
