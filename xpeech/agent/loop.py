@@ -5,6 +5,7 @@ from .tools.filesystem import build_file_tools
 from .tools.shell import build_shell_tools
 from .tools.web import web_fetch, web_search
 from .tools.office import office_read
+from .tools.file_message import build_file_message_tools
 from itertools import count
 from ..config.settings import settings
 from typing import Any
@@ -83,6 +84,13 @@ class AgentLoop:
 
         # office document reader
         self.provider.register_tool()(office_read)
+
+        # outbound send file messages
+        send_file = build_file_message_tools(
+            workspace=self.workspace,
+            restrict_tools_to_workspace=settings.path.restrict_tools_to_workspace,
+        )
+        self.provider.register_tool()(send_file)
 
     # ----------------- history会话读写 -----------------
 

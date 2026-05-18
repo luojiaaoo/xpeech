@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import Any, NotRequired, TypedDict
 from loguru import logger
 from ..config.settings import settings
+import base64
 
 
 class OutputEventType(TypedDict):
@@ -153,6 +154,18 @@ class FeishuBridge:
         # 处理消息
         try:
             async for event in iter_chat_events(messages, self.chat_url):
+
+                # 检测有没有文件发送请求
+                if event.event == ChatEventType.TOOL_CALL_RESULT:
+                    for _, tool_call_name, tool_call_result in json.loads(event.context):
+                        if tool_call_name != 'send_file':
+                            continue
+                        filepath = tool_call_result
+                        async with aiofiles.open(filepath, "rb") as f:
+                            source_bytes = await f.read()
+                        await self.channel.send(chat_id, {"file": {"source": source_bytes, "file_name": Path(filepath).name}})
+                
+                # 返回给用户消息
                 card = self._format_chat_event(event)
                 if card:
                     await self.channel.send(
