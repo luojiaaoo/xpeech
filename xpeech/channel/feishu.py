@@ -26,17 +26,56 @@ from pathlib import Path
 import aiofiles
 from itertools import chain
 from datetime import datetime
+from typing import Any, NotRequired, TypedDict
 from loguru import logger
 from ..config.settings import settings
 
 
-OUTPUT_EVENT_TYPES: dict[ChatEventType, str | None | type(Ellipsis)] = {
-    ChatEventType.ASSISTANT: ...,
-    ChatEventType.COMMAND: ...,
-    ChatEventType.THINKING: "我正在思考，稍等一下。",
-    ChatEventType.TOOL_CALL: "我需要调用工具处理一下。",
-    ChatEventType.TOOL_CALL_RESULT: "工具处理完成，我继续整理结果。",
-    ChatEventType.TOKEN_USAGE: ...,
+class OutputEventType(TypedDict):
+    content: str | None | type(Ellipsis)
+    text_size: NotRequired[str | dict[str, Any]]
+    text_align: NotRequired[str]
+    icon: NotRequired[dict[str, Any] | None]
+
+
+# 图标： https://open.feishu.cn/document/feishu-cards/enumerations-for-icons
+OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
+    ChatEventType.ASSISTANT: {
+        "content": ...,
+        "text_size": "normal",
+        "text_align": "left",
+        "icon": {"tag": "standard_icon", "token": "robot_filled", "color": "red"},
+    },
+    ChatEventType.COMMAND: {
+        "content": ...,
+        "text_size": "notation",
+        "text_align": "center",
+        "icon": {"tag": "standard_icon", "token": "command_outlined", "color": "green"},
+    },
+    ChatEventType.THINKING: {
+        "content": "我正在思考，稍等一下。",
+        "text_size": "notation",
+        "text_align": "center",
+        "icon": {"tag": "standard_icon", "token": "edit-continue_outlined", "color": "green"},
+    },
+    ChatEventType.TOOL_CALL: {
+        "content": "我需要调用工具处理一下。",
+        "text_size": "notation",
+        "text_align": "center",
+        "icon": {"tag": "standard_icon", "token": "external_outlined", "color": "green"},
+    },
+    ChatEventType.TOOL_CALL_RESULT: {
+        "content": "工具处理完成，我继续整理结果。",
+        "text_size": "notation",
+        "text_align": "center",
+        "icon": {"tag": "standard_icon", "token": "select-down_outlined", "color": "green"},
+    },
+    ChatEventType.TOKEN_USAGE: {
+        "content": ...,
+        "text_size": "notation",
+        "text_align": "left",
+        "icon": None,
+    },
 }
 
 _EMOJI_TYPES = """
@@ -114,50 +153,66 @@ class FeishuBridge:
         # 处理消息
         try:
             async for event in iter_chat_events(messages, self.chat_url):
-                if event.event not in OUTPUT_EVENT_TYPES:
-                    continue
-
-                output = OUTPUT_EVENT_TYPES[event.event]
-                if output is None:
-                    continue
-                message = self._format_chat_event(event) if output is ... else output
-                if message:
-                    await self._send_markdown_reply(
+                card = self._format_chat_event(event)
+                if card:
+                    await self.channel.send(
                         chat_id,
-                        message,
-                        reply_to if event.event == ChatEventType.ASSISTANT else None,
+                        card,
+                        *(
+                            [{"reply_to": reply_to}]
+                            if event.event == ChatEventType.ASSISTANT and reply_to is not None
+                            else []
+                        ),
                     )
         except Exception:
             logger.exception("Failed to consume Feishu messages session_id={}", session_id)
-            await self._send_markdown_reply(chat_id, "这次处理消息时出错了，请稍后再试。", reply_to)
+            card = self._format_chat_event(
+                ChatEvent(event=ChatEventType.ASSISTANT, context="这次处理消息时出错了，请稍后再试。")
+            )
+            if card:
+                await self.channel.send(
+                    chat_id,
+                    card,
+                    *([{"reply_to": reply_to}] if reply_to is not None else []),
+                )
 
     def _chat_id_from_session_id(self, session_id: str) -> str:
         parts = session_id.split("_", 1)
         return parts[1] if len(parts) == 2 else session_id
 
-    async def _send_markdown_reply(self, chat_id: str, text: str, reply_to: str) -> None:
-        await self.channel.send(
-            chat_id,
-            {
-                "card": {
-                    "schema": "2.0",
-                    "body": {
-                        "elements": [
-                            {
-                                "tag": "markdown",
-                                "margin": "0px 0px 0px 0px",
-                                "content": text,
-                                "text_size": "normal",
-                                "text_align": "left",
-                            }
-                        ]
-                    },
-                }
-            },
-            *([{"reply_to": reply_to}] if reply_to is not None else []),
-        )
+    def _format_chat_event(self, event: ChatEvent) -> dict[str, Any] | None:
+        if event.event not in OUTPUT_EVENT_TYPES:
+            return None
 
-    def _format_chat_event(self, event: ChatEvent) -> str:
+        output = OUTPUT_EVENT_TYPES[event.event]
+        content = output["content"]
+        if content is None:
+            return None
+
+        text = self._format_chat_event_content(event) if content is ... else content
+        if not text:
+            return None
+
+        element = {
+            "tag": "markdown",
+            "margin": "0px 0px 0px 0px",
+            "content": text,
+            "text_size": output.get("text_size", "normal"),
+            "text_align": output.get("text_align", "left"),
+        }
+        if output.get("icon") is not None:
+            element["icon"] = output["icon"]
+
+        return {
+            "card": {
+                "schema": "2.0",
+                "body": {
+                    "elements": [element],
+                },
+            }
+        }
+
+    def _format_chat_event_content(self, event: ChatEvent) -> str:
         if event.event == ChatEventType.ASSISTANT:
             return event.context
         elif event.event == ChatEventType.COMMAND:
