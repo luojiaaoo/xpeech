@@ -18,14 +18,16 @@ async def office_read(args: OfficeReadArgs) -> str:
     file_path = Path(args.path)
     
     if not file_path.exists():
-        return f"Error: File not found: {args.path}"
+        raise FileNotFoundError(f"File not found: {args.path}")
     
     if not file_path.is_file():
-        return f"Error: Not a file: {args.path}"
+        raise ValueError(f"Not a file: {args.path}")
     
     supported_extensions = {'.docx', '.xlsx', '.pdf', '.pptx', '.doc', '.xls', '.ppt'}
     if file_path.suffix.lower() not in supported_extensions:
-        return f"Error: Unsupported file format: {file_path.suffix}. Supported formats: {', '.join(sorted(supported_extensions))}"
+        raise ValueError(
+            f"Unsupported file format: {file_path.suffix}. Supported formats: {', '.join(sorted(supported_extensions))}"
+        )
     
     try:
         md = MarkItDown()
@@ -40,4 +42,4 @@ async def office_read(args: OfficeReadArgs) -> str:
         return f"{title_info}{content}"
     
     except Exception as e:
-        return f"Error: Failed to read document {args.path}: {str(e)}"
+        raise RuntimeError(f"Failed to read document {args.path}: {str(e)}") from e

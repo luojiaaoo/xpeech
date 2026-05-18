@@ -118,9 +118,9 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         path = args.path
         file_path = safe_resolve(path, include_buildin_skills_path=True)
         if not file_path.exists():
-            return f"Error: File not found: {path}"
+            raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
-            return f"Error: Not a file: {path}"
+            raise ValueError(f"Not a file: {path}")
 
         async with aiofiles.open(file_path, "rb") as f:
             raw = await f.read()
@@ -130,11 +130,11 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         try:
             raw = compress_image_bytes_to_jpg(raw)
         except Exception as e:
-            return f"Error: Cannot read image file {path}: {e}"
+            raise RuntimeError(f"Cannot read image file {path}: {e}") from e
 
         mime = detect_image_mime(raw) or mimetypes.guess_type(file_path)[0]
         if not mime or not mime.startswith("image/"):
-            return f"Error: Not an image file: {path} (MIME: {mime or 'unknown'})"
+            raise ValueError(f"Not an image file: {path} (MIME: {mime or 'unknown'})")
 
         return build_image_content_blocks(raw, mime, path, f"(Image file: {path})")
 
@@ -147,29 +147,29 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         path = args.path
         file_path = safe_resolve(path, include_buildin_skills_path=True)
         if not file_path.exists():
-            return f"Error: File not found: {path}"
+            raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
-            return f"Error: Not a file: {path}"
+            raise ValueError(f"Not a file: {path}")
 
         start_time = args.start_time if args.start_time is not None and args.start_time >= 0 else 0
         end_time = args.end_time
         if end_time is not None and end_time <= start_time:
-            return f"Error: end_time must be greater than start_time: {path}"
+            raise ValueError(f"end_time must be greater than start_time: {path}")
 
         try:
             video_info = await read_video_metadata(file_path)
         except Exception as e:
-            return f"Error: Cannot read video metadata {path}: {e}"
+            raise RuntimeError(f"Cannot read video metadata {path}: {e}") from e
 
         duration = video_info.get("duration")
         width = video_info.get("width")
         height = video_info.get("height")
         if not isinstance(duration, (int, float)) or not isinstance(width, int) or not isinstance(height, int):
-            return f"Error: Cannot read required video metadata {path}: {video_info}"
+            raise RuntimeError(f"Cannot read required video metadata {path}: {video_info}")
         if start_time >= duration:
-            return f"Error: start_time must be less than video duration: {path} (total {duration} seconds)"
+            raise ValueError(f"start_time must be less than video duration: {path} (total {duration} seconds)")
         if end_time is not None and end_time > duration:
-            return f"Error: end_time must be less than video duration: {path} (total {duration} seconds)"
+            raise ValueError(f"end_time must be less than video duration: {path} (total {duration} seconds)")
         if end_time is not None:
             effective_duration = end_time - start_time
         else:
@@ -187,7 +187,7 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
                     raw = await f.read()
                 output_mime = mimetypes.guess_type(output_path)[0] or "video/mp4"
         except Exception as e:
-            return f"Error: Cannot read video file {path}: {e}"
+            raise RuntimeError(f"Cannot read video file {path}: {e}") from e
 
         if not raw:
             return f"(Empty video file: {path})"
@@ -207,9 +207,9 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
 
         file_path = safe_resolve(path, include_buildin_skills_path=True)
         if not file_path.exists():
-            return f"Error: File not found: {path}"
+            raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
-            return f"Error: Not a file: {path}"
+            raise ValueError(f"Not a file: {path}")
 
         async with aiofiles.open(file_path, "rb") as f:
             raw = await f.read()
@@ -219,7 +219,7 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         text_content, _ = await super_read_text(file_path)
 
         if text_content is None:
-            return f"Error: Cannot read binary file {path}."
+            raise ValueError(f"Cannot read binary file {path}.")
 
         all_lines = text_content.splitlines()
         total = len(all_lines)
@@ -227,7 +227,7 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         if offset < 1:
             offset = 1
         if offset > total:
-            return f"Error: offset {offset} is beyond end of file ({total} lines)"
+            raise ValueError(f"offset {offset} is beyond end of file ({total} lines)")
 
         start = offset - 1
         end = min(start + limit, total)
@@ -322,19 +322,19 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         replace_all = args.replace_all
         file_path = safe_resolve(path)
         if not file_path.exists():
-            return f"Error: File not found: {path}"
+            raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
-            return f"Error: Not a file: {path}"
+            raise ValueError(f"Not a file: {path}")
 
         content, encoding = await super_read_text(file_path=file_path)
         if content is None:
-            return f"Error: Cannot edit binary file {path}."
+            raise ValueError(f"Cannot edit binary file {path}.")
         uses_crlf = "\r\n" in content
         if uses_crlf:
             content = content.replace("\r\n", "\n")
         match, count = _find_match(content, old_text.replace("\r\n", "\n"))
         if match is None:
-            return _not_found_msg(old_text, content, path)
+            raise ValueError(_not_found_msg(old_text, content, path))
         if count > 1 and not replace_all:
             return (
                 f"Warning: old_text appears {count} times. "
@@ -379,9 +379,9 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         recursive = args.recursive
         dir_path = safe_resolve(path, include_buildin_skills_path=True)
         if not dir_path.exists():
-            return f"Error: Directory not found: {path}"
+            raise FileNotFoundError(f"Directory not found: {path}")
         if not dir_path.is_dir():
-            return f"Error: Not a directory: {path}"
+            raise NotADirectoryError(f"Not a directory: {path}")
 
         cap = max_entries or _DEFAULT_MAX
         items: list[str] = []

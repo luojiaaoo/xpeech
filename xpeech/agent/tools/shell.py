@@ -152,10 +152,7 @@ def build_shell_tools(workspace: str, restrict_tools_to_workspace: bool):
 
     async def shell(args: ShellArgs) -> str:
         command = args.command
-        try:
-            _guard_command(command, workspace, restrict_tools_to_workspace)
-        except RuntimeError as e:
-            return f"Error: {e}"
+        _guard_command(command, workspace, restrict_tools_to_workspace)
         process = await asyncio.create_subprocess_exec(
             bash_path,
             "-l",
@@ -172,7 +169,7 @@ def build_shell_tools(workspace: str, restrict_tools_to_workspace: bool):
             )
         except asyncio.TimeoutError:
             await _kill_process(process)
-            return f"Error: Command timed out after {EXEC_TIMEOUT} seconds"
+            raise TimeoutError(f"Command timed out after {EXEC_TIMEOUT} seconds")
         except asyncio.CancelledError:
             await _kill_process(process)
             raise
