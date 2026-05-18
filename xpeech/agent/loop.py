@@ -4,6 +4,7 @@ from pathlib import Path
 from .tools.filesystem import build_file_tools
 from .tools.shell import build_shell_tools
 from .tools.web import web_fetch, web_search
+from .tools.office import office_read
 from itertools import count
 from ..config.settings import settings
 from typing import Any
@@ -79,6 +80,9 @@ class AgentLoop:
         # web fetch
         self.provider.register_tool()(web_fetch)
         self.provider.register_tool()(web_search)
+
+        # office document reader
+        self.provider.register_tool()(office_read)
 
     # ----------------- history会话读写 -----------------
 
