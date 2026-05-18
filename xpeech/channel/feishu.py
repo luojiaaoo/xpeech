@@ -142,7 +142,7 @@ class FeishuBridge:
             return
         # 取出全部数据并请求chat接口
         messages = [queue.get_nowait() for _ in range(qsize)]
-        chat_id = self._chat_id_from_session_id(session_id)
+        chat_id = messages[-1].chat_id
         reply_to = messages[-1].message_id
         # 添加已读反应
         for i in messages:
@@ -175,10 +175,6 @@ class FeishuBridge:
                     card,
                     *([{"reply_to": reply_to}] if reply_to is not None else []),
                 )
-
-    def _chat_id_from_session_id(self, session_id: str) -> str:
-        parts = session_id.split("_", 1)
-        return parts[1] if len(parts) == 2 else session_id
 
     def _format_chat_event(self, event: ChatEvent) -> dict[str, Any] | None:
         if event.event not in OUTPUT_EVENT_TYPES:
@@ -321,6 +317,7 @@ class FeishuBridge:
             if isinstance(inbound_msg.content, TextContent):
                 return Message(
                     message_id=inbound_msg.message_id,
+                    chat_id=inbound_msg.chat_id,
                     session_id=session_id,
                     content=[TextData(text=inbound_msg.content.text)],
                     timestamp=timestamp,
@@ -329,6 +326,7 @@ class FeishuBridge:
             elif isinstance(inbound_msg.content, ImageContent):
                 return Message(
                     message_id=inbound_msg.message_id,
+                    chat_id=inbound_msg.chat_id,
                     session_id=session_id,
                     content=[
                         ImageData(
@@ -344,6 +342,7 @@ class FeishuBridge:
                 save_filepath = FEISHU_CACHE_DIR / session_id / inbound_msg.content.file_name
                 return Message(
                     message_id=inbound_msg.message_id,
+                    chat_id=inbound_msg.chat_id,
                     session_id=session_id,
                     content=[
                         FileData(
@@ -373,7 +372,8 @@ class FeishuBridge:
                     parsed_content.append(TextData(text="\n".join(text_buffer)))
                 return Message(
                     message_id=inbound_msg.message_id,
-                    session_id=f"{inbound_msg.chat_type}_{inbound_msg.chat_id}",
+                    chat_id=inbound_msg.chat_id,
+                    session_id=session_id,
                     content=parsed_content,
                     timestamp=timestamp,
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},

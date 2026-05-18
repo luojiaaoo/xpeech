@@ -28,6 +28,7 @@ class Message(BaseModel):
     """Message to be sent to Feishu."""
 
     message_id: str  # Unique identifier for the message.
+    chat_id: str  # Unique identifier for the chat.
     session_id: str  # Unique identifier for the session.
     content: list[TextData | ImageData | FileData]  # List of messages.
     timestamp: int  # Unix timestamp of the message, in seconds.
