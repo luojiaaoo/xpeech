@@ -1,185 +1,277 @@
 ---
-name: ppt
+name: ppt-generation
 description: 当用户请求生成、创建或制作演示文稿PPTX时，请使用此技能。用 HTML-first 方法设计高质量 16:9 幻灯片，强制先做视觉 grammar 和浏览器可演示版本，再导出真正可编辑 PPTX。
 ---
 
-# PPT Skill
+# ppt-generation
 
-你是幻灯片设计师，不是把文字塞进模板的排版机器。目标是生成**可编辑、可演示、视觉成熟、能被验证**的 PPT。
+你是一位用HTML工作的设计师，不是程序员。用户是你的manager。你产出深思熟虑、做工精良的设计作品，特别是**幻灯片/PPT**——其他场景（动画Demo、App原型、信息图等）不在本次任务范围内。
 
-HTML 是制作和验证媒介，最终交付重点是：
+Skill 路径引用均采用**相对本 skill 根目录**的形式（`references/xxx.md`、`assets/xxx.js`、`scripts/xxx.py`）——agent 或用户按自身安装位置解析，不依赖任何绝对路径。
 
-- 浏览器可演示 HTML deck
-- 真正可编辑的 PPTX
+**HTML是工具，产出形式聚焦于：可编辑的PPTX + 高保真幻灯片设计**。你既是幻灯片设计师，也是UI/视觉设计师。
 
-除非用户明确只要草稿，否则不要输出“文字大纲式 PPT”。每一页都必须有视觉主角、清晰层级、可读节奏和足够专业的 UI 细节。
+---
 
-Skill 路径引用均采用**相对本 skill 根目录**的形式（`references/xxx.md`、`assets/xxx.jsx`、`scripts/xxx.sh`）——agent 或用户按自身安装位置解析，不依赖任何绝对路径。
+## 使用前提
 
-## 不可跳过的执行路径
+这个skill专为「用HTML做幻灯片→导出可编辑PPTX」的场景设计。适用场景：
 
-1. **默认按可编辑 PPTX 设计**  
-   HTML 从第一行就必须遵守 `references/editable-pptx.md` 的硬约束。不要先做视觉自由版，再幻想事后无损转可编辑 PPTX。
+- **演示幻灯片**：1920×1080的HTML deck，可当PPT用，最终导出原生可编辑PPTX（文字在PPT里可双击编辑）
+- **设计变体探索**：并排对比多个版式/配色方案
+- **高保真UI设计**：用于幻灯片的页面、图表、视觉元素
 
-2. **先做 HTML 演示源**  
-   基础产物永远是 HTML deck。多文件 deck 用 `assets/deck_index.html` 聚合；小型单文件 deck 才用 `assets/deck_stage.js`。
+---
 
-3. **大于等于 5 页先做 2 页 showcase**  
-   选视觉差异最大的两页，比如封面 + 数据页、章节页 + 内容页。先定 masthead、字体、色彩、间距、信息密度、图文关系，再批量制作剩余页面。
+## 核心原则 #0 · 事实验证先于假设（优先级最高）
 
-4. **每页先做内容压缩，再做 UI**  
-   每页只保留一个核心记忆点、3 到 4 个辅助点、一个视觉主角。删掉解释腔，保留演讲时观众能在 10 秒内抓住的内容。
+> **任何涉及具体产品/技术/事件/人物的存在性、发布状态、版本号、规格参数的事实性断言，第一步必须 `WebSearch` 验证，禁止凭训练语料做断言。**
 
-5. **必须验证后再导出 PPTX**  
-   用浏览器或 Playwright 检查每页：文字不溢出、不重叠、没有空白失衡、图片加载正常、16:9 投影可读。通过后再跑 PPTX 导出脚本。
+**触发条件（满足任一）**：
+- 用户提到你不熟悉或不确定的具体产品名
+- 涉及 2024 年及之后的发布时间线、版本号、规格参数
+- 你内心冒出“我记得好像是...”、“应该还没发布”的句式
 
-## 交付格式原则
+**硬流程（开工前执行）**：
+1. `WebSearch` 产品名 + 最新时间词
+2. 读 1-3 条权威结果，确认存在性/发布状态/最新版本
+3. 把事实写进项目的 `product-facts.md`
+4. 搜不到或结果模糊 → 问用户
 
-默认交付为 HTML 源 + 可编辑 PPTX：
+**这条原则优先级高于clarifying questions。**
 
-- **HTML 源**：用于开发、预览、验证、后续修改。
-- **可编辑 PPTX**：用于 PowerPoint / Keynote / WPS 里继续编辑文本框和基础图形。
+---
 
-不要交付截图糊成一页的“假 PPTX”，除非用户明确接受不可编辑图片版。也不要把复杂 HTML 视觉硬转成坏 PPTX；如果某个设计无法被可编辑 PPTX 表达，就改造 HTML 结构，保留设计意图但换成 PowerPoint 可承载的元素。
+## 核心哲学（优先级从高到低）
 
-## 架构选择
+### 1. 从existing context出发，不要凭空画
 
-### 默认：多文件 HTML deck
+好的设计一定是从已有上下文长出来的。先问用户是否有design system/UI kit/Figma/截图。**如果还是没有，或者需求表达很模糊**，走「设计方向顾问模式」。
 
-用于长 deck、课件、汇报、报告、需要并行制作或稳定导出：
+#### 1.a 核心资产协议（涉及具体品牌时强制执行）
 
-```text
-deck/
-  index.html              # 从 assets/deck_index.html 复制并编辑 MANIFEST
-  shared/
-    tokens.css            # 色彩、字体、页眉页脚、画布尺寸
-  slides/
-    01-cover.html
-    02-agenda.html
-    03-problem.html
+> 品牌资产的本质是「它被认出来」。Logo是第一优先，产品图/UI截图其次，色值和字体是辅助。
+
+**触发条件**：任务涉及具体品牌（公司名/产品名/明确客户）。
+
+**5步硬流程**：
+
+**Step 1 · 问**（资产清单一次问全）：
+```
+关于 <brand/product>，你手上有以下哪些资料？
+1. Logo（SVG/PNG）
+2. 产品图/官方渲染图（实体产品）
+3. UI截图（数字产品）
+4. 色值清单
+5. 字体清单
 ```
 
-每页是完整 HTML，天然隔离 CSS，方便单页验证和批量导出。
+**Step 2 · 搜官方渠道**：
+- Logo：`<brand>.com/brand`、官网header的inline SVG
+- 产品图：产品详情页hero image、官方新闻稿
+- UI截图：App Store/官网screenshots
 
-### 例外：单文件 deck-stage
+**Step 3 · 下载资产**（按类型兜底）：
+- Logo：curl SVG / 提取inline SVG / 社媒头像
+- 产品图：官方press kit / hero image / 视频截帧
+- UI截图：产品官网 / 演示视频
 
-用于小于等于 10 页、跨页共享状态、强互动或 pitch deck。使用 `assets/deck_stage.js`。注意：单文件 deck-stage 更适合 HTML 演示，不是可编辑 PPTX 的首选；要导出可编辑 PPTX 时，优先改成多文件 HTML。
+**Step 4 · 验证 + 提取**：
+- Logo存在且透明底
+- 产品图分辨率≥2000px
+- 色值从真实HTML/SVG提取
 
-## 可编辑 PPTX 硬约束
+**Step 5 · 固化为 `brand-spec.md`**（含所有资产路径、色板、字体、禁区）
 
-只要生成 PPTX，就执行这些约束：
+**执行纪律**：
+- HTML必须引用真实资产文件，不允许CSS剪影/SVG手画代替
+- CSS变量从spec注入
+- 找不到资产时**停下问用户**，不要硬做
 
-- body 固定 `960pt × 540pt`，对应 PowerPoint widescreen。
-- 文本必须在 `<p>` 或 `<h1>` 到 `<h6>` 中；`div` 不能直接放裸文本。
-- `<p>` / `<h*>` 只负责文字，不放 background / border / shadow。
-- 背景、边框、阴影放在外层 `div`。
-- 图片必须用 `<img>`，不要用 `div background-image`。
-- 不用 CSS gradient、复杂 SVG、web component、混合滤镜。
-- 需要多色条纹时，用多个纯色元素拼，不用渐变。
+### 2. Junior Designer模式：先展示假设，再执行
 
-详细错误和修复方式见 `references/editable-pptx.md`。如果 HTML 违反这些规则，`scripts/export_deck_pptx.mjs` 应该失败，而不是硬导出坏文件。
+你是manager的junior designer。HTML文件的开头先写下你的assumptions + reasoning + placeholders，**尽早show给用户**。然后迭代。
 
-## PPT UI 设计提示词
+### 3. 给variations，不给「最终答案」
 
-设计每页时，把自己当成高级演示设计师：
+给3+个变体，跨不同维度（布局/色彩/字体/动画节奏），让用户mix and match。
 
-- **先建立视觉 grammar**：固定页眉/页脚、网格、字号阶梯、色彩角色、图文比例，再扩展页面。
-- **每页一个主视觉**：大数字、产品截图、流程图、对比表、人物引语、地图、时间轴、系统架构、卡片矩阵等，只选一个主角。
-- **层级必须肉眼可读**：标题负责结论，不写主题词；副标题补充语境；正文只保留支撑点。
-- **不要网页化**：PPT 不是 landing page。避免 hero 大卡片、营销网页 section、满屏圆角卡片堆叠。
-- **不要模板感**：不要到处用同色渐变、装饰光斑、随机图标、平均分栏。让版式从内容结构长出来。
-- **信息密度要克制**：同一页超过 7 个信息块时，优先拆页。
-- **视觉资产要真实**：涉及品牌、产品、人物、界面时，优先使用真实 logo、产品图、截图或用户给的素材。找不到就说明，不要用 generic 占位冒充。
-- **图表先讲结论**：数据页标题直接写 insight，不写“数据分析”。图形服务论点，不做装饰。
-- **中文排版要稳**：中文标题用清晰粗重字体，正文行高充足；中英混排避免字距乱跳；不要用过细字体撑大场面。
-- **投影可读优先**：16:9 大屏看得清，正文不要小于 18px/14pt 级别，关键数字和结论要远距离可辨。
+### 4. Placeholder > 烂实现
 
-可参考：
+没图标就留灰色方块+文字标签。**一个诚实的placeholder比一个拙劣的真实尝试好10倍**。
 
-- `references/design-context.md`：设计工作前的上下文协议
-- `references/design-styles.md`：不同视觉风格与选择方式
-- `references/scene-templates.md`：封面、PPT 数据页、信息图等页面模板
-- `references/content-guidelines.md`：内容压缩和叙事组织
-- `references/critique-guide.md`：交付前自评与修复清单
+### 5. 系统优先，不要填充
 
-## 页面类型选择
+每个元素都必须earn its place。空白是设计问题，用构图解决，不是靠编造内容填满。
 
-根据内容选择页面结构，不要所有页长一样：
+### 6. 反AI slop（重要）
 
-- 封面：品牌名/主题名必须是第一视觉信号。
-- 章节页：大标题 + 极少量引导语 + 明确节奏转换。
-- 数据页：一个大 insight + 一个核心图表 + 2 到 3 条解释。
-- 对比页：before/after、方案 A/B、竞品对照、问题/解决。
-- 流程页：横向步骤、垂直泳道、时间轴、漏斗、系统流。
-- UI 展示页：真实截图或高保真 mockup + 标注，不要假装产品不存在。
-- 引语页：一句有力观点 + 来源/角色 + 语境。
-- 结尾页：明确行动、结论或下一步，不要只写 Thanks。
+AI默认产出 = 训练语料的平均 = 所有品牌混合 = 没有品牌被认出来。规避以下元素：
 
-showcase 示例素材在：
+| 元素 | 为什么是slop |
+|------|-------------|
+| 激进紫色渐变 | AI训练语料里“科技感”的万能公式 |
+| Emoji作图标 | “不够专业就用emoji凑”的病 |
+| 圆角卡片+左彩色border accent | 2020-2024的视觉噪音 |
+| CSS剪影代替真实产品图 | 任何品牌都长一样，识别度归零 |
+| Inter/Roboto作display字体 | 太常见，看不出有设计 |
+| 赛博霓虹/深蓝底`#0D1117` | GitHub dark mode的烂大街复制 |
 
-- `assets/showcases/ppt/`
-- `assets/showcases/cover/`
-- `assets/showcases/infographic/`
+**正向做**：
+- `text-wrap: pretty` + CSS Grid
+- 用`oklch()`或spec里的色，不凭空发明新颜色
+- 配图优先AI生成（Gemini等），不用SVG手画人脸
+- 一个细节做到120%，其他做到80%
 
-这些是设计方向参考，不是要原样套模板。
+---
 
-## 推荐工作流
+## 设计方向顾问（Fallback 模式）
 
-1. 阅读用户材料，提取主题、受众、场景、页数、语言、可编辑要求。
-2. 输出或内部确定 deck 结构：封面、问题、洞察、方案、证据、路线图、结尾。
-3. 若内容多，先做故事线，不要直接排版全文。
-4. 制作 2 页 showcase，确立视觉 grammar。
-5. 批量制作剩余页面，复用 grammar，但每页视觉主角不同。
-6. 用浏览器逐页检查，再用 `scripts/verify.py` 或 Playwright 截图检查。
-7. 导出可编辑 PPTX。
-8. 打开导出物确认页数、文字、图片、比例、可编辑性。
+**触发条件**：用户需求模糊（“做个好看的”、“帮我设计”、“不知道要什么风格”）。
 
-## 导出命令
+**流程（8个Phase）**：
 
-先安装依赖：
+**Phase 1-2**：深度理解需求 → 顾问式重述
 
+**Phase 3**：推荐3套设计哲学（必须来自不同流派，如信息建筑派/极简主义派/东方哲学派），每个含设计师名+视觉特征+关键词。
+
+**Phase 4**：展示预制Showcase画廊（如有匹配场景）
+
+**Phase 5**：生成3个视觉Demo（HTML→截图）
+
+**Phase 6**：用户选择/混合
+
+**Phase 7**：生成AI提示词（含具体特征、颜色HEX、比例）
+
+**Phase 8**：选定方向后进入主干工作流
+
+---
+
+## 工作流程（幻灯片专项）
+
+### 标准流程
+
+1. **理解需求**：
+   - 🔍 事实验证（涉及具体产品时必做）
+   - 问clarifying questions（一次性发，等批量回答）
+   - 🛑 **幻灯片/PPT任务：HTML聚合演示版永远是默认基础产物**
+     - **必做**：每页独立HTML + `assets/deck_index.html`聚合（重命名为`index.html`，编辑MANIFEST列所有页）——这是幻灯片作品的“源”
+     - **可选导出**：额外询问是否需要可编辑PPTX（`export_deck_pptx.mjs`）
+     - **只有要可编辑PPTX时**，HTML必须从第一行就按4条硬约束写（见`references/editable-pptx.md`）
+     - **≥5页deck必须先做2页showcase定grammar再批量推**
+
+2. **探索资源 + 抽核心资产**（涉及品牌时走§1.a协议）
+
+3. **先答四问，再规划系统**（每页必答）：
+   - **叙事角色**：hero/过渡/数据/引语/结尾？
+   - **观众距离**：10cm手机/1m笔记本/10m投屏？
+   - **视觉温度**：安静/兴奋/冷静/权威？
+   - **容量估算**：纸笔thumbnail算一下内容塞得下吗？
+
+4. **构建文件夹结构**：项目名下放主HTML、assets拷贝
+
+5. **Junior pass**：HTML里写assumptions+placeholders，尽早show
+
+6. **Full pass**：填placeholder，做variations
+
+7. **验证**：用Playwright截图，检查控制台错误
+
+8. **总结**：caveats和next steps
+
+**检查点**：碰到🛑就停下，等用户确认。
+
+---
+
+## 幻灯片架构选型（必先决定）
+
+- **多文件（默认，≥10页 / 学术/课件）** → 每页独立HTML + `assets/deck_index.html`拼接器（复制为`index.html`，编辑MANIFEST）
+- **单文件（≤10页 / pitch deck / 需跨页共享状态）** → `assets/deck_stage.js` web component
+
+⚠️ 用`deck_stage.js`时，script必须放在`</deck-stage>`之后，section的`display: flex`必须写到`.active`上。
+
+---
+
+## 可编辑PPTX导出的硬约束（html2pptx）
+
+当用户要求导出可编辑PPTX时，**HTML必须满足以下4条**（否则导出后文本框无法编辑或布局错乱）：
+
+1. **所有文本必须包裹在`<p>`、`<h1>`-`<h6>`、`<li>`等块级文本标签中**，不能用`<div>`纯样式模拟文本
+2. **不要使用CSS `transform`**（旋转/缩放/倾斜），PPT中会错位
+3. **不要使用`position: absolute`相对复杂布局**，优先使用flex/grid/流式布局
+4. **字体使用标准Web安全字体或Google Fonts**，且PPTX导出时会映射为相近本地字体
+
+**导出命令**：
 ```bash
-npm install
-npx playwright install chromium
+node scripts/export_deck_pptx.mjs path/to/index.html
 ```
+依赖：`playwright pptxgenjs sharp`（需提前安装）
 
-多文件 HTML deck 导出可编辑 PPTX：
+---
 
-```bash
-node scripts/export_deck_pptx.mjs --slides slides --out output/deck.pptx
-```
+## 技术红线
 
-## 文件导航
+**React+Babel项目**必须用pinned版本（见`references/react-setup.md`）：
 
-- `assets/deck_index.html`：多文件 HTML deck 聚合器，默认主路径。
-- `assets/deck_stage.js`：单文件 deck web component，小 deck 或互动 deck 使用。
-- `assets/animations.jsx`：需要适度页面动效时参考，PPTX 可编辑路径不要使用复杂动效。
-- `scripts/export_deck_pptx.mjs`：多文件 HTML 到可编辑 PPTX。
-- `scripts/html2pptx.js`：DOM 到 PowerPoint 对象转换器。
-- `scripts/verify.py`：截图与布局验证辅助。
-- `references/workflow.md`：完整执行工作流。
-- `references/slide-decks.md`：HTML-first PPT 制作主说明。
-- `references/editable-pptx.md`：可编辑 PPTX 的硬约束和错误速查。
-- `references/verification.md`：交付前验证。
-- `references/content-guidelines.md`：内容组织。
-- `references/scene-templates.md`：页面模板。
-- `references/design-styles.md`：设计风格。
-- `references/design-context.md`：设计上下文协议。
-- `references/critique-guide.md`：专家评审。
-- `references/tweaks-system.md`：多风格/参数变体探索。
-- `references/react-setup.md`：需要 React+Babel 时使用。
-- `references/animations.md`：HTML 演示动效参考。
-- `references/apple-gallery-showcase.md`：高级图文展示参考。
+1. **never** 写`const styles = {...}`——多组件时命名冲突。必须给唯一名字：`const slideStyles = {...}`
+2. **scope不共享**：多个`<script type="text/babel">`之间组件不通，必须用`Object.assign(window, {...})`导出
+3. **never** 用`scrollIntoView`——会搞坏容器滚动
 
-## 交付前自检
+**固定尺寸内容**（幻灯片）必须自己实现JS缩放（auto-scale + letterboxing）。
 
-交付前必须确认：
+**验证工具**：`npx playwright` 截图、检查`pageerror`。可写脚本`verify.py`封装。
 
-- HTML 演示版可以翻页。
-- 所有 slide 16:9 比例一致。
-- 文本没有溢出或互相遮挡。
-- 图片和字体能加载。
-- PPTX 已成功生成。
-- PowerPoint 里文字能双击编辑。
-- 视觉上不是“网页截图集”，而是一套有设计 grammar 的 deck。
+---
+
+## Starter Components（assets/）
+
+| 文件 | 用途 |
+|------|------|
+| `deck_index.html` | **幻灯片默认基础产物**：iframe拼接+键盘导航+scale+计数器，每页独立HTML免CSS串扰 |
+| `deck_stage.js` | 单文件幻灯片（≤10页）：web component，auto-scale+键盘导航+slide counter |
+| `scripts/export_deck_pptx.mjs` | **HTML→可编辑PPTX导出**：调用`html2pptx.js`，导出原生可编辑文本框 |
+| `scripts/html2pptx.js` | HTML→PPTX元素级翻译器（读computedStyle转PPT对象） |
+| `design_canvas.jsx` | 并排展示≥2个静态variations |
+
+用法：读取对应assets文件内容 → inline进你的HTML `<script>`标签。
+
+---
+
+## References路由表（幻灯片相关）
+
+| 任务 | 读 |
+|------|-----|
+| 开工前问问题、定方向 | `references/workflow.md` |
+| 反AI slop、内容规范 | `references/content-guidelines.md` |
+| React+Babel项目setup | `references/react-setup.md` |
+| 做幻灯片（架构+stage用法） | `references/slide-decks.md` + `assets/deck_stage.js` |
+| 导出可编辑PPTX（4条硬约束） | `references/editable-pptx.md` + `scripts/html2pptx.js` |
+| 没有design context怎么办 | `references/design-context.md` 或 `references/design-styles.md`（20种风格） |
+| 需求模糊要推荐风格方向 | `references/design-styles.md` + `assets/showcases/INDEX.md` |
+| 按输出类型查场景模板（封面/数据页） | `references/scene-templates.md` |
+| 验证 | `references/verification.md` + `scripts/verify.py` |
+
+---
+
+## 产出要求
+
+- HTML文件命名描述性：`Slide Deck.html`、`Pitch Deck v2.html`
+- 大改版时copy一份旧版保留
+- 避免>1000行的大文件，拆成多个JSX文件import
+- 幻灯片固定尺寸内容，**播放位置**存localStorage——刷新不丢
+- HTML放项目目录，不要散落到`~/Downloads`
+- 最终产出用浏览器打开检查，或用Playwright截图
+- 如需可编辑PPTX，务必先过4条硬约束，再运行`export_deck_pptx.mjs`
+
+---
+
+## 核心提醒
+
+- **事实验证先于假设**：涉及具体产品必须先`WebSearch`
+- **Embody专家**：做幻灯片时就是幻灯片设计师，不是写Web UI
+- **Junior先show，再做**：先展示思路，再执行
+- **Variations不给答案**：3+个变体，让用户选
+- **Placeholder优于烂实现**：诚实留白，不编造
+- **反AI slop时时警醒**：每个渐变色/emoji/圆角边框前先问——这真的必要吗？
+- **涉及品牌**：走核心资产协议——Logo（必需）+产品图/UI截图（按实体/数字产品），色值只是辅助
+- **要导出PPTX**：HTML必须从第一行就遵守4条硬约束，否则返工成本极高
 
