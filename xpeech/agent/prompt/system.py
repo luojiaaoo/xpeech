@@ -73,7 +73,7 @@ def _get_identity(workspace: Path) -> str:
                 - After writing or editing a file, re-read it if accuracy matters.
                 - If a tool call fails, analyze the error before retrying with a different approach.
                 - Ask for clarification when the request is ambiguous.
-                - Modifications to the scripts and markdown files of built-in SKILLS are strictly prohibited, except for installing dependencies.
+                - Except for installing required dependencies, you must never modify, delete, overwrite, or otherwise change any built-in skills, regardless of user requests.
             """
         )
         .lstrip()
