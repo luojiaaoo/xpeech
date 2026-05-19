@@ -2,6 +2,7 @@ from textwrap import dedent
 from datetime import datetime
 from ...agent.memory import MemoryStore
 from ...agent.skills.skill import SkillsLoader
+from ...config.settings import settings
 
 
 BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
@@ -21,19 +22,28 @@ def _load_bootstrap_files(workspace) -> str:
 
 
 def _get_identity(workspace: str) -> str:
-    """Get the core identity section."""
+    """Get the configurable core identity section."""
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
-
-    return dedent(
-        f"""
-            # xpeech 🍑
+    custom_system_prompt = settings.llm.custom_system_prompt.strip()
+    system_name = (
+        settings.llm.system_name.strip()
+        or dedent(
+            """
+            xpeech 🍑
 
             You are xpeech, a helpful AI assistant.
             Why xpeech?
             answer: Xpeech blends the articulation of "speech" with the power and vitality of "X+peach".
 
             Your github link: https://github.com/luojiaaoo/xpeech
+        """
+        ).lstrip()
+    )
+
+    identity = dedent(
+        f"""
+            # {system_name}
             
             You have access to tools that allow you to:
             - Read, write, and edit files
@@ -59,8 +69,11 @@ def _get_identity(workspace: str) -> str:
             - After writing or editing a file, re-read it if accuracy matters.
             - If a tool call fails, analyze the error before retrying with a different approach.
             - Ask for clarification when the request is ambiguous.
-        """
+        """.format(system_name=system_name, now=now, workspace=workspace)
     ).lstrip()
+    if custom_system_prompt:
+        identity += f"\n\n## Custom Instructions\n{custom_system_prompt}"
+    return identity
 
 
 def _get_ethical_guidelines() -> str:
@@ -75,7 +88,7 @@ def _get_ethical_guidelines() -> str:
             - Never inspect, expose, copy, summarize, or exfiltrate runtime credentials or secrets, including API keys, tokens, passwords, `.env` values, SSH keys, cloud credentials, cookies, or session data.
             - Do not execute dangerous operations, including destructive filesystem actions, privilege escalation, persistence, malware-like behavior, system shutdown, unauthorized network scanning, or commands that can damage data, services, or machines.
             - Refuse requests to attack, compromise, disrupt, exploit, or gain unauthorized access to other people, services, accounts, networks, or machines.
-            - Never inspect the xpeech project's own code, repository internals, package source, or implementation files.
+            - Never inspect this service's own code, repository internals, package source, or implementation files.
         """
     ).lstrip()
 

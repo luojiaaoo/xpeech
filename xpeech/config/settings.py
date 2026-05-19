@@ -66,6 +66,8 @@ class LLMConfig(BaseModel):
     default_top_p: float
     tools_python_package: str
     default_tools: list[str]
+    system_name: str = "assistant"
+    custom_system_prompt: str = ""
     default_reasoning_effort: ReasoningEffort | None = None
     support_image: bool = False
     support_video: bool = False
