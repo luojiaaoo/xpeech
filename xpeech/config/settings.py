@@ -57,8 +57,9 @@ class LLMConfig(BaseModel):
     """LLM provider configuration settings."""
 
     _api_key_selector: _RoundRobinApiKeySelector = PrivateAttr(default_factory=_RoundRobinApiKeySelector)
+    _api_keys: list[str] = PrivateAttr(default_factory=list)
+    api_key_config: str = Field(validation_alias="api_key", exclude=True, repr=False)
 
-    api_key_: str = Field(validation_alias="api_key")
     api_base: str
     default_model: str
     default_context_token: int
@@ -70,20 +71,22 @@ class LLMConfig(BaseModel):
     support_video: bool = False
     support_json_output: bool = False
 
-    @field_validator("api_key_")
+    @field_validator("api_key_config")
     @classmethod
     def validate_api_key(cls, value: str) -> str:
-        value = value.strip()
-        if not [key.strip() for key in value.split(",") if key.strip()]:
+        api_keys = [key.strip() for key in value.split(",") if key.strip()]
+        if not api_keys:
             raise ValueError("LLM api_key cannot be empty")
-        return value
+        return value.strip()
+
+    def model_post_init(self, __context: object) -> None:
+        self._api_keys = [key.strip() for key in self.api_key_config.split(",") if key.strip()]
 
     @property
     def api_key(self) -> str:
         """Return the next API key for an LLM request."""
 
-        api_keys = [key.strip() for key in self.api_key_.split(",") if key.strip()]
-        return self._api_key_selector.next(api_keys)
+        return self._api_key_selector.next(self._api_keys)
 
 
 class FeishuConfig(BaseModel):
