@@ -42,7 +42,7 @@ def _get_identity(workspace: str) -> str:
     )
 
     identity = dedent(
-        f"""
+        """
             # {system_name}
             
             You have access to tools that allow you to:
