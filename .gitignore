@@ -166,3 +166,5 @@ cython_debug/
 session/
 workspace_base/
 feishu_cache/
+node_modules/
+package-lock.json

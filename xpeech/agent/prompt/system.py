@@ -3,6 +3,8 @@ from datetime import datetime
 from ...agent.memory import MemoryStore
 from ...agent.skills.skill import SkillsLoader
 from ...config.settings import settings
+from pathlib import Path
+from ...agent.skills.skill import BUILTIN_SKILLS_DIR
 
 
 BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
@@ -21,7 +23,7 @@ def _load_bootstrap_files(workspace) -> str:
     return "\n\n".join(parts) if parts else ""
 
 
-def _get_identity(workspace: str) -> str:
+def _get_identity(workspace: Path) -> str:
     """Get the configurable core identity section."""
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
@@ -58,6 +60,7 @@ def _get_identity(workspace: str) -> str:
                 Your workspace is at: {workspace}
                 - Long-term memory: {workspace}/memory/MEMORY.md (write important facts here)
                 - History log: {workspace}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
+                - Built-in skills: {builtin_skills_dir}/{{skill-name}}/SKILL.md
                 - Custom skills: {workspace}/skills/{{skill-name}}/SKILL.md
 
                 ## Platform Policy
@@ -70,10 +73,11 @@ def _get_identity(workspace: str) -> str:
                 - After writing or editing a file, re-read it if accuracy matters.
                 - If a tool call fails, analyze the error before retrying with a different approach.
                 - Ask for clarification when the request is ambiguous.
+                - Modifications to the scripts and markdown files of built-in SKILLS are strictly prohibited, except for installing dependencies.
             """
         )
         .lstrip()
-        .format(system_name=system_name, now=now, workspace=workspace)
+        .format(system_name=system_name, now=now, workspace=workspace.as_posix(), builtin_skills_dir=BUILTIN_SKILLS_DIR.as_posix())
     )
     if custom_system_prompt:
         identity += f"\n## Custom Instructions\n{custom_system_prompt}"
@@ -97,7 +101,7 @@ def _get_ethical_guidelines() -> str:
     ).lstrip()
 
 
-async def build_system_prompt(workspace: str) -> str:
+async def build_system_prompt(workspace: Path) -> str:
     parts = []
 
     # Identity

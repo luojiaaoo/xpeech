@@ -10,6 +10,7 @@ import re
 from ...utils.security.network import contains_internal_url
 from ...utils.helper import is_relative_path, msys_to_win
 from textwrap import dedent
+from ..skills.skill import BUILTIN_SKILLS_DIR
 
 EXEC_TIMEOUT = 60
 _MAX_OUTPUT = 10000
@@ -137,7 +138,7 @@ def _guard_command(command: str, workspace: str, restrict_tools_to_workspace: bo
             if _is_benign_device_path(str(p)):
                 continue
 
-            if not is_relative_path(path_target=p, base=workspace):
+            if not (is_relative_path(path_target=p, base=workspace) or is_relative_path(path_target=p, base=BUILTIN_SKILLS_DIR)):
                 raise RuntimeError(
                     f"Command blocked by safety guard (path outside working dir): {p}" + _WORKSPACE_BOUNDARY_NOTE
                 )
