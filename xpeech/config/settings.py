@@ -1,6 +1,10 @@
 from pathlib import Path
+from threading import Lock
 
 from pydantic import BaseModel
+from pydantic import Field
+from pydantic import PrivateAttr
+from pydantic import field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -23,6 +27,23 @@ env_conf = dict(
 )
 
 
+class _RoundRobinApiKeySelector:
+    """Select LLM API keys in round-robin order within this server process."""
+
+    def __init__(self) -> None:
+        self._index = 0
+        self._lock = Lock()
+
+    def next(self, api_keys: list[str]) -> str:
+        if len(api_keys) == 1:
+            return api_keys[0]
+
+        with self._lock:
+            api_key = api_keys[self._index % len(api_keys)]
+            self._index += 1
+            return api_key
+
+
 class PathConfig(BaseModel):
     """Path configuration settings."""
 
@@ -35,7 +56,9 @@ class PathConfig(BaseModel):
 class LLMConfig(BaseModel):
     """LLM provider configuration settings."""
 
-    api_key: str
+    _api_key_selector: _RoundRobinApiKeySelector = PrivateAttr(default_factory=_RoundRobinApiKeySelector)
+
+    api_key_: str = Field(validation_alias="api_key")
     api_base: str
     default_model: str
     default_context_token: int
@@ -46,6 +69,21 @@ class LLMConfig(BaseModel):
     support_image: bool = False
     support_video: bool = False
     support_json_output: bool = False
+
+    @field_validator("api_key_")
+    @classmethod
+    def validate_api_key(cls, value: str) -> str:
+        value = value.strip()
+        if not [key.strip() for key in value.split(",") if key.strip()]:
+            raise ValueError("LLM api_key cannot be empty")
+        return value
+
+    @property
+    def api_key(self) -> str:
+        """Return the next API key for an LLM request."""
+
+        api_keys = [key.strip() for key in self.api_key_.split(",") if key.strip()]
+        return self._api_key_selector.next(api_keys)
 
 
 class FeishuConfig(BaseModel):
