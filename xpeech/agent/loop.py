@@ -60,7 +60,7 @@ class AgentLoop:
         # 文件读写
         read_image, read_video, read_file, write_file, edit_file, list_dir = build_file_tools(
             workspace=self.workspace,
-            restrict_tools_to_workspace=settings.path.restrict_tools_to_workspace,
+            restrict_tools_to_workspace=settings.tool.restrict_tools_to_workspace,
         )
         if self.provider.support_image:
             self.provider.register_tool()(read_image)
@@ -74,7 +74,7 @@ class AgentLoop:
         # shell执行
         exec = build_shell_tools(
             workspace=self.workspace,
-            restrict_tools_to_workspace=settings.path.restrict_tools_to_workspace,
+            restrict_tools_to_workspace=settings.tool.restrict_tools_to_workspace,
         )
         self.provider.register_tool()(exec)
 
@@ -88,7 +88,7 @@ class AgentLoop:
         # outbound send file messages
         send_file = build_file_message_tools(
             workspace=self.workspace,
-            restrict_tools_to_workspace=settings.path.restrict_tools_to_workspace,
+            restrict_tools_to_workspace=settings.tool.restrict_tools_to_workspace,
         )
         self.provider.register_tool()(send_file)
 

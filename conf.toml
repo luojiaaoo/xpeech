@@ -3,6 +3,10 @@ session_path = "session"
 session_history_path = "session/history"
 workspace_base_path = "workspace_base"
 
+[tool]
+restrict_tools_to_workspace = true
+allowed_networks = ["10.0.0.0/8"]
+
 [llm]
 api_base = "http://10.4.71.158:4000/v1"
 default_model = "openai/Kimi-K2.6"

@@ -50,7 +50,13 @@ class PathConfig(BaseModel):
     session_path: Path
     session_history_path: Path
     workspace_base_path: Path
+
+
+class ToolConfig(BaseModel):
+    """Tool safety configuration settings."""
+
     restrict_tools_to_workspace: bool = True
+    allowed_networks: list[str] = Field(default_factory=list)
 
 
 class LLMConfig(BaseModel):
@@ -102,6 +108,7 @@ class FeishuConfig(BaseModel):
 
 class Settings(BaseSettings):
     path: PathConfig
+    tool: ToolConfig = ToolConfig()
     llm: LLMConfig
     feishu: FeishuConfig
 

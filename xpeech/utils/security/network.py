@@ -8,6 +8,8 @@ import socket
 from contextlib import suppress
 from urllib.parse import urlparse
 
+from ...config.settings import settings
+
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("0.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
@@ -117,3 +119,6 @@ def contains_internal_url(command: str) -> bool:
         if not ok:
             return True
     return False
+
+
+configure_ssrf_whitelist(settings.tool.allowed_networks)
