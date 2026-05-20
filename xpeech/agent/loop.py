@@ -169,6 +169,7 @@ class AgentLoop:
 
         # 执行工具调用
         tool_call_result = []
+        with_metas = []
         for tool_call in response.tool_calls:
             tool_call: ToolCallRequest = tool_call
             model_cls = get_tool_model_cls(tool_call_func := response.mapping_tool_call_funcs[tool_call.name])
@@ -196,15 +197,41 @@ class AgentLoop:
                 )
 
             # 创建工具调用结果消息
+            if isinstance(result, str):
+                messages_yaml.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result,
+                    }
+                )
+            elif isinstance(result, list):
+                # 把带_meta属性的字典过滤出来
+                others = []
+                for i in result:
+                    if isinstance(i, dict) and "_meta" in i:
+                        # 提取_meta属性，组装成消息
+                        _meta = i.pop("_meta")
+                        with_metas.extend([{"type": "text", "text": _meta}, i])
+                    else:
+                        others.append(i)
+                messages_yaml.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": others,
+                    }
+                )
+            tool_call_result.append((tool_call.id, tool_call.name, result))
+
+        # 如果包含_meta属性，则把这类消息转成user消息
+        if with_metas:
             messages_yaml.append(
                 {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": tool_call.name,
-                    "content": result,
+                    "role": "user",
+                    "content": with_metas,
                 }
             )
-            tool_call_result.append((tool_call.id, tool_call.name, result))
 
         # 输出工具调用结果消息
         yield {"event": "tool_call_result", "context": json.dumps(tool_call_result)}
@@ -352,6 +379,7 @@ class AgentLoop:
 
     @classmethod
     def is_send_user_message(cls, message: dict):
+        """判断是否是用户主动发送的消息， 主动发送的消息会打上时间戳"""
         return message["role"] == "user" and "timestamp" in message
 
     @classmethod
