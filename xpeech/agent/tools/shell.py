@@ -11,6 +11,7 @@ from ...utils.security.network import contains_internal_url
 from ...utils.helper import is_relative_path, msys_to_win
 from textwrap import dedent
 from ..skills.skill import BUILTIN_SKILLS_DIR
+import shlex
 
 EXEC_TIMEOUT = 60
 _MAX_OUTPUT = 10000
@@ -99,10 +100,19 @@ def _extract_absolute_paths(command: str) -> list[str]:
     return win_paths + posix_paths + home_paths
 
 
+def rewrite_shell_command_for_skills(command: str, session_id: str) -> str:
+    parts = shlex.split(command)
+    # 如果包含 playwright-cli，则添加 -s={session_id}
+    if "playwright-cli" in parts:
+        parts.append(f"-s={session_id}")
+    return shlex.join(parts)
+
+
 def _guard_command(command: str, workspace: str, restrict_tools_to_workspace: bool) -> str | None:
     """Guard a command string from code injection attacks."""
     cmd = command.strip()
     lower = cmd.lower()
+
     # 正则判断
     for pattern in DENY_PATTERNS:
         if re.search(pattern, lower):
@@ -111,6 +121,10 @@ def _guard_command(command: str, workspace: str, restrict_tools_to_workspace: bo
     if contains_internal_url(cmd):
         raise RuntimeError(f"Command blocked by safety guard (internal/private URL detected): {cmd}")
 
+    # 为skill命令注入参数
+    cmd = rewrite_shell_command_for_skills(cmd)
+
+    # 是否开启工作路径限制
     if restrict_tools_to_workspace:
         # 拦截非工作路径下的文件操作
         ## 拦截 .. 符号
@@ -138,7 +152,10 @@ def _guard_command(command: str, workspace: str, restrict_tools_to_workspace: bo
             if _is_benign_device_path(str(p)):
                 continue
 
-            if not (is_relative_path(path_target=p, base=workspace) or is_relative_path(path_target=p, base=BUILTIN_SKILLS_DIR)):
+            if not (
+                is_relative_path(path_target=p, base=workspace)
+                or is_relative_path(path_target=p, base=BUILTIN_SKILLS_DIR)
+            ):
                 raise RuntimeError(
                     f"Command blocked by safety guard (path outside working dir): {p}" + _WORKSPACE_BOUNDARY_NOTE
                 )
