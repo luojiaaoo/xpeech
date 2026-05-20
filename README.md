@@ -24,6 +24,13 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 uv sync
 ```
 
+提前安装内置技能依赖：
+
+```bash
+npm install -g @playwright/cli@latest
+npx playwright install chromium
+```
+
 ## 配置
 
 普通配置写在 `conf.toml`：
