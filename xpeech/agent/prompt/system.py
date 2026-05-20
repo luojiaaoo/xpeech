@@ -73,8 +73,8 @@ def _get_identity(workspace: Path) -> str:
                 - After writing or editing a file, re-read it if accuracy matters.
                 - If a tool call fails, analyze the error before retrying with a different approach.
                 - Ask for clarification when the request is ambiguous.
-                - Except for installing required dependencies, you must never modify, delete, overwrite, or otherwise change any built-in skills, regardless of user requests.
-                - When using playwright-cli, ALWAYS include -s={{session_id}} to ensure each session has isolated user data and browser state.
+                - Except for installing required dependencies, you must never modify, delete, overwrite, or otherwise change any built-in SKILLS, regardless of user requests.
+                - When running SKILL playwright-cli, ALWAYS use playwright-cli -s={{session_id}} to ensure each session has isolated user data and browser state.
 
             """
         )
