@@ -101,7 +101,9 @@ def _extract_absolute_paths(command: str) -> list[str]:
     return win_paths + posix_paths + home_paths
 
 
-def rewrite_shell_command_for_skills(command: str, session_id: str) -> str:
+def rewrite_shell_command_for_skills(command: str, session_id: str | None) -> str:
+    if not isinstance(session_id, str):
+        raise ValueError("shell internal error: session_id must be a string")
     parts = shlex.split(command)
     # 如果包含 playwright-cli，则添加 -s={session_id}
     if "playwright-cli" in parts:
