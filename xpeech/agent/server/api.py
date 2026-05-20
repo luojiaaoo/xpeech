@@ -87,6 +87,7 @@ async def chat(
         support_image=settings.llm.support_image,
         support_video=settings.llm.support_video,
         support_json_output=settings.llm.support_json_output,
+        extra_headers = {'Authorization': 'Bearer ' + settings.llm.api_key}
     )
     async for i in AgentLoop(
         provider=provider,
