@@ -351,14 +351,14 @@ class AgentLoop:
         return totol_token < max_accept_token
 
     @classmethod
-    def is_iterations_stop_user_message(cls, message: dict):
-        return message["role"] == "user" and message["content"] == cls.INTERATION_STOP_PROMPT
+    def is_send_user_message(cls, message: dict):
+        return message["role"] == "user" and "timestamp" in message
 
     @classmethod
     def clear_role_user_timestamp(cls, messages: list[dict]):
         rt = []
         for i in messages:
-            if i["role"] == "user" and not cls.is_iterations_stop_user_message(i):
+            if i["role"] == "user" and cls.is_send_user_message(i):
                 # 不修改原始消息
                 i = i.copy()
                 # 剔除时间戳
@@ -383,7 +383,7 @@ class AgentLoop:
         def split_recent_user_messages(_messages: list[dict], keep_count: int) -> int:
             count = 0
             for i in range(len(_messages) - 1, -1, -1):
-                if not (_messages[i]["role"] == "user" and not self.is_iterations_stop_user_message(_messages[i])):
+                if not (_messages[i]["role"] == "user" and self.is_send_user_message(_messages[i])):
                     continue
                 count += 1
                 if count == keep_count:
@@ -420,7 +420,7 @@ class AgentLoop:
             last_timestamp = None
             idx_split = 0
             for i in range(len(_messages) - 1, -1, -1):
-                if not (_messages[i]["role"] == "user" and not self.is_iterations_stop_user_message(_messages[i])):
+                if not (_messages[i]["role"] == "user" and self.is_send_user_message(_messages[i])):
                     continue
                 if last_timestamp is None:
                     last_timestamp = _messages[i]["timestamp"]
