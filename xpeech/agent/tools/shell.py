@@ -12,6 +12,7 @@ from ...utils.helper import is_relative_path, msys_to_win
 from textwrap import dedent
 from ..skills.skill import BUILTIN_SKILLS_DIR
 import shlex
+from ..server.context import get_session_id
 
 EXEC_TIMEOUT = 60
 _MAX_OUTPUT = 10000
@@ -122,7 +123,7 @@ def _guard_command(command: str, workspace: str, restrict_tools_to_workspace: bo
         raise RuntimeError(f"Command blocked by safety guard (internal/private URL detected): {cmd}")
 
     # 为skill命令注入参数
-    cmd = rewrite_shell_command_for_skills(cmd)
+    cmd = rewrite_shell_command_for_skills(cmd, get_session_id())
 
     # 是否开启工作路径限制
     if restrict_tools_to_workspace:
