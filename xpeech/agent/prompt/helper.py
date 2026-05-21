@@ -2,8 +2,6 @@ from ...agent.server.schema import InboundMessage, InputText, InputImage
 from pathlib import Path
 from textwrap import dedent
 from ...utils.helper import save_to_workspace
-import base64
-from typing import Any
 
 
 def build_inbound_message_metadata(*metas: dict[str, str], sort: bool = False) -> str:
@@ -85,32 +83,3 @@ async def build_user_prompt(message: InboundMessage, workspace: Path, support_im
         "timestamp": message.timestamp.timestamp(),
         "content": parts,
     }
-
-
-def build_image_content_blocks(raw: bytes, mime: str, path: str, label: str) -> list[dict[str, Any]]:
-    """Build native image blocks plus a short text label."""
-    b64 = base64.b64encode(raw).decode()
-    return [
-        {
-            "type": "image_url",
-            "image_url": {"url": f"data:{mime};base64,{b64}"},
-            "_meta": f'[image: {path}]',
-        },
-        {"type": "text", "text": label},
-    ]
-
-
-def build_video_content_blocks(raw: bytes, mime: str, path: str, label: str) -> list[dict[str, Any]]:
-    """Build native video blocks plus a parseable text label."""
-    b64 = base64.b64encode(raw).decode()
-    return [
-        {
-            "type": "video_url",
-            "video_url": {"url": f"data:{mime};base64,{b64}"},
-            "_meta": f'[video: {path}]',
-        },
-        {
-            "type": "text",
-            "text": label,
-        },
-    ]

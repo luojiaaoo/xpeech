@@ -14,9 +14,9 @@ import platform
 from ...agent.skills.skill import BUILTIN_SKILLS_DIR
 import aiofiles
 import mimetypes
-from ..prompt.helper import build_image_content_blocks, build_video_content_blocks
 import difflib
 import tempfile
+import base64
 
 
 if platform.system() == "Windows":
@@ -136,7 +136,16 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
         if not mime or not mime.startswith("image/"):
             raise ValueError(f"Not an image file: {path} (MIME: {mime or 'unknown'})")
 
-        return build_image_content_blocks(raw, mime, path, f"(Image file: {path})")
+        b64 = base64.b64encode(raw).decode()
+        return [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+                "_meta": f"The read_image tool returned this image: {path}",
+            },
+            {"type": "text", "text": f"(Image file: {path})"},
+            {"type": "text", "text": "Image content is attached in the next user message."},
+        ]
 
     async def read_video(args: ReadVideoArgs) -> str | list[dict[str, Any]]:
         """
@@ -193,7 +202,16 @@ def build_file_tools(workspace: str, restrict_tools_to_workspace: bool):
             return f"(Empty video file: {path})"
         video_info = dict(duration=effective_duration, width=width, height=height, path=path)
         label = "\n".join(f"{key}: {value}" for key, value in video_info.items())
-        return build_video_content_blocks(raw, output_mime, path, label)
+        b64 = base64.b64encode(raw).decode()
+        return [
+            {
+                "type": "video_url",
+                "video_url": {"url": f"data:{output_mime};base64,{b64}"},
+                "_meta": f"The read_video tool returned this video: {path}",
+            },
+            {"type": "text", "text": label},
+            {"type": "text", "text": "Video content is attached in the next user message."},
+        ]
 
     async def read_file(args: ReadFileArgs) -> str:
         """
