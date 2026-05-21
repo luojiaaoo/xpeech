@@ -52,25 +52,25 @@ OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
         "content": ...,
         "text_size": "notation",
         "text_align": "center",
-        "icon": {"tag": "standard_icon", "token": "command_outlined", "color": "green"},
+        "icon": {"tag": "standard_icon", "token": "command_outlined", "color": "turquoise"},
     },
     ChatEventType.THINKING: {
         "content": "我正在思考，稍等一下。",
         "text_size": "notation",
         "text_align": "center",
-        "icon": {"tag": "standard_icon", "token": "edit-continue_outlined", "color": "green"},
+        "icon": {"tag": "standard_icon", "token": "tab-more_outlined", "color": "green"},
     },
     ChatEventType.TOOL_CALL: {
         "content": "我需要调用工具处理一下。",
         "text_size": "notation",
         "text_align": "center",
-        "icon": {"tag": "standard_icon", "token": "external_outlined", "color": "green"},
+        "icon": {"tag": "standard_icon", "token": "select-up_outlined", "color": "wathet"},
     },
     ChatEventType.TOOL_CALL_RESULT: {
         "content": "工具处理完成，我继续整理结果。",
         "text_size": "notation",
         "text_align": "center",
-        "icon": {"tag": "standard_icon", "token": "select-down_outlined", "color": "green"},
+        "icon": {"tag": "standard_icon", "token": "bitableform_outlined", "color": "yellow"},
     },
     ChatEventType.TOKEN_USAGE: {
         "content": ...,
@@ -129,21 +129,24 @@ class FeishuBridge:
             self.receive_queues[msg.session_id] = asyncio.Queue()
         self.receive_queues[msg.session_id].put_nowait(msg)
 
-    async def send(self, to: str, message: dict, options: dict | None, session_id: str, message_type: ChatEventType):
+    async def channel_send(
+        self, to: str, message: dict, opts: dict | None, session_id: str, message_type: ChatEventType
+    ):
         persistence_tyle = (
             ChatEventType.ASSISTANT,
             ChatEventType.COMMAND,
             ChatEventType.TOKEN_USAGE,
         )
         if message_type in persistence_tyle:
-            await self.channel.send(to=to, message=message, options=options)
+            await self.channel.send(to=to, message=message, opts=opts)
             self.session_update_message_id.pop(session_id, None)
         else:
             if (_message_id := self.session_update_message_id.get(session_id)) is None:
-                send_result: SendResult = await self.channel.send(to=to, message=message, options=options)
+                send_result: SendResult = await self.channel.send(to=to, message=message, opts=opts)
                 self.session_update_message_id[session_id] = send_result.message_id
             else:
-                await self.channel.update_card(_message_id, message)
+                await asyncio.sleep(0.25)
+                await self.channel.update_card(_message_id, message["card"])
 
     async def consume(self, session_id: str, idle_timeout: int | None = None) -> None:
         idle_timeout = settings.feishu.idle_timeout if idle_timeout is None else idle_timeout
@@ -187,10 +190,10 @@ class FeishuBridge:
                 # 返回给用户消息
                 card = self._format_chat_event(event)
                 if card:
-                    await self.send(
+                    await self.channel_send(
                         to=chat_id,
                         message=card,
-                        options=(
+                        opts=(
                             {"reply_to": reply_to}
                             if event.event == ChatEventType.ASSISTANT and reply_to is not None
                             else None
