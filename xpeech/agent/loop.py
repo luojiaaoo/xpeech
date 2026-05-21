@@ -276,12 +276,12 @@ class AgentLoop:
         ):
             command = command.strip()
             if command == "/help":
-                yield {"event": "command", "context": "/new -> start a new session"}
+                yield {"event": "command", "context": "/new -> 开始一个新会话"}
                 return
             elif command == "/new":
                 rt = await self.consolidate_memory(messages_yaml[:-1])
                 await self.del_history_yaml(message.session_id)
-                yield {"event": "command", "context": f"NEW SESSION, {rt}"}
+                yield {"event": "command", "context": f"新会话, {rt}"}
                 return
             yield {
                 "event": "command",
@@ -362,7 +362,7 @@ class AgentLoop:
         token_notify = "♻️ 即将达到最大令牌数，强制压缩" if token_percent > 90 else ""
         yield {
             "event": "token_usage",
-            "context": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}",
+            "context": f"上下文使用率：{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}",
         }
 
         logger.info("Agent run completed")
@@ -509,13 +509,13 @@ class AgentLoop:
             tools=[memory_store.save_memory],
             remove_default_tools=True,
         )
-        if response.tool_calls:
+        if response.has_tool_calls:
             for tool_call in response.tool_calls:
                 tool_call: ToolCallRequest = tool_call
                 model_cls = get_tool_model_cls(tool_call_func := response.mapping_tool_call_funcs[tool_call.name])
                 await tool_call_func(model_cls(**tool_call.arguments))
             logger.info("Consolidating memory finished")
-            return "[INFO] Consolidating memory finished"
+            return "已记忆本次会话关键内容"
         else:
-            logger.warning("Consolidating memory failed")
-            return "[WARNING] Consolidating memory failed"
+            logger.info("No worth consolidating memory")
+            return "未发现需要记忆的内容"

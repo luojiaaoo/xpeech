@@ -154,17 +154,18 @@ class FeishuBridge:
         # 处理消息
         try:
             async for event in iter_chat_events(messages, self.chat_url):
-
                 # 检测有没有文件发送请求
                 if event.event == ChatEventType.TOOL_CALL_RESULT:
                     for _, tool_call_name, tool_call_result in json.loads(event.context):
-                        if tool_call_name != 'send_file':
+                        if tool_call_name != "send_file":
                             continue
                         filepath = tool_call_result
                         async with aiofiles.open(filepath, "rb") as f:
                             source_bytes = await f.read()
-                        await self.channel.send(chat_id, {"file": {"source": source_bytes, "file_name": Path(filepath).name}})
-                
+                        await self.channel.send(
+                            chat_id, {"file": {"source": source_bytes, "file_name": Path(filepath).name}}
+                        )
+
                 # 返回给用户消息
                 card = self._format_chat_event(event)
                 if card:
@@ -225,15 +226,15 @@ class FeishuBridge:
         if event.event == ChatEventType.ASSISTANT:
             return event.context
         elif event.event == ChatEventType.COMMAND:
-            return f"**[command]** {event.context}"
+            return f"**[命令]** {event.context}"
         elif event.event == ChatEventType.THINKING:
-            return f"**[thinking]** {event.context}"
+            return f"**[思考中]** {event.context}"
         elif event.event == ChatEventType.TOOL_CALL:
-            return f"**[tool_call]** {self._format_tool_call_event(event)}"
+            return f"**[调用工具]** {self._format_tool_call_event(event)}"
         elif event.event == ChatEventType.TOOL_CALL_RESULT:
-            return f"**[tool_call_result]** {self._format_json_context(event.context)}"
+            return f"**[工具调用结果]** {self._format_json_context(event.context)}"
         elif event.event == ChatEventType.TOKEN_USAGE:
-            return f"**[token_usage]** {event.context}"
+            return f"**[词元]** {event.context}"
         return f"[{event.event}]\n{event.context}"
 
     def _format_tool_call_event(self, event: ChatEvent) -> str:
