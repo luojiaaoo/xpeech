@@ -289,10 +289,6 @@ class AgentLoop:
             }
             return
 
-        # 判断是否需要压缩
-        if await self.need_compress(messages_yaml):
-            messages_yaml = await self.compress(messages_yaml)
-
         final_content = None
         for loop_count in count():
             if self.max_iterations is not None and loop_count >= self.max_iterations:
@@ -308,6 +304,11 @@ class AgentLoop:
 
             # 清理用户消息中的时间戳，开始对话
             _clean_messages = self.clear_role_user_timestamp(messages_yaml)
+
+            # 判断是否需要压缩
+            if await self.need_compress(messages_yaml):
+                messages_yaml = await self.compress(messages_yaml)
+
             logger.info("Calling provider chat loop_count={}", loop_count)
 
             try:
@@ -475,20 +476,14 @@ class AgentLoop:
                 return messages
 
         # 三级压缩：AI总结历史消息，只保留最近4次对话消息
-        idx_split_keep = split_recent_user_messages(messages, keep_count)
-        recent_messages = messages[idx_split_keep:]
-        if idx_split_keep > 0 and await self.is_finish_compress(recent_messages):
-            logger.info("Compression level=3 summarizing history")
-            messages = await summary_messages(messages[:idx_split_keep]) + recent_messages
-            logger.info("Compression finished level=3 messages={}", len(messages))
-            return messages
-
-        # 四级压缩：如果仍然不满足要求，则进行完全压缩
-        logger.info("Compression level=4 summarizing all history")
-        idx_split_keep = split_recent_user_messages(messages, 1)
-        compressed_messages = await summary_messages(messages[:idx_split_keep]) + messages[idx_split_keep:]
-        logger.info("Compression finished level=4 messages={}", len(compressed_messages))
-        return compressed_messages
+        for keep_count in range(4, 0, -1):
+            idx_split_keep = split_recent_user_messages(messages, keep_count)
+            recent_messages = messages[idx_split_keep:]
+            if (idx_split_keep > 0 and await self.is_finish_compress(recent_messages)) or keep_count == 1:
+                logger.info("Compression level=3 summarizing history")
+                messages = await summary_messages(messages[:idx_split_keep]) + recent_messages
+                logger.info("Compression finished level=3 messages={}", len(messages))
+                return messages
 
     # ----------------- 记忆和历史(在/new 或者 压缩的时候触发) -----------------
 
