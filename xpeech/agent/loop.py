@@ -302,12 +302,12 @@ class AgentLoop:
                 )
                 break
 
-            # 清理用户消息中的时间戳，开始对话
-            _clean_messages = self.clear_role_user_timestamp(messages_yaml)
-
             # 判断是否需要压缩
             if await self.need_compress(messages_yaml):
                 messages_yaml = await self.compress(messages_yaml)
+
+            # 清理用户消息中的时间戳，开始对话
+            _clean_messages = self.clear_role_user_timestamp(messages_yaml)
 
             logger.info("Calling provider chat loop_count={}", loop_count)
 
