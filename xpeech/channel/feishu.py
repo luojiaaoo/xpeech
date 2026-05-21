@@ -14,6 +14,7 @@ from lark_oapi.channel import (
     FileContent,
     MediaContent,
     PostContent,
+    SendResult,
 )
 import asyncio
 from .schema import ChatEvent, ChatEventType, Message, TextData, ImageData, FileData
@@ -103,6 +104,7 @@ class FeishuBridge:
         self.app_secret = app_secret
         self.receive_queues: dict[str, asyncio.Queue[Message]] = {}
         self.session_tasks: dict[str, asyncio.Task] = {}
+        self.session_update_message_id: dict[str, str] = {}
         # 初始化通道
         self.channel = FeishuChannel(
             log_level=self.LOG_LEVEL,
@@ -126,6 +128,22 @@ class FeishuBridge:
         if msg.session_id not in self.receive_queues:
             self.receive_queues[msg.session_id] = asyncio.Queue()
         self.receive_queues[msg.session_id].put_nowait(msg)
+
+    async def send(self, to: str, message: dict, options: dict | None, session_id: str, message_type: ChatEventType):
+        persistence_tyle = (
+            ChatEventType.ASSISTANT,
+            ChatEventType.COMMAND,
+            ChatEventType.TOKEN_USAGE,
+        )
+        if message_type in persistence_tyle:
+            await self.channel.send(to=to, message=message, options=options)
+            self.session_update_message_id.pop(session_id, None)
+        else:
+            if (_message_id := self.session_update_message_id.get(session_id)) is None:
+                send_result: SendResult = await self.channel.send(to=to, message=message, options=options)
+                self.session_update_message_id[session_id] = send_result.message_id
+            else:
+                await self.channel.update_card(_message_id, message)
 
     async def consume(self, session_id: str, idle_timeout: int | None = None) -> None:
         idle_timeout = settings.feishu.idle_timeout if idle_timeout is None else idle_timeout
@@ -169,14 +187,16 @@ class FeishuBridge:
                 # 返回给用户消息
                 card = self._format_chat_event(event)
                 if card:
-                    await self.channel.send(
-                        chat_id,
-                        card,
-                        *(
-                            [{"reply_to": reply_to}]
+                    await self.send(
+                        to=chat_id,
+                        message=card,
+                        options=(
+                            {"reply_to": reply_to}
                             if event.event == ChatEventType.ASSISTANT and reply_to is not None
-                            else []
+                            else None
                         ),
+                        session_id=session_id,
+                        message_type=event.event,
                     )
         except Exception:
             logger.exception("Failed to consume Feishu messages session_id={}", session_id)
@@ -269,6 +289,7 @@ class FeishuBridge:
             if not task.done():
                 continue
             self.session_tasks.pop(session_id, None)
+            self.session_update_message_id.pop(session_id, None)
             try:
                 task.result()
             except Exception:
