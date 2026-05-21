@@ -492,7 +492,7 @@ class AgentLoop:
         _clean_messages = self.clear_role_user_timestamp(mesages)
         _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
         if not _clean_messages:
-            return "[INFO] No messages to consolidate"
+            return "当前上下文为空，无需记忆"
         _system_prompt = "## Current Long-term Memory\n" + (await memory_store.get_memory_context() or "(empty)")
         _clean_messages.insert(0, {"role": "system", "content": _system_prompt})
         _clean_messages.append(
