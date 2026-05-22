@@ -77,7 +77,12 @@ def _get_identity(workspace: Path) -> str:
             """
         )
         .lstrip()
-        .format(system_name=system_name, now=now, workspace=workspace.as_posix(), builtin_skills_dir=BUILTIN_SKILLS_DIR.as_posix())
+        .format(
+            system_name=system_name,
+            now=now,
+            workspace=workspace.as_posix(),
+            builtin_skills_dir=BUILTIN_SKILLS_DIR.as_posix(),
+        )
     )
     if custom_system_prompt:
         identity += f"\n## Custom Instructions\n{custom_system_prompt}"
@@ -119,12 +124,14 @@ async def build_system_prompt(workspace: Path) -> str:
 
     # Skills
     skill_loader = SkillsLoader(workspace)
-    skills_summary = await skill_loader.build_skills_summary()
+    # Always skills
     always_skills = await skill_loader.get_always_skills()
     if always_skills:
         always_content = await skill_loader.load_skills_for_context(always_skills)
         if always_content:
             parts.append(f"# Active Skills\n\n{always_content}")
+    # Skills summary
+    skills_summary = await skill_loader.build_skills_summary()
     if skills_summary:
         _template = dedent(
             """

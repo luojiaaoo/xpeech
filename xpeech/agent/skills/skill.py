@@ -115,9 +115,10 @@ class SkillsLoader:
         for s in all_skills:
             name = escape_xml(s["name"])
             path = s["path"]
+            source = s["source"]
             desc = escape_xml(await self._get_skill_description(s["name"]))
 
-            lines.append("  <skill>")
+            lines.append(f"  <skill source='{source}'>")
             lines.append(f"    <name>{name}</name>")
             lines.append(f"    <description>{desc}</description>")
             lines.append(f"    <location>{path}</location>")
