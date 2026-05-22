@@ -5,7 +5,7 @@ from .tools.filesystem import build_file_tools
 from .tools.shell import build_shell_tools
 from .tools.web import web_fetch, web_search
 from .tools.office import office_read
-from .tools.question import joyride_request_human_input, is_ok_question, extract_question
+from .tools.question import joyride_request_human_input, is_ok_question, extract_question, USER_TIMEOUT
 from .tools.file_message import build_file_message_tools
 from itertools import count
 from ..config.settings import settings
@@ -243,13 +243,12 @@ class AgentLoop:
                 append_tool_result_messages_yaml(tool_call, result)
             elif tool_call.name == "joyride_request_human_input" and is_ok_question(result):
                 # 等待用户输入
-                user_timeout = tool_call.arguments["timeout"]
-                logger.info(f"Waiting for user input, timeout={user_timeout}")
+                logger.info(f"Waiting for user input, timeout={USER_TIMEOUT} seconds")
                 # 加协程锁，等待用户输入20秒
                 self.SESSION_QUESTION_EVENT[session_id] = QuestionEvent(event=asyncio.Event())
                 yield {"event": "question", "context": extract_question(result)}
                 try:
-                    await asyncio.wait_for(self.SESSION_QUESTION_EVENT[session_id].event.wait(), timeout=user_timeout)
+                    await asyncio.wait_for(self.SESSION_QUESTION_EVENT[session_id].event.wait(), timeout=USER_TIMEOUT)
                     logger.info("User answered the question {}", self.SESSION_QUESTION_EVENT[session_id].answer)
                 except asyncio.TimeoutError:
                     logger.warning("User timeout answering the question")

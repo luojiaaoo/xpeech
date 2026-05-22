@@ -22,11 +22,10 @@ from .schema import ChatEvent, ChatEventType, Message, TextData, ImageData, File
 import json
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import GetMessageResourceRequest, GetMessageResourceResponse
-from .helper import bytes_to_image_url, iter_chat_events
+from .helper import bytes_to_image_url, iter_chat_events, notify_question
 import random
 from pathlib import Path
 import aiofiles
-import httpx
 from itertools import chain
 from datetime import datetime
 from typing import Any, NotRequired, TypedDict
@@ -132,21 +131,10 @@ class FeishuBridge:
             self.receive_queues[msg.session_id] = asyncio.Queue()
         self.receive_queues[msg.session_id].put_nowait(msg)
 
-    async def _notify_question(self, session_id: str, result: Any) -> None:
-        answer_url = str(URL(self.chat_url) / "answer_question")
-        answer = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                answer_url,
-                headers={"x-session-id": session_id},
-                data={"answer": answer},
-            )
-            response.raise_for_status()
-
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
         session_id = f"xpeech_{card_action_event.chat_id}"
         form_data = card_action_event.raw.event.action.form_value
-        await self._notify_question(session_id, form_data)
+        await notify_question(session_id, form_data, self.chat_url)
 
     async def channel_send(
         self, to: str, message: dict, opts: dict | None, session_id: str, message_type: ChatEventType
@@ -205,8 +193,7 @@ class FeishuBridge:
                     )
                     continue
                 if event.event == ChatEventType.QUESTION:
-                    sr: SendResult = await self.channel.send(chat_id, {"card": json.loads(event.context)})
-                    print(sr)
+                    await self.channel.send(chat_id, {"card": json.loads(event.context)})
                     continue
 
                 # 返回给用户消息

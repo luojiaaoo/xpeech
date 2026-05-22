@@ -1,178 +1,207 @@
-from pydantic import BaseModel, Field
 import json
+from re import I
+from typing import Any, List, Union, Literal
+from pydantic import BaseModel, Field, ValidationError, ConfigDict, TypeAdapter
+
+USER_TIMEOUT = 5 * 60
 
 
-SUPPORTED_FIELD_TAGS = {
-    "select_static",
-    "multi_select_static",
-    "input",
-    "date_picker",
-    "picker_datetime",
-}
-REQUIRED_TOP_LEVEL_KEYS = {
-    "schema",
-    "config",
-    "body",
-    "header",
-}
+class StrictBaseModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
-class ValidationError(Exception):
-    pass
+class PlainText(StrictBaseModel):
+    tag: Literal["plain_text"] = "plain_text"
+    content: str
 
 
-def load_json(json_str: str) -> dict:
+class PlaceholderText(StrictBaseModel):
+    tag: Literal["plain_text"] = "plain_text"
+    content: Literal["请选择"] = "请选择"
+
+
+class InputPlaceholderText(StrictBaseModel):
+    tag: Literal["plain_text"] = "plain_text"
+    content: Literal["请输入"] = "请输入"
+
+
+class StandardIcon(StrictBaseModel):
+    tag: Literal["standard_icon"] = "standard_icon"
+    token: Literal["signature_outlined"] = "signature_outlined"
+
+
+class SelectOption(StrictBaseModel):
+    text: PlainText
+    value: str
+    icon: StandardIcon = Field(default_factory=StandardIcon)
+
+
+class EmptyLabel(StrictBaseModel):
+    tag: Literal["plain_text"] = "plain_text"
+    content: Literal[""] = ""
+
+
+class DivPlainText(StrictBaseModel):
+    tag: Literal["plain_text"] = "plain_text"
+    content: str
+    text_size: Literal["normal_v2"] = "normal_v2"
+    text_align: Literal["left"] = "left"
+    text_color: Literal["default"] = "default"
+
+
+class Div(StrictBaseModel):
+    tag: Literal["div"] = "div"
+    text: DivPlainText
+    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+
+
+class SelectStatic(StrictBaseModel):
+    tag: Literal["select_static"] = "select_static"
+    placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
+    options: List[SelectOption]
+    type: Literal["default"] = "default"
+    width: Literal["fill"] = "fill"
+    name: str
+    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+
+
+class MultiSelectStatic(StrictBaseModel):
+    tag: Literal["multi_select_static"] = "multi_select_static"
+    placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
+    options: List[SelectOption]
+    type: Literal["default"] = "default"
+    width: Literal["fill"] = "fill"
+    name: str
+    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+
+
+class Input(StrictBaseModel):
+    tag: Literal["input"] = "input"
+    placeholder: InputPlaceholderText = Field(default_factory=InputPlaceholderText)
+    default_value: Literal[""] = ""
+    width: Literal["fill"] = "fill"
+    label: EmptyLabel = Field(default_factory=EmptyLabel)
+    label_position: Literal["top"] = "top"
+    name: str
+    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+
+
+class DatePicker(StrictBaseModel):
+    tag: Literal["date_picker"] = "date_picker"
+    placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
+    width: Literal["fill"] = "fill"
+    name: str
+    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+
+
+class DateTimePicker(StrictBaseModel):
+    tag: Literal["picker_datetime"] = "picker_datetime"
+    placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
+    width: Literal["fill"] = "fill"
+    name: str
+    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+
+
+FormComponent = Union[
+    Div,
+    SelectStatic,
+    MultiSelectStatic,
+    Input,
+    DatePicker,
+    DateTimePicker,
+]
+FormComponentListAdapter = TypeAdapter(List[FormComponent])
+
+
+def validate_form_json(data: str) -> tuple[bool, Any]:
+    """
+    校验表单 JSON 数组。
+    Args:
+        data: JSON 字符串，或已经解析后的 Python list。
+    Returns:
+        tuple[bool, Any]:
+        - 成功时: (True, validated_data)
+        - 失败时: (False, error_detail)
+    """
     try:
-        data = json.loads(json_str)
-    except json.JSONDecodeError as error:
-        raise ValidationError(f"JSON 格式错误：第 {error.lineno} 行，第 {error.colno} 列，{error.msg}") from error
-    if not isinstance(data, dict):
-        raise ValidationError("JSON 根节点必须是对象")
-    return data
+        data = json.loads(data)
+        validated_data = FormComponentListAdapter.validate_python(data)
+        return [item.model_dump() for item in validated_data]
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON 格式错误: {str(e)}")
+    except ValidationError as e:
+        raise ValueError(f"表单 JSON 校验失败: {str(e)}")
 
 
-def require_keys(obj: dict, keys: set[str], path: str) -> None:
-    missing_keys = keys - set(obj.keys())
-    if missing_keys:
-        raise ValidationError(f"{path} 缺少字段：{', '.join(sorted(missing_keys))}")
-
-
-def require_type(value, expected_type, path: str) -> None:
-    if not isinstance(value, expected_type):
-        expected_name = expected_type.__name__
-        actual_name = type(value).__name__
-        raise ValidationError(f"{path} 类型错误：期望 {expected_name}，实际 {actual_name}")
-
-
-def validate_plain_text(obj: dict, path: str) -> None:
-    require_type(obj, dict, path)
-    if obj.get("tag") != "plain_text":
-        raise ValidationError(f"{path}.tag 必须是 plain_text")
-    if "content" not in obj:
-        raise ValidationError(f"{path} 缺少 content")
-    require_type(obj["content"], str, f"{path}.content")
-
-
-def validate_header(card: dict) -> None:
-    header = card["header"]
-    require_type(header, dict, "header")
-    require_keys(header, {"title", "subtitle"}, "header")
-    validate_plain_text(header["title"], "header.title")
-    validate_plain_text(header["subtitle"], "header.subtitle")
-    if "template" in header:
-        require_type(header["template"], str, "header.template")
-    if "icon" in header:
-        require_type(header["icon"], dict, "header.icon")
-        require_keys(header["icon"], {"tag", "token"}, "header.icon")
-
-
-def validate_config(card: dict) -> None:
-    config = card["config"]
-    require_type(config, dict, "config")
-    if "update_multi" in config:
-        require_type(config["update_multi"], bool, "config.update_multi")
-    if "style" in config:
-        require_type(config["style"], dict, "config.style")
-
-
-def validate_title_div(element: dict, path: str) -> None:
-    require_type(element, dict, path)
-    if element.get("tag") != "div":
-        raise ValidationError(f"{path}.tag 必须是 div")
-    if "text" not in element:
-        raise ValidationError(f"{path} 缺少 text")
-    validate_plain_text(element["text"], f"{path}.text")
-
-
-def validate_options(component: dict, path: str) -> None:
-    if "options" not in component:
-        raise ValidationError(f"{path} 缺少 options")
-    require_type(component["options"], list, f"{path}.options")
-    if not component["options"]:
-        raise ValidationError(f"{path}.options 不能为空")
-    seen_values = set()
-    for index, option in enumerate(component["options"]):
-        option_path = f"{path}.options[{index}]"
-        require_type(option, dict, option_path)
-        require_keys(option, {"text", "value"}, option_path)
-        validate_plain_text(option["text"], f"{option_path}.text")
-        require_type(option["value"], str, f"{option_path}.value")
-        if option["value"] in seen_values:
-            raise ValidationError(f"{option_path}.value 重复：{option['value']}")
-        seen_values.add(option["value"])
-
-
-def validate_field_component(component: dict, path: str) -> None:
-    require_type(component, dict, path)
-    tag = component.get("tag")
-    if tag not in SUPPORTED_FIELD_TAGS:
-        raise ValidationError(f"{path}.tag 不支持：{tag}，支持值：{', '.join(sorted(SUPPORTED_FIELD_TAGS))}")
-    if "name" not in component:
-        raise ValidationError(f"{path} 缺少 name")
-    require_type(component["name"], str, f"{path}.name")
-    if not component["name"].strip():
-        raise ValidationError(f"{path}.name 不能为空")
-    if tag in {"select_static", "multi_select_static"}:
-        validate_options(component, path)
-    if "placeholder" in component:
-        validate_plain_text(component["placeholder"], f"{path}.placeholder")
-
-
-def is_button_group(element: dict) -> bool:
-    return isinstance(element, dict) and element.get("tag") == "column_set"
-
-
-def validate_button_group(element: dict, path: str) -> None:
-    require_type(element, dict, path)
-    if element.get("tag") != "column_set":
-        raise ValidationError(f"{path}.tag 必须是 column_set")
-    require_keys(element, {"columns"}, path)
-    require_type(element["columns"], list, f"{path}.columns")
-    if len(element["columns"]) < 2:
-        raise ValidationError(f"{path}.columns 至少需要提交和取消两个按钮")
-
-
-def validate_form(form: dict, path: str) -> None:
-    require_type(form, dict, path)
-    if form.get("tag") != "form":
-        raise ValidationError(f"{path}.tag 必须是 form")
-    require_keys(form, {"elements", "name"}, path)
-    require_type(form["elements"], list, f"{path}.elements")
-    require_type(form["name"], str, f"{path}.name")
-    elements = form["elements"]
-    if not elements:
-        raise ValidationError(f"{path}.elements 不能为空")
-    if not is_button_group(elements[-1]):
-        raise ValidationError(f"{path}.elements 最后一个元素必须是提交/取消按钮 column_set")
-    validate_button_group(elements[-1], f"{path}.elements[-1]")
-    field_elements = elements[:-1]
-    if len(field_elements) % 2 != 0:
-        raise ValidationError(f"{path}.elements 字段部分必须成对出现：标题 div + 字段组件")
-    for index in range(0, len(field_elements), 2):
-        title_path = f"{path}.elements[{index}]"
-        component_path = f"{path}.elements[{index + 1}]"
-        validate_title_div(field_elements[index], title_path)
-        validate_field_component(field_elements[index + 1], component_path)
-
-
-def validate_body(card: dict) -> None:
-    body = card["body"]
-    require_type(body, dict, "body")
-    require_keys(body, {"elements"}, "body")
-    require_type(body["elements"], list, "body.elements")
-    if not body["elements"]:
-        raise ValidationError("body.elements 不能为空")
-    form = body["elements"][0]
-    validate_form(form, "body.elements[0]")
-
-
-def validate_card(card: dict) -> None:
-    require_keys(card, REQUIRED_TOP_LEVEL_KEYS, "root")
-    if card["schema"] != "2.0":
-        raise ValidationError("schema 必须是 2.0")
-    validate_config(card)
-    validate_body(card)
-    validate_header(card)
+def get_json(form: str, title: str, subtitle: str):
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "style": {"text_size": {"normal_v2": {"default": "normal", "pc": "normal", "mobile": "heading"}}},
+        },
+        "body": {
+            "direction": "vertical",
+            "padding": "12px 12px 12px 12px",
+            "elements": [
+                {
+                    "tag": "form",
+                    "elements": [
+                        *validate_form_json(form),
+                        {
+                            "tag": "div",
+                            "text": {
+                                "tag": "plain_text",
+                                "content": "自定义",
+                                "text_size": "normal_v2",
+                                "text_align": "left",
+                                "text_color": "default",
+                            },
+                            "margin": "0px 0px 0px 0px",
+                        },
+                        {
+                            "tag": "input",
+                            "placeholder": {"tag": "plain_text", "content": "请输入"},
+                            "default_value": "",
+                            "width": "fill",
+                            "name": "user_customization",
+                            "margin": "0px 0px 0px 0px",
+                        },
+                        {
+                            "tag": "column_set",
+                            "columns": [
+                                {
+                                    "tag": "column",
+                                    "width": "auto",
+                                    "elements": [
+                                        {
+                                            "tag": "button",
+                                            "text": {"tag": "plain_text", "content": "提交"},
+                                            "type": "primary",
+                                            "width": "default",
+                                            "form_action_type": "submit",
+                                            "name": "Button_mpgy4lye",
+                                        }
+                                    ],
+                                    "vertical_align": "top",
+                                },
+                                {"tag": "column", "width": "auto", "elements": [], "vertical_align": "top"},
+                            ],
+                        },
+                    ],
+                    "padding": "4px 0px 4px 0px",
+                    "margin": "0px 0px 0px 0px",
+                    "name": "Form_mpgy4lyd",
+                }
+            ],
+        },
+        "header": {
+            "title": {"tag": "plain_text", "content": title},
+            "subtitle": {"tag": "plain_text", "content": subtitle},
+            "template": "blue",
+            "padding": "12px 12px 12px 12px",
+        },
+    }
 
 
 def is_ok_question(question: str) -> bool:
@@ -186,16 +215,17 @@ def extract_question(question: str) -> str:
         raise ValueError("Invalid question format")
 
 
-class QuestionArgs(BaseModel):
-    question: str = Field(description="飞书卡片 2.0 表单 JSON")
-    timeout: int = Field(description="用户填写表单超时时间", default=20, ge=10, le=60)
+class QuestionArgs(StrictBaseModel):
+    question: str = Field(description="飞书卡片 2.0 JSON 数组")
+    title: str = Field(description="表单标题")
 
     @property
     def json(self):
         try:
-            card = load_json(self.question)
-            validate_card(card)
-            return f"OK {self.question}"
+            json_str: str = json.dumps(
+                get_json(self.question, self.title, f"您有{USER_TIMEOUT}秒时间填写表单"), ensure_ascii=False, indent=4
+            )
+            return f"OK {json_str}"
         except ValidationError as error:
             return f"NOTOK 校验失败：{error}"
 

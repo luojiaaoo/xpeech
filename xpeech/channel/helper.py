@@ -9,6 +9,8 @@ from loguru import logger
 from pydantic import ValidationError
 from ..utils.helper import detect_image_mime, compress_image_bytes_to_jpg
 from .schema import ChatEvent, FileData, ImageData, Message, TextData
+from typing import Any
+from yarl import URL
 
 
 async def iter_chat_events(
@@ -69,6 +71,18 @@ async def iter_chat_events(
                         yield ChatEvent.model_validate_json(event.data)
                     except ValidationError:
                         logger.exception("Skipping invalid SSE event payload: {}", event.data[:200])
+
+
+async def notify_question(session_id: str, result: Any, chat_url: str) -> None:
+    answer_url = str(URL(chat_url) / "answer_question")
+    answer = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            answer_url,
+            headers={"x-session-id": session_id},
+            data={"answer": answer},
+        )
+        response.raise_for_status()
 
 
 def bytes_to_image_url(raw: bytes) -> str:

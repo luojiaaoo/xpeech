@@ -1,153 +1,55 @@
 ---
 name: feishu-form-question-card
-description: 当用户需求信息不足、需要通过表单向用户提问并收集结构化信息时，生成飞书卡片 2.0 表单 JSON。Skill 本体负责整体卡片框架，具体字段组件写法参考 references。
+description: 生成飞书卡片 2.0 JSON 数组。支持组合生成下拉单选、下拉多选、输入框、日期选择、日期时间选择等表单控件。当需要主动向用户收集信息、澄清需求、确认偏好或补全任务参数时使用。
 ---
 
-# 飞书表单追问卡片
-
-- Skill 路径引用均采用**相对本 skill 根目录**的形式（`references/xxx.md`）——agent 或用户按自身安装位置解析，不依赖任何绝对路径。
-
-## 作用
-
-当用户提出一个需求，但当前信息不足以继续完成任务时，使用本 Skill 生成一个飞书表单卡片，通过 joyride_request_human_input 向用户追问关键信息。
-
-这个 Skill 不是让用户手动描述字段配置。
-
-大模型需要根据用户的实际需求，自行判断：
-
-1. 当前任务缺少哪些关键信息。
-2. 哪些信息适合通过表单收集。
-3. 每个问题应该使用哪种表单组件。
-4. 选项类问题应提供哪些合理选项。
-5. 生成完整可用的飞书卡片 JSON。
+# 主动询问用户问题
 
 ## 适用场景
 
-当用户需求存在以下情况时，可使用本 Skill：
+当你需要在继续执行任务前，主动向用户询问一个或多个问题时，使用本 Skill 生成交互式表单，通过 joyride_request_human_input 向用户追问关键信息。
 
-- 缺少执行任务所需的关键参数。
-- 需要用户从多个选项中选择。
-- 需要用户补充文本信息。
-- 需要用户选择日期。
-- 需要用户选择日期和时间。
-- 一次性需要向用户追问多个结构化问题。
+适用场景包括但不限于：
 
-## 不适用场景
+- 需求不完整，需要用户补充关键信息
+- 存在多个可选方案，需要用户选择
+- 需要确认时间、日期、范围、偏好或约束条件
+- 需要一次性收集多个字段，避免多轮追问
+- 需要结构化收集用户输入，便于后续自动处理
 
-以下情况不要使用表单追问：
+## 表单能力
 
-- 只缺少一个很简单的信息，直接自然语言提问更合适。
-- 可以根据上下文合理推断，不需要继续询问。
-- 用户已经给出完整信息。
-- 问题不适合结构化收集，例如开放式讨论、观点交流、头脑风暴。
+本 Skill 支持以下 5 种表单类型，可自由组合使用：
 
-## 支持的提问组件
+1. 下拉单选：`select_static`
+2. 下拉多选：`multi_select_static`
+3. 输入框：`input`
+4. 日期选择：`date_picker`
+5. 日期时间选择：`picker_datetime`
 
-根据要收集的信息类型选择组件：
+## 输出要求
 
-| 需要收集的信息 | 使用组件 |
-|---|---|
-| 用户只能选择一个答案 | `select_static` |
-| 用户可以选择多个答案 | `multi_select_static` |
-| 用户需要输入文本 | `plain_text` |
-| 用户需要选择日期 | `date_picker` |
-| 用户需要选择日期和时间 | `picker_datetime` |
+调用本 Skill 时，应输出一个 JSON 数组。
 
-组件详细写法参考：
+数组中的每个问题通常由两部分组成：
 
-- `references/select_static.md`
-- `references/multi_select_static.md`
-- `references/plain_text.md`
-- `references/date_picker.md`
-- `references/picker_datetime.md`
+1. 一个标题说明组件：`div`
+2. 一个表单输入组件：如 `select_static`、`multi_select_static`、`input`、`date_picker`、`picker_datetime`
 
-## 组件选择原则
+每个表单组件必须包含唯一的 `name` 字段，用于后续识别用户答案。
 
-### 单选问题
+## 通用字段规范
 
-当问题只有一个答案时，使用 `select_static`。
+### 标题组件
 
-例如：
-
-- 请选择输出格式
-- 请选择目标平台
-- 请选择优先级
-- 请选择语言
-
-### 多选问题
-
-当问题允许多个答案同时成立时，使用 `multi_select_static`。
-
-例如：
-
-- 请选择需要包含的模块
-- 请选择目标渠道
-- 请选择需要支持的功能
-- 请选择通知对象
-
-### 文本输入问题
-
-当需要用户自由输入内容时，使用 `plain_text` 对应的输入框组件。
-
-例如：
-
-- 请输入项目名称
-- 请输入补充说明
-- 请输入目标描述
-- 请输入联系人
-
-注意：
-
-- 用户侧类型称为 `plain_text`
-- 最终飞书卡片组件使用 `"tag": "input"`
-
-### 日期问题
-
-当只需要日期时，使用 `date_picker`。
-
-例如：
-
-- 请选择开始日期
-- 请选择截止日期
-- 请选择入职日期
-
-### 日期时间问题
-
-当需要精确到时间时，使用 `picker_datetime`。
-
-例如：
-
-- 请选择会议时间
-- 请选择提醒时间
-- 请选择任务截止时间
-
-## 追问设计原则
-
-生成表单问题时遵循以下原则：
-
-1. 只问完成任务所必需的信息。
-2. 不要把已知信息重复问给用户。
-3. 问题标题要清晰、简短、可直接作答。
-4. 优先使用选择组件降低用户输入成本。
-5. 如果可选项无法合理枚举，则使用文本输入框。
-6. 单选与多选要严格区分。
-7. 日期和日期时间要严格区分。
-8. 表单问题数量保持克制，避免一次追问过多。
-9. 如果需要多个字段，按用户完成任务的思考顺序排列。
-10. 如果选项值未特别要求，使用简洁稳定的字符串值。
-
-## 字段标题格式
-
-每一个问题组件前，都必须先生成一个问题标题 `div`。
-
-标题格式固定如下：
+每个问题前建议使用 `div` 作为标题说明。
 
 ```json
 {
   "tag": "div",
   "text": {
     "tag": "plain_text",
-    "content": "{{问题标题}}",
+    "content": "问题标题",
     "text_size": "normal_v2",
     "text_align": "left",
     "text_color": "default"
@@ -156,220 +58,516 @@ description: 当用户需求信息不足、需要通过表单向用户提问并�
 }
 ```
 
-其中：
+### 表单组件通用字段
 
-- `{{问题标题}}` 是大模型根据当前需求生成的提问标题。
-- 标题应是用户可以直接理解的问题或字段名。
-- 示例：
-  - `请选择输出格式`
-  - `请选择需要包含的模块`
-  - `请输入项目名称`
-  - `请选择开始日期`
-  - `请选择会议时间`
+表单组件建议包含以下字段：
 
-## 字段名称规则
+- `tag`：组件类型
+- `placeholder`：占位提示
+- `width`：建议使用 `fill`
+- `name`：唯一字段名
+- `margin`：建议使用 `0px 0px 0px 0px`
 
-每个组件都需要设置 `name`。
+字段名 `name` 应具备语义，例如：
 
-`name` 用于表单提交后识别用户回答。
+- `project_type`
+- `target_date`
+- `user_requirements`
+- `preferred_options`
+- `meeting_time`
 
-生成规则：
+避免使用无意义或重复的字段名。
 
-1. 优先使用清晰、稳定、可读的字段名。
-2. 不要使用含义不明的随机名称。
-3. 若无额外约束，可根据问题含义生成英文蛇形命名。
+## 组件模板
 
-示例：
+### 1. 下拉单选
 
-| 问题标题 | name |
-|---|---|
-| 请选择输出格式 | `output_format` |
-| 请选择目标平台 | `target_platform` |
-| 请输入项目名称 | `project_name` |
-| 请选择开始日期 | `start_date` |
-| 请选择会议时间 | `meeting_time` |
+用于让用户从多个选项中选择一个答案。
 
-## 卡片标题规则
+适合场景：
 
-卡片标题应表达“需要用户补充信息”。
-
-推荐写法：
-
-- `请补充需求信息`
-- `请确认以下信息`
-- `请完善任务参数`
-- `请填写以下内容`
-
-卡片副标题应简要说明补充信息的目的。
-
-推荐写法：
-
-- `补充以下信息后，我将继续处理`
-- `请确认关键参数，以便继续生成结果`
-- `请填写任务所需信息`
-
-## 整体卡片外框架
-
-生成飞书表单卡片时，使用以下整体框架，副标题中告知用户超时时间：
+- 选择任务类型
+- 选择优先级
+- 选择风格
+- 选择是否继续
+- 选择单一方案
 
 ```json
 {
-  "schema": "2.0",
-  "config": {
-    "update_multi": true,
-    "style": {
-      "text_size": {
-        "normal_v2": {
-          "default": "normal",
-          "pc": "normal",
-          "mobile": "heading"
-        }
+  "tag": "select_static",
+  "placeholder": {
+    "tag": "plain_text",
+    "content": "请选择"
+  },
+  "options": [
+    {
+      "text": {
+        "tag": "plain_text",
+        "content": "选项1"
+      },
+      "value": "option_1",
+      "icon": {
+        "tag": "standard_icon",
+        "token": "signature_outlined"
+      }
+    },
+    {
+      "text": {
+        "tag": "plain_text",
+        "content": "选项2"
+      },
+      "value": "option_2",
+      "icon": {
+        "tag": "standard_icon",
+        "token": "signature_outlined"
       }
     }
+  ],
+  "type": "default",
+  "width": "fill",
+  "name": "single_choice",
+  "margin": "0px 0px 0px 0px"
+}
+```
+
+### 2. 下拉多选
+
+用于让用户从多个选项中选择多个答案。
+
+适合场景：
+
+- 选择多个需求
+- 选择多个功能模块
+- 选择多个偏好
+- 选择多个限制条件
+
+```json
+{
+  "tag": "multi_select_static",
+  "placeholder": {
+    "tag": "plain_text",
+    "content": "请选择，可多选"
   },
-  "body": {
-    "direction": "vertical",
-    "padding": "12px 12px 12px 12px",
-    "elements": [
+  "options": [
+    {
+      "text": {
+        "tag": "plain_text",
+        "content": "选项1"
+      },
+      "value": "option_1",
+      "icon": {
+        "tag": "standard_icon",
+        "token": "signature_outlined"
+      }
+    },
+    {
+      "text": {
+        "tag": "plain_text",
+        "content": "选项2"
+      },
+      "value": "option_2",
+      "icon": {
+        "tag": "standard_icon",
+        "token": "signature_outlined"
+      }
+    }
+  ],
+  "type": "default",
+  "width": "fill",
+  "name": "multiple_choices",
+  "margin": "0px 0px 0px 0px"
+}
+```
+
+### 3. 输入框
+
+用于收集用户的自由文本输入。
+
+适合场景：
+
+- 描述需求
+- 补充背景
+- 输入名称
+- 输入备注
+- 输入自定义内容
+
+```json
+{
+  "tag": "input",
+  "placeholder": {
+    "tag": "plain_text",
+    "content": "请输入"
+  },
+  "default_value": "",
+  "width": "fill",
+  "label": {
+    "tag": "plain_text",
+    "content": ""
+  },
+  "label_position": "top",
+  "name": "text_input",
+  "margin": "0px 0px 0px 0px"
+}
+```
+
+### 4. 日期选择
+
+用于收集某一天的日期。
+
+适合场景：
+
+- 截止日期
+- 开始日期
+- 目标日期
+- 生日
+- 活动日期
+
+```json
+{
+  "tag": "date_picker",
+  "placeholder": {
+    "tag": "plain_text",
+    "content": "请选择日期"
+  },
+  "width": "fill",
+  "name": "selected_date",
+  "margin": "0px 0px 0px 0px"
+}
+```
+
+### 5. 日期时间选择
+
+用于收集精确到时间的日期时间信息。
+
+适合场景：
+
+- 会议时间
+- 提醒时间
+- 发布时间
+- 预约时间
+- 任务执行时间
+
+```json
+{
+  "tag": "picker_datetime",
+  "placeholder": {
+    "tag": "plain_text",
+    "content": "请选择日期和时间"
+  },
+  "width": "fill",
+  "name": "selected_datetime",
+  "margin": "0px 0px 0px 0px"
+}
+```
+
+## 使用原则
+
+### 何时提问
+
+只有在缺少必要信息，且无法合理推断时，才主动向用户提问。
+
+如果问题可以通过上下文推断，优先直接继续执行，不要过度打断用户。
+
+### 问题数量
+
+一次表单中建议包含 1 到 5 个问题。
+
+如果问题过多，应优先询问最关键的信息，避免给用户造成负担。
+
+### 问题设计
+
+问题应清晰、具体、可回答。
+
+推荐：
+
+- “请选择你希望生成的文档类型”
+- “请选择需要包含的功能模块”
+- “请输入项目背景或补充说明”
+- “请选择期望完成日期”
+- “请选择会议开始时间”
+
+避免：
+
+- “你想要什么？”
+- “还有吗？”
+- “请补充一下”
+- “选择一下”
+
+### 选项设计
+
+下拉选项应互斥、清晰、覆盖常见情况。
+
+如果存在不确定情况，可以加入：
+
+- “不确定”
+- “其他”
+- “暂不决定”
+- “由模型推荐”
+
+### 字段命名
+
+`name` 字段必须稳定、唯一、语义化。
+
+推荐使用英文小写加下划线：
+
+```text
+task_type
+priority_level
+required_features
+additional_context
+deadline_date
+meeting_datetime
+```
+
+不推荐：
+
+```text
+Select_3w2jckvrbtg
+Input_yuvaqw12aek
+field1
+aaa
+test
+```
+
+## 标准输出示例
+
+以下示例用于在开始生成方案前，主动询问用户任务类型、需要的功能、补充说明、截止日期和会议时间。
+
+```json
+[
+  {
+    "tag": "div",
+    "text": {
+      "tag": "plain_text",
+      "content": "请选择你希望处理的任务类型",
+      "text_size": "normal_v2",
+      "text_align": "left",
+      "text_color": "default"
+    },
+    "margin": "0px 0px 0px 0px"
+  },
+  {
+    "tag": "select_static",
+    "placeholder": {
+      "tag": "plain_text",
+      "content": "请选择"
+    },
+    "options": [
       {
-        "tag": "form",
-        "elements": [
-          "{{问题标题 div}}",
-          "{{对应问题组件}}",
-          "{{更多问题标题 div 与问题组件}}",
-          "{{提交取消按钮}}"
-        ],
-        "padding": "4px 0px 4px 0px",
-        "margin": "0px 0px 0px 0px",
-        "name": "question_form"
+        "text": {
+          "tag": "plain_text",
+          "content": "需求梳理"
+        },
+        "value": "requirement_analysis",
+        "icon": {
+          "tag": "standard_icon",
+          "token": "signature_outlined"
+        }
+      },
+      {
+        "text": {
+          "tag": "plain_text",
+          "content": "方案设计"
+        },
+        "value": "solution_design",
+        "icon": {
+          "tag": "standard_icon",
+          "token": "signature_outlined"
+        }
+      },
+      {
+        "text": {
+          "tag": "plain_text",
+          "content": "内容生成"
+        },
+        "value": "content_generation",
+        "icon": {
+          "tag": "standard_icon",
+          "token": "signature_outlined"
+        }
+      },
+      {
+        "text": {
+          "tag": "plain_text",
+          "content": "其他"
+        },
+        "value": "other",
+        "icon": {
+          "tag": "standard_icon",
+          "token": "signature_outlined"
+        }
       }
-    ]
+    ],
+    "type": "default",
+    "width": "fill",
+    "name": "task_type",
+    "margin": "0px 0px 0px 0px"
   },
-  "header": {
-    "title": {
+  {
+    "tag": "div",
+    "text": {
       "tag": "plain_text",
-      "content": "{{主标题}}"
+      "content": "请选择需要包含的功能或内容",
+      "text_size": "normal_v2",
+      "text_align": "left",
+      "text_color": "default"
     },
-    "subtitle": {
+    "margin": "0px 0px 0px 0px"
+  },
+  {
+    "tag": "multi_select_static",
+    "placeholder": {
       "tag": "plain_text",
-      "content": "{{副标题}}"
+      "content": "请选择，可多选"
     },
-    "template": "wathet",
-    "icon": {
-      "tag": "standard_icon",
-      "token": "thumbsup_filled"
+    "options": [
+      {
+        "text": {
+          "tag": "plain_text",
+          "content": "背景分析"
+        },
+        "value": "background_analysis",
+        "icon": {
+          "tag": "standard_icon",
+          "token": "signature_outlined"
+        }
+      },
+      {
+        "text": {
+          "tag": "plain_text",
+          "content": "执行步骤"
+        },
+        "value": "execution_steps",
+        "icon": {
+          "tag": "standard_icon",
+          "token": "signature_outlined"
+        }
+      },
+      {
+        "text": {
+          "tag": "plain_text",
+          "content": "风险提示"
+        },
+        "value": "risk_notes",
+        "icon": {
+          "tag": "standard_icon",
+          "token": "signature_outlined"
+        }
+      },
+      {
+        "text": {
+          "tag": "plain_text",
+          "content": "结果示例"
+        },
+        "value": "examples",
+        "icon": {
+          "tag": "standard_icon",
+          "token": "signature_outlined"
+        }
+      }
+    ],
+    "type": "default",
+    "width": "fill",
+    "name": "required_sections",
+    "margin": "0px 0px 0px 0px"
+  },
+  {
+    "tag": "div",
+    "text": {
+      "tag": "plain_text",
+      "content": "请补充你的具体需求或背景信息",
+      "text_size": "normal_v2",
+      "text_align": "left",
+      "text_color": "default"
     },
-    "padding": "12px 12px 12px 12px"
+    "margin": "0px 0px 0px 0px"
+  },
+  {
+    "tag": "input",
+    "placeholder": {
+      "tag": "plain_text",
+      "content": "请输入补充说明"
+    },
+    "default_value": "",
+    "width": "fill",
+    "label": {
+      "tag": "plain_text",
+      "content": ""
+    },
+    "label_position": "top",
+    "name": "additional_context",
+    "margin": "0px 0px 0px 0px"
+  },
+  {
+    "tag": "div",
+    "text": {
+      "tag": "plain_text",
+      "content": "请选择期望完成日期",
+      "text_size": "normal_v2",
+      "text_align": "left",
+      "text_color": "default"
+    },
+    "margin": "0px 0px 0px 0px"
+  },
+  {
+    "tag": "date_picker",
+    "placeholder": {
+      "tag": "plain_text",
+      "content": "请选择日期"
+    },
+    "width": "fill",
+    "name": "deadline_date",
+    "margin": "0px 0px 0px 0px"
+  },
+  {
+    "tag": "div",
+    "text": {
+      "tag": "plain_text",
+      "content": "如需安排沟通，请选择会议时间",
+      "text_size": "normal_v2",
+      "text_align": "left",
+      "text_color": "default"
+    },
+    "margin": "0px 0px 0px 0px"
+  },
+  {
+    "tag": "picker_datetime",
+    "placeholder": {
+      "tag": "plain_text",
+      "content": "请选择日期和时间"
+    },
+    "width": "fill",
+    "name": "meeting_datetime",
+    "margin": "0px 0px 0px 0px"
   }
-}
+]
 ```
 
-## 表单按钮
+## 生成规则
 
-所有追问字段生成完成后，在 `form.elements` 最后追加以下按钮：
+当你根据用户任务生成表单时，请遵循以下规则：
 
-```json
-{
-  "tag": "column_set",
-  "columns": [
-    {
-      "tag": "column",
-      "width": "auto",
-      "elements": [
-        {
-          "tag": "button",
-          "text": {
-            "tag": "plain_text",
-            "content": "提交"
-          },
-          "type": "primary",
-          "width": "default",
-          "form_action_type": "submit",
-          "name": "submit_button"
-        }
-      ],
-      "vertical_align": "top"
-    },
-    {
-      "tag": "column",
-      "width": "auto",
-      "elements": [
-        {
-          "tag": "button",
-          "text": {
-            "tag": "plain_text",
-            "content": "取消"
-          },
-          "type": "default",
-          "width": "default",
-          "form_action_type": "reset",
-          "name": "reset_button"
-        }
-      ],
-      "vertical_align": "top"
-    }
-  ]
-}
-```
+1. 先判断当前任务缺少哪些关键信息。
+2. 只询问完成任务所必需的信息。
+3. 优先使用结构化选项，减少用户输入成本。
+4. 对开放性、个性化或背景类问题使用输入框。
+5. 对日期类信息使用 `date_picker`。
+6. 对具体时间点使用 `picker_datetime`。
+7. 每个问题标题必须简洁明确。
+8. 每个控件的 `name` 必须唯一。
+9. 输出必须是合法 JSON 数组。
+10. 不要在 JSON 外输出额外解释文本。
 
-## 生成步骤
+## 输出格式约束
 
-当决定使用表单向用户追问时：
+最终输出必须满足：
 
-1. 分析用户当前需求。
-2. 找出继续执行前必须确认的信息。
-3. 删除已经从上下文中明确获得的信息。
-4. 为每个缺失信息选择最合适的组件。
-5. 为选择组件补充合理选项。
-6. 为每个问题生成标题 `div`。
-7. 根据 `references` 中的对应组件模板生成字段组件。
-8. 将所有问题加入同一个 `form.elements`。
-9. 在末尾追加提交和取消按钮。
-10. 输出完整飞书卡片 JSON。
+- 顶层结构是 JSON 数组
+- 数组元素只能是表单相关组件对象
+- 不要输出 Markdown
+- 不要输出解释说明
+- 不要输出代码块标记
+- 不要输出 JSON 之外的任何文本
+- 所有字符串必须使用双引号
+- 所有 `name` 字段必须唯一且语义化
 
-## 输出要求
-
-默认只输出完整 JSON。
-
-不要输出：
-
-- 字段设计过程
-- 组件选择解释
-- Markdown 代码块外的额外说明
-- 给用户看的字段配置说明
-
-除非调用方明确要求解释，否则最终结果应直接是飞书卡片 JSON。
-
-## 示例理解方式
-
-### 用户需求
-
-用户说：
-
-> 帮我生成一个活动报名页面。
-
-### 大模型判断
-
-当前可能缺少：
-
-- 活动名称
-- 报名截止日期
-- 报名页面风格
-- 需要收集哪些报名信息
-
-于是可生成表单向用户提问：
-
-- `请输入活动名称` → `plain_text`
-- `请选择报名截止日期` → `date_picker`
-- `请选择页面风格` → `select_static`
-- `请选择报名信息字段` → `multi_select_static`
-
-### 用户需求
-
-用户说：
-
-> 明天下午三点提醒我开会。
-
-### 大模型判断
-
-信息已足够，不应生成表单追问。
