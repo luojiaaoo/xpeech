@@ -12,6 +12,31 @@ from .schema import ChatEvent, FileData, ImageData, Message, TextData
 from typing import Any
 from yarl import URL
 
+FINISH_CARD_CONTENT = {
+    "schema": "2.0",
+    "config": {
+        "update_multi": True,
+        "style": {"text_size": {"normal_v2": {"default": "normal", "pc": "normal", "mobile": "heading"}}},
+    },
+    "body": {
+        "direction": "vertical",
+        "horizontal_spacing": "8px",
+        "vertical_spacing": "8px",
+        "horizontal_align": "center",
+        "vertical_align": "center",
+        "padding": "12px 12px 12px 12px",
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": ":OK:<font color='red'>表单填写完成</font>",
+                "text_align": "left",
+                "text_size": "normal_v2",
+                "margin": "0px 0px 0px 0px",
+            }
+        ],
+    },
+}
+
 
 async def iter_chat_events(
     messages: list[Message],

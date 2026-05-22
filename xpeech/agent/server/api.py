@@ -51,9 +51,12 @@ async def answer_question(
     answer: Annotated[str, Form(description="回答内容")],
 ):
     question_event: QuestionEvent = AgentLoop.SESSION_QUESTION_EVENT.get(session_id)
-    question_event.answer = answer
-    question_event.event.set()
-    return {"message": "Answer received"}
+    if question_event is not None:
+        question_event.answer = answer
+        question_event.event.set()
+        return {"message": "Answer received"}
+    else:
+        return {"message": "Question event not found"}
 
 
 @app.post("/chat", response_class=EventSourceResponse)

@@ -22,7 +22,7 @@ from .schema import ChatEvent, ChatEventType, Message, TextData, ImageData, File
 import json
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import GetMessageResourceRequest, GetMessageResourceResponse
-from .helper import bytes_to_image_url, iter_chat_events, notify_question
+from .helper import bytes_to_image_url, iter_chat_events, notify_question, FINISH_CARD_CONTENT
 import random
 from pathlib import Path
 import aiofiles
@@ -135,6 +135,7 @@ class FeishuBridge:
         session_id = f"xpeech_{card_action_event.chat_id}"
         form_data = card_action_event.raw["event"]["action"]["form_value"]
         await notify_question(session_id, form_data, self.chat_url)
+        await self.channel.update_card(card_action_event.message_id, FINISH_CARD_CONTENT)
 
     async def channel_send(
         self, to: str, message: dict, opts: dict | None, session_id: str, message_type: ChatEventType
