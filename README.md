@@ -69,7 +69,6 @@ parallel = 4
 [feishu]
 app_id = "cli_xxx"
 idle_timeout = 3
-parallel = 3
 ```
 
 密钥写在 `.env`：
