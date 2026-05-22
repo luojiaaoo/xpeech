@@ -5,6 +5,7 @@ from .tools.filesystem import build_file_tools
 from .tools.shell import build_shell_tools
 from .tools.web import web_fetch, web_search
 from .tools.office import office_read
+from .tools.question import joyride_request_human_input, is_ok_question, extract_question
 from .tools.file_message import build_file_message_tools
 from itertools import count
 from ..config.settings import settings
@@ -24,12 +25,21 @@ from loguru import logger
 from ..agent.server.schema import InputText
 from .memory import MemoryStore
 from .prompt.compress import SUMMARY_PROMPT
+import asyncio
+from dataclasses import dataclass, Field
+
+
+@dataclass
+class QuestionEvent:
+    event: asyncio.Event
+    answer: str = "User timeout answering the question"
 
 
 class AgentLoop:
     """Agent循环处理逻辑。"""
 
     INTERATION_STOP_PROMPT = "You have reached the maximum number of iterations and MUST stop calling tools."
+    SESSION_QUESTION_EVENT: dict[str, QuestionEvent] = {}
 
     def __init__(
         self,
@@ -40,7 +50,6 @@ class AgentLoop:
         provider_chat_kwargs: ProviderChatKwargs | None = None,
         max_iterations: int | None = None,
     ):
-
         self.provider = provider
         self.workspace = workspace
         self.tools = tools
@@ -92,6 +101,9 @@ class AgentLoop:
         )
         self.provider.register_tool()(send_file)
 
+        # question
+        self.provider.register_tool()(joyride_request_human_input)
+
     # ----------------- history会话读写 -----------------
 
     async def del_history_yaml(self, session_id: str):
@@ -134,7 +146,7 @@ class AgentLoop:
 
     # ----------------- agent loop tool call -----------------
 
-    async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int):
+    async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str):
         logger.info(
             "Processing tool calls loop_count={} count={}",
             loop_count,
@@ -196,33 +208,55 @@ class AgentLoop:
                     tool_call.name,
                 )
 
-            # 创建工具调用结果消息
-            if isinstance(result, str):
-                messages_yaml.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result,
-                    }
-                )
-            elif isinstance(result, list):
-                # 把带_meta属性的字典过滤出来
-                others = []
-                for i in result:
-                    if isinstance(i, dict) and "_meta" in i:
-                        # 提取_meta属性，组装成消息
-                        _meta = i.pop("_meta")
-                        with_metas.extend([{"type": "text", "text": _meta}, i])
-                    else:
-                        others.append(i)
-                messages_yaml.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": others,
-                    }
-                )
-            tool_call_result.append((tool_call.id, tool_call.name, result))
+            def append_tool_result_messages_yaml(tool_call: ToolCallRequest, result_: Any):
+                # 创建工具调用结果消息
+                if isinstance(result_, str):
+                    messages_yaml.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result_,
+                        }
+                    )
+                elif isinstance(result_, list):
+                    # 把带_meta属性的字典过滤出来
+                    others = []
+                    for i in result_:
+                        if isinstance(i, dict) and "_meta" in i:
+                            # 提取_meta属性，组装成消息
+                            _meta = i.pop("_meta")
+                            with_metas.extend([{"type": "text", "text": _meta}, i])
+                        else:
+                            others.append(i)
+                    messages_yaml.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": others,
+                        }
+                    )
+
+            if tool_call.name == "send_file":
+                # 发送文件
+                logger.info("Sending file {}", result)
+                yield {"event": "send_file", "context": result}
+                append_tool_result_messages_yaml(tool_call, result)
+            elif tool_call.name == "joyride_request_human_input" and is_ok_question(result):
+                # 等待用户输入
+                user_timeout = tool_call.arguments["timeout"]
+                logger.info(f"Waiting for user input, timeout={user_timeout}")
+                # 加协程锁，等待用户输入20秒
+                self.SESSION_QUESTION_EVENT[session_id] = QuestionEvent(event=asyncio.Event())
+                yield {"event": "question", "context": extract_question(result)}
+                try:
+                    await asyncio.wait_for(self.SESSION_QUESTION_EVENT[session_id].event.wait(), timeout=user_timeout)
+                    logger.info("User answered the question {}", self.SESSION_QUESTION_EVENT[session_id].answer)
+                except asyncio.TimeoutError:
+                    logger.warning("User timeout answering the question")
+                append_tool_result_messages_yaml(tool_call, self.SESSION_QUESTION_EVENT[session_id].answer)
+            else:
+                append_tool_result_messages_yaml(tool_call, result)
+                tool_call_result.append((tool_call.id, tool_call.name, result))
 
         # 如果包含_meta属性，则把这类消息转成user消息
         if with_metas:
@@ -335,7 +369,7 @@ class AgentLoop:
 
             # 如果有工具调用
             if response.has_tool_calls:
-                async for i in self.tool_call(response, messages_yaml, loop_count):
+                async for i in self.tool_call(response, messages_yaml, loop_count, message.session_id):
                     yield i
 
             else:

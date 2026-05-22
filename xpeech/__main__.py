@@ -13,7 +13,7 @@ def main() -> None:
     api_parser.set_defaults(service="api")
 
     feishu_parser = subparsers.add_parser("feishu", help="Run the Feishu bridge.")
-    feishu_parser.add_argument("--chat-url", default="http://127.0.0.1:7878/chat", help="Xpeech /chat endpoint.")
+    feishu_parser.add_argument("--chat-url", default="http://127.0.0.1:7878", help="Xpeech /chat endpoint.")
     feishu_parser.set_defaults(service="feishu")
 
     args = parser.parse_args()

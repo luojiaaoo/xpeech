@@ -9,6 +9,8 @@ class ChatEventType(StrEnum):
     TOOL_CALL = "tool_call"
     TOOL_CALL_RESULT = "tool_call_result"
     COMMAND = "command"
+    SEND_FILE = "send_file"
+    QUESTION = "question"
     TOKEN_USAGE = "token_usage"
 
 

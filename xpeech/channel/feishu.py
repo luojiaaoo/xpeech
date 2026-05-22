@@ -15,6 +15,7 @@ from lark_oapi.channel import (
     MediaContent,
     PostContent,
     SendResult,
+    CardActionEvent,
 )
 import asyncio
 from .schema import ChatEvent, ChatEventType, Message, TextData, ImageData, FileData
@@ -25,12 +26,14 @@ from .helper import bytes_to_image_url, iter_chat_events
 import random
 from pathlib import Path
 import aiofiles
+import httpx
 from itertools import chain
 from datetime import datetime
 from typing import Any, NotRequired, TypedDict
 from loguru import logger
 from ..config.settings import settings
-import base64
+from lark_oapi.channel import Events
+from yarl import URL
 
 
 class OutputEventType(TypedDict):
@@ -118,7 +121,8 @@ class FeishuBridge:
             safety=SafetyConfig(dedup=DedupConfig(ttl_seconds=43_200)),
             outbound=OutboundConfig(retry=RetryConfig(max_attempts=5)),
         )
-        self.channel.on("message", self._on_message)
+        self.channel.on(Events.MESSAGE, self._on_message)
+        self.channel.on(Events.CARD_ACTION, self._on_card_action)
 
     async def add_reaction(self, msg: Message):
         await self.channel.add_reaction(msg.message_id, random.choice(_EMOJI_TYPES))
@@ -129,6 +133,22 @@ class FeishuBridge:
             self.receive_queues[msg.session_id] = asyncio.Queue()
         self.receive_queues[msg.session_id].put_nowait(msg)
 
+    async def _notify_question(self, session_id: str, result: Any) -> None:
+        answer_url = str(URL(self.chat_url) / "answer_question")
+        answer = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                answer_url,
+                headers={"x-session-id": session_id},
+                data={"answer": answer},
+            )
+            response.raise_for_status()
+
+    async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
+        session_id = f"xpeech_{card_action_event.chat_id}"
+        form_data = card_action_event.raw.event.action.form_value
+        await self._notify_question(session_id, form_data)
+
     async def channel_send(
         self, to: str, message: dict, opts: dict | None, session_id: str, message_type: ChatEventType
     ):
@@ -136,6 +156,7 @@ class FeishuBridge:
             ChatEventType.ASSISTANT,
             ChatEventType.COMMAND,
             ChatEventType.TOKEN_USAGE,
+            ChatEventType.QUESTION,
         )
         if message_type in persistence_tyle:
             await self.channel.send(to=to, message=message, opts=opts)
@@ -174,18 +195,20 @@ class FeishuBridge:
                 logger.debug("Failed to add Feishu reaction message_id={}", i.message_id)
         # 处理消息
         try:
-            async for event in iter_chat_events(messages, self.chat_url):
+            async for event in iter_chat_events(messages, str(URL(self.chat_url) / "chat")):
                 # 检测有没有文件发送请求
-                if event.event == ChatEventType.TOOL_CALL_RESULT:
-                    for _, tool_call_name, tool_call_result in json.loads(event.context):
-                        if tool_call_name != "send_file":
-                            continue
-                        filepath = tool_call_result
-                        async with aiofiles.open(filepath, "rb") as f:
-                            source_bytes = await f.read()
-                        await self.channel.send(
-                            chat_id, {"file": {"source": source_bytes, "file_name": Path(filepath).name}}
-                        )
+                if event.event == ChatEventType.SEND_FILE:
+                    filepath = event.context
+                    async with aiofiles.open(filepath, "rb") as f:
+                        source_bytes = await f.read()
+                    await self.channel.send(
+                        chat_id, {"file": {"source": source_bytes, "file_name": Path(filepath).name}}
+                    )
+                    continue
+                if event.event == ChatEventType.QUESTION:
+                    sr: SendResult = await self.channel.send(chat_id, {"card": json.loads(event.context)})
+                    print(sr)
+                    continue
 
                 # 返回给用户消息
                 card = self._format_chat_event(event)
@@ -351,7 +374,7 @@ class FeishuBridge:
             return save_filepath
 
         if inbound_msg.chat_type == "p2p":
-            session_id = f"{inbound_msg.chat_type}_{inbound_msg.chat_id}"
+            session_id = f"xpeech_{inbound_msg.chat_id}"
             if isinstance(inbound_msg.content, TextContent):
                 return Message(
                     message_id=inbound_msg.message_id,
