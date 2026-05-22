@@ -17,12 +17,12 @@ class PlainText(StrictBaseModel):
 
 class PlaceholderText(StrictBaseModel):
     tag: Literal["plain_text"] = "plain_text"
-    content: Literal["请选择"] = "请选择"
+    content: str = "请选择"
 
 
 class InputPlaceholderText(StrictBaseModel):
     tag: Literal["plain_text"] = "plain_text"
-    content: Literal["请输入"] = "请输入"
+    content: str = "请输入"
 
 
 class StandardIcon(StrictBaseModel):
@@ -38,7 +38,7 @@ class SelectOption(StrictBaseModel):
 
 class EmptyLabel(StrictBaseModel):
     tag: Literal["plain_text"] = "plain_text"
-    content: Literal[""] = ""
+    content: str = ""
 
 
 class DivPlainText(StrictBaseModel):
@@ -78,7 +78,7 @@ class MultiSelectStatic(StrictBaseModel):
 class Input(StrictBaseModel):
     tag: Literal["input"] = "input"
     placeholder: InputPlaceholderText = Field(default_factory=InputPlaceholderText)
-    default_value: Literal[""] = ""
+    default_value: str = ""
     width: Literal["fill"] = "fill"
     label: EmptyLabel = Field(default_factory=EmptyLabel)
     label_position: Literal["top"] = "top"
