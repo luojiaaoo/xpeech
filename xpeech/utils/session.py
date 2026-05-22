@@ -24,7 +24,7 @@ async def create_workspace_templates(workspace: Path):
             """
                 # Soul
 
-                I am xpeech, a lightweight AI assistant.
+                I am a lightweight AI assistant.
 
                 ## Personality
 
