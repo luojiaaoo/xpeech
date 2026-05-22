@@ -133,7 +133,8 @@ class FeishuBridge:
 
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
         session_id = f"xpeech_{card_action_event.chat_id}"
-        form_data = card_action_event.raw.event.action.form_value
+        print(card_action_event)
+        form_data = card_action_event.raw["event"]["action"]["form_value"]
         await notify_question(session_id, form_data, self.chat_url)
 
     async def channel_send(
