@@ -2,7 +2,7 @@ import asyncio
 import random
 import time
 from typing import Any
-
+from ..config.settings import settings
 from litellm import RateLimitError, acompletion
 from loguru import logger
 
@@ -24,6 +24,7 @@ class LiteLLMRetryClient:
         max_delay: float = 12.0,
         jitter: float = 0.5,
     ):
+        self.semaphore = asyncio.Semaphore(settings.llm.parallel)
         self.max_retries = max(0, max_retries)
         self.initial_delay = initial_delay
         self.max_delay = max_delay
@@ -35,7 +36,8 @@ class LiteLLMRetryClient:
 
         for attempt in range(self.max_retries + 1):
             try:
-                result = await acompletion(**kwargs)
+                async with self.semaphore:
+                    result = await acompletion(**kwargs)
                 elapsed = time.time() - start_time
                 logger.info(
                     "LiteLLM request succeeded in {:.2f}s (attempts: {})",

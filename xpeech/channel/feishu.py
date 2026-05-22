@@ -100,8 +100,7 @@ class FeishuBridge:
 
     LOG_LEVEL = LogLevel.INFO
 
-    def __init__(self, chat_url: str, app_id: str, app_secret: str, parallel: int):
-        self.semaphore = asyncio.Semaphore(parallel)
+    def __init__(self, chat_url: str, app_id: str, app_secret: str):
         self.chat_url = chat_url
         self.app_id = app_id
         self.app_secret = app_secret
@@ -324,13 +323,9 @@ class FeishuBridge:
         for session_id in list(self.receive_queues.keys()):
             if session_id in self.session_tasks:
                 continue
-            self.session_tasks[session_id] = asyncio.create_task(self._run_session(session_id))
+            self.session_tasks[session_id] = asyncio.create_task(self.consume(session_id))
 
-    async def _run_session(self, session_id: str) -> None:
-        async with self.semaphore:
-            await self.consume(session_id=session_id)
-
-    async def poll_sessions(self, interval: float = 1.0) -> None:
+    async def poll_sessions(self, interval: float = 2.0) -> None:
         while True:
             try:
                 await self.one_by_one_session_id()
@@ -459,7 +454,6 @@ def run(chat_url: str) -> None:
                 chat_url=chat_url,
                 app_id=settings.feishu.app_id,
                 app_secret=settings.feishu.app_secret,
-                parallel=settings.feishu.parallel,
             ).start()
         )
     except KeyboardInterrupt:

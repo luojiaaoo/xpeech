@@ -78,6 +78,7 @@ class LLMConfig(BaseModel):
     support_image: bool = False
     support_video: bool = False
     support_json_output: bool = False
+    parallel: int = Field(default=4)
 
     @field_validator("api_key_config")
     @classmethod
@@ -103,7 +104,6 @@ class FeishuConfig(BaseModel):
     app_id: str
     app_secret: str
     idle_timeout: int = 5
-    parallel: int = 4
 
 
 class Settings(BaseSettings):

@@ -20,8 +20,9 @@ custom_system_prompt = ""
 support_image = true
 support_video = true
 support_json_output = true
+parallel = 4
+
 
 [feishu]
 app_id = "cli_a99b80eb143c9013"
 idle_timeout = 5
-parallel = 3
