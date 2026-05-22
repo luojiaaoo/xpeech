@@ -1,6 +1,5 @@
 import json
-from re import I
-from typing import Any, List, Union, Literal
+from typing import Any, List, Union, Literal, Annotated
 from pydantic import BaseModel, Field, ValidationError, ConfigDict, TypeAdapter
 
 USER_TIMEOUT = 5 * 60
@@ -49,10 +48,13 @@ class DivPlainText(StrictBaseModel):
     text_color: Literal["default"] = "default"
 
 
+Margin = Annotated[str, Field(pattern=r"^\d+px \d+px \d+px \d+px$")]
+
+
 class Div(StrictBaseModel):
     tag: Literal["div"] = "div"
     text: DivPlainText
-    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+    margin: Margin = "0px 0px 0px 0px"
 
 
 class SelectStatic(StrictBaseModel):
@@ -62,7 +64,7 @@ class SelectStatic(StrictBaseModel):
     type: Literal["default"] = "default"
     width: Literal["fill"] = "fill"
     name: str
-    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+    margin: Margin = "0px 0px 0px 0px"
 
 
 class MultiSelectStatic(StrictBaseModel):
@@ -72,7 +74,7 @@ class MultiSelectStatic(StrictBaseModel):
     type: Literal["default"] = "default"
     width: Literal["fill"] = "fill"
     name: str
-    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+    margin: Margin = "0px 0px 0px 0px"
 
 
 class Input(StrictBaseModel):
@@ -83,7 +85,7 @@ class Input(StrictBaseModel):
     label: EmptyLabel = Field(default_factory=EmptyLabel)
     label_position: Literal["top"] = "top"
     name: str
-    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+    margin: Margin = "0px 0px 0px 0px"
 
 
 class DatePicker(StrictBaseModel):
@@ -91,7 +93,7 @@ class DatePicker(StrictBaseModel):
     placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
     width: Literal["fill"] = "fill"
     name: str
-    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+    margin: Margin = "0px 0px 0px 0px"
 
 
 class DateTimePicker(StrictBaseModel):
@@ -99,7 +101,7 @@ class DateTimePicker(StrictBaseModel):
     placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
     width: Literal["fill"] = "fill"
     name: str
-    margin: Literal["0px 0px 0px 0px"] = "0px 0px 0px 0px"
+    margin: Margin = "0px 0px 0px 0px"
 
 
 FormComponent = Union[
@@ -114,15 +116,6 @@ FormComponentListAdapter = TypeAdapter(List[FormComponent])
 
 
 def validate_form_json(data: str) -> tuple[bool, Any]:
-    """
-    校验表单 JSON 数组。
-    Args:
-        data: JSON 字符串，或已经解析后的 Python list。
-    Returns:
-        tuple[bool, Any]:
-        - 成功时: (True, validated_data)
-        - 失败时: (False, error_detail)
-    """
     try:
         data = json.loads(data)
         validated_data = FormComponentListAdapter.validate_python(data)

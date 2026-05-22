@@ -26,7 +26,8 @@ from ..agent.server.schema import InputText
 from .memory import MemoryStore
 from .prompt.compress import SUMMARY_PROMPT
 import asyncio
-from dataclasses import dataclass, Field
+from dataclasses import dataclass
+import time
 
 
 @dataclass
@@ -287,7 +288,7 @@ class AgentLoop:
 
     async def run(self, message: InboundMessage):
         """运行一次Agent循环，处理一次用户消息。"""
-
+        start_time = time.perf_counter()
         logger.info("Agent run started workspace={}", self.workspace)
         messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
@@ -395,7 +396,7 @@ class AgentLoop:
         token_notify = "♻️ 即将达到最大令牌数，强制压缩" if token_percent > 90 else ""
         yield {
             "event": "token_usage",
-            "context": f"大模型请求次数：{loop_count + 1}；上下文使用率：{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}",
+            "context": f"上下文使用率：{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify} | 会话时长：{time.perf_counter() - start_time:.0f}秒 | 大模型请求次数：{loop_count + 1}",
         }
 
         logger.info("Agent run completed")
