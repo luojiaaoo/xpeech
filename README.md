@@ -1,6 +1,6 @@
 # Xpeech
 
-![Xpeech screenshot](screenshot/PixPin_2026-05-15_16-47-46.jpg)
+![Xpeech screenshot](screenshot/image.png)
 
 Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口，可以接收文本、图片和文件，调用大模型生成流式回复，并在需要时调用工具完成任务。
 
@@ -15,6 +15,12 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 支持内置工具和自定义 Python 工具
 - 支持飞书消息桥接
 - 使用 `conf.toml` 管理普通配置，使用 `.env` 管理密钥
+- YAML 格式存储会话历史，可读性更好
+- 自动历史消息压缩（三级压缩策略），避免超出上下文限制
+- 内置记忆系统，自动总结和保存关键信息
+- 支持视频输入
+- Token 使用率实时监控
+- 丰富的内置工具集：文件读写、Shell 执行、Web 搜索、网页抓取、Office 文档读取、文件发送、向用户提问
 
 ## 安装
 
@@ -41,14 +47,24 @@ session_path = "session"
 session_history_path = "session/history"
 workspace_base_path = "workspace_base"
 
+[tool]
+restrict_tools_to_workspace = true
+allowed_networks = ["10.0.0.0/8"]
+
 [llm]
 api_base = "https://api.siliconflow.cn/v1"
 default_model = "openai/Pro/moonshotai/Kimi-K2.6"
+default_context_token = 256000
+default_top_p = 0.7
 tools_python_package = "custom_tools"
 default_tools = ["echo", "hello"]
+system_name = ""
+custom_system_prompt = ""
+# default_reasoning_effort = "normal"
 support_image = true
 support_video = true
 support_json_output = true
+parallel = 4
 
 [feishu]
 app_id = "cli_xxx"
@@ -135,6 +151,13 @@ curl -N -X POST "http://localhost:7878/chat" \
 
 响应是 SSE 流，可以边生成边读取。
 
+### 内置命令
+
+在聊天中输入以下命令可以使用快捷功能：
+
+- `/help` - 显示帮助信息
+- `/new` - 开始一个新会话，自动总结并保存当前会话记忆
+
 ## 自定义工具
 
 在 `conf.toml` 里指定工具包：
@@ -185,15 +208,39 @@ def echo(message: Message):
 
 工具函数需要有 docstring。函数可以不接收参数，也可以接收一个 Pydantic `BaseModel` 参数。
 
+## 内置工具
+
+Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
+
+| 工具 | 说明 |
+|------|------|
+| `read_file` | 读取工作区内的文件内容 |
+| `write_file` | 向工作区写入文件 |
+| `edit_file` | 编辑工作区内的文件 |
+| `list_dir` | 列出工作区目录内容 |
+| `shell` | 执行 Bash 命令（带安全限制） |
+| `web_fetch` | 抓取网页内容并转为 Markdown |
+| `web_search` | 搜索网页并返回结果 |
+| `office_read` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
+| `send_file` | 向用户发送文件 |
+| `joyride_request_human_input` | 向用户发送表单提问 |
+
+### 工具安全
+
+- **路径隔离**：工具操作默认限制在工作区内，防止访问系统文件
+- **Shell 黑名单**：禁止执行 `rm -rf`、`format`、`dd` 等危险命令
+- **路径遍历检测**：拦截包含 `..` 的路径操作
+- **内网 URL 拦截**：防止访问内部网络接口
+
 ## 目录
 
 ```text
 conf.toml              # 普通配置
 .env                   # 本地密钥，不建议提交
 custom_tools/          # 自定义工具包
-xpeech/                # 服务代码
+session/history/       # 会话历史（YAML 格式）
 workspace_base/        # 每个会话的工作区
-session/history/       # 会话历史
+xpeech/                # 服务代码
 ```
 
 ## 开发
