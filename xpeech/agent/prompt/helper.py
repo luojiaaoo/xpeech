@@ -1,7 +1,42 @@
-from ...agent.server.schema import InboundMessage, InputText, InputImage
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
+
+from ...agent.server.schema import InboundMessage, InputText, InputImage
 from ...utils.helper import save_to_workspace
+
+
+def is_system_message(message: dict[str, Any]) -> bool:
+    return message["role"] == "system"
+
+
+def split_system_messages(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    system_messages = []
+    other_messages = []
+    for message in messages:
+        if is_system_message(message):
+            system_messages.append(message)
+        else:
+            other_messages.append(message)
+    return system_messages, other_messages
+
+
+def remove_system_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return split_system_messages(messages)[1]
+
+
+def prepend_system_messages(
+    messages: list[dict[str, Any]],
+    system_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [*system_messages, *messages]
+
+
+def set_system_prompt(
+    messages: list[dict[str, Any]],
+    system_prompt: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [system_prompt, *remove_system_messages(messages)]
 
 
 def build_inbound_message_metadata(*metas: dict[str, str], sort: bool = False) -> str:

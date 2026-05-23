@@ -14,7 +14,13 @@ import json
 from .server.schema import InboundMessage
 import aiofiles
 from .prompt.system import build_system_prompt
-from .prompt.helper import build_user_prompt
+from .prompt.helper import (
+    build_user_prompt,
+    prepend_system_messages,
+    remove_system_messages,
+    set_system_prompt,
+    split_system_messages,
+)
 from ..agent.tools.helper import get_tool_model_cls
 from ..provider.schema import ToolCallRequest
 import yaml
@@ -141,7 +147,7 @@ class AgentLoop:
         async with aiofiles.open(file, "r", encoding="utf-8") as f:
             content: list[dict[str, Any]] = yaml.safe_load(await f.read()) or []
         # 剔除系统提示词
-        content = [i for i in content if i["role"] != "system"]
+        content = remove_system_messages(content)
         logger.info("Session history loaded messages={}", len(content))
         return content
 
@@ -292,7 +298,7 @@ class AgentLoop:
         logger.info("Agent run started workspace={}", self.workspace)
         messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
         # 拼接系统提示词
-        messages_yaml.insert(0, await build_system_prompt(workspace=self.workspace))
+        messages_yaml = set_system_prompt(messages_yaml, await build_system_prompt(workspace=self.workspace))
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(
             await build_user_prompt(
@@ -340,14 +346,11 @@ class AgentLoop:
             if await self.need_compress(messages_yaml):
                 messages_yaml = await self.compress(messages_yaml)
 
-            # 清理用户消息中的时间戳，开始对话
-            _clean_messages = self.clear_role_user_timestamp(messages_yaml)
-
             logger.info("Calling provider chat loop_count={}", loop_count)
 
             try:
-                response = await self.provider.chat(
-                    messages=_clean_messages,
+                response = await self.chat(
+                    messages=messages_yaml,
                     tools=self.tools,
                     **self.provider_chat_kwargs,
                 )
@@ -412,16 +415,19 @@ class AgentLoop:
         max_accept_token = int(self.provider.default_context_token * 0.4)
         return totol_token < max_accept_token
 
+    async def chat(self, messages: list[dict[str, Any]], **kwargs) -> LLMResponse:
+        return await self.provider.chat(messages=self._strip_internal_message_metadata(messages), **kwargs)
+
     @classmethod
-    def is_send_user_message(cls, message: dict):
+    def _is_timestamped_user_message(cls, message: dict):
         """判断是否是用户主动发送的消息， 主动发送的消息会打上时间戳"""
         return message["role"] == "user" and "timestamp" in message
 
     @classmethod
-    def clear_role_user_timestamp(cls, messages: list[dict]):
+    def _strip_internal_message_metadata(cls, messages: list[dict]):
         rt = []
         for i in messages:
-            if i["role"] == "user" and cls.is_send_user_message(i):
+            if cls._is_timestamped_user_message(i):
                 # 不修改原始消息
                 i = i.copy()
                 # 剔除时间戳
@@ -446,7 +452,7 @@ class AgentLoop:
         def split_recent_user_messages(_messages: list[dict], keep_count: int) -> int:
             count = 0
             for i in range(len(_messages) - 1, -1, -1):
-                if not (_messages[i]["role"] == "user" and self.is_send_user_message(_messages[i])):
+                if not self._is_timestamped_user_message(_messages[i]):
                     continue
                 count += 1
                 if count == keep_count:
@@ -454,15 +460,16 @@ class AgentLoop:
             return 0
 
         async def summary_messages(_messages: list[dict]):
-            _clean_messages = self.clear_role_user_timestamp(_messages)
-            system_messages = [i for i in _clean_messages if i["role"] == "system"]
-            _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
-            _clean_messages.insert(0, {"role": "system", "content": SUMMARY_PROMPT})
-            _clean_messages.append({"role": "user", "content": "Please summarize the history messages."})
+            system_messages, history_messages = split_system_messages(_messages)
+            messages_for_summary = [
+                {"role": "system", "content": SUMMARY_PROMPT},
+                *history_messages,
+                {"role": "user", "content": "Please summarize the history messages."},
+            ]
             try:
                 summary = (
-                    await self.provider.chat(
-                        messages=_clean_messages,
+                    await self.chat(
+                        messages=messages_for_summary,
                         max_tokens=self.summary_tokens,
                         top_p=0.1,
                         remove_all_tools=True,
@@ -471,19 +478,15 @@ class AgentLoop:
             except Exception:
                 logger.exception("Failed to summarize history")
                 raise
-            _messages = [
-                *system_messages,
-                {"role": "assistant", "content": summary},
-            ]
+            _messages = prepend_system_messages([{"role": "assistant", "content": summary}], system_messages)
             return _messages
 
         def keep_messages_for_day(days, _messages):
-            system_messages = [i for i in _messages if i["role"] == "system"]
-            _messages = [i for i in _messages if i["role"] != "system"]
+            system_messages, _messages = split_system_messages(_messages)
             last_timestamp = None
             idx_split = 0
             for i in range(len(_messages) - 1, -1, -1):
-                if not (_messages[i]["role"] == "user" and self.is_send_user_message(_messages[i])):
+                if not self._is_timestamped_user_message(_messages[i]):
                     continue
                 if last_timestamp is None:
                     last_timestamp = _messages[i]["timestamp"]
@@ -491,7 +494,7 @@ class AgentLoop:
                 if last_timestamp - _timestamp > timedelta(days=days).total_seconds():
                     break
                 idx_split = i
-            _messages = [*system_messages, *_messages[idx_split:]]
+            _messages = prepend_system_messages(_messages[idx_split:], system_messages)
             return _messages
 
         # 一级压缩：超过1000字的工具执行结果（保留最近4次对话消息的结果调用）
@@ -523,8 +526,7 @@ class AgentLoop:
 
     async def consolidate_memory(self, mesages):
         memory_store = MemoryStore(workspace=self.workspace)
-        _clean_messages = self.clear_role_user_timestamp(mesages)
-        _clean_messages = [i for i in _clean_messages if i["role"] != "system"]
+        _clean_messages = remove_system_messages(mesages)
         if not _clean_messages:
             return "当前上下文为空，无需记忆"
         _system_prompt = "## Current Long-term Memory\n" + (await memory_store.get_memory_context() or "(empty)")
@@ -536,7 +538,7 @@ class AgentLoop:
             }
         )
         logger.info("Consolidating memory")
-        response = await self.provider.chat(
+        response = await self.chat(
             messages=_clean_messages,
             max_tokens=self.summary_tokens,
             top_p=0.7,
