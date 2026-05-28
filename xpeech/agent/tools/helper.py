@@ -1,8 +1,9 @@
 import inspect
 from typing import Callable, get_type_hints, Type
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from ...utils.helper import dynamic_import
 from ...config.settings import settings
+from openai import pydantic_function_tool
 
 
 def get_tool_model_cls(func: Callable[Type[BaseModel] | None, str | dict]) -> type[BaseModel]:
@@ -51,12 +52,7 @@ def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str
 
     # 情况 1：无参数
     if len(params) == 0:
-        parameters = {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        }
+        model_cls = create_model(f"{tool_name}Args")
 
     # 情况 2：单个 BaseModel 参数
     elif len(params) == 1:
@@ -72,14 +68,6 @@ def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str
                 f"with a BaseModel subclass, got {model_cls!r}"
             )
 
-        schema = model_cls.model_json_schema()
-        parameters = {
-            "type": "object",
-            "properties": schema.get("properties", {}),
-            "required": schema.get("required", []),
-            "additionalProperties": False,
-        }
-
     # 其他情况：不支持
     else:
         raise ValueError(
@@ -87,14 +75,7 @@ def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str
             f"or exactly 1 parameter annotated with a BaseModel subclass"
         )
 
-    return {
-        "type": "function",
-        "function": {
-            "name": tool_name,
-            "description": description,
-            "parameters": parameters,
-        },
-    }
+    return pydantic_function_tool(model_cls, name=tool_name, description=description)
 
 
 _MODULE_CUSTOM_CACHE = {}
