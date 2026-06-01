@@ -34,7 +34,7 @@ def content(
     content: Annotated[
         str,
         Form(
-            description='消息内容列表，JSON 格式字符串。支持文本和图片：[{"text": "你好"}, {"image_url": "data:image/png;base64,iVBOR..."}]',
+            description="消息内容列表，JSON 格式字符串。",
         ),
     ],
 ):

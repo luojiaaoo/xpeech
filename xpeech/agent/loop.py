@@ -304,7 +304,6 @@ class AgentLoop:
             await build_user_prompt(
                 message=message,
                 workspace=self.workspace,
-                support_image=self.provider.support_image,
             ),
         )
 

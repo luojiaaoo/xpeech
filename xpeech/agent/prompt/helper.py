@@ -2,8 +2,7 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
-from ...agent.server.schema import InboundMessage, InputText, InputImage
-from ...utils.helper import save_to_workspace
+from ...agent.server.schema import InboundMessage, InputText
 
 
 def is_system_message(message: dict[str, Any]) -> bool:
@@ -66,7 +65,7 @@ def build_inbound_message_metadata(*metas: dict[str, str], sort: bool = False) -
     return body
 
 
-async def build_user_prompt(message: InboundMessage, workspace: Path, support_image: bool):
+async def build_user_prompt(message: InboundMessage, workspace: Path):
 
     # 时间和元数据
     parts = [
@@ -82,18 +81,9 @@ async def build_user_prompt(message: InboundMessage, workspace: Path, support_im
 
     files: list[Path] = []
 
-    # 多模态消息
-    image_idx = 1
     for input in message.content:
         if isinstance(input, InputText):
             parts.append({"type": "text", "text": input.text})
-        elif isinstance(input, InputImage):
-            if support_image:
-                parts.append({"type": "image_url", "image_url": {"url": input.image_url, "detail": "auto"}})
-            else:
-                # 不支持图片以文件形式存储，再让工具去解析
-                files.append(await save_to_workspace(input, workspace=workspace, idx=image_idx))
-                image_idx += 1
     files.extend(message.files)
     # 文件提示词
     file_paths: str = ""
