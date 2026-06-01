@@ -34,7 +34,7 @@ def content(
     content: Annotated[
         str,
         Form(
-            description="消息内容列表，JSON 格式字符串。",
+            description='消息内容列表，JSON 格式字符串。[{"text": "你好"}, {"text": "world"}]',
         ),
     ],
 ):
