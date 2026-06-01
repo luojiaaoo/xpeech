@@ -18,10 +18,6 @@ class TextData(BaseModel):
     text: str
 
 
-class ImageData(BaseModel):
-    image_url: str
-
-
 class FileData(BaseModel):
     file: Path
 
@@ -32,7 +28,7 @@ class Message(BaseModel):
     message_id: str  # Unique identifier for the message.
     chat_id: str  # Unique identifier for the chat.
     session_id: str  # Unique identifier for the session.
-    content: list[TextData | ImageData | FileData]  # List of messages.
+    content: list[TextData | FileData]  # List of messages.
     timestamp: int  # Unix timestamp of the message, in seconds.
     session_metadata: dict[str, str | int]  # Metadata for the session.
 

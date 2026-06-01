@@ -18,11 +18,12 @@ from lark_oapi.channel import (
     CardActionEvent,
 )
 import asyncio
-from .schema import ChatEvent, ChatEventType, Message, TextData, ImageData, FileData
+from .schema import ChatEvent, ChatEventType, Message, TextData, FileData
 import json
+import mimetypes
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import GetMessageResourceRequest, GetMessageResourceResponse
-from .helper import bytes_to_image_url, iter_chat_events, notify_question, FINISH_CARD_CONTENT
+from .helper import iter_chat_events, notify_question, FINISH_CARD_CONTENT
 import random
 from pathlib import Path
 import aiofiles
@@ -31,6 +32,7 @@ from datetime import datetime
 from typing import Any, NotRequired, TypedDict
 from loguru import logger
 from ..config.settings import settings
+from ..utils.helper import detect_image_mime
 from lark_oapi.channel import Events
 from yarl import URL
 
@@ -327,33 +329,36 @@ class FeishuBridge:
     async def _parse_msg(self, inbound_msg: InboundMessage) -> Message:
         timestamp = inbound_msg.create_time // 1000
 
-        async def get_image_url_from_key(message_id: str, image_key: str) -> bytes:
+        async def _save_resource(
+            message_id: str,
+            file_key: str,
+            resource_type: str,
+            save_filepath: Path,
+        ) -> Path:
             client = self.channel.client
             request: GetMessageResourceRequest = (
-                GetMessageResourceRequest.builder().message_id(message_id).file_key(image_key).type("image").build()
+                GetMessageResourceRequest.builder()
+                .message_id(message_id)
+                .file_key(file_key)
+                .type(resource_type)
+                .build()
             )
             response: GetMessageResourceResponse = client.im.v1.message_resource.get(request)
             if not response.success():
-                lark.logger.error(
-                    f"client.im.v1.message_resource.get failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}"
+                error = (
+                    f"client.im.v1.message_resource.get failed, code: {response.code}, msg: {response.msg}, "
+                    f"log_id: {response.get_log_id()}, resp: \n"
+                    f"{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}"
                 )
-                return
-            return bytes_to_image_url(response.file.read())
-
-        async def _save_file(message_id: str, file_key: str, save_filepath: Path) -> None:
-            client = self.channel.client
-            request: GetMessageResourceRequest = (
-                GetMessageResourceRequest.builder().message_id(message_id).file_key(file_key).type("file").build()
-            )
-            response: GetMessageResourceResponse = client.im.v1.message_resource.get(request)
-            if not response.success():
-                lark.logger.error(
-                    f"client.im.v1.message_resource.get failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}"
-                )
-                return
+                lark.logger.error(error)
+                raise RuntimeError(error)
+            raw = response.file.read()
+            if resource_type == "image" and not save_filepath.suffix:
+                mime = detect_image_mime(raw)
+                save_filepath = save_filepath.with_suffix(mimetypes.guess_extension(mime or "") or ".jpg")
             save_filepath.parent.mkdir(parents=True, exist_ok=True)
             async with aiofiles.open(save_filepath, "wb") as f:
-                await f.write(response.file.read())
+                await f.write(raw)
             return save_filepath
 
         if inbound_msg.chat_type == "p2p":
@@ -368,14 +373,18 @@ class FeishuBridge:
                     session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
                 )
             elif isinstance(inbound_msg.content, ImageContent):
+                save_filepath = FEISHU_CACHE_DIR / session_id / inbound_msg.message_id
                 return Message(
                     message_id=inbound_msg.message_id,
                     chat_id=inbound_msg.chat_id,
                     session_id=session_id,
                     content=[
-                        ImageData(
-                            image_url=await get_image_url_from_key(
-                                inbound_msg.message_id, inbound_msg.content.image_key
+                        FileData(
+                            file=await _save_resource(
+                                inbound_msg.message_id,
+                                inbound_msg.content.image_key,
+                                "image",
+                                save_filepath,
                             )
                         )
                     ],
@@ -390,7 +399,12 @@ class FeishuBridge:
                     session_id=session_id,
                     content=[
                         FileData(
-                            file=await _save_file(inbound_msg.message_id, inbound_msg.content.file_key, save_filepath)
+                            file=await _save_resource(
+                                inbound_msg.message_id,
+                                inbound_msg.content.file_key,
+                                "file",
+                                save_filepath,
+                            )
                         )
                     ],
                     timestamp=timestamp,
@@ -399,6 +413,7 @@ class FeishuBridge:
             elif isinstance(inbound_msg.content, PostContent):
                 parsed_content: list = []
                 text_buffer: list[str] = []
+                image_index = 0
                 for item in chain.from_iterable(inbound_msg.content.post["content"]):
                     tag = item["tag"]
                     if tag == "text":
@@ -408,8 +423,20 @@ class FeishuBridge:
                         parsed_content.append(TextData(text="\n".join(text_buffer)))
                         text_buffer = []
                     if tag == "img":
-                        image_url = await get_image_url_from_key(inbound_msg.message_id, item["image_key"])
-                        parsed_content.append(ImageData(image_url=image_url))
+                        image_index += 1
+                        save_filepath = FEISHU_CACHE_DIR / session_id / f"{inbound_msg.message_id}_{image_index}"
+                        saved_file = await _save_resource(
+                            inbound_msg.message_id,
+                            item["image_key"],
+                            "image",
+                            save_filepath,
+                        )
+                        parsed_content.extend(
+                            (
+                                TextData(text=f"[Attachment: {saved_file.name}]"),
+                                FileData(file=saved_file),
+                            )
+                        )
                     else:
                         raise ValueError(f"Unknown tag: {tag}")
                 if text_buffer:

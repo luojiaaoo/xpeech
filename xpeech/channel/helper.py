@@ -3,12 +3,10 @@ from pathlib import Path
 from typing import AsyncIterator
 import json
 import httpx
-import base64
 from httpx_sse import aconnect_sse
 from loguru import logger
 from pydantic import ValidationError
-from ..utils.helper import detect_image_mime, compress_image_bytes_to_jpg
-from .schema import ChatEvent, FileData, ImageData, Message, TextData
+from .schema import ChatEvent, FileData, Message, TextData
 from typing import Any
 from yarl import URL
 
@@ -60,8 +58,6 @@ async def iter_chat_events(
         for item in message.content:
             if isinstance(item, TextData):
                 content.append({"text": item.text})
-            elif isinstance(item, ImageData):
-                content.append({"image_url": item.image_url})
             elif isinstance(item, FileData):
                 files.append(item.file)
             else:
@@ -109,9 +105,3 @@ async def notify_question(session_id: str, result: Any, chat_url: str) -> None:
         )
         response.raise_for_status()
 
-
-def bytes_to_image_url(raw: bytes) -> str:
-    raw = compress_image_bytes_to_jpg(raw)
-    mime = detect_image_mime(raw)
-    b64 = base64.b64encode(raw).decode()
-    return f"data:{mime};base64,{b64}"
