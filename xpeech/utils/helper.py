@@ -1,5 +1,6 @@
 from pathlib import Path
 import base64
+from datetime import datetime
 import math
 import re
 from typing import Union
@@ -93,7 +94,18 @@ def msys_to_win(msys_path: str) -> str:
 
 
 async def save_to_workspace(file: UploadFile, workspace: Path):
-    file_path = workspace / Path(file.filename).name
+    attachments_dir = workspace / "attachments" / datetime.now().strftime("%Y-%m-%d")
+    attachments_dir.mkdir(parents=True, exist_ok=True)
+    file_path = attachments_dir / Path(file.filename).name
+
+    if file_path.exists():
+        stem = file_path.stem
+        suffix = file_path.suffix
+        index = 1
+        while file_path.exists():
+            file_path = attachments_dir / f"{stem}_{index}{suffix}"
+            index += 1
+
     async with aiofiles.open(file_path, "wb") as out_file:
         while chunk := await file.read(1024 * 1024):
             await out_file.write(chunk)
