@@ -23,7 +23,7 @@ import json
 import mimetypes
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import GetMessageResourceRequest, GetMessageResourceResponse
-from .helper import iter_chat_events, notify_question, FINISH_CARD_CONTENT
+from .helper import iter_chat_events, notify_question
 import random
 from pathlib import Path
 import aiofiles
@@ -43,6 +43,31 @@ class OutputEventType(TypedDict):
     text_align: NotRequired[str]
     icon: NotRequired[dict[str, Any] | None]
 
+
+FINISH_CARD_CONTENT = {
+    "schema": "2.0",
+    "config": {
+        "update_multi": True,
+        "style": {"text_size": {"normal_v2": {"default": "normal", "pc": "normal", "mobile": "heading"}}},
+    },
+    "body": {
+        "direction": "vertical",
+        "horizontal_spacing": "8px",
+        "vertical_spacing": "8px",
+        "horizontal_align": "center",
+        "vertical_align": "center",
+        "padding": "12px 12px 12px 12px",
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": ":OK:<font color='red'>表单填写完成</font>",
+                "text_align": "left",
+                "text_size": "normal_v2",
+                "margin": "0px 0px 0px 0px",
+            }
+        ],
+    },
+}
 
 # 图标： https://open.feishu.cn/document/feishu-cards/enumerations-for-icons
 OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
