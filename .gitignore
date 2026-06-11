@@ -168,3 +168,4 @@ workspace_base/
 feishu_cache/
 node_modules/
 package-lock.json
+xpeech/channel/desktop_client/frontend/dist/
