@@ -2,13 +2,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
+import os
 import tomlkit
+
+
+def get_root_dirpath() -> Path:
+    if getattr(sys, "frozen", False):
+        root_dirpath = Path(sys.executable).expanduser().parent.resolve()
+    else:
+        root_dirpath = Path(os.getcwd()).expanduser().resolve()
+    return root_dirpath
+
+
+def get_asset_dirpath() -> Path:
+    return Path(__file__).expanduser().parents[3].resolve()
 
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:7878"
 DEFAULT_APP_NAME = "Xpeech Desktop"
-DEFAULT_APP_ICON = ""
-CONFIG_PATH = Path(__file__).with_name("config.toml")
+DEFAULT_APP_ICON = get_asset_dirpath().joinpath("xpeech", "channel", "desktop_client", "favicon.ico")
+CONFIG_PATH = get_root_dirpath() / "config.toml"
 
 
 @dataclass(slots=True)

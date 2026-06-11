@@ -409,7 +409,7 @@ export function DesktopApp() {
 
   const senderHeader = (
     <Sender.Header
-      title="Attachments"
+      title="附件"
       styles={{ content: { padding: 0 } }}
       open={attachmentsOpen}
       onOpenChange={(open) => {

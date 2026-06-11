@@ -1,4 +1,0 @@
-# Desktop client configuration
-api_base_url = "http://127.0.0.1:7878"
-app_name = "Xpeech Desktop"
-app_icon = ""

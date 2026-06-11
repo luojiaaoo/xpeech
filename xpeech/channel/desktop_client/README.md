@@ -55,12 +55,6 @@ npm run dev
 uv run python -m xpeech.channel.desktop_client --dev
 ```
 
-如果要指定 API 地址：
-
-```bash
-uv run python -m xpeech.channel.desktop_client --dev --api-base-url http://127.0.0.1:7878
-```
-
 ## 生产模式启动
 
 先构建前端：
@@ -74,12 +68,6 @@ npm run build
 
 ```bash
 uv run python -m xpeech.channel.desktop_client
-```
-
-如果要指定 API 地址：
-
-```bash
-uv run python -m xpeech.channel.desktop_client --api-base-url http://127.0.0.1:7878
 ```
 
 ## 配置文件

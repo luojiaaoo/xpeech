@@ -12,7 +12,7 @@ import tempfile
 from typing import Any
 from uuid import uuid4
 
-from .config import DesktopConfig, load_config, save_api_base_url
+from .config import load_config, save_api_base_url, get_asset_dirpath
 from .identity import get_identity
 from .xpeech_client import XpeechDesktopClient, serialize_event_for_js
 
@@ -34,7 +34,6 @@ class DesktopApi:
     def save_api_base_url(self, api_base_url: str):
         url = api_base_url.rstrip("/")
         save_api_base_url(url)
-        return asdict(DesktopConfig(api_base_url=url))
 
     def get_identity(self):
         return asdict(get_identity())
@@ -153,12 +152,16 @@ class DesktopApi:
 
 
 def run(dev: bool = False) -> None:
-    index_html = Path(__file__).with_name("frontend").joinpath("dist", "index.html").resolve()
+    index_html = (
+        get_asset_dirpath().joinpath("xpeech", "channel", "desktop_client", "frontend", "dist", "index.html").resolve()
+    )
     url = "http://localhost:5173" if dev else index_html.as_uri()
     try:
         import webview
     except ImportError as exc:
-        raise RuntimeError("pywebview is required to run the desktop client. Install dependencies with `uv sync`.") from exc
+        raise RuntimeError(
+            "pywebview is required to run the desktop client. Install dependencies with `uv sync`."
+        ) from exc
 
     api = DesktopApi()
     config = load_config()
@@ -168,14 +171,15 @@ def run(dev: bool = False) -> None:
         "height": 760,
         "min_size": (900, 620),
     }
-    if config.app_icon and Path(config.app_icon).exists():
-        try:
-            window_kwargs["icon"] = str(Path(config.app_icon).resolve())
-        except Exception:
-            pass
     window = webview.create_window(config.app_name, url, **window_kwargs)
     api._set_window(window)
     try:
-        webview.start()
+        start_kwargs = {}
+        if config.app_icon and Path(config.app_icon).exists():
+            try:
+                start_kwargs["icon"] = str(Path(config.app_icon).resolve())
+            except Exception:
+                pass
+        webview.start(**start_kwargs)
     finally:
         api.clear_browser_files()
