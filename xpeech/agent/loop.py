@@ -398,7 +398,11 @@ class AgentLoop:
         token_notify = "♻️ 即将达到最大令牌数，强制压缩" if token_percent > 90 else ""
         yield {
             "event": "token_usage",
-            "context": f"上下文使用率：{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify} | 会话时长：{time.perf_counter() - start_time:.0f}秒 | 大模型请求次数：{loop_count + 1}",
+            "context": json.dumps({
+                "上下文使用率": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}".strip(),
+                "会话时长": f"{time.perf_counter() - start_time:.0f}秒",
+                "大模型请求次数": str(loop_count + 1),
+            }, ensure_ascii=False),
         }
 
         logger.info("Agent run completed")

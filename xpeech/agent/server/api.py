@@ -2,11 +2,13 @@ from .server import app
 from fastapi import Depends
 from typing import Annotated
 from datetime import datetime
-from fastapi import File, Form, UploadFile, HTTPException, status, Header
+from fastapi import File, Form, UploadFile, HTTPException, status, Header, Query
+from fastapi.responses import FileResponse
 from .schema import InputContent, InboundMessage
 import json
+from pathlib import Path
 from ...config.settings import settings
-from ...utils.helper import save_to_workspace, ensure_path
+from ...utils.helper import save_to_workspace, ensure_path, is_relative_path
 from ...utils.session import create_workspace_templates
 from ...provider.litellm_provider import LiteLLMProvider
 from ..loop import AgentLoop, QuestionEvent
@@ -43,6 +45,26 @@ def content(
         return json.loads(content)
     except json.JSONDecodeError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid JSON format")
+
+
+@app.get("/sessions/{session_id}/files")
+async def download_session_file(
+    session_id: str,
+    path: Annotated[str, Query(description="File path returned by a send_file event.")],
+):
+    workspace = (settings.path.workspace_base_path / session_id).resolve()
+    parsed = Path(path).expanduser()
+    if not parsed.is_absolute():
+        file_path = (workspace / parsed).resolve()
+    else:
+        file_path = parsed.resolve()
+
+    if not is_relative_path(file_path, workspace):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File is outside the session workspace")
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    return FileResponse(file_path, filename=file_path.name)
 
 
 @app.post("/answer_question")

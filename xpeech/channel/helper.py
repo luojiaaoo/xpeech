@@ -1,4 +1,6 @@
 from contextlib import ExitStack
+from dataclasses import dataclass
+from email.message import Message as EmailMessage
 from pathlib import Path
 from typing import AsyncIterator
 import json
@@ -9,6 +11,12 @@ from pydantic import ValidationError
 from .schema import ChatEvent, FileData, Message, TextData
 from typing import Any
 from yarl import URL
+
+
+@dataclass(frozen=True)
+class DownloadedFile:
+    filename: str
+    content: bytes
 
 
 async def iter_chat_events(
@@ -79,3 +87,22 @@ async def notify_question(session_id: str, result: Any, chat_url: str) -> None:
             data={"answer": answer},
         )
         response.raise_for_status()
+
+
+async def download_file(session_id: str, path: str, api_base_url: str) -> DownloadedFile:
+    file_url = str(URL(api_base_url) / "sessions" / session_id / "files")
+    async with httpx.AsyncClient(timeout=None) as client:
+        response = await client.get(file_url, params={"path": path})
+        response.raise_for_status()
+
+    filename = _filename_from_content_disposition(response.headers.get("content-disposition")) or Path(path).name
+    return DownloadedFile(filename=filename, content=response.content)
+
+
+def _filename_from_content_disposition(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    message = EmailMessage()
+    message["content-disposition"] = value
+    return message.get_filename()

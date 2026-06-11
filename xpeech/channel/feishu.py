@@ -23,6 +23,7 @@ import json
 import mimetypes
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import GetMessageResourceRequest, GetMessageResourceResponse
+from .helper import download_file as download_channel_file
 from .helper import iter_chat_events, notify_question
 import random
 from pathlib import Path
@@ -213,11 +214,10 @@ class FeishuBridge:
             async for event in iter_chat_events(messages, str(URL(self.chat_url) / "chat")):
                 # 检测有没有文件发送请求
                 if event.event == ChatEventType.SEND_FILE:
-                    filepath = event.context
-                    async with aiofiles.open(filepath, "rb") as f:
-                        source_bytes = await f.read()
+                    downloaded_file = await download_channel_file(session_id, event.context, self.chat_url)
                     await self.channel.send(
-                        chat_id, {"file": {"source": source_bytes, "file_name": Path(filepath).name}}
+                        chat_id,
+                        {"file": {"source": downloaded_file.content, "file_name": downloaded_file.filename}},
                     )
                     continue
                 if event.event == ChatEventType.QUESTION:
@@ -294,7 +294,7 @@ class FeishuBridge:
         elif event.event == ChatEventType.TOOL_CALL_RESULT:
             return f"**[工具调用结果]** {self._format_json_context(event.context)}"
         elif event.event == ChatEventType.TOKEN_USAGE:
-            return f"**[词元]** {event.context}"
+            return f'**[词元]** {self._format_token_usage(event.context)}'
         return f"[{event.event}]\n{event.context}"
 
     def _format_tool_call_event(self, event: ChatEvent) -> str:
@@ -320,6 +320,10 @@ class FeishuBridge:
         except json.JSONDecodeError:
             return context
         return f"```json\n{self._format_json_value(value)}\n```"
+
+    def _format_token_usage(self, context: str) -> str:
+        data: dict[str, str] = json.loads(context)
+        return " | ".join(f"{k}：{v}" for k, v in data.items())
 
     def _format_json_value(self, value) -> str:
         return json.dumps(value, ensure_ascii=False, indent=4)
