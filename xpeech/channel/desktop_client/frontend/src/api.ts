@@ -50,7 +50,7 @@ export async function getConfig(): Promise<DesktopConfig> {
   return (await getBridge()).get_config();
 }
 
-export async function saveConfig(apiBaseUrl: string): Promise<DesktopConfig> {
+export async function saveConfig(apiBaseUrl: string): Promise<null> {
   return (await getBridge()).save_api_base_url(apiBaseUrl);
 }
 
