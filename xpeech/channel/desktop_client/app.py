@@ -4,8 +4,10 @@ import asyncio
 import base64
 import mimetypes
 import shutil
+import socket
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 import tempfile
@@ -18,6 +20,7 @@ from .xpeech_client import XpeechDesktopClient, serialize_event_for_js
 
 
 TEMP_UPLOAD_DIR = Path(tempfile.gettempdir()) / "xpeech_desktop_client"
+INSTANCE_LOCK_PORT = 43187
 
 
 class DesktopApi:
@@ -152,7 +155,32 @@ class DesktopApi:
         self._window.evaluate_js(script)
 
 
+@contextmanager
+def single_instance_lock():
+    lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        lock_socket.bind(("127.0.0.1", INSTANCE_LOCK_PORT))
+        lock_socket.listen(1)
+    except OSError:
+        lock_socket.close()
+        yield False
+        return
+
+    try:
+        yield True
+    finally:
+        lock_socket.close()
+
+
 def run(dev: bool = False) -> None:
+    with single_instance_lock() as acquired:
+        if not acquired:
+            print("Xpeech desktop client is already running.")
+            return
+        _run_app(dev=dev)
+
+
+def _run_app(dev: bool = False) -> None:
     index_html = (
         get_asset_dirpath().joinpath("xpeech", "channel", "desktop_client", "frontend", "dist", "index.html").resolve()
     )

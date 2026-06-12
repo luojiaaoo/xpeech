@@ -42,7 +42,7 @@ REM ── 3. PyInstaller 打包 ───────────────�
 echo [3/3] PyInstaller 打包中...
 uv run pyinstaller ^
     --name "DesktopClient" ^
-    --onedir ^
+    --onefile ^
     --windowed ^
     --clean ^
     --noconfirm ^
