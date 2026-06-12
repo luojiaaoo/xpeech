@@ -94,7 +94,7 @@ api_base_url = "http://127.0.0.1:7878"
 desktop_{machine_code}
 ```
 
-其中 `machine_code` 来自 `uuid.getnode()`，格式化为 12 位小写十六进制字符串。
+其中 `machine_code` 是 24 位小写十六进制短指纹，由系统用户名、MAC 地址组合后计算 SHA-256 得到。
 
 桌面客户端会把系统登录用户名作为 `sender_name` 发送给 Xpeech API。
 
