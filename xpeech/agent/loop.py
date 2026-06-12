@@ -5,7 +5,7 @@ from .tools.filesystem import build_file_tools
 from .tools.shell import build_shell_tools
 from .tools.web import web_fetch, web_search
 from .tools.office import office_read
-from .tools.question import joyride_request_human_input, is_ok_question, extract_question, USER_TIMEOUT
+from .tools.question import ask_user_question, is_ok_question, extract_question, USER_TIMEOUT
 from .tools.file_message import build_file_message_tools
 from itertools import count
 from ..config.settings import settings
@@ -109,7 +109,7 @@ class AgentLoop:
         self.provider.register_tool()(send_file)
 
         # question
-        self.provider.register_tool()(joyride_request_human_input)
+        self.provider.register_tool()(ask_user_question)
 
     # ----------------- history会话读写 -----------------
 
@@ -248,7 +248,7 @@ class AgentLoop:
                 logger.info("Sending file {}", result)
                 yield {"event": "send_file", "context": result}
                 append_tool_result_messages_yaml(tool_call, result)
-            elif tool_call.name == "joyride_request_human_input" and is_ok_question(result):
+            elif tool_call.name == "ask_user_question" and is_ok_question(result):
                 # 等待用户输入
                 logger.info(f"Waiting for user input, timeout={USER_TIMEOUT} seconds")
                 # 加协程锁，等待用户输入20秒

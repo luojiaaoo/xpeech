@@ -33,6 +33,7 @@ from datetime import datetime
 from typing import Any, NotRequired, TypedDict
 from loguru import logger
 from ..config.settings import settings
+from ..agent.tools.question import validate_question_json
 from ..utils.helper import detect_image_mime
 from lark_oapi.channel import Events
 from yarl import URL
@@ -69,6 +70,176 @@ FINISH_CARD_CONTENT = {
         ],
     },
 }
+
+
+def _plain_text(content: str) -> dict[str, str]:
+    return {"tag": "plain_text", "content": content}
+
+
+def _feishu_label(content: str) -> dict[str, Any]:
+    return {
+        "tag": "div",
+        "text": {
+            "tag": "plain_text",
+            "content": content,
+            "text_size": "normal_v2",
+            "text_align": "left",
+            "text_color": "default",
+        },
+        "margin": "0px 0px 0px 0px",
+    }
+
+
+def _feishu_options(options: list[dict[str, str]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "text": _plain_text(option["label"]),
+            "value": option["value"],
+            "icon": {"tag": "standard_icon", "token": "signature_outlined"},
+        }
+        for option in options
+    ]
+
+
+def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
+    placeholder = _plain_text(field.get("placeholder") or "请选择")
+    field_type = field["type"]
+    elements: list[dict[str, Any]] = [_feishu_label(field["label"])]
+
+    if field_type == "input":
+        elements.append(
+            {
+                "tag": "input",
+                "placeholder": _plain_text(field.get("placeholder") or "请输入"),
+                "default_value": field.get("default_value") or "",
+                "width": "fill",
+                "label": _plain_text(""),
+                "label_position": "top",
+                "name": field["name"],
+                "margin": "0px 0px 0px 0px",
+            }
+        )
+    elif field_type == "select":
+        elements.append(
+            {
+                "tag": "select_static",
+                "placeholder": placeholder,
+                "options": _feishu_options(field["options"]),
+                "type": "default",
+                "width": "fill",
+                "name": field["name"],
+                "margin": "0px 0px 0px 0px",
+            }
+        )
+    elif field_type == "multi_select":
+        elements.append(
+            {
+                "tag": "multi_select_static",
+                "placeholder": placeholder,
+                "options": _feishu_options(field["options"]),
+                "type": "default",
+                "width": "fill",
+                "name": field["name"],
+                "margin": "0px 0px 0px 0px",
+            }
+        )
+    elif field_type == "date":
+        elements.append(
+            {
+                "tag": "date_picker",
+                "placeholder": placeholder,
+                "width": "fill",
+                "name": field["name"],
+                "margin": "0px 0px 0px 0px",
+            }
+        )
+    elif field_type == "datetime":
+        elements.append(
+            {
+                "tag": "picker_datetime",
+                "placeholder": placeholder,
+                "width": "fill",
+                "name": field["name"],
+                "margin": "0px 0px 0px 0px",
+            }
+        )
+    else:
+        raise ValueError(f"Unsupported question field type: {field_type}")
+
+    return elements
+
+
+def build_feishu_question_card(question_context: str) -> dict[str, Any]:
+    form = validate_question_json(question_context)
+    elements: list[dict[str, Any]] = []
+    for field in form["fields"]:
+        elements.extend(_feishu_field(field))
+
+    if form.get("include_customization", True):
+        elements.extend(
+            [
+                _feishu_label("自定义"),
+                {
+                    "tag": "input",
+                    "placeholder": _plain_text("请输入"),
+                    "default_value": "",
+                    "width": "fill",
+                    "name": "user_customization",
+                    "margin": "0px 0px 0px 0px",
+                },
+            ]
+        )
+
+    elements.append(
+        {
+            "tag": "column_set",
+            "columns": [
+                {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                        {
+                            "tag": "button",
+                            "text": _plain_text(form.get("submit_label") or "提交"),
+                            "type": "primary",
+                            "width": "default",
+                            "form_action_type": "submit",
+                            "name": "submit_question",
+                        }
+                    ],
+                    "vertical_align": "top",
+                },
+                {"tag": "column", "width": "auto", "elements": [], "vertical_align": "top"},
+            ],
+        }
+    )
+
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "style": {"text_size": {"normal_v2": {"default": "normal", "pc": "normal", "mobile": "heading"}}},
+        },
+        "body": {
+            "direction": "vertical",
+            "padding": "12px 12px 12px 12px",
+            "elements": [
+                {
+                    "tag": "form",
+                    "elements": elements,
+                    "padding": "4px 0px 4px 0px",
+                    "margin": "0px 0px 0px 0px",
+                    "name": "question_form",
+                }
+            ],
+        },
+        "header": {
+            "title": _plain_text(form["title"]),
+            "subtitle": _plain_text(form["subtitle"]),
+            "template": "blue",
+            "padding": "12px 12px 12px 12px",
+        },
+    }
 
 # 图标： https://open.feishu.cn/document/feishu-cards/enumerations-for-icons
 OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
@@ -221,7 +392,7 @@ class FeishuBridge:
                     )
                     continue
                 if event.event == ChatEventType.QUESTION:
-                    await self.channel.send(chat_id, {"card": json.loads(event.context)})
+                    await self.channel.send(chat_id, {"card": build_feishu_question_card(event.context)})
                     continue
 
                 # 返回给用户消息

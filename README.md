@@ -222,7 +222,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `web_search` | 搜索网页并返回结果 |
 | `office_read` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
 | `send_file` | 向用户发送文件 |
-| `joyride_request_human_input` | 向用户发送表单提问 |
+| `ask_user_question` | 向用户发送表单提问 |
 
 ### 工具安全
 

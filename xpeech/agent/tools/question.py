@@ -1,6 +1,7 @@
 import json
-from typing import Any, List, Union, Literal, Annotated
-from pydantic import BaseModel, Field, ValidationError, ConfigDict, TypeAdapter
+from typing import Annotated, Any, Literal, Union
+
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 USER_TIMEOUT = 5 * 60
 
@@ -9,192 +10,80 @@ class StrictBaseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PlainText(StrictBaseModel):
-    tag: Literal["plain_text"] = "plain_text"
-    content: str
-
-
-class PlaceholderText(StrictBaseModel):
-    tag: Literal["plain_text"] = "plain_text"
-    content: str = "请选择"
-
-
-class InputPlaceholderText(StrictBaseModel):
-    tag: Literal["plain_text"] = "plain_text"
-    content: str = "请输入"
-
-
-class StandardIcon(StrictBaseModel):
-    tag: Literal["standard_icon"] = "standard_icon"
-    token: Literal["signature_outlined"] = "signature_outlined"
-
-
-class SelectOption(StrictBaseModel):
-    text: PlainText
+class QuestionOption(StrictBaseModel):
+    label: str
     value: str
-    icon: StandardIcon = Field(default_factory=StandardIcon)
 
 
-class EmptyLabel(StrictBaseModel):
-    tag: Literal["plain_text"] = "plain_text"
-    content: str = ""
+Name = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$")]
 
 
-class DivPlainText(StrictBaseModel):
-    tag: Literal["plain_text"] = "plain_text"
-    content: str
-    text_size: Literal["normal_v2"] = "normal_v2"
-    text_align: Literal["left"] = "left"
-    text_color: Literal["default"] = "default"
+class QuestionFieldBase(StrictBaseModel):
+    name: Name
+    label: str
+    placeholder: str | None = None
 
 
-Margin = Annotated[str, Field(pattern=r"^\d+px \d+px \d+px \d+px$")]
-
-
-class Div(StrictBaseModel):
-    tag: Literal["div"] = "div"
-    text: DivPlainText
-    margin: Margin = "0px 0px 0px 0px"
-
-
-class SelectStatic(StrictBaseModel):
-    tag: Literal["select_static"] = "select_static"
-    placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
-    options: List[SelectOption]
-    type: Literal["default"] = "default"
-    width: Literal["fill"] = "fill"
-    name: str
-    margin: Margin = "0px 0px 0px 0px"
-
-
-class MultiSelectStatic(StrictBaseModel):
-    tag: Literal["multi_select_static"] = "multi_select_static"
-    placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
-    options: List[SelectOption]
-    type: Literal["default"] = "default"
-    width: Literal["fill"] = "fill"
-    name: str
-    margin: Margin = "0px 0px 0px 0px"
-
-
-class Input(StrictBaseModel):
-    tag: Literal["input"] = "input"
-    placeholder: InputPlaceholderText = Field(default_factory=InputPlaceholderText)
+class InputField(QuestionFieldBase):
+    type: Literal["input"] = "input"
     default_value: str = ""
-    width: Literal["fill"] = "fill"
-    label: EmptyLabel = Field(default_factory=EmptyLabel)
-    label_position: Literal["top"] = "top"
-    name: str
-    margin: Margin = "0px 0px 0px 0px"
 
 
-class DatePicker(StrictBaseModel):
-    tag: Literal["date_picker"] = "date_picker"
-    placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
-    width: Literal["fill"] = "fill"
-    name: str
-    margin: Margin = "0px 0px 0px 0px"
+class SelectField(QuestionFieldBase):
+    type: Literal["select"] = "select"
+    options: list[QuestionOption]
 
 
-class DateTimePicker(StrictBaseModel):
-    tag: Literal["picker_datetime"] = "picker_datetime"
-    placeholder: PlaceholderText = Field(default_factory=PlaceholderText)
-    width: Literal["fill"] = "fill"
-    name: str
-    margin: Margin = "0px 0px 0px 0px"
+class MultiSelectField(QuestionFieldBase):
+    type: Literal["multi_select"] = "multi_select"
+    options: list[QuestionOption]
 
 
-FormComponent = Union[
-    Div,
-    SelectStatic,
-    MultiSelectStatic,
-    Input,
-    DatePicker,
-    DateTimePicker,
+class DateField(QuestionFieldBase):
+    type: Literal["date"] = "date"
+
+
+class DateTimeField(QuestionFieldBase):
+    type: Literal["datetime"] = "datetime"
+
+
+QuestionField = Annotated[
+    Union[InputField, SelectField, MultiSelectField, DateField, DateTimeField],
+    Field(discriminator="type"),
 ]
-FormComponentListAdapter = TypeAdapter(List[FormComponent])
 
 
-def validate_form_json(data: str) -> tuple[bool, Any]:
+class QuestionForm(StrictBaseModel):
+    type: Literal["form"] = "form"
+    title: str = "需要补充信息"
+    subtitle: str | None = None
+    submit_label: str = "提交"
+    include_customization: bool = True
+    fields: list[QuestionField]
+
+    @model_validator(mode="after")
+    def validate_unique_field_names(self):
+        names = [field.name for field in self.fields]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise ValueError(f"field names must be unique: {', '.join(duplicates)}")
+        if self.include_customization and "user_customization" in names:
+            raise ValueError("field name 'user_customization' is reserved when include_customization is true")
+        return self
+
+
+QuestionFormAdapter = TypeAdapter(QuestionForm)
+
+
+def validate_question_json(data: str | dict[str, Any]) -> dict[str, Any]:
     try:
-        data = json.loads(data)
-        validated_data = FormComponentListAdapter.validate_python(data)
-        return [item.model_dump() for item in validated_data]
+        raw_data = json.loads(data) if isinstance(data, str) else data
+        validated_data = QuestionFormAdapter.validate_python(raw_data)
+        return validated_data.model_dump()
     except json.JSONDecodeError as e:
-        raise ValueError(f"JSON 格式错误: {str(e)}")
+        raise ValueError(f"JSON 格式错误: {str(e)}") from e
     except ValidationError as e:
-        raise ValueError(f"表单 JSON 校验失败: {str(e)}")
-
-
-def get_json(form: str, title: str, subtitle: str):
-    return {
-        "schema": "2.0",
-        "config": {
-            "update_multi": True,
-            "style": {"text_size": {"normal_v2": {"default": "normal", "pc": "normal", "mobile": "heading"}}},
-        },
-        "body": {
-            "direction": "vertical",
-            "padding": "12px 12px 12px 12px",
-            "elements": [
-                {
-                    "tag": "form",
-                    "elements": [
-                        *validate_form_json(form),
-                        {
-                            "tag": "div",
-                            "text": {
-                                "tag": "plain_text",
-                                "content": "自定义",
-                                "text_size": "normal_v2",
-                                "text_align": "left",
-                                "text_color": "default",
-                            },
-                            "margin": "0px 0px 0px 0px",
-                        },
-                        {
-                            "tag": "input",
-                            "placeholder": {"tag": "plain_text", "content": "请输入"},
-                            "default_value": "",
-                            "width": "fill",
-                            "name": "user_customization",
-                            "margin": "0px 0px 0px 0px",
-                        },
-                        {
-                            "tag": "column_set",
-                            "columns": [
-                                {
-                                    "tag": "column",
-                                    "width": "auto",
-                                    "elements": [
-                                        {
-                                            "tag": "button",
-                                            "text": {"tag": "plain_text", "content": "提交"},
-                                            "type": "primary",
-                                            "width": "default",
-                                            "form_action_type": "submit",
-                                            "name": "Button_mpgy4lye",
-                                        }
-                                    ],
-                                    "vertical_align": "top",
-                                },
-                                {"tag": "column", "width": "auto", "elements": [], "vertical_align": "top"},
-                            ],
-                        },
-                    ],
-                    "padding": "4px 0px 4px 0px",
-                    "margin": "0px 0px 0px 0px",
-                    "name": "Form_mpgy4lyd",
-                }
-            ],
-        },
-        "header": {
-            "title": {"tag": "plain_text", "content": title},
-            "subtitle": {"tag": "plain_text", "content": subtitle},
-            "template": "blue",
-            "padding": "12px 12px 12px 12px",
-        },
-    }
+        raise ValueError(f"问题表单 JSON 校验失败: {str(e)}") from e
 
 
 def is_ok_question(question: str) -> bool:
@@ -204,25 +93,26 @@ def is_ok_question(question: str) -> bool:
 def extract_question(question: str) -> str:
     if is_ok_question(question):
         return question.split(" ", 1)[-1]
-    else:
-        raise ValueError("Invalid question format")
+    raise ValueError("Invalid question format")
 
 
 class QuestionArgs(StrictBaseModel):
-    question: str = Field(description="飞书卡片 2.0 JSON 数组")
-    title: str = Field(description="表单标题")
+    question: str = Field(description="通用问题表单 JSON 对象")
+    title: str | None = Field(default=None, description="表单标题。若 question.title 已提供，可省略。")
 
     @property
     def json(self):
         try:
-            json_str: str = json.dumps(
-                get_json(self.question, self.title, f"您有{USER_TIMEOUT}秒时间填写表单"), ensure_ascii=False, indent=4
-            )
+            question = validate_question_json(self.question)
+            if self.title and question.get("title") == QuestionForm.model_fields["title"].default:
+                question["title"] = self.title
+            question["subtitle"] = f"您有{USER_TIMEOUT}秒时间填写表单"
+            json_str = json.dumps(question, ensure_ascii=False, indent=4)
             return f"OK {json_str}"
-        except ValidationError as error:
+        except ValueError as error:
             return f"NOTOK 校验失败：{error}"
 
 
-def joyride_request_human_input(args: QuestionArgs):
-    """通过发送飞书卡片 2.0 表单 JSON 向用户追问关键信息"""
+def ask_user_question(args: QuestionArgs):
+    """通过通用问题表单 JSON 向用户追问关键信息。"""
     return args.json
