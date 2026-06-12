@@ -22,7 +22,6 @@ interface QuestionPayload {
   title?: string;
   subtitle?: string;
   submit_label?: string;
-  include_customization?: boolean;
   fields: QuestionField[];
 }
 
@@ -99,7 +98,7 @@ export function QuestionForm({ event, onAnswered }: { event: ChatEvent; onAnswer
               name={item.name}
               initialValue={item.default_value}
               label={item.label}
-              rules={[{ required: true, message: `请输入${item.label}` }]}
+              rules={[{ required: false, message: `请输入${item.label}` }]}
             >
               <Input placeholder={placeholder} />
             </Form.Item>
@@ -112,7 +111,7 @@ export function QuestionForm({ event, onAnswered }: { event: ChatEvent; onAnswer
               key={index}
               name={item.name}
               label={item.label}
-              rules={[{ required: true, message: `请选择${item.label}` }]}
+              rules={[{ required: false, message: `请选择${item.label}` }]}
             >
               <Select
                 mode={item.type === 'multi_select' ? 'multiple' : undefined}
@@ -132,7 +131,7 @@ export function QuestionForm({ event, onAnswered }: { event: ChatEvent; onAnswer
               key={index}
               name={item.name}
               label={item.label}
-              rules={[{ required: true, message: `请选择${item.label}` }]}
+              rules={[{ required: false, message: `请选择${item.label}` }]}
             >
               <DatePicker showTime={item.type === 'datetime'} className="full-width" />
             </Form.Item>
@@ -141,11 +140,9 @@ export function QuestionForm({ event, onAnswered }: { event: ChatEvent; onAnswer
 
         return null;
       })}
-      {payload?.include_customization !== false ? (
-        <Form.Item name="user_customization" label="自定义">
-          <Input placeholder="请输入" />
-        </Form.Item>
-      ) : null}
+      <Form.Item name="user_customization" label="自定义">
+        <Input placeholder="请输入" />
+      </Form.Item>
       <Button type="primary" htmlType="submit" loading={submitting} disabled={answered}>
         {payload?.submit_label || '提交'}
       </Button>

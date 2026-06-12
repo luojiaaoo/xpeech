@@ -58,7 +58,6 @@ class QuestionForm(StrictBaseModel):
     title: str = "需要补充信息"
     subtitle: str | None = None
     submit_label: str = "提交"
-    include_customization: bool = True
     fields: list[QuestionField]
 
     @model_validator(mode="after")
@@ -67,8 +66,6 @@ class QuestionForm(StrictBaseModel):
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
             raise ValueError(f"field names must be unique: {', '.join(duplicates)}")
-        if self.include_customization and "user_customization" in names:
-            raise ValueError("field name 'user_customization' is reserved when include_customization is true")
         return self
 
 

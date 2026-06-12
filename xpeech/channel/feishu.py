@@ -90,19 +90,24 @@ def _feishu_label(content: str) -> dict[str, Any]:
     }
 
 
-def _feishu_options(options: list[dict[str, str]]) -> list[dict[str, Any]]:
-    return [
-        {
+def _feishu_options(options: list[dict[str, str]], *, include_icon: bool = False) -> list[dict[str, Any]]:
+    feishu_options = []
+    for option in options:
+        feishu_option: dict[str, Any] = {
             "text": _plain_text(option["label"]),
             "value": option["value"],
-            "icon": {"tag": "standard_icon", "token": "signature_outlined"},
         }
-        for option in options
-    ]
+        if include_icon:
+            feishu_option["icon"] = {"tag": "standard_icon", "token": "signature_outlined"}
+        feishu_options.append(feishu_option)
+    return feishu_options
 
 
 def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
-    placeholder = _plain_text(field.get("placeholder") or "请选择")
+    placeholder = {
+        "tag": "plain_text",
+        "content": field.get("placeholder") or "请选择",
+    }
     field_type = field["type"]
     elements: list[dict[str, Any]] = [_feishu_label(field["label"])]
 
@@ -110,11 +115,13 @@ def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
         elements.append(
             {
                 "tag": "input",
-                "placeholder": _plain_text(field.get("placeholder") or "请输入"),
+                "placeholder": {
+                    "tag": "plain_text",
+                    "content": field.get("placeholder") or "请输入",
+                },
                 "default_value": field.get("default_value") or "",
                 "width": "fill",
-                "label": _plain_text(""),
-                "label_position": "top",
+                "required": False,
                 "name": field["name"],
                 "margin": "0px 0px 0px 0px",
             }
@@ -127,6 +134,7 @@ def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
                 "options": _feishu_options(field["options"]),
                 "type": "default",
                 "width": "fill",
+                "required": False,
                 "name": field["name"],
                 "margin": "0px 0px 0px 0px",
             }
@@ -136,9 +144,10 @@ def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "tag": "multi_select_static",
                 "placeholder": placeholder,
-                "options": _feishu_options(field["options"]),
+                "options": _feishu_options(field["options"], include_icon=True),
                 "type": "default",
                 "width": "fill",
+                "required": False,
                 "name": field["name"],
                 "margin": "0px 0px 0px 0px",
             }
@@ -149,6 +158,7 @@ def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
                 "tag": "date_picker",
                 "placeholder": placeholder,
                 "width": "fill",
+                "required": False,
                 "name": field["name"],
                 "margin": "0px 0px 0px 0px",
             }
@@ -159,6 +169,7 @@ def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
                 "tag": "picker_datetime",
                 "placeholder": placeholder,
                 "width": "fill",
+                "required": False,
                 "name": field["name"],
                 "margin": "0px 0px 0px 0px",
             }
@@ -175,24 +186,28 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
     for field in form["fields"]:
         elements.extend(_feishu_field(field))
 
-    if form.get("include_customization", True):
-        elements.extend(
-            [
-                _feishu_label("自定义"),
-                {
-                    "tag": "input",
-                    "placeholder": _plain_text("请输入"),
-                    "default_value": "",
-                    "width": "fill",
-                    "name": "user_customization",
-                    "margin": "0px 0px 0px 0px",
+    elements.extend(
+        [
+            _feishu_label("自定义"),
+            {
+                "tag": "input",
+                "placeholder": {
+                    "tag": "plain_text",
+                    "content": "请输入",
                 },
-            ]
-        )
+                "default_value": "",
+                "width": "fill",
+                "required": False,
+                "name": "user_customization",
+                "margin": "0px 0px 0px 0px",
+            },
+        ]
+    )
 
     elements.append(
         {
             "tag": "column_set",
+            "horizontal_align": "left",
             "columns": [
                 {
                     "tag": "column",
@@ -227,6 +242,7 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
                 {
                     "tag": "form",
                     "elements": elements,
+                    "direction": "vertical",
                     "padding": "4px 0px 4px 0px",
                     "margin": "0px 0px 0px 0px",
                     "name": "question_form",
