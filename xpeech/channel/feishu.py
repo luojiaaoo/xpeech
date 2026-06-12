@@ -337,6 +337,9 @@ class FeishuBridge:
         self.channel.on(Events.MESSAGE, self._on_message)
         self.channel.on(Events.CARD_ACTION, self._on_card_action)
 
+    def session_id(self, chat_id: str):
+        return f"feishu_{chat_id}"
+
     async def add_reaction(self, msg: Message):
         await self.channel.add_reaction(msg.message_id, random.choice(_EMOJI_TYPES))
 
@@ -347,7 +350,7 @@ class FeishuBridge:
         self.receive_queues[msg.session_id].put_nowait(msg)
 
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
-        session_id = f"xpeech_{card_action_event.chat_id}"
+        session_id = self.session_id(card_action_event.chat_id)
         form_data = card_action_event.raw["event"]["action"]["form_value"]
         await notify_question(session_id, form_data, self.chat_url)
         await self.channel.update_card(card_action_event.message_id, FINISH_CARD_CONTENT)
@@ -578,7 +581,7 @@ class FeishuBridge:
             return save_filepath
 
         if inbound_msg.chat_type == "p2p":
-            session_id = f"xpeech_{inbound_msg.chat_id}"
+            session_id = self.session_id(inbound_msg.chat_id)
             if isinstance(inbound_msg.content, TextContent):
                 return Message(
                     message_id=inbound_msg.message_id,
