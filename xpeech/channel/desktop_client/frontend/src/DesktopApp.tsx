@@ -363,6 +363,10 @@ export function DesktopApp() {
   async function saveSettings(values: DesktopConfig) {
     const nextConfig = await saveConfig(values.api_base_url);
     setConfig(nextConfig);
+    form.setFieldsValue(nextConfig);
+    if (nextConfig.app_name) {
+      document.title = nextConfig.app_name;
+    }
     setSettingsOpen(false);
     message.success('配置已保存');
   }
@@ -447,7 +451,14 @@ export function DesktopApp() {
             <Typography.Text type="secondary" className="session-id">
               {identity?.session_id}
             </Typography.Text>
-            <Button icon={<SettingOutlined />} type="text" onClick={() => setSettingsOpen(true)} />
+            <Button
+              icon={<SettingOutlined />}
+              type="text"
+              onClick={() => {
+                form.setFieldsValue(config || {});
+                setSettingsOpen(true);
+              }}
+            />
           </Space>
         </Flex>
       </header>

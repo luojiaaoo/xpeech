@@ -34,6 +34,7 @@ class DesktopApi:
     def save_api_base_url(self, api_base_url: str):
         url = api_base_url.rstrip("/")
         save_api_base_url(url)
+        return asdict(load_config())
 
     def get_identity(self):
         return asdict(get_identity())

@@ -11,7 +11,7 @@ declare global {
 
 interface DesktopBridge {
   get_config: () => Promise<DesktopConfig>;
-  save_api_base_url: (apiBaseUrl: string) => Promise<null>;
+  save_api_base_url: (apiBaseUrl: string) => Promise<DesktopConfig>;
   get_identity: () => Promise<DesktopIdentity>;
   save_browser_files: (files: BrowserFilePayload[]) => Promise<DesktopFile[]>;
   send_message: (content: string, files: DesktopFile[]) => Promise<{ message: string }>;
@@ -50,7 +50,7 @@ export async function getConfig(): Promise<DesktopConfig> {
   return (await getBridge()).get_config();
 }
 
-export async function saveConfig(apiBaseUrl: string): Promise<null> {
+export async function saveConfig(apiBaseUrl: string): Promise<DesktopConfig> {
   return (await getBridge()).save_api_base_url(apiBaseUrl);
 }
 
