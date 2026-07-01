@@ -638,6 +638,10 @@ class FeishuBridge:
                     if tag == "text":
                         text_buffer.append(item["text"])
                         continue
+                    elif tag == "a":
+                        text_buffer.append(f'[{item["text"]}]({item["href"]})')
+                        continue
+                    # 多行合并成整体Text数据
                     if text_buffer:
                         parsed_content.append(TextData(text="\n".join(text_buffer)))
                         text_buffer = []
