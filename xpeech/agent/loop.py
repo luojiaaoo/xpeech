@@ -315,12 +315,16 @@ class AgentLoop:
         ):
             command = command.strip()
             if command == "/help":
-                yield {"event": "command", "context": "/new -> 开始一个新会话"}
+                yield {"event": "command", "context": "/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）"}
                 return
             elif command == "/new":
                 rt = await self.consolidate_memory(messages_yaml[:-1])
                 await self.del_history_yaml(message.session_id)
                 yield {"event": "command", "context": f"新会话, {rt}"}
+                return
+            elif command == "/clear":
+                await self.del_history_yaml(message.session_id)
+                yield {"event": "command", "context": "上下文已清空"}
                 return
             yield {
                 "event": "command",
