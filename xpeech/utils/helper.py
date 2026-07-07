@@ -77,22 +77,6 @@ def dynamic_import(path: str, module_name: str | None = None):
     return module
 
 
-def msys_to_win(msys_path: str) -> str:
-    """将 MSYS2 路径转换为 Windows 路径
-    例: /c/Users/Test -> C:/Users/Test
-       /d/code        -> D:/code
-    """
-    # 匹配 /c/ 开头的挂载路径
-    match = re.match(r"^/([A-Za-z])/(.*)", msys_path.replace("\\", "/"))
-    if match:
-        drive = match.group(1).upper()  # 盘符转大写 (Windows惯例)
-        rest = match.group(2)  # 斜杠转反斜杠
-        return f"{drive}:/{rest}"
-
-    # 如果不符合 MSYS2 挂载格式，直接返回
-    return msys_path
-
-
 async def save_to_workspace(file: UploadFile, workspace: Path):
     attachments_dir = workspace / "attachments" / datetime.now().strftime("%Y-%m-%d")
     attachments_dir.mkdir(parents=True, exist_ok=True)

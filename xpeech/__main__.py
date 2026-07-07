@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import platform
 import argparse
 
 
@@ -22,6 +22,8 @@ def main() -> None:
     if service == "api":
         from .agent.server.app import run
 
+        if platform.system() != "Linux":
+            raise RuntimeError("Xpeech API is only supported on Linux.")
         run(host=getattr(args, "host", "0.0.0.0"), port=getattr(args, "port", 7878))
         return
 

@@ -55,7 +55,6 @@ class PathConfig(BaseModel):
 class ToolConfig(BaseModel):
     """Tool safety configuration settings."""
 
-    restrict_tools_to_workspace: bool = True
     allowed_networks: list[str] = Field(default_factory=list)
 
 

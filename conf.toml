@@ -4,11 +4,10 @@ session_history_path = "session/history"
 workspace_base_path = "workspace_base"
 
 [tool]
-restrict_tools_to_workspace = true
 allowed_networks = ["10.0.0.0/8"]
 
 [llm]
-api_base = "http://10.4.71.158:4000/v1"
+api_base = "http://llm-proxy.1393074507312057.cn-wulanchabu.pai-eas.aliyuncs.com/v1"
 default_model = "openai/Kimi-K2.6"
 default_context_token = 256000
 default_top_p = 0.7
@@ -24,5 +23,5 @@ parallel = 4
 
 
 [feishu]
-app_id = "cli_a99b80eb143c9013"
+app_id = "cli_aa8fcbaccae41cba"
 idle_timeout = 5

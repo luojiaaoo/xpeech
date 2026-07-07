@@ -24,16 +24,27 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 
 ## 安装
 
-需要 Python 3.12+ 和 uv。
+需要 Python 3.12+ 和 uv。项目依赖通过 `uv sync` 安装：
 
 ```bash
 uv sync
 ```
 
+Shell 工具只支持 Linux，并依赖 bubblewrap 沙盒。Debian/Ubuntu 可这样安装：
+
+```bash
+sudo apt-get install bubblewrap
+```
+
 提前安装内置技能依赖：
 
 ```bash
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+npm config set registry https://registry.npmmirror.com/
+
 npm install -g @playwright/cli@latest
+
 npx playwright install chromium
 ```
 
@@ -48,7 +59,6 @@ session_history_path = "session/history"
 workspace_base_path = "workspace_base"
 
 [tool]
-restrict_tools_to_workspace = true
 allowed_networks = ["10.0.0.0/8"]
 
 [llm]
@@ -213,23 +223,43 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 
 | 工具 | 说明 |
 |------|------|
-| `read_file` | 读取工作区内的文件内容 |
+| `read_file` | 读取工作区或内置技能目录中的文件内容 |
 | `write_file` | 向工作区写入文件 |
 | `edit_file` | 编辑工作区内的文件 |
-| `list_dir` | 列出工作区目录内容 |
-| `shell` | 执行 Bash 命令（带安全限制） |
+| `list_dir` | 列出工作区或内置技能目录内容 |
+| `shell` | 执行 Bash 命令（带工作区路径限制和 bwrap 沙盒） |
 | `web_fetch` | 抓取网页内容并转为 Markdown |
 | `web_search` | 搜索网页并返回结果 |
 | `office_read` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
-| `send_file` | 向用户发送文件 |
+| `send_file` | 向用户发送工作区或内置技能目录中的文件 |
 | `ask_user_question` | 向用户发送表单提问 |
 
 ### 工具安全
 
-- **路径隔离**：工具操作默认限制在工作区内，防止访问系统文件
+- **统一路径解析**：文件工具、文件发送工具和 Shell 绝对路径检查统一通过 `xpeech/agent/tools/helper.py` 解析路径；默认限制在工作区内，读取类操作可额外访问内置技能目录，写入和编辑仍只能落在工作区内
+- **Shell 沙盒**：Shell 命令通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离
+- **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到共享沙盒 HOME，便于不同会话复用 CLI 工具
 - **Shell 黑名单**：禁止执行 `rm -rf`、`format`、`dd` 等危险命令
 - **路径遍历检测**：拦截包含 `..` 的路径操作
 - **内网 URL 拦截**：防止访问内部网络接口
+
+### 沙盒
+
+Shell 命令会在 bwrap 进程沙盒中执行：
+
+- 每个会话工作区会绑定为可读写目录，并作为命令工作目录。
+- 内置技能目录以只读方式挂载，便于读取技能脚本和资源。
+- `/tmp` 和工作区父目录会使用临时文件系统隔离，避免命令看到其他工作区。
+- `/usr`、`/bin`、`/lib`、证书和 DNS 配置等系统路径以只读方式挂载，提供基础运行环境。
+- `HOME` 会指向工作区父目录下的共享沙盒目录 `.xpeech-sandbox-home`，并挂载为可读写目录。
+- `PATH` 会优先包含共享沙盒 HOME 下的 `.local/bin` 和 `.npm-global/bin`，因此 `uv tool install`、`npm install -g` 安装的命令可被后续会话直接找到。
+
+Shell 工具首次运行时会在工作区内执行 `uv venv .venv`，为该工作区创建独立 Python 环境。
+Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `pip` 会被安全检查拦截。
+沙盒内设置了 `PIP_REQUIRE_VIRTUALENV=true` 和 `UV_PROJECT_ENVIRONMENT=<workspace>/.venv`，确保项目 Python 依赖安装进入当前工作区的 `.venv`。
+同时设置 `UV_CACHE_DIR=<sandbox-home>/.cache/uv` 和 `NPM_CONFIG_PREFIX=<sandbox-home>/.npm-global`，让 uv 缓存、uv tool 工具和 npm 全局工具在沙盒 HOME 内共享。
+
+如果 `npx` 来自 nvm 或真实用户 HOME 中的 Node 安装，沙盒默认看不到它；需要把 Node/npm/npx 安装到 `/usr`、`/bin`、`/opt` 等沙盒可见路径，或在沙盒内通过可见的 npm 安装全局工具。
 
 ## 目录
 
@@ -246,6 +276,7 @@ xpeech/                # 服务代码
 
 ```bash
 uv sync
+uv run pytest
 uv run -m xpeech api
 ```
 

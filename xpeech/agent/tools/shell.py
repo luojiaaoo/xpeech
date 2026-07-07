@@ -1,18 +1,22 @@
-from pydantic import BaseModel, Field
-import shutil
-from pathlib import Path
-import platform
-import asyncio
-from loguru import logger
-import os
 from contextlib import suppress
-import re
-from ...utils.security.network import contains_internal_url
-from ...utils.helper import is_relative_path, msys_to_win
+from pathlib import Path
 from textwrap import dedent
-from ..skills.skill import BUILTIN_SKILLS_DIR
+
+import asyncio
+import os
+import platform
+import re
 import shlex
+import shutil
+
+from loguru import logger
+from pydantic import BaseModel, Field
+
+from ...utils.security.network import contains_internal_url
+from ...utils.helper import ensure_path
 from ..server.context import get_session_id
+from . import sandbox
+from .helper import safe_resolve_workspace_path, is_direct_python_pip_exec
 
 EXEC_TIMEOUT = 60
 _MAX_OUTPUT = 10000
@@ -32,7 +36,7 @@ _WORKSPACE_BOUNDARY_NOTE = (
     "Do NOT retry with shell tricks (symlinks, base64 piping, alternative "
     "tools, working_dir overrides). If the user genuinely needs this "
     "resource, tell them you cannot reach it under the current "
-    "restrict_to_workspace policy and ask how to proceed."
+    "restrict to workspace policy and ask how to proceed."
 )
 _BENIGN_DEVICE_PATHS: frozenset[str] = frozenset(
     {
@@ -47,26 +51,6 @@ _BENIGN_DEVICE_PATHS: frozenset[str] = frozenset(
         "/dev/tty",
     }
 )
-
-# 如果是windows系统，检测git bash是否安装，如果未安装，抛出异常
-if platform.system() == "Windows":
-    _IS_WINDOWS = True
-    git_path = shutil.which("git")
-    if git_path is None:
-        raise Exception("Git Bash is not installed. Please install Git Bash and try again.")
-    bash_path = Path(git_path).parent.parent / "bin" / "bash"
-    docstring_str = (
-        "MSYS2 is a Bash emulator for Windows. It supports Windows-style paths. All absolute paths MUST follow the D:/dir1/dir2/file format (Drive letter + colon + forward slash). The /d/dir1/dir2/file format is STRICTLY FORBIDDEN.\n"
-        "To avoid escaping issues, All paths MUST unconditionally use forward slashes (/). You MUST automatically convert any backslashes (\\) to forward slashes (/) without exception.\n"
-        "example:\n"
-        "ls -l D:/dir1/dir2/file\n"
-        "ls -l dir3/file\n"
-        "cat D:/dir1/dir2/file.txt"
-    )
-else:
-    _IS_WINDOWS = False
-    bash_path = Path(shutil.which("bash") or "/bin/bash")
-    docstring_str = ""
 
 
 class ShellArgs(BaseModel):
@@ -87,31 +71,29 @@ async def _kill_process(process: asyncio.subprocess.Process) -> None:
         with suppress(asyncio.TimeoutError):
             await asyncio.wait_for(process.wait(), timeout=5.0)
     finally:
-        if not _IS_WINDOWS:
-            try:
-                os.waitpid(process.pid, os.WNOHANG)
-            except (ProcessLookupError, ChildProcessError) as e:
-                logger.debug("Process already reaped or not found: {}", e)
+        try:
+            os.waitpid(process.pid, os.WNOHANG)
+        except (ProcessLookupError, ChildProcessError) as e:
+            logger.debug("Process already reaped or not found: {}", e)
 
 
 def _extract_absolute_paths(command: str) -> list[str]:
-    win_paths = re.findall(r"\b[A-Za-z]:[\\/][^\s\"'|><;]*", command)
     posix_paths = re.findall(r"(?:^|[\s|>'\"])(/[^\s\"'>;|<]+)", command)
     home_paths = re.findall(r"(?:^|[\s>'\"])(~[^\s\"'>;|<]*)", command)
-    return win_paths + posix_paths + home_paths
+    return posix_paths + home_paths
 
 
 def rewrite_shell_command_for_skills(command: str, session_id: str | None) -> str:
-    if not isinstance(session_id, str):
-        raise ValueError("shell internal error: session_id must be a string")
     parts = shlex.split(command)
     # 如果包含 playwright-cli，则添加 -s={session_id}
     if "playwright-cli" in parts:
+        if not isinstance(session_id, str):
+            raise ValueError("shell internal error: session_id must be a string for playwright-cli")
         parts.append(f"-s={session_id}")
     return shlex.join(parts)
 
 
-def _guard_command(command: str, workspace: str, restrict_tools_to_workspace: bool) -> str | None:
+def _guard_command(command: str, workspace: str | Path) -> str:
     """Guard a command string from code injection attacks."""
     cmd = command.strip()
     lower = cmd.lower()
@@ -127,99 +109,122 @@ def _guard_command(command: str, workspace: str, restrict_tools_to_workspace: bo
     # 为skill命令注入参数
     cmd = rewrite_shell_command_for_skills(cmd, get_session_id())
 
-    # 是否开启工作路径限制
-    if restrict_tools_to_workspace:
-        # 拦截非工作路径下的文件操作
-        ## 拦截 .. 符号
-        if "..\\" in cmd or "../" in cmd:
-            raise RuntimeError(
-                f"Command blocked by safety guard (path traversal detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE
+    # 判断是否使用了 python 直接运行
+    if is_direct_python_pip_exec(cmd):
+        raise RuntimeError(
+            "Command blocked by safety guard: run Python through 'uv run python/pip' instead of calling "
+            "'python/pip' directly."
+        )
+
+    # 判断是否包含 ..\
+    if "..\\" in cmd or "../" in cmd:
+        raise RuntimeError(
+            f"Command blocked by safety guard (path traversal detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE
+        )
+    ## 提取所有路径，判断是否在工作路径下
+    for path in _extract_absolute_paths(cmd):
+        try:
+            expanded = os.path.expandvars(path.strip())
+            if _is_benign_device_path(expanded):
+                continue
+            resolved = safe_resolve_workspace_path(
+                expanded,
+                workspace,
+                include_builtin_skills_path=True,
             )
-        ## 提取所有路径，判断是否在工作路径下
-        for i in _extract_absolute_paths(cmd):
-            try:
-                expanded = os.path.expandvars(i.strip())
-                if _is_benign_device_path(expanded):
-                    continue
-                if not _IS_WINDOWS:
-                    p = Path(expanded).expanduser().resolve()
-                else:
-                    if expanded.startswith("~"):
-                        p = Path(expanded).expanduser().resolve()
-                    else:
-                        # windows系统下，需要将 MSYS2 路径转换为 Windows 路径
-                        p = Path(msys_to_win(expanded)).resolve()
-            except Exception:
+            if _is_benign_device_path(str(resolved)):
                 continue
+        except PermissionError:
+            raise RuntimeError(
+                f"Command blocked by safety guard (path outside working dir): {path}" + _WORKSPACE_BOUNDARY_NOTE
+            ) from None
+        except Exception:
+            continue
 
-            if _is_benign_device_path(str(p)):
-                continue
-
-            if not (
-                is_relative_path(path_target=p, base=workspace)
-                or is_relative_path(path_target=p, base=BUILTIN_SKILLS_DIR)
-            ):
-                raise RuntimeError(
-                    f"Command blocked by safety guard (path outside working dir): {p}" + _WORKSPACE_BOUNDARY_NOTE
-                )
-
-    return None
+    return cmd
 
 
-def build_shell_tools(workspace: str, restrict_tools_to_workspace: bool):
-    base = Path(workspace).expanduser().resolve()
-    if not base.exists() or not base.is_dir():
+async def _run_wrapped_command(command: str, workspace: Path) -> tuple[bytes, bytes, int | None]:
+    wrapped_command = sandbox.wrap_command(command, workspace)
+    process = await asyncio.create_subprocess_exec(
+        "bash",
+        "-l",
+        "-c",
+        wrapped_command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=workspace,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=EXEC_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        await _kill_process(process)
+        raise TimeoutError(f"Command timed out after {EXEC_TIMEOUT} seconds")
+    except asyncio.CancelledError:
+        await _kill_process(process)
+        raise
+    return stdout, stderr, process.returncode
+
+
+def _format_command_output(stdout: bytes, stderr: bytes, returncode: int | None) -> str:
+    output_parts = []
+
+    if stdout:
+        output_parts.append(stdout.decode("utf-8", errors="replace"))
+
+    if stderr:
+        stderr_text = stderr.decode("utf-8", errors="replace")
+        if stderr_text.strip():
+            output_parts.append(f"STDERR:\n{stderr_text}")
+
+    output_parts.append(f"\nExit code: {returncode}")
+    result = "\n".join(output_parts) if output_parts else "(no output)"
+
+    max_len = _MAX_OUTPUT
+    if len(result) > max_len:
+        half = max_len // 2
+        result = result[:half] + f"\n\n... ({len(result) - max_len:,} chars truncated) ...\n\n" + result[-half:]
+
+    return result
+
+
+async def _ensure_workspace_uv_venv(workspace: Path) -> None:
+    if (workspace / ".venv").exists():
+        return
+    stdout, stderr, returncode = await _run_wrapped_command("uv venv .venv", workspace)
+    if returncode != 0:
+        result = _format_command_output(stdout, stderr, returncode)
+        raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{result}")
+
+
+def build_shell_tools(workspace: str | Path):
+    if platform.system() != "Linux":
+        raise RuntimeError("Shell tool requires Linux with bubblewrap; Windows and other platforms are not supported.")
+    missing = [name for name in ("bwrap", "sh", "uv") if shutil.which(name) is None]
+    if missing:
+        raise RuntimeError(f"Shell tool requires executable(s) on PATH: {', '.join(missing)}")
+    workspace = Path(workspace).expanduser().resolve()
+    if not workspace.exists() or not workspace.is_dir():
         raise ValueError(f"Invalid workspace: {workspace}")
 
     async def shell(args: ShellArgs) -> str:
-        command = args.command
-        _guard_command(command, workspace, restrict_tools_to_workspace)
-        process = await asyncio.create_subprocess_exec(
-            bash_path,
-            "-l",
-            "-c",
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=base,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=EXEC_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            await _kill_process(process)
-            raise TimeoutError(f"Command timed out after {EXEC_TIMEOUT} seconds")
-        except asyncio.CancelledError:
-            await _kill_process(process)
-            raise
-
-        output_parts = []
-
-        if stdout:
-            output_parts.append(stdout.decode("utf-8", errors="replace"))
-
-        if stderr:
-            stderr_text = stderr.decode("utf-8", errors="replace")
-            if stderr_text.strip():
-                output_parts.append(f"STDERR:\n{stderr_text}")
-
-        output_parts.append(f"\nExit code: {process.returncode}")
-
-        result = "\n".join(output_parts) if output_parts else "(no output)"
-
-        max_len = _MAX_OUTPUT
-        if len(result) > max_len:
-            half = max_len // 2
-            result = result[:half] + f"\n\n... ({len(result) - max_len:,} chars truncated) ...\n\n" + result[-half:]
-
-        return result
+        command = _guard_command(args.command, workspace)
+        ensure_path(sandbox.get_sandbox_home())
+        await _ensure_workspace_uv_venv(workspace)
+        stdout, stderr, returncode = await _run_wrapped_command(command, workspace)
+        return _format_command_output(stdout, stderr, returncode)
 
     shell.__doc__ = dedent(
-        f"""
+        """
             Execute a bash command and return the output.
-            {docstring_str}
+
+            Commands run on Linux inside a bubblewrap sandbox. The current
+            workspace is isolated from other workspaces.
+            Python must be run through uv, for example:
+            uv run python script.py
         """
     ).lstrip()
 

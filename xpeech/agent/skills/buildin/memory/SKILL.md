@@ -16,12 +16,10 @@ always: true
 Choose the search method based on file size:
 
 - Small `memory/HISTORY.md`: use `read_file`, then search in-memory
-- Large or long-lived `memory/HISTORY.md`: use the `exec` tool for targeted search
+- Large or long-lived `memory/HISTORY.md`: use the `shell` tool for targeted search
 
 Examples:
-- **Linux/macOS:** `grep -i "keyword" memory/HISTORY.md`
-- **Windows:** `findstr /i "keyword" memory\HISTORY.md`
-- **Cross-platform Python:** `python -c "from pathlib import Path; text = Path('memory/HISTORY.md').read_text(encoding='utf-8'); print('\n'.join([l for l in text.splitlines() if 'keyword' in l.lower()][-20:]))"`
+- `grep -i "keyword" memory/HISTORY.md`
 
 Prefer targeted command-line search for large history files.
 
