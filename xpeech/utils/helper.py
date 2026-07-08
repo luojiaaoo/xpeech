@@ -38,8 +38,10 @@ def ensure_path(path_: Path):
 
 
 def is_relative_path(path_target: Path, base: Path):
-    path_target = path_target.resolve()
-    base = base.resolve()
+    if not base.is_absolute():
+        raise ValueError("Base path must be absolute")
+    if not path_target.is_absolute():
+        raise ValueError("Path target must be absolute")
     try:
         path_target.relative_to(base)
     except ValueError:
