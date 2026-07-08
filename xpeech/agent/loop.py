@@ -192,24 +192,35 @@ class AgentLoop:
 
             # 如果没有参数，则直接调用工具函数
             try:
+                start_time = time.time()
+                logger.info(
+                    "Tool call started loop_count={} tool_name={} args={}",
+                    loop_count,
+                    tool_call.name,
+                    tool_call.arguments,
+                )
                 if model_cls is None:
                     result = await tool_call_func()
                 else:
                     result = await tool_call_func(model_cls(**tool_call.arguments))
             except Exception as e:
+                duration = (time.time() - start_time)
                 logger.warning(
-                    "Tool call failed loop_count={} tool_name={} args={} exception={}",
+                    "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
                     loop_count,
                     tool_call.name,
                     tool_call.arguments,
                     format_exception2llm(e),
+                    duration,
                 )
                 result = format_exception2llm(e)
             else:
+                duration = (time.time() - start_time)
                 logger.info(
-                    "Tool call completed loop_count={} tool_name={}",
+                    "Tool call completed loop_count={} tool_name={} duration={:.2f}s",
                     loop_count,
                     tool_call.name,
+                    duration,
                 )
 
             def append_tool_result_messages_yaml(tool_call: ToolCallRequest, result_: Any):
@@ -399,11 +410,14 @@ class AgentLoop:
         token_notify = "♻️ 即将达到最大令牌数，强制压缩" if token_percent > 90 else ""
         yield {
             "event": "token_usage",
-            "context": json.dumps({
-                "上下文使用率": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}".strip(),
-                "会话时长": f"{time.perf_counter() - start_time:.0f}秒",
-                "大模型请求次数": str(loop_count + 1),
-            }, ensure_ascii=False),
+            "context": json.dumps(
+                {
+                    "上下文使用率": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}".strip(),
+                    "会话时长": f"{time.perf_counter() - start_time:.0f}秒",
+                    "大模型请求次数": str(loop_count + 1),
+                },
+                ensure_ascii=False,
+            ),
         }
 
         logger.info("Agent run completed")
