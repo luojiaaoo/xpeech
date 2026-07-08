@@ -146,6 +146,7 @@ def _guard_command(command: str, workspace: str | Path) -> str:
 
 async def _run_wrapped_command(command: str, workspace: Path) -> tuple[bytes, bytes, int | None]:
     wrapped_command = sandbox.wrap_command(command, workspace)
+    logger.info(f"Running wrapped command: {wrapped_command}")
     process = await asyncio.create_subprocess_exec(
         "bash",
         "-l",
