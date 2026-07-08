@@ -27,15 +27,15 @@ def safe_resolve_workspace_path(
     include_builtin_skills_path: bool = False,
 ) -> Path:
     """Resolve a user path and ensure it stays inside the allowed tool roots."""
-    base = Path(workspace).expanduser().resolve()
-    path = _expand_sandbox_home_path(user_path, base)
+    workspace = Path(workspace).expanduser().resolve()
+    path = _expand_sandbox_home_path(user_path)
 
     if path.is_absolute():
         resolved_path = path.resolve()
     else:
-        resolved_path = (base / path).resolve()
+        resolved_path = (workspace / path).resolve()
 
-    if is_relative_path(path_target=resolved_path, base=base):
+    if is_relative_path(path_target=resolved_path, base=workspace):
         return resolved_path
 
     if include_builtin_skills_path and is_relative_path(
