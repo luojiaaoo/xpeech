@@ -50,6 +50,7 @@ class PathConfig(BaseModel):
     session_path: Path
     session_history_path: Path
     workspace_base_path: Path
+    sandbox_home_path: Path = Path("sandbox-home")
 
 
 class ToolConfig(BaseModel):

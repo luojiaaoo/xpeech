@@ -5,9 +5,9 @@ import shlex
 from pathlib import Path
 from ...utils.helper import ensure_path
 
+from ...config.settings import settings
 from ..skills.skill import BUILTIN_SKILLS_DIR
 
-_SANDBOX_HOME_DIRNAME = "sandbox-home"
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
@@ -17,8 +17,7 @@ def _add_setenv(args: list[str], key: str, value: Path | str) -> None:
 
 def get_sandbox_home() -> Path:
     """Return the shared sandbox home for all sessions under a workspace base."""
-    share_home = ensure_path(Path(_SANDBOX_HOME_DIRNAME).resolve())
-    return share_home
+    return ensure_path(settings.path.sandbox_home_path.resolve())
 
 
 def _sandbox_path(shared_home: Path) -> str:

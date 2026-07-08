@@ -2,6 +2,7 @@
 session_path = "session"
 session_history_path = "session/history"
 workspace_base_path = "workspace_base"
+sandbox_home_path = "sandbox-home"
 
 [tool]
 allowed_networks = ["10.0.0.0/8"]
