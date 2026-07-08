@@ -59,6 +59,20 @@ if errorlevel 1 (
 )
 
 echo.
+
+REM ── 4. 清理构建产物 ──────────────────
+echo [4/4] 清理构建产物...
+cd /d "%~dp0"
+if exist "build" (
+    rmdir /s /q "build"
+    echo [OK] build 目录已删除
+)
+if exist "DesktopClient.spec" (
+    del /q "DesktopClient.spec"
+    echo [OK] DesktopClient.spec 已删除
+)
+echo.
+
 echo ========================================
 echo   打包完成！
 echo ========================================
