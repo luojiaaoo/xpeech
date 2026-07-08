@@ -1,10 +1,6 @@
 from pathlib import Path
 from threading import Lock
-
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import PrivateAttr
-from pydantic import field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -57,6 +53,21 @@ class ToolConfig(BaseModel):
     """Tool safety configuration settings."""
 
     allowed_networks: list[str] = Field(default_factory=list)
+    mcp_servers: dict[str, "MCPServerSettings"] = Field(default_factory=dict, validation_alias="mcpServers")
+
+
+class MCPServerSettings(BaseModel):
+    """MCP server configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] | None = None
+    url: str | None = None
+    headers: dict[str, str] | None = None
+    enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")
+    tool_timeout: float = Field(default=30.0, validation_alias="tool_timeout")
 
 
 class LLMConfig(BaseModel):

@@ -4,9 +4,6 @@ session_history_path = "session/history"
 workspace_base_path = "workspace_base"
 sandbox_home_path = "sandbox-home"
 
-[tool]
-allowed_networks = ["10.0.0.0/8"]
-
 [llm]
 api_base = "http://llm-proxy.1393074507312057.cn-wulanchabu.pai-eas.aliyuncs.com/v1"
 default_model = "openai/Kimi-K2.6"
@@ -21,6 +18,21 @@ support_image = true
 support_video = true
 support_json_output = true
 parallel = 4
+
+[tool]
+allowed_networks = ["10.0.0.0/8"]
+
+[tool.mcpServers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "workspace_base"]
+enabled_tools = ["*"]
+tool_timeout = 30
+
+# [tool.mcpServers.my-api]
+# url = "https://mcp.example.com/sse"
+# headers = { Authorization = "Bearer xxx" }
+# enabled_tools = ["*"]
+# tool_timeout = 120
 
 
 [feishu]

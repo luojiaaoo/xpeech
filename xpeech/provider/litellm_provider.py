@@ -1,11 +1,12 @@
 from ..agent.tools.helper import get_custom_tool_func
 import litellm
-from typing import Any, Callable, Type
+from typing import Any, Callable, Literal, Type
 import functools
 from pydantic import BaseModel
 from .schema import LLMResponse, ReasoningEffort, ToolCallRequest
 from .helper import LiteLLMRetryClient
 from ..agent.tools.helper import as_tool
+from ..agent.tools.mcp_client import MCPServerRegistration, collect_mcp_tool
 import inspect
 from loguru import logger
 
@@ -38,7 +39,7 @@ class LiteLLMProvider:
         self.default_top_p = default_top_p
         self.default_reasoning_effort = default_reasoning_effort
         self.default_tool_jsons: list[dict[str, Any]] = []
-        self.default_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str]] = {}
+        self.default_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str | list]] = {}
         self._support_image = support_image
         self._support_video = support_video
         self._support_json_output = support_json_output
@@ -63,7 +64,6 @@ class LiteLLMProvider:
 
         return self._support_video
 
-
     @property
     def support_json_output(self) -> bool:
         """是否支持JSON输出。"""
@@ -71,9 +71,10 @@ class LiteLLMProvider:
         return self._support_json_output
 
     def decorator_tool_func(
-        self, func_: Callable[[Type[BaseModel] | None], str | list], register_default: bool = False
+        self,
+        func_: Callable[[Type[BaseModel] | None], str | list],
+        register_default: bool = False,
     ):
-
         def format_result(rt) -> str:
             if isinstance(rt, str):
                 return rt
@@ -97,22 +98,33 @@ class LiteLLMProvider:
         else:
             return as_tool(func_), wrapper
 
-    def register_tool(self):
+    async def decorator_mcp_tool(self, registration: MCPServerRegistration) -> MCPServerRegistration:
+        async for tool_json, tool_func, tool_func_name in collect_mcp_tool(registration):
+            self.default_tool_jsons.append(tool_json)
+            self.default_mapping_tool_call_funcs[tool_func_name] = tool_func
+        return registration
+
+    def register_tool(self, tool_type: Literal["function", "mcp"] = "function"):
         """注册工具，统一返回 async wrapper。"""
 
-        return functools.partial(self.decorator_tool_func, register_default=True)
+        if tool_type == "function":
+            return functools.partial(self.decorator_tool_func, register_default=True)
+        if tool_type == "mcp":
+            return self.decorator_mcp_tool
+        raise ValueError(f"Unsupported tool type: {tool_type}")
 
-    def _parse_temp_tools(
+    async def _parse_tools(
         self, funcs: list[Callable[[Type[BaseModel] | None], str | list]]
     ) -> tuple[list[dict[str, Any]], dict[str, Callable[[Type[BaseModel] | None], str | list]]]:
-        """解析临时工具。"""
-        temp_as_tools = []
-        temp_mapping_tool_call_funcs = {}
+        """解析普通函数工具。"""
+
+        tool_jsons = []
+        mapping_tool_call_funcs = {}
         for func in funcs:
-            _temp_as_tool, _temp_mapping_tool_call_func = self.decorator_tool_func(func, register_default=False)
-            temp_as_tools.append(_temp_as_tool)
-            temp_mapping_tool_call_funcs[func.__name__] = _temp_mapping_tool_call_func
-        return temp_as_tools, temp_mapping_tool_call_funcs
+            tool_json, tool_func = self.decorator_tool_func(func, register_default=False)
+            tool_jsons.append(tool_json)
+            mapping_tool_call_funcs[func.__name__] = tool_func
+        return tool_jsons, mapping_tool_call_funcs
 
     async def chat(
         self,
@@ -142,18 +154,21 @@ class LiteLLMProvider:
 
         # 根据工具名称获取自定义工具，或使用工具函数
         tools = [get_custom_tool_func(tool) if isinstance(tool, str) else tool for tool in tools] if tools else []
-        temp_tool_jsons, temp_mapping_tool_call_funcs = self._parse_temp_tools(tools)
+        parsed_tool_jsons, parsed_mapping_tool_call_funcs = await self._parse_tools(tools)
 
         # 确定工具列表
         if remove_default_tools and remove_all_tools:
             raise ValueError("remove_default_tools and remove_all_tools cannot be True at the same time.")
         if remove_default_tools:
-            tool_jsons = temp_tool_jsons
+            tool_jsons = parsed_tool_jsons
+            mapping_tool_call_funcs = parsed_mapping_tool_call_funcs
         else:
-            tool_jsons = self.default_tool_jsons + temp_tool_jsons
+            tool_jsons = self.default_tool_jsons + parsed_tool_jsons
+            mapping_tool_call_funcs = self.default_mapping_tool_call_funcs | parsed_mapping_tool_call_funcs
 
         if remove_all_tools:
             tool_jsons = []
+            mapping_tool_call_funcs = {}
 
         completion_kwargs = {
             "model": model,
@@ -175,7 +190,10 @@ class LiteLLMProvider:
 
         # 解析响应
         try:
-            return self._parse_response(response, self.default_mapping_tool_call_funcs | temp_mapping_tool_call_funcs)
+            return self._parse_response(
+                response,
+                mapping_tool_call_funcs,
+            )
 
         except Exception as e:
             return LLMResponse(

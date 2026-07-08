@@ -125,7 +125,7 @@ async def chat(
         support_json_output=settings.llm.support_json_output,
         extra_headers={"Authorization": "Bearer " + settings.llm.api_key},
     )
-    async for i in AgentLoop(
+    al = AgentLoop(
         provider=provider,
         workspace=workspace,
         tools=settings.llm.default_tools,
@@ -133,5 +133,9 @@ async def chat(
         provider_chat_kwargs=ProviderChatKwargs(
             reasoning_effort=None,
         ),
-    ).run(message=message):
+    )
+    # 注册默认工具
+    await al.register_default_tools()
+    # 运行Agent Loop
+    async for i in al.run(message=message):
         yield i

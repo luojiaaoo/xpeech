@@ -13,6 +13,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 支持多轮会话和独立工作区
 - 支持 LiteLLM 兼容的大模型服务
 - 支持内置工具和自定义 Python 工具
+- 支持通过 MCP Server 扩展 Agent 工具
 - 支持飞书消息桥接
 - 使用 `conf.toml` 管理普通配置，使用 `.env` 管理密钥
 - YAML 格式存储会话历史，可读性更好
@@ -57,9 +58,7 @@ npx playwright install chromium
 session_path = "session"
 session_history_path = "session/history"
 workspace_base_path = "workspace_base"
-
-[tool]
-allowed_networks = ["10.0.0.0/8"]
+sandbox_home_path = "sandbox-home"
 
 [llm]
 api_base = "https://api.siliconflow.cn/v1"
@@ -75,6 +74,22 @@ support_image = true
 support_video = true
 support_json_output = true
 parallel = 4
+
+[tool]
+allowed_networks = ["10.0.0.0/8"]
+
+[tool.mcpServers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "workspace_base"]
+# env = { DATABASE_URL = "postgres://user:pass@localhost:5432/db" }
+enabled_tools = ["*"]
+tool_timeout = 30
+
+# [tool.mcpServers.my-api]
+# url = "https://mcp.example.com/sse"
+# headers = { Authorization = "Bearer xxx" }
+# enabled_tools = ["*"]
+# tool_timeout = 120
 
 [feishu]
 app_id = "cli_xxx"
@@ -200,7 +215,6 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-
 def hello():
     """Return a hello message."""
     return "hello"
@@ -213,9 +227,47 @@ class Message(BaseModel):
 def echo(message: Message):
     """Echo the message content."""
     return message.content
+
 ```
 
 工具函数需要有 docstring。函数可以不接收参数，也可以接收一个 Pydantic `BaseModel` 参数。
+
+## MCP 工具
+
+可以在 `conf.toml` 的 `[tool.mcpServers.<name>]` 下配置 MCP Server。启动会话时，Xpeech 会连接这些 Server、发现可用工具，并把它们注册为 Agent 默认工具。
+
+stdio Server 示例：
+
+```toml
+[tool.mcpServers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "workspace_base"]
+enabled_tools = ["*"]
+tool_timeout = 30
+```
+
+远程 MCP Server 示例：
+
+```toml
+[tool.mcpServers.my-api]
+url = "https://mcp.example.com/sse"
+headers = { Authorization = "Bearer xxx" }
+enabled_tools = ["search", "read_record"]
+tool_timeout = 120
+```
+
+字段说明：
+
+- `command` / `args`：启动 stdio MCP Server 的命令和参数。
+- `url`：连接远程 MCP Server。`/sse` 结尾的地址使用 SSE transport，其他地址默认使用 streamable HTTP。
+- `env`：stdio Server 的环境变量。
+- `headers`：远程 MCP Server 的请求头。
+- `enabled_tools`：允许注册的 MCP 工具名，`["*"]` 表示全部注册。
+- `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
+
+`command` 和 `url` 只能二选一。MCP Server 配置会按原样传入，不会做运行时字符串替换。
+
+注册后的工具名会加上 `mcp_<server>_` 前缀，例如 `filesystem` Server 暴露的 `read_file` 会注册为 `mcp_filesystem_read_file`。`enabled_tools` 可以填写 MCP 原始工具名，也可以填写加前缀后的工具名。
 
 ## 内置工具
 

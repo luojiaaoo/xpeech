@@ -7,6 +7,7 @@ from .tools.web import web_fetch, web_search
 from .tools.office import office_read
 from .tools.question import ask_user_question, is_ok_question, extract_question, USER_TIMEOUT
 from .tools.file_message import build_file_message_tools
+from .tools.mcp_client import get_persistent_mcp_registration_from_config
 from itertools import count
 from ..config.settings import settings
 from typing import Any
@@ -65,12 +66,9 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
 
-        # 注册默认工具
-        self.register_default_tools()
-
     # ----------------- 默认工具 -----------------
 
-    def register_default_tools(self):
+    async def register_default_tools(self):
         """注册默认工具。"""
 
         # 文件读写
@@ -107,6 +105,11 @@ class AgentLoop:
 
         # question
         self.provider.register_tool()(ask_user_question)
+
+        # MCP servers from config
+        for mcp_server_name, mcp_server in settings.tool.mcp_servers.items():
+            registration = await get_persistent_mcp_registration_from_config(mcp_server_name, mcp_server)
+            await self.provider.register_tool("mcp")(registration)
 
     # ----------------- history会话读写 -----------------
 
