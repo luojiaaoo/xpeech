@@ -1,6 +1,11 @@
 from __future__ import annotations
+
+import os
 import platform
 import argparse
+
+# 取消 litellm 的本地模型成本映射
+os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
 
 
 def main() -> None:
