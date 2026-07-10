@@ -46,7 +46,7 @@ class PathConfig(BaseModel):
     session_path: Path
     session_history_path: Path
     workspace_base_path: Path
-    sandbox_home_path: Path = Path("sandbox-home")
+    sandbox_home_path: Path
 
 
 class ToolConfig(BaseModel):
@@ -115,6 +115,7 @@ class FeishuConfig(BaseModel):
     app_id: str
     app_secret: str
     idle_timeout: int = 5
+    cache_path: Path
 
 
 class Settings(BaseSettings):
@@ -148,3 +149,4 @@ settings = Settings()
 ensure_path(settings.path.session_path)
 ensure_path(settings.path.session_history_path)
 ensure_path(settings.path.workspace_base_path)
+ensure_path(settings.feishu.cache_path)

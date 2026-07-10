@@ -34,7 +34,7 @@ from typing import Any, NotRequired, TypedDict
 from loguru import logger
 from ..config.settings import settings
 from ..agent.tools.question import validate_question_json
-from ..utils.helper import detect_image_mime
+from ..utils.helper import detect_image_mime, ensure_path
 from lark_oapi.channel import Events
 from yarl import URL
 
@@ -305,8 +305,7 @@ Trophy Fire FIREWORKS REDPACKET FORTUNE LUCK BeamingFace Delighted
 GoGoGo ThanksFace SaluteFace HappyDragon
 """.split()
 
-FEISHU_CACHE_DIR = Path("feishu_cache").resolve()
-FEISHU_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+FEISHU_CACHE_DIR = ensure_path(settings.feishu.cache_path.resolve())
 
 
 class FeishuBridge:

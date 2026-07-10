@@ -1,0 +1,49 @@
+name: xpeech
+
+configs:
+  xpeech_env:
+    file: ./.env
+  xpeech_conf:
+    file: ./conf.toml
+
+x-xpeech-service: &xpeech-service
+  image: xpeech:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+  configs:
+    - source: xpeech_env
+      target: /app/.env
+    - source: xpeech_conf
+      target: /app/conf.toml
+  init: true
+  restart: unless-stopped
+
+services:
+  backend:
+    <<: *xpeech-service
+    command: ["api", "--host", "0.0.0.0", "--port", "7878"]
+    ports:
+      - "7878:7878"
+    volumes:
+      - ./docker_data/session:/app/data/session
+      - ./docker_data/workspace_base:/app/data/workspace_base
+      - ./docker_data/sandbox-home:/app/data/sandbox-home
+    # Agent 的 shell 工具需要 bubblewrap 创建隔离的挂载命名空间。
+    cap_add:
+      - SYS_ADMIN
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:7878/docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
+  feishu:
+    <<: *xpeech-service
+    command: ["feishu", "--chat-url", "http://backend:7878"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./docker_data/feishu_cache:/app/data/feishu_cache

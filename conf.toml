@@ -1,8 +1,8 @@
 [path]
-session_path = "session"
-session_history_path = "session/history"
-workspace_base_path = "workspace_base"
-sandbox_home_path = "sandbox-home"
+session_path = "data/session"
+session_history_path = "data/session/history"
+workspace_base_path = "data/workspace_base"
+sandbox_home_path = "data/sandbox-home"
 
 [llm]
 api_base = "http://llm-proxy.1393074507312057.cn-wulanchabu.pai-eas.aliyuncs.com/v1"
@@ -38,3 +38,4 @@ tool_timeout = 30
 [feishu]
 app_id = "cli_aa8fcbaccae41cba"
 idle_timeout = 5
+cache_path = "data/feishu_cache"

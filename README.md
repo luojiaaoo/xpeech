@@ -55,10 +55,10 @@ npx playwright install chromium
 
 ```toml
 [path]
-session_path = "session"
-session_history_path = "session/history"
-workspace_base_path = "workspace_base"
-sandbox_home_path = "sandbox-home"
+session_path = "data/session"
+session_history_path = "data/session/history"
+workspace_base_path = "data/workspace_base"
+sandbox_home_path = "data/sandbox-home"
 
 [llm]
 api_base = "https://api.siliconflow.cn/v1"
@@ -94,6 +94,7 @@ tool_timeout = 30
 [feishu]
 app_id = "cli_xxx"
 idle_timeout = 3
+cache_path = "data/feishu_cache"
 ```
 
 密钥写在 `.env`：
@@ -146,10 +147,46 @@ uv run -m xpeech feishu
 - `feishu.idle_timeout`：同一会话消息合并等待时间，单位秒
 - `FEISHU__APP_SECRET`：飞书应用密钥，建议放在 `.env`
 
-如需连接非默认 API 地址，可以传入 `/chat` 地址：
+如需连接非默认 API 地址，可以传入 API 基地址：
 
 ```bash
-uv run -m xpeech feishu --chat-url http://127.0.0.1:7878/chat
+uv run -m xpeech feishu --chat-url http://127.0.0.1:7878
+```
+
+## Docker Compose 部署
+
+Compose 会启动两个容器：
+
+- `backend`：Xpeech API、Agent 和工具执行服务
+- `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
+
+先准备密钥：
+
+```bash
+cp .env.example .env
+```
+
+填写 `.env` 中的 `LLM__API_KEY` 和 `FEISHU__APP_SECRET`，并确认
+`conf.toml` 中的 `llm`、`feishu.app_id` 等普通配置正确，然后构建并启动：
+
+```bash
+docker compose up -d --build
+```
+
+查看运行状态和日志：
+
+```bash
+docker compose ps
+docker compose logs -f backend feishu
+```
+
+后端默认暴露在 `http://localhost:7878`。如需修改宿主机端口，请修改
+`compose.yaml` 中 `backend.ports` 的宿主机端口。持久化数据统一映射到宿主机
+的 `./data/` 目录，其中包含 `session`、`workspace_base`、`sandbox-home` 和
+`feishu_cache`；`conf.toml` 以只读方式挂载，修改后重启服务即可生效：
+
+```bash
+docker compose restart backend feishu
 ```
 
 ## 发送消息
@@ -312,17 +349,6 @@ Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `
 同时设置 `UV_CACHE_DIR=<sandbox-home>/.cache/uv` 和 `NPM_CONFIG_PREFIX=<sandbox-home>/.npm-global`，让 uv 缓存、uv tool 工具和 npm 全局工具在沙盒 HOME 内共享。
 
 如果 `npx` 来自 nvm 或真实用户 HOME 中的 Node 安装，沙盒默认看不到它；需要把 Node/npm/npx 安装到 `/usr`、`/bin`、`/opt` 等沙盒可见路径，或在沙盒内通过可见的 npm 安装全局工具。
-
-## 目录
-
-```text
-conf.toml              # 普通配置
-.env                   # 本地密钥，不建议提交
-custom_tools/          # 自定义工具包
-session/history/       # 会话历史（YAML 格式）
-workspace_base/        # 每个会话的工作区
-xpeech/                # 服务代码
-```
 
 ## 开发
 
