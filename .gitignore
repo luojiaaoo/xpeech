@@ -163,7 +163,9 @@ cython_debug/
 .vscode
 
 # Ignore data except the sandbox-home config files listed below.
-docker_data
+# docker data directory
+docker_data/
+# Home directory for acceleration download
 data/*
 !data/sandbox-home/
 data/sandbox-home/**
