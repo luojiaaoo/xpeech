@@ -42,4 +42,4 @@ COPY data/sandbox-home/.pip/pip.conf /app/sandbox-home-defaults/.pip/pip.conf
 COPY data/sandbox-home/.config/uv/uv.toml /app/sandbox-home-defaults/.config/uv/uv.toml
 RUN uv sync --frozen --no-dev
 
-ENTRYPOINT ["/bin/sh", "-c", "cp -rf /app/sandbox-home-defaults/* /app/data/sandbox-home/ && exec uv run -m xpeech \"$@\"", "--"]
+ENTRYPOINT ["/bin/sh", "-c", "cp -a /app/sandbox-home-defaults/. /app/data/sandbox-home/ && exec uv run -m xpeech \"$@\"", "--"]
