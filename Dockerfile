@@ -36,6 +36,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY xpeech/ ./xpeech/
 COPY custom_tools/ ./custom_tools/
+RUN mkdir /opt/sandbox-home-defaults
 COPY data/sandbox-home/.npmrc /opt/sandbox-home-defaults/.npmrc
 COPY data/sandbox-home/.pip/pip.conf /opt/sandbox-home-defaults/.pip/pip.conf
 COPY data/sandbox-home/.config/uv/uv.toml /opt/sandbox-home-defaults/.config/uv/uv.toml
