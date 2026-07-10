@@ -36,9 +36,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY xpeech/ ./xpeech/
 COPY custom_tools/ ./custom_tools/
-COPY data/sandbox-home/.npmrc ./data/sandbox-home/.npmrc
-COPY data/sandbox-home/.pip/pip.conf ./data/sandbox-home/.pip/pip.conf
-COPY data/sandbox-home/.config/uv/uv.toml ./data/sandbox-home/.config/uv/uv.toml
+COPY data/sandbox-home/.npmrc /opt/sandbox-home-defaults/.npmrc
+COPY data/sandbox-home/.pip/pip.conf /opt/sandbox-home-defaults/.pip/pip.conf
+COPY data/sandbox-home/.config/uv/uv.toml /opt/sandbox-home-defaults/.config/uv/uv.toml
 RUN uv sync --frozen --no-dev
 
-ENTRYPOINT ["uv", "run", "-m", "xpeech"]
+ENTRYPOINT ["/bin/sh", "-c", "cp -rf /opt/sandbox-home-defaults/* /app/data/sandbox-home/ && exec uv run -m xpeech \"$@\"", "--"]
