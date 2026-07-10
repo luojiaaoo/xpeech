@@ -166,7 +166,9 @@ cython_debug/
 session/
 workspace_base/
 feishu_cache/
+data/
 node_modules/
 package-lock.json
 xpeech/channel/desktop_client/frontend/dist/
 .vscode
+sandbox-home

@@ -3110,7 +3110,6 @@ dependencies = [
     { name = "pillow" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
-    { name = "tomlkit" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "yarl" },
 ]
@@ -3118,6 +3117,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pywebview" },
+    { name = "tomlkit" },
 ]
 
 [package.metadata]
@@ -3138,13 +3138,15 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },
     { name = "python-multipart", specifier = ">=0.0.27" },
-    { name = "tomlkit", specifier = ">=0.13.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.46.0" },
     { name = "yarl", specifier = ">=1.23.0" },
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pywebview", specifier = ">=6.2.1" }]
+dev = [
+    { name = "pywebview", specifier = ">=6.2.1" },
+    { name = "tomlkit", specifier = ">=0.15.0" },
+]
 
 [[package]]
 name = "yarl"
