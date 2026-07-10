@@ -58,7 +58,7 @@ def wrap_command(command: str, workspace: str | Path) -> list[str]:
         "/opt",
         "/etc/alternatives",
         "/etc/ssl/certs",
-        "/etc/pki/tls",
+        "/etc/pki/tls/certs",
         "/etc/pki/ca-trust",
         "/etc/crypto-policies",
         "/etc/resolv.conf",
