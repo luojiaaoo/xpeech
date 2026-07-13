@@ -66,6 +66,7 @@ def _get_identity(workspace: Path) -> str:
                 ## Platform Policy
                 - Prefer UTF-8 and standard shell tools.
                 - Use file tools when they are simpler or more reliable than shell commands.
+                - When executing shell, use the command name from PATH (e.g., `cat`, `uv`) instead of absolute paths (e.g., `/usr/bin/cat`, `/usr/local/bin/uv`).
 
                 ## Tools / Skills Guidelines
                 - State intent before tool calls, but NEVER predict or claim results before receiving them.
