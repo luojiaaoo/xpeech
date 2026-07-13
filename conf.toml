@@ -22,11 +22,11 @@ parallel = 4
 [tool]
 allowed_networks = ["10.0.0.0/8"]
 
-[tool.mcpServers.filesystem]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "workspace_base"]
-enabled_tools = ["*"]
-tool_timeout = 30
+# [tool.mcpServers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "data/workspace_base"]
+# enabled_tools = ["*"]
+# tool_timeout = 30
 
 # [tool.mcpServers.my-api]
 # url = "https://mcp.example.com/sse"
