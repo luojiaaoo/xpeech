@@ -21,7 +21,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 内置记忆系统，自动总结和保存关键信息
 - 支持视频输入
 - Token 使用率实时监控
-- 丰富的内置工具集：文件读写、Shell 执行、Web 搜索、网页抓取、Office 文档读取、文件发送、向用户提问
+- 丰富的内置工具集：文件读写、Shell 执行、Web 搜索与网页抓取、Playwright MCP 网页操作、Office 文档读取、文件发送、向用户提问
 
 ## 安装
 
@@ -43,11 +43,9 @@ sudo apt-get install bubblewrap
 pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 npm config set registry https://registry.npmmirror.com/
-
-npm install -g @playwright/cli@latest
-
-npx playwright install chromium
 ```
+
+Docker 部署通过独立的 Playwright MCP 容器提供网页操作能力。目前 Docker 实现仅支持无头 Chromium。
 
 ## 配置
 
@@ -75,8 +73,14 @@ support_video = true
 support_json_output = true
 parallel = 4
 
-[tool]
-allowed_networks = ["10.0.0.0/8"]
+[tool.browser_preview]
+browser_preview_base_url = "http://backend:7878/browser_preview"
+browser_preview_path = "data/browser_preview"
+
+[tool.mcpServers.playwright]
+url = "http://playwright:8931/mcp"
+enabled_tools = ["*"]
+tool_timeout = 120
 
 [tool.mcpServers.filesystem]
 command = "npx"
@@ -155,10 +159,11 @@ uv run -m xpeech feishu --chat-url http://127.0.0.1:7878
 
 ## Docker Compose 部署
 
-Compose 会启动两个容器：
+Compose 会启动三个容器：
 
 - `backend`：Xpeech API、Agent 和工具执行服务
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
+- `playwright`：常驻 Playwright MCP 服务，使用无头 Chromium 执行所有交互式网页操作
 
 先准备密钥：
 
@@ -177,7 +182,7 @@ docker compose up -d --build
 
 ```bash
 docker compose ps
-docker compose logs -f backend feishu
+docker compose logs -f backend feishu playwright
 ```
 
 后端默认暴露在 `http://localhost:7878`。如需修改宿主机端口，请修改
@@ -186,7 +191,7 @@ docker compose logs -f backend feishu
 `feishu_cache`；`conf.toml` 以只读方式挂载，修改后重启服务即可生效：
 
 ```bash
-docker compose restart backend feishu
+docker compose restart backend feishu playwright
 ```
 
 ## 发送消息
@@ -293,6 +298,24 @@ enabled_tools = ["search", "read_record"]
 tool_timeout = 120
 ```
 
+Compose 中的 Playwright MCP 使用 streamable HTTP 连接：
+
+```toml
+[tool.mcpServers.playwright]
+url = "http://playwright:8931/mcp"
+enabled_tools = ["*"]
+tool_timeout = 120
+```
+
+Docker 实现目前仅支持无头 Chromium。普通搜索和网页文本抓取使用
+`web_search` 和 `web_fetch`；需要浏览器渲染或交互操作时使用注册后的
+`mcp_playwright_*` 工具。`browser_preview_base_url` 只负责生成 Playwright MCP
+能访问的 URL 前缀，FastAPI 路由由该 URL 的 path 部分自动注册；
+`browser_preview_path` 只负责存放预览文件，两者没有
+路径推导关系。`create_browser_preview` 会把目录复制到 `<browser_preview_path>/<uuid>/`；
+传入目录时返回该 UUID 目录的 URL 前缀；传入单个 HTML 时保留源文件名，
+并返回完整的文件 URL。
+
 字段说明：
 
 - `command` / `args`：启动 stdio MCP Server 的命令和参数。
@@ -319,6 +342,8 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `shell` | 执行 Bash 命令（带工作区路径限制和 bwrap 沙盒） |
 | `web_fetch` | 抓取网页内容并转为 Markdown |
 | `web_search` | 搜索网页并返回结果 |
+| `create_browser_preview` | 将工作区内目录或单个 HTML 复制到 UUID 预览目录，返回目录 URL 前缀或完整文件 URL |
+| `mcp_playwright_*` | 通过 Playwright MCP 搜索、打开、读取、检查和操作网页 |
 | `office_read` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |
 | `ask_user_question` | 向用户发送表单提问 |
@@ -326,6 +351,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 ### 工具安全
 
 - **统一路径解析**：文件工具、文件发送工具和 Shell 绝对路径检查统一通过 `xpeech/agent/tools/helper.py` 解析路径；默认限制在工作区内，读取类操作可额外访问内置技能目录，写入和编辑仍只能落在工作区内
+- **预览目录隔离**：`create_browser_preview` 只能复制当前会话工作区内的目录或 HTML，每次写入 `<browser_preview_path>/<uuid>/`，请求子路径不能越出对应 UUID 目录
 - **Shell 沙盒**：Shell 命令通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离
 - **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到共享沙盒 HOME，便于不同会话复用 CLI 工具
 - **Shell 黑名单**：禁止执行 `rm -rf`、`format`、`dd` 等危险命令

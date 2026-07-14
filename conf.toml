@@ -19,8 +19,14 @@ support_video = true
 support_json_output = true
 parallel = 4
 
-[tool]
-allowed_networks = ["0.0.0.0/0", "::/0"]
+[tool.browser_preview]
+browser_preview_base_url = "http://backend:7878/browser_preview"
+browser_preview_path = "data/browser_preview"
+
+[tool.mcpServers.playwright]
+url = "http://playwright:8931/mcp"
+enabled_tools = ["*"]
+tool_timeout = 120
 
 # [tool.mcpServers.filesystem]
 # command = "npx"

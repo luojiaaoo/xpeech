@@ -5,6 +5,7 @@ from .tools.filesystem import build_file_tools
 from .tools.shell import build_shell_tools
 from .tools.web import web_fetch, web_search
 from .tools.office import office_read
+from .tools.browser_preview import build_browser_preview_tool
 from .tools.question import ask_user_question, is_ok_question, extract_question, USER_TIMEOUT
 from .tools.file_message import build_file_message_tools
 from .tools.mcp_client import get_persistent_mcp_registration_from_config
@@ -93,6 +94,15 @@ class AgentLoop:
         # web fetch
         self.provider.register_tool()(web_fetch)
         self.provider.register_tool()(web_search)
+
+        # browser preview for workspace paths
+        browser_preview = settings.tool.browser_preview
+        create_browser_preview = build_browser_preview_tool(
+            workspace=self.workspace,
+            browser_preview_path=browser_preview.browser_preview_path,
+            browser_preview_base_url=browser_preview.browser_preview_base_url,
+        )
+        self.provider.register_tool()(create_browser_preview)
 
         # office document reader
         self.provider.register_tool()(office_read)

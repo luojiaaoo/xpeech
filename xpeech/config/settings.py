@@ -1,5 +1,6 @@
 from pathlib import Path
 from threading import Lock
+from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 from pydantic_settings import (
     BaseSettings,
@@ -49,10 +50,34 @@ class PathConfig(BaseModel):
     sandbox_home_path: Path
 
 
+class BrowserPreviewConfig(BaseModel):
+    """Browser preview URL and file storage settings."""
+
+    browser_preview_base_url: str = "http://127.0.0.1:7878/browser_preview"
+    browser_preview_path: Path = Path("data/browser_preview")
+
+    @field_validator("browser_preview_base_url")
+    @classmethod
+    def validate_browser_preview_base_url(cls, value: str) -> str:
+        value = value.rstrip("/")
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("browser_preview_base_url must be an absolute HTTP(S) URL")
+        if parsed.query or parsed.fragment:
+            raise ValueError("browser_preview_base_url cannot contain a query or fragment")
+        if not parsed.path or parsed.path == "/":
+            raise ValueError("browser_preview_base_url must contain a route path")
+        return value
+
+    @property
+    def route_path(self) -> str:
+        return urlsplit(self.browser_preview_base_url).path.rstrip("/")
+
+
 class ToolConfig(BaseModel):
     """Tool safety configuration settings."""
 
-    allowed_networks: list[str] = Field(default_factory=list)
+    browser_preview: BrowserPreviewConfig = Field(default_factory=BrowserPreviewConfig)
     mcp_servers: dict[str, "MCPServerSettings"] = Field(default_factory=dict, validation_alias="mcpServers")
 
 
@@ -150,3 +175,4 @@ ensure_path(settings.path.session_path)
 ensure_path(settings.path.session_history_path)
 ensure_path(settings.path.workspace_base_path)
 ensure_path(settings.feishu.cache_path)
+ensure_path(settings.tool.browser_preview.browser_preview_path)

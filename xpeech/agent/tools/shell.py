@@ -11,7 +11,6 @@ import shutil
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from ...utils.security.network import contains_internal_url
 from ...utils.helper import ensure_path
 from . import sandbox
 from .helper import safe_resolve_workspace_path, is_direct_python_pip_exec
@@ -90,10 +89,6 @@ def _guard_command(command: str, workspace: str | Path) -> str:
     for pattern in DENY_PATTERNS:
         if re.search(pattern, lower):
             raise RuntimeError(f"Command blocked by deny pattern filter: {cmd}")
-    # 判断是否恶意访问内网接口
-    if contains_internal_url(cmd):
-        raise RuntimeError(f"Command blocked by safety guard (internal/private URL detected): {cmd}")
-
     # 判断是否使用了 python 直接运行
     if is_direct_python_pip_exec(cmd):
         raise RuntimeError(

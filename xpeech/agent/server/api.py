@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from .schema import InputContent, InboundMessage
 import json
 from pathlib import Path
+from uuid import UUID
 from ...config.settings import settings
 from ...utils.helper import save_to_workspace, ensure_path, is_relative_path
 from ...utils.session import create_workspace_templates
@@ -65,6 +66,20 @@ async def download_session_file(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
     return FileResponse(file_path, filename=file_path.name)
+
+
+@app.get(
+    f"{settings.tool.browser_preview.route_path}/{{preview_id}}/{{file_path:path}}",
+    include_in_schema=False,
+)
+async def preview_file(preview_id: UUID, file_path: str):
+    relative_path = Path(file_path)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid preview path")
+    preview_file_path = settings.tool.browser_preview.browser_preview_path / str(preview_id) / relative_path
+    if not preview_file_path.exists() or not preview_file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preview file not found")
+    return FileResponse(preview_file_path, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/answer_question")

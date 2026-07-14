@@ -20,6 +20,32 @@ x-xpeech-service: &xpeech-service
   restart: unless-stopped
 
 services:
+  playwright:
+    image: mcr.microsoft.com/playwright/mcp
+    pull_policy: always
+    init: true
+    stdin_open: true
+    restart: unless-stopped
+    entrypoint: ["node"]
+    command:
+      - /app/cli.js
+      - --headless
+      - --browser
+      - chromium
+      - --no-sandbox
+      - --port
+      - "8931"
+      - --host
+      - 0.0.0.0
+    ports:
+      - "8931:8931"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8931/mcp').then(r=>{if(r.status>=500)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
   backend:
     <<: *xpeech-service
     command: ["api", "--host", "0.0.0.0", "--port", "7878"]
@@ -29,7 +55,6 @@ services:
       - ./docker_data/session:/app/data/session
       - ./docker_data/workspace_base:/app/data/workspace_base
       - ./docker_data/sandbox-home:/app/data/sandbox-home
-    # Agent 的 shell 工具需要 bubblewrap 创建隔离的挂载命名空间。
     cap_add:
       - SYS_ADMIN
     security_opt:
