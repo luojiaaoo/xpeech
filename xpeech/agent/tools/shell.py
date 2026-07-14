@@ -6,7 +6,6 @@ import asyncio
 import os
 import platform
 import re
-import shlex
 import shutil
 
 from loguru import logger
@@ -14,7 +13,6 @@ from pydantic import BaseModel, Field
 
 from ...utils.security.network import contains_internal_url
 from ...utils.helper import ensure_path
-from ..server.context import get_session_id
 from . import sandbox
 from .helper import safe_resolve_workspace_path, is_direct_python_pip_exec
 
@@ -83,16 +81,6 @@ def _extract_absolute_paths(command: str) -> list[str]:
     return posix_paths + home_paths
 
 
-def rewrite_shell_command_for_skills(command: str, session_id: str | None) -> str:
-    parts = shlex.split(command)
-    # 如果包含 playwright-cli，则添加 -s={session_id}
-    if "playwright-cli" in parts:
-        if not isinstance(session_id, str):
-            raise ValueError("shell internal error: session_id must be a string for playwright-cli")
-        parts.append(f"-s={session_id}")
-    return shlex.join(parts)
-
-
 def _guard_command(command: str, workspace: str | Path) -> str:
     """Guard a command string from code injection attacks."""
     cmd = command.strip()
@@ -105,9 +93,6 @@ def _guard_command(command: str, workspace: str | Path) -> str:
     # 判断是否恶意访问内网接口
     if contains_internal_url(cmd):
         raise RuntimeError(f"Command blocked by safety guard (internal/private URL detected): {cmd}")
-
-    # 为skill命令注入参数
-    cmd = rewrite_shell_command_for_skills(cmd, get_session_id())
 
     # 判断是否使用了 python 直接运行
     if is_direct_python_pip_exec(cmd):
