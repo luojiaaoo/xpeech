@@ -1,6 +1,6 @@
 ---
 name: ppt-generation
-description: 当用户请求生成、创建、设计或修改 HTML、PDF、PPT/PPTX 演示文稿、幻灯片、路演 deck 或网页演示时使用。技能支持为 HTML、PDF 和 PPTX 请求制作演示内容，但本服务只生成并交付 HTML、CSS、JavaScript 与静态资源。用户要求 PDF、PPT/PPTX 或 HTML 格式转换时，必须告知本服务不提供转换所需的本地浏览器环境，请用户在本地自行处理，并发送内置的 html-to-pptx-pdf 技能压缩包。本地 HTML 先用 create_browser_preview 托管；所有浏览器导航、截图、交互和控制台验证只能调用 playwright-mcp，禁止自建 HTTP 服务、本地浏览器控制或其他浏览器工具。
+description: 当用户请求生成、创建、设计或修改 HTML、PDF、PPT/PPTX 演示文稿、幻灯片、路演 deck 或网页演示时使用。技能支持为 HTML、PDF 和 PPTX 请求制作演示内容，但本服务只生成 HTML、CSS、JavaScript 与静态资源；完成验证后必须将整个 HTML 项目压缩为 ZIP 并通过 send_file 发送给用户。用户要求 PDF、PPT/PPTX 或 HTML 格式转换时，必须告知本服务不提供转换所需的本地浏览器环境，请用户在本地自行处理，并额外发送内置的 html-to-pptx-pdf 技能压缩包。本地 HTML 先用 create_browser_preview 托管；所有浏览器导航、截图、交互和控制台验证只能调用 playwright-mcp，禁止自建 HTTP 服务、本地浏览器控制或其他浏览器工具。
 ---
 
 # ppt-generation
@@ -21,6 +21,7 @@ description: 当用户请求生成、创建、设计或修改 HTML、PDF、PPT/P
 ## 输出边界
 
 - 必须交付的演示文稿：`index.html`、逐页 HTML 或单文件 deck、CSS/JavaScript、图片与字体等静态资源。
+- 不得只发送单个 `index.html` 或只返回目录路径；必须将完整 HTML 项目压缩为 ZIP，并调用 `send_file` 发送。
 - 服务端不生成或导出：PPT、PPTX、PDF、Keynote。
 - 用户请求 PDF/PPTX 时，技能压缩包是必须发送的辅助文件，但不算服务端生成的演示文稿。
 - 不安装或调用本地 Playwright、Chrome、Chromium、Edge、Puppeteer、Selenium 或浏览器 CLI。
@@ -43,6 +44,18 @@ description: 当用户请求生成、创建、设计或修改 HTML、PDF、PPT/P
 5. `send_file` 不可用或发送失败时，明确报告失败，并返回该压缩包的可访问文件链接或绝对路径，不得静默略过。
 
 该压缩包是独立的 PDF/PPTX 转换技能，由用户在其本地环境中安装和执行。主技能的 playwright-mcp 限制不传递给压缩包。
+
+## HTML 项目压缩与发送
+
+完成 HTML 和所有浏览器验证后：
+
+1. 确认项目目录包含 `index.html`、所有逐页 HTML、CSS/JavaScript、图片、字体和 manifest 依赖。
+2. 在项目目录之外创建 `<project-name>-html.zip`，避免压缩包把自己包进去。同名 ZIP 已存在时使用新版本文件名，不要在旧包上增量更新。
+3. 压缩时排除 `.git/`、`node_modules/`、`__pycache__/`、`.DS_Store`、临时截图、浏览器缓存和其他非交付文件，但不得排除页面引用的静态资源。
+4. 用 `unzip -t <project-name>-html.zip` 检查压缩包完整性，并确认 ZIP 内的项目根目录可直接找到 `index.html`。
+5. 必须调用 `send_file` 发送 HTML 项目 ZIP。
+6. 如果用户还需要 PDF/PPTX，再发送 `assets/html-to-pptx-pdf-skill.zip`；这是第二个附件，不能替代 HTML 项目 ZIP。
+7. `send_file` 不可用或发送失败时，明确报告失败并返回 ZIP 的可访问链接或绝对路径，不得静默略过。
 
 ## 核心原则
 
@@ -86,7 +99,8 @@ description: 当用户请求生成、创建、设计或修改 HTML、PDF、PPT/P
 6. ≥5 页时先完成两页 showcase，先用 `create_browser_preview` 托管项目，再使用 playwright-mcp 打开返回的 URL 并截图展示，等待方向确认。
 7. 完成全量页面、真实资产、键盘导航、缩放与 localStorage 位置记忆。
 8. 严格按 `references/verification.md` 使用 playwright-mcp 逐页验证。
-9. 只交付 HTML 项目，简要列出已验证项、已知限制和入口文件。
+9. 按“HTML 项目压缩与发送”创建并验证 HTML 项目 ZIP，通过 `send_file` 发送给用户。
+10. 用户请求 PDF/PPTX 时，额外发送转换技能包。最终回复简要列出 HTML ZIP、入口文件、已验证项和已知限制。
 
 ## 浏览器验证硬约束
 
@@ -129,6 +143,8 @@ description: 当用户请求生成、创建、设计或修改 HTML、PDF、PPT/P
 - 键盘导航、缩放、计数器与位置记忆正常。
 - playwright-mcp 已逐页截图，控制台无未解释错误。
 - 不存在 TODO、placeholder 或临时资源路径。
+- 已在项目目录之外创建 HTML 项目 ZIP，`unzip -t` 检查通过，且 ZIP 内包含完整静态资源。
+- 已通过 `send_file` 将 HTML 项目 ZIP 发送给用户。
 - 用户请求 PDF/PPTX 时，HTML 已按 `references/export-compatible-html.md` 完成格式友好性检查。
 - 交付物中没有本次任务生成的 PPTX/PDF。
 - 用户请求 PDF/PPTX 时，已发送 `assets/html-to-pptx-pdf-skill.zip`。
