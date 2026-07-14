@@ -148,8 +148,8 @@ HTML文件头部先写你的**assumptions+reasoning comments**，像junior给man
 
 ### Pass 4：验证+交付
 
-- 用Playwright截图（见`references/verification.md`）
-- 打开浏览器肉眼确认
+- 只用 playwright-mcp 截图并读取控制台（见`references/verification.md`）
+- 查看 playwright-mcp 返回的截图与 snapshot，肉眼确认
 - 总结**极简**：只说caveats和next steps
 
 ## Variations的深度逻辑

@@ -175,7 +175,7 @@ Asymmetric、不同大小的cards、有的带image有的只有文字、有的跨
 
 - 正文 vs 背景 **至少 4.5:1**（WCAG AA）
 - 大字 vs 背景 **至少 3:1**
-- 用Chrome DevTools的accessibility工具检查
+- 用 playwright-mcp 的 `browser_snapshot` 检查 accessibility tree
 
 ## CSS 神器
 
