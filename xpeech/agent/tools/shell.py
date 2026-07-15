@@ -6,12 +6,14 @@ import asyncio
 import os
 import platform
 import re
+import shlex
 import shutil
 
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from ...utils.helper import ensure_path
+from ..server.context import get_session_id
 from . import sandbox
 from .helper import safe_resolve_workspace_path, is_direct_python_pip_exec
 
@@ -48,6 +50,7 @@ _BENIGN_DEVICE_PATHS: frozenset[str] = frozenset(
         "/dev/tty",
     }
 )
+_AGENT_BROWSER_PATTERN = re.compile(r"(?<![\w./-])agent-browser(?=\s|$)")
 
 
 class ShellArgs(BaseModel):
@@ -124,6 +127,25 @@ def _guard_command(command: str, workspace: str | Path) -> str:
     return cmd
 
 
+def _inject_agent_browser_args(command: str, cdp_url: str, session_id: str | None) -> str:
+    """Append the managed CDP and session arguments to agent-browser calls."""
+    if not _AGENT_BROWSER_PATTERN.search(command):
+        return command
+    if not cdp_url.strip():
+        raise RuntimeError("agent-browser requires tool.cdp_url to be configured")
+    if not session_id:
+        raise RuntimeError("agent-browser requires a session ID in the current request context")
+
+    quoted_cdp_url = shlex.quote(cdp_url)
+    quoted_session_id = shlex.quote(session_id)
+    return (
+        "agent-browser() {\n"
+        f'    command agent-browser "$@" --cdp {quoted_cdp_url} --session {quoted_session_id}\n'
+        "}\n"
+        f"{command}"
+    )
+
+
 async def _run_wrapped_command(command: str, workspace: Path) -> tuple[bytes, bytes, int | None]:
     wrapped_command = sandbox.wrap_command(command, workspace)
     logger.info(f"Running wrapped command: {wrapped_command}")
@@ -181,7 +203,7 @@ async def _ensure_workspace_uv_venv(workspace: Path) -> None:
         raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{result}")
 
 
-def build_shell_tools(workspace: str | Path):
+def build_shell_tools(workspace: str | Path, cdp_url: str):
     if platform.system() != "Linux":
         raise RuntimeError("Shell tool requires Linux with bubblewrap; Windows and other platforms are not supported.")
     missing = [name for name in ("bwrap", "sh", "uv") if shutil.which(name) is None]
@@ -193,6 +215,7 @@ def build_shell_tools(workspace: str | Path):
 
     async def shell(args: ShellArgs) -> str:
         command = _guard_command(args.command, workspace)
+        command = _inject_agent_browser_args(command, cdp_url, get_session_id())
         ensure_path(sandbox.get_sandbox_home())
         await _ensure_workspace_uv_venv(workspace)
         stdout, stderr, returncode = await _run_wrapped_command(command, workspace)
