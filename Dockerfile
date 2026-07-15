@@ -30,7 +30,7 @@ RUN ARCH=$(uname -m) && \
 
 RUN curl -sL https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease/uv-installer.sh | sh && \
     uv --version && \
-    uv python install cpython-3.12
+    uv python install
 
 WORKDIR /app
 

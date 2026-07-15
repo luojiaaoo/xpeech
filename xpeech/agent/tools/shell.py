@@ -197,10 +197,10 @@ def _format_command_output(stdout: bytes, stderr: bytes, returncode: int | None)
 async def _ensure_workspace_uv_venv(workspace: Path) -> None:
     if (workspace / ".venv").exists():
         return
-    stdout, stderr, returncode = await _run_wrapped_command("uv venv .venv --python=3.12", workspace)
+    stdout, stderr, returncode = await _run_wrapped_command("uv venv .venv", workspace)
     if returncode != 0:
         result = _format_command_output(stdout, stderr, returncode)
-        raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv --python=3.12`.\n{result}")
+        raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{result}")
 
 
 def build_shell_tools(workspace: str | Path, cdp_url: str):
