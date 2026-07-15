@@ -46,6 +46,17 @@ agent-browser screenshot page.png
 
 执行环境会将它们转换为使用已注入 session 和 CDP endpoint 的命令。
 
+## 命令执行格式
+
+- **直接执行**：`agent-browser` 命令必须直接执行，禁止使用函数调用语法（如 `execute_command("agent-browser ...")`）或任何形式的引号（单引号/双引号）包装。
+- **多命令拼接**：如需执行多条命令，使用 `&&` 拼接，例如：
+
+```bash
+agent-browser open https://example.com && agent-browser snapshot
+```
+
+- 不通过 shell 子进程或脚本间接调用，每一条 `agent-browser` 命令都应在顶层直接执行。
+
 ## 约束
 
 - 仅使用注入的浏览器 session 和 CDP endpoint。
