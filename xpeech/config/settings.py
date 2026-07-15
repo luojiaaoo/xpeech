@@ -13,7 +13,9 @@ from pydantic_settings import (
 from ..provider.schema import ReasoningEffort
 from ..utils.helper import ensure_path
 
-load_dotenv(".env")
+if Path(".env").exists():
+    load_dotenv(".env")
+
 conf_toml_path = "conf.toml"  # Configuration TOML file path
 
 

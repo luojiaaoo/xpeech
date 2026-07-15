@@ -114,15 +114,6 @@ cp conf.toml.exmple conf.toml
 CDP_URL=ws://browserless:3000
 ```
 
-Docker Compose 通过 `env_file` 将 `.env` 注入容器进程。本地直接启动前需先导入：
-
-```bash
-cp .env.example .env
-set -a
-source .env
-set +a
-```
-
 ## 启动
 
 启动 API 服务：
