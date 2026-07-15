@@ -20,34 +20,19 @@ x-xpeech-service: &xpeech-service
   restart: unless-stopped
 
 services:
-  playwright:
-    image: mcr.microsoft.com/playwright/mcp
+  browserless:
+    image: ghcr.io/browserless/chromium
     init: true
-    stdin_open: true
     restart: unless-stopped
-    entrypoint: ["node"]
-    command:
-      - /app/cli.js
-      - --headless
-      - --browser
-      - chromium
-      - --no-sandbox
-      - --port
-      - "8931"
-      - --host
-      - 0.0.0.0
     ports:
-      - "8931:8931"
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8931/mcp').then(r=>{if(r.status>=500)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 10s
+      - "3000:3000"
 
   backend:
     <<: *xpeech-service
     command: ["api", "--host", "0.0.0.0", "--port", "7878"]
+    depends_on:
+      browserless:
+        condition: service_started
     ports:
       - "7878:7878"
     volumes:

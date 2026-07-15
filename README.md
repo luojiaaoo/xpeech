@@ -21,7 +21,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 内置记忆系统，自动总结和保存关键信息
 - 支持视频输入
 - Token 使用率实时监控
-- 丰富的内置工具集：文件读写、Shell 执行、Web 搜索与网页抓取、Playwright MCP 网页操作、Office 文档读取、文件发送、向用户提问
+- 丰富的内置工具集：文件读写、Shell 执行、Web 搜索与网页抓取、`agent-browser` 浏览器自动化、Office 文档读取、文件发送、向用户提问
 
 ## 安装
 
@@ -45,7 +45,7 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 npm config set registry https://registry.npmmirror.com/
 ```
 
-Docker 部署通过独立的 Playwright MCP 容器提供网页操作能力。目前 Docker 实现仅支持无头 Chromium。
+Docker 镜像已安装 `agent-browser`。Compose 通过 Browserless Chromium 容器提供 CDP 服务，Xpeech 不会在 backend 容器内安装、启动或管理本地浏览器。
 
 ## 配置
 
@@ -75,16 +75,11 @@ parallel = 4
 max_iterations = 40
 
 [tool]
-cdp_url = "ws://xxxxx"
+cdp_url = "ws://browserless:3000"
 
 [tool.browser_preview]
 browser_preview_base_url = "http://backend:7878/browser_preview"
 browser_preview_path = "data/browser_preview"
-
-[tool.mcpServers.playwright]
-url = "http://playwright:8931/mcp"
-enabled_tools = ["*"]
-tool_timeout = 120
 
 [tool.mcpServers.filesystem]
 command = "npx"
@@ -165,9 +160,9 @@ uv run -m xpeech feishu --chat-url http://127.0.0.1:7878
 
 Compose 会启动三个容器：
 
+- `browserless`：Browserless Chromium CDP 服务，宿主机通过 `http://localhost:3000/docs` 查看文档
 - `backend`：Xpeech API、Agent 和工具执行服务
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
-- `playwright`：常驻 Playwright MCP 服务，使用无头 Chromium 执行所有交互式网页操作
 
 先准备密钥：
 
@@ -186,7 +181,7 @@ docker compose up -d --build
 
 ```bash
 docker compose ps
-docker compose logs -f backend feishu playwright
+docker compose logs -f browserless backend feishu
 ```
 
 后端默认暴露在 `http://localhost:7878`。如需修改宿主机端口，请修改
@@ -195,7 +190,7 @@ docker compose logs -f backend feishu playwright
 `feishu_cache`；`conf.toml` 以只读方式挂载，修改后重启服务即可生效：
 
 ```bash
-docker compose restart backend feishu playwright
+docker compose restart browserless backend feishu
 ```
 
 ## 发送消息
@@ -278,6 +273,18 @@ def echo(message: Message):
 
 工具函数需要有 docstring。函数可以不接收参数，也可以接收一个 Pydantic `BaseModel` 参数。
 
+## 浏览器自动化
+
+浏览器自动化通过内置 `agent-browser` 技能完成。Compose 内的 backend 通过
+`ws://browserless:3000` 连接 Browserless；宿主机上对应的地址是 `ws://localhost:3000`，
+文档页为 `http://localhost:3000/docs`。Agent 使用 Shell 执行
+`agent-browser` 命令时，执行层会自动追加当前请求的 `--session` 和配置的
+`--cdp` 参数。
+
+模型在首次进行浏览器操作前会加载
+`xpeech/agent/skills/buildin/agent-browser/SKILL.md`，并按其约束复用注入的
+CDP 连接和 session。Xpeech 不提供本地浏览器回退；CDP 连接失败时会直接报错。
+
 ## MCP 工具
 
 可以在 `conf.toml` 的 `[tool.mcpServers.<name>]` 下配置 MCP Server。启动会话时，Xpeech 会连接这些 Server、发现可用工具，并把它们注册为 Agent 默认工具。
@@ -302,27 +309,14 @@ enabled_tools = ["search", "read_record"]
 tool_timeout = 120
 ```
 
-Compose 中的 Playwright MCP 使用 streamable HTTP 连接：
-
-```toml
-[tool.mcpServers.playwright]
-url = "http://playwright:8931/mcp"
-enabled_tools = ["*"]
-tool_timeout = 120
-```
-
 每个会话都会把当前用户 workspace 作为 MCP workspace root。stdio MCP
 进程同时以该目录作为 `cwd`；HTTP/SSE MCP 通过标准 `roots/list` 获取同一目录。
 因此 MCP、内置文件工具和 Shell 的相对路径基准保持一致。远程 MCP 服务若需
-直接读写文件，必须能以相同绝对路径访问该目录；Compose 已将
-`workspace_base` 挂载到 Playwright MCP 容器中的相同路径。Playwright MCP
-显式指定文件名的截图直接保存在当前用户 workspace 中；snapshot 等
-辅助输出保存在该 workspace 的 `.playwright-mcp/` 下。
+直接读写文件，必须能以相同绝对路径访问该目录。
 
-Docker 实现目前仅支持无头 Chromium。普通搜索和网页文本抓取使用
-`web_search` 和 `web_fetch`；需要浏览器渲染或交互操作时使用注册后的
-`mcp_playwright_*` 工具。`browser_preview_base_url` 只负责生成 Playwright MCP
-能访问的 URL 前缀，FastAPI 路由由该 URL 的 path 部分自动注册；
+普通搜索和网页文本抓取使用 `web_search` 和 `web_fetch`；需要浏览器渲染或
+交互操作时使用 `agent-browser`。`browser_preview_base_url` 只负责生成
+`agent-browser` 能访问的 URL 前缀，FastAPI 路由由该 URL 的 path 部分自动注册；
 `browser_preview_path` 只负责存放预览文件，两者没有
 路径推导关系。`create_browser_preview` 会把目录复制到 `<browser_preview_path>/<uuid>/`；
 传入目录时返回该 UUID 目录的 URL 前缀；传入单个 HTML 时保留源文件名，
@@ -355,7 +349,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `web_fetch` | 抓取网页内容并转为 Markdown |
 | `web_search` | 搜索网页并返回结果 |
 | `create_browser_preview` | 将工作区内目录或单个 HTML 复制到 UUID 预览目录，返回目录 URL 前缀或完整文件 URL |
-| `mcp_playwright_*` | 通过 Playwright MCP 搜索、打开、读取、检查和操作网页 |
+| `shell` + `agent-browser` | 通过注入的 CDP 连接搜索、打开、读取、检查和操作网页 |
 | `office_read` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |
 | `ask_user_question` | 向用户发送表单提问 |

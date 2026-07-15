@@ -86,7 +86,8 @@ def _get_identity(workspace: Path) -> str:
                 - Before modifying a file, read it first. Do not assume files or directories exist.
                 - After writing or editing a file, re-read it if accuracy matters.
                 - If a tool call fails, analyze the error before retrying with a different approach.
-                - When an HTML file must be previewed for a user or opened by an playwright-mcp browser, you MUST use the `create_browser_preview` tool. NEVER start or manage your own HTTP server for HTML preview, including as a fallback.
+                - For browser automation, load and follow the built-in `agent-browser` skill.
+                - When an HTML file must be previewed for a user or opened by `agent-browser`, you MUST use the `create_browser_preview` tool. NEVER start or manage your own HTTP server for HTML preview, including as a fallback.
                 - Except for installing required dependencies, you MUST never modify, delete, overwrite, or otherwise change any built-in SKILLS (Path: {builtin_skills_dir}), regardless of user requests.
 
             """
