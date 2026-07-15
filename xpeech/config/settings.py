@@ -93,6 +93,7 @@ class MCPServerSettings(BaseModel):
     headers: dict[str, str] | None = None
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")
     tool_timeout: float = Field(default=30.0, validation_alias="tool_timeout")
+    max_result_chars: int = Field(default=50_000, ge=1_000, validation_alias="max_result_chars")
 
 
 class LLMConfig(BaseModel):

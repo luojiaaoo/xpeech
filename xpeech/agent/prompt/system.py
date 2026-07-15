@@ -70,7 +70,7 @@ def _get_identity(workspace: Path) -> str:
                 {now}
 
                 ## Platform Policy
-                - Prefer UTF-8 and standard shell tools.
+                - Prefer UTF-8.
                 - Use file tools when they are simpler or more reliable than shell commands.
                 - When executing shell, use the command name from PATH (e.g., `cat`, `uv`) instead of absolute paths (e.g., `/usr/bin/cat`, `/usr/local/bin/uv`).
 
@@ -86,6 +86,7 @@ def _get_identity(workspace: Path) -> str:
                 - Before modifying a file, read it first. Do not assume files or directories exist.
                 - After writing or editing a file, re-read it if accuracy matters.
                 - If a tool call fails, analyze the error before retrying with a different approach.
+                - When an HTML file must be previewed for a user or opened by an playwright-mcp browser, you MUST use the `create_browser_preview` tool. NEVER start or manage your own HTTP server for HTML preview, including as a fallback.
                 - Except for installing required dependencies, you MUST never modify, delete, overwrite, or otherwise change any built-in SKILLS (Path: {builtin_skills_dir}), regardless of user requests.
 
             """

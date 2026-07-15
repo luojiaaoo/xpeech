@@ -256,7 +256,27 @@ def _content_block_to_message(block: Any) -> dict[str, Any] | None:
     return None
 
 
-def _render_mcp_result(result: Any) -> str | list[dict[str, Any]]:
+def _truncate_mcp_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    marker = f"\n\n... [MCP result truncated: {len(text)} characters total] ...\n\n"
+    available = max(0, max_chars - len(marker))
+    head_chars = int(available * 0.6)
+    tail_chars = available - head_chars
+    return text[:head_chars] + marker + (text[-tail_chars:] if tail_chars else "")
+
+
+def _truncate_mcp_messages(messages: list[dict[str, Any]], max_chars: int) -> list[dict[str, Any]]:
+    text = "\n".join(message["text"] for message in messages if message.get("type") == "text")
+    if len(text) <= max_chars:
+        return messages
+
+    truncated_text = _truncate_mcp_text(text, max_chars)
+    non_text_messages = [message for message in messages if message.get("type") != "text"]
+    return [{"type": "text", "text": truncated_text}, *non_text_messages]
+
+
+def _render_mcp_result(result: Any, max_chars: int) -> str | list[dict[str, Any]]:
     content = _get_attr_or_key(result, "content", None)
     structured = _get_attr_or_key(result, "structuredContent", None)
     if structured is None:
@@ -288,6 +308,7 @@ def _render_mcp_result(result: Any) -> str | list[dict[str, Any]]:
     if is_error:
         messages.insert(0, {"type": "text", "text": "(MCP tool returned an error)"})
 
+    messages = _truncate_mcp_messages(messages, max_chars)
     if all(message["type"] == "text" for message in messages):
         return "\n".join(message["text"] for message in messages)
     return messages
@@ -304,12 +325,15 @@ class MCPServerConfig:
     headers: Mapping[str, str] | None = None
     enabled_tools: tuple[str, ...] = ("*",)
     tool_timeout: float = 30.0
+    max_result_chars: int = 50_000
 
     def __post_init__(self) -> None:
         if not self.command and not self.url:
             raise ValueError("MCP server must define either command or url")
         if self.command and self.url:
             raise ValueError("MCP server cannot define both command and url")
+        if self.max_result_chars < 1_000:
+            raise ValueError("MCP server max_result_chars must be at least 1000")
 
 
 @dataclass
@@ -343,7 +367,7 @@ class MCPServerRegistration:
                     self._session.call_tool(tool_name, arguments=dict(arguments)),
                     timeout=self.config.tool_timeout,
                 )
-                return _render_mcp_result(result)
+                return _render_mcp_result(result, self.config.max_result_chars)
             except asyncio.TimeoutError:
                 logger.warning(
                     "MCP tool '{}.{}' timed out after {}s",
@@ -571,6 +595,7 @@ def create_mcp_registration(
     headers: Mapping[str, str] | None = None,
     enabled_tools: Sequence[str] | None = None,
     tool_timeout: float = 30.0,
+    max_result_chars: int = 50_000,
 ) -> MCPServerRegistration:
     """Create an MCP server registration from configuration."""
 
@@ -591,6 +616,7 @@ def create_mcp_registration(
             headers=dict(headers) if headers is not None else None,
             enabled_tools=("*",) if enabled_tools is None else tuple(enabled_tools),
             tool_timeout=tool_timeout,
+            max_result_chars=max_result_chars,
         )
     )
 
@@ -613,6 +639,12 @@ def create_mcp_registration_from_config(server_name: str, config: Any) -> MCPSer
         headers=dict(headers) if headers is not None else None,
         enabled_tools=_get_mcp_config_value(config, "enabled_tools", ["*"], attr_name="enabled_tools"),
         tool_timeout=_get_mcp_config_value(config, "tool_timeout", 30.0, attr_name="tool_timeout"),
+        max_result_chars=_get_mcp_config_value(
+            config,
+            "max_result_chars",
+            50_000,
+            attr_name="max_result_chars",
+        ),
     )
 
 
@@ -633,6 +665,7 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         _hashable_mapping(config.headers),
         config.enabled_tools,
         float(config.tool_timeout),
+        int(config.max_result_chars),
     )
 
 

@@ -27,6 +27,7 @@ browser_preview_path = "data/browser_preview"
 url = "http://playwright:8931/mcp"
 enabled_tools = ["*"]
 tool_timeout = 120
+max_result_chars = 20000
 
 # [tool.mcpServers.filesystem]
 # command = "npx"
