@@ -1,6 +1,6 @@
 # Design Philosophy Showcases — 样例资产索引
 
-> 7 种场景 × 3 种风格 = 21 个预制设计样例
+> 8 种场景 × 3 种风格 = 24 个预制设计样例
 > 用于 Phase 3 推荐设计方向时，直接展示「这个风格做出来长什么样」
 
 ## 风格说明
@@ -17,18 +17,19 @@
 
 | # | 场景 | 规格 | Pentagram | Build | Takram |
 |---|------|------|-----------|-------|--------|
-| 1 | HTML 演示数据页 | 1920×1080 | `ppt/ppt-pentagram` | `ppt/ppt-build` | `ppt/ppt-takram` |
-| 2 | 竖版信息图 | 1080×1920 | `infographic/infographic-pentagram` | `infographic/infographic-build` | `infographic/infographic-takram` |
+| 1 | 公众号封面 | 1200×510 | `cover/cover-pentagram` | `cover/cover-build` | `cover/cover-takram` |
+| 2 | PPT数据页 | 1920×1080 | `ppt/ppt-pentagram` | `ppt/ppt-build` | `ppt/ppt-takram` |
+| 3 | 竖版信息图 | 1080×1920 | `infographic/infographic-pentagram` | `infographic/infographic-build` | `infographic/infographic-takram` |
 
 ### 网站设计场景
 
 | # | 场景 | 规格 | Pentagram | Build | Takram |
 |---|------|------|-----------|-------|--------|
-| 3 | 个人主页 | 1440×900 | `website-homepage/homepage-pentagram` | `website-homepage/homepage-build` | `website-homepage/homepage-takram` |
-| 4 | AI导航站 | 1440×900 | `website-ai-nav/ainav-pentagram` | `website-ai-nav/ainav-build` | `website-ai-nav/ainav-takram` |
-| 5 | AI写作工具 | 1440×900 | `website-ai-writing/aiwriting-pentagram` | `website-ai-writing/aiwriting-build` | `website-ai-writing/aiwriting-takram` |
-| 6 | SaaS落地页 | 1440×900 | `website-saas/saas-pentagram` | `website-saas/saas-build` | `website-saas/saas-takram` |
-| 7 | 开发者文档 | 1440×900 | `website-devdocs/devdocs-pentagram` | `website-devdocs/devdocs-build` | `website-devdocs/devdocs-takram` |
+| 4 | 个人主页 | 1440×900 | `website-homepage/homepage-pentagram` | `website-homepage/homepage-build` | `website-homepage/homepage-takram` |
+| 5 | AI导航站 | 1440×900 | `website-ai-nav/ainav-pentagram` | `website-ai-nav/ainav-build` | `website-ai-nav/ainav-takram` |
+| 6 | AI写作工具 | 1440×900 | `website-ai-writing/aiwriting-pentagram` | `website-ai-writing/aiwriting-build` | `website-ai-writing/aiwriting-takram` |
+| 7 | SaaS落地页 | 1440×900 | `website-saas/saas-pentagram` | `website-saas/saas-build` | `website-saas/saas-takram` |
+| 8 | 开发者文档 | 1440×900 | `website-devdocs/devdocs-pentagram` | `website-devdocs/devdocs-build` | `website-devdocs/devdocs-takram` |
 
 > 每个条目同时有 `.html`（源码）和 `.png`（截图）两个文件
 
@@ -37,8 +38,8 @@
 ### Phase 3 推荐时引用
 推荐设计方向后，可展示对应场景的预制截图：
 ```
-「Build 风格做 HTML 演示数据页是这种感觉 → [展示 ppt/ppt-build.png]」
-「Takram 风格做竖版信息图是这种感觉 → [展示 infographic/infographic-takram.png]」
+「这是 Pentagram 风格做公众号封面的效果 → [展示 cover/cover-pentagram.png]」
+「Takram 风格做 PPT 数据页是这种感觉 → [展示 ppt/ppt-takram.png]」
 ```
 
 ### 场景匹配优先级
@@ -53,7 +54,13 @@
 
 ## 内容详情
 
-### HTML 演示数据页（ppt/）
+### 公众号封面（cover/）
+- 内容：Claude Code Agent 工作流 — 8 个并行 Agent 架构
+- Pentagram：巨大红色「8」+ 瑞士网格线 + 数据条
+- Build：超细字重「Agent」悬浮于 70% 留白中 + 暖金细线
+- Takram：8 节点放射状流程图作为艺术品 + 米色底
+
+### PPT数据页（ppt/）
 - 内容：GLM-4.7 开源模型 Coding 能力突破（AIME 95.7 / SWE-bench 73.8% / τ²-Bench 87.4）
 - Pentagram：260px「95.7」锚点 + 红/灰/浅灰对比条形图
 - Build：三组 120px 超细数字悬浮 + 暖金渐变对比条
@@ -97,12 +104,12 @@
 
 ## 文件统计
 
-- HTML 源文件：21 个
-- PNG 截图：21 个
-- 总资产：42 个文件
+- HTML 源文件：24 个
+- PNG 截图：24 个
+- 总资产：48 个文件
 
 ---
 
 **版本**：v1.0
 **创建日期**：2026-02-13
-**适用于**：`ppt-generation` 设计方向推荐环节
+**适用于**：design-philosophy skill Phase 3 推荐环节

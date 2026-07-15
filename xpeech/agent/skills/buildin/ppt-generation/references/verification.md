@@ -1,79 +1,189 @@
-# HTML 演示文稿验证
+# Verification：输出验证流程
 
-浏览器验证必须遵循 `references/playwright-mcp.md`。只接受 playwright-mcp，不做本地浏览器控制。
+一些 design-agent 原生环境（如 Claude.ai Artifacts）有内置的 `fork_verifier_agent` 起 subagent 用 iframe 截图检查。大部分 agent 环境（Claude Code / Codex / Cursor / Trae / 等）里没有这个内置能力——用 Playwright 手动做就能覆盖相同的验证场景。
 
-## 必检项
+## 验证清单
 
-### 入口与资源
+每次产出HTML后，按这个清单做一遍：
 
-- `index.html` 可访问，标题与语言正确。
-- manifest 文件存在、页数和顺序正确。
-- CSS、JavaScript、字体、Logo、图片没有 404。
-- 页面无白屏，控制台无未解释 error。
+### 1. 浏览器渲染检查（必做）
 
-### 逐页视觉
+最基础：**HTML能不能打开**？在macOS上：
 
-- 1920×1080 视口逐页截图。
-- 标题、正文、关键数字没有溢出或裁切。
-- 元素不重叠，安全区与页边距一致。
-- 字体已加载，没有意外 fallback。
-- 图片清晰、比例正确、无拉伸和破图。
-- 重点对比度足够，远距离可读。
-- 页面节奏有变化，但 design grammar 一致。
-
-### 播放与状态
-
-- ArrowLeft / ArrowRight、Home / End 正常。
-- 页码与计数器同步。
-- hash 可跳到指定页。
-- 刷新后 localStorage 位置恢复符合预期。
-- scale 与 letterbox 在缩小视口下正常。
-- 最后一页继续前进不会出现空白页。
-
-### 多文件架构
-
-- 每个 `slides/*.html` 可被 playwright-mcp 独立导航。
-- 单页控制台干净。
-- iframe 加载失败时能定位到具体文件。
-- 页面私有 CSS 不依赖其他页的加载顺序。
-
-### PDF/PPTX 交接（仅用户要求时）
-
-- 已读取 `references/export-compatible-html.md`。
-- 需要 PDF 时，页面的关键内容不依赖 hover、中间动画帧或视频。
-- 需要可编辑 PPTX 时，使用多文件架构和 `960pt×540pt` / `1280px×720px` 画布。
-- PPTX 源页不存在裸文字 DIV、CSS gradient、文字标签背景/边框/阴影、DIV `background-image`。
-- 仅检查 HTML 是否适合交接，不在主服务运行 PDF/PPTX 转换。
-
-## 验证顺序
-
-1. 调用内置 `create_browser_preview` 托管 deck 目录，使用它返回的 URL；禁止自行启动 HTTP 服务。
-2. 确认 playwright-mcp 工具来源。
-3. 导航到预览 URL 下的 `index.html`，设置 1920×1080。
-4. 等待字体与图片，读取 snapshot、控制台和首页截图。
-5. 逐页操作并截图。
-6. 随机独立打开至少 3 页；不足 3 页时全部打开。
-7. 清理 TODO、placeholder、临时路径和控制台问题。
-8. 用户需要 PDF/PPTX 时，完成上述交接静态检查。
-9. 修复后重复受影响页面与完整翻页回归。
-
-因为 `create_browser_preview` 会复制文件，第 9 步前必须重新调用它，并对新 URL 验证。该工具不可用时将浏览器验证标记为 `blocked`，不得启动其他静态服务兜底。
-
-## 报告格式
-
-```text
-status: pass | fail | blocked
-entry: .../index.html
-slides_checked: N/N
-screenshots:
-  - ...
-console_errors:
-  - ...
-visual_issues:
-  - slide: 03
-    severity: high | medium | low
-    issue: ...
-    evidence: ...
+```bash
+open -a "Google Chrome" "/path/to/your/design.html"
 ```
 
-没有 playwright-mcp 时只能报告 `blocked`，不得写成“已通过”。
+或者用Playwright截图（下一节）。
+
+### 2. 控制台错误检查
+
+HTML文件里最常见的问题是JS报错导致白屏。用Playwright跑一遍：
+
+```bash
+python ~/.claude/skills/claude-design/scripts/verify.py path/to/design.html
+```
+
+这个脚本会：
+1. 用headless chromium打开HTML
+2. 截图保存到项目目录
+3. 抓取控制台错误
+4. 报告status
+
+详见`scripts/verify.py`。
+
+### 3. 多视口检查
+
+如果是响应式设计，抓多个viewport：
+
+```bash
+python verify.py design.html --viewports 1920x1080,1440x900,768x1024,375x667
+```
+
+### 4. 交互检查
+
+Tweaks、动画、按钮切换——默认的静态截图看不到。**建议让用户自己开浏览器点一遍**，或者用Playwright录屏：
+
+```python
+page.video.record('interaction.mp4')
+```
+
+### 5. 幻灯片逐页检查
+
+Deck类HTML，一张张截：
+
+```bash
+python verify.py deck.html --slides 10  # 截前10张
+```
+
+生成 `deck-slide-01.png`、`deck-slide-02.png`... 方便快速浏览。
+
+## Playwright Setup
+
+首次使用需要：
+
+```bash
+# 如果还没装
+npm install -g playwright
+npx playwright install chromium
+
+# 或者Python版
+pip install playwright
+playwright install chromium
+```
+
+如果用户已经全局安装 Playwright，直接用即可。
+
+## 截图最佳实践
+
+### 截完整页面
+
+```python
+page.screenshot(path='full.png', full_page=True)
+```
+
+### 截viewport
+
+```python
+page.screenshot(path='viewport.png')  # 默认只截可见区域
+```
+
+### 截特定元素
+
+```python
+element = page.query_selector('.hero-section')
+element.screenshot(path='hero.png')
+```
+
+### 高清截图
+
+```python
+page = browser.new_page(device_scale_factor=2)  # retina
+```
+
+### 等动画结束再截
+
+```python
+page.wait_for_timeout(2000)  # 等2秒让动画settle
+page.screenshot(...)
+```
+
+## 把截图发给用户
+
+### 本地截图直接打开
+
+```bash
+open screenshot.png
+```
+
+用户会在自己的 Preview/Figma/VSCode/浏览器 里看。
+
+### 上传图床分享链接
+
+如果需要给远程协作者看（比如 Slack/飞书/微信），让用户用自己的图床工具或 MCP 上传：
+
+```bash
+python ~/Documents/写作/tools/upload_image.py screenshot.png
+```
+
+返回ImgBB的永久链接，可以粘贴到任何地方。
+
+## 验证出错时
+
+### 页面白屏
+
+控制台一定有错。先检查：
+
+1. React+Babel script tag的integrity hash对不对（见`react-setup.md`）
+2. 是不是`const styles = {...}`命名冲突
+3. 跨文件的组件有没有export到`window`
+4. JSX语法错误（babel.min.js不报错，换babel.js非压缩版）
+
+### 动画卡
+
+- 用Chrome DevTools Performance tab录一段
+- 找layout thrashing（频繁的reflow）
+- 动效优先用`transform`和`opacity`（GPU加速）
+
+### 字体不对
+
+- 检查`@font-face`的url是否可访问
+- 检查fallback字体
+- 中文字体加载慢：先显示fallback，加载完再切换
+
+### 布局错位
+
+- 检查`box-sizing: border-box`是否全局应用
+- 检查`*  margin: 0; padding: 0`reset
+- Chrome DevTools里打开gridlines看实际布局
+
+## 验证=设计师的第二双眼
+
+**永远要自己过一遍**。AI写代码时经常出现：
+
+- 看起来对但interaction有bug
+- 静态截图好但scroll时错位
+- 宽屏好看但窄屏崩
+- Dark mode忘了测
+- Tweaks切换后某些组件没响应
+
+**最后1分钟的验证可以省1小时的返工**。
+
+## 常用验证脚本命令
+
+```bash
+# 基础：打开+截图+抓错
+python verify.py design.html
+
+# 多viewport
+python verify.py design.html --viewports 1920x1080,375x667
+
+# 多slide
+python verify.py deck.html --slides 10
+
+# 输出到指定目录
+python verify.py design.html --output ./screenshots/
+
+# headless=false，打开真实浏览器给你看
+python verify.py design.html --show
+```

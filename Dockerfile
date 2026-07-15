@@ -41,6 +41,8 @@ COPY xpeech/ ./xpeech/
 COPY custom_tools/ ./custom_tools/
 RUN uv sync --frozen --no-dev
 
+RUN npm i -g agent-browser
+
 RUN mkdir /app/sandbox-home-defaults
 COPY data/sandbox-home/.npmrc /app/sandbox-home-defaults/.npmrc
 COPY data/sandbox-home/.pip/pip.conf /app/sandbox-home-defaults/.pip/pip.conf
