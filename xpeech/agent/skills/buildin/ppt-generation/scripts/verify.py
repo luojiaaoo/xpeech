@@ -40,9 +40,9 @@ def verify_html(preview_url, viewports=None, slides=0, output_dir=None, wait=200
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
         print("ERROR: target 必须是 create_browser_preview 返回的 HTTP(S) URL")
         sys.exit(1)
-    cdp_url = os.environ.get("TOOL__CDP_URL")
+    cdp_url = os.environ.get("XPEECH_TOOL__CDP_URL")
     if not cdp_url:
-        print("ERROR: 请通过环境变量 TOOL__CDP_URL 提供远程 CDP 地址")
+        print("ERROR: 请通过环境变量 XPEECH_TOOL__CDP_URL 提供远程 CDP 地址")
         sys.exit(1)
 
     if output_dir is None:
