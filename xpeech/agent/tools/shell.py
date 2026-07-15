@@ -197,16 +197,16 @@ def _format_command_output(stdout: bytes, stderr: bytes, returncode: int | None)
 async def _ensure_workspace_uv_venv(workspace: Path) -> None:
     if (workspace / ".venv").exists():
         return
-    stdout, stderr, returncode = await _run_wrapped_command("uv venv .venv", workspace)
+    stdout, stderr, returncode = await _run_wrapped_command("uv venv .venv --python=3.12", workspace)
     if returncode != 0:
         result = _format_command_output(stdout, stderr, returncode)
-        raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{result}")
+        raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv --python=3.12`.\n{result}")
 
 
 def build_shell_tools(workspace: str | Path, cdp_url: str):
     if platform.system() != "Linux":
         raise RuntimeError("Shell tool requires Linux with bubblewrap; Windows and other platforms are not supported.")
-    missing = [name for name in ("bwrap", "sh", "uv") if shutil.which(name) is None]
+    missing = [name for name in ("bwrap", "bash", "uv") if shutil.which(name) is None]
     if missing:
         raise RuntimeError(f"Shell tool requires executable(s) on PATH: {', '.join(missing)}")
     workspace = Path(workspace).expanduser().resolve()

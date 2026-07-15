@@ -79,7 +79,7 @@ def wrap_command(command: str, workspace: str | Path) -> list[str]:
             *("--bind", str(shared_home), str(shared_home)),
             *("--ro-bind", str(builtin_skills), str(builtin_skills)),
             *("--chdir", str(workspace)),
-            *("--", "sh", "-c", command),
+            *("--", "bash", "-c", command),
         ]
     )
     return shlex.join(args)
