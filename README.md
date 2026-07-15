@@ -72,6 +72,7 @@ support_image = true
 support_video = true
 support_json_output = true
 parallel = 4
+max_iterations = 40
 
 [tool.browser_preview]
 browser_preview_base_url = "http://backend:7878/browser_preview"
@@ -84,7 +85,7 @@ tool_timeout = 120
 
 [tool.mcpServers.filesystem]
 command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "workspace_base"]
+args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 # env = { DATABASE_URL = "postgres://user:pass@localhost:5432/db" }
 enabled_tools = ["*"]
 tool_timeout = 30
@@ -283,7 +284,7 @@ stdio Server 示例：
 ```toml
 [tool.mcpServers.filesystem]
 command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "workspace_base"]
+args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 enabled_tools = ["*"]
 tool_timeout = 30
 ```
@@ -306,6 +307,14 @@ url = "http://playwright:8931/mcp"
 enabled_tools = ["*"]
 tool_timeout = 120
 ```
+
+每个会话都会把当前用户 workspace 作为 MCP workspace root。stdio MCP
+进程同时以该目录作为 `cwd`；HTTP/SSE MCP 通过标准 `roots/list` 获取同一目录。
+因此 MCP、内置文件工具和 Shell 的相对路径基准保持一致。远程 MCP 服务若需
+直接读写文件，必须能以相同绝对路径访问该目录；Compose 已将
+`workspace_base` 挂载到 Playwright MCP 容器中的相同路径。Playwright MCP
+显式指定文件名的截图直接保存在当前用户 workspace 中；snapshot 等
+辅助输出保存在该 workspace 的 `.playwright-mcp/` 下。
 
 Docker 实现目前仅支持无头 Chromium。普通搜索和网页文本抓取使用
 `web_search` 和 `web_fetch`；需要浏览器渲染或交互操作时使用注册后的

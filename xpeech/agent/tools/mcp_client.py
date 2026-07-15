@@ -4,7 +4,7 @@ Default MCP servers are configured in ``conf.toml``:
 
     [tool.mcpServers.filesystem]
     command = "npx"
-    args = ["-y", "@modelcontextprotocol/server-filesystem", "workspace_base"]
+    args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import urllib.parse
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field as dataclass_field
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -317,6 +318,7 @@ def _render_mcp_result(result: Any, max_chars: int) -> str | list[dict[str, Any]
 @dataclass(frozen=True)
 class MCPServerConfig:
     server_name: str
+    workspace: str | None = None
     command: str | None = None
     args: tuple[str, ...] = ()
     env: Mapping[str, str] | None = None
@@ -451,16 +453,22 @@ class MCPServerRegistration:
         close_event: asyncio.Event,
     ) -> None:
         cfg = self.config
+        workspace = Path(cfg.workspace).expanduser().resolve() if cfg.workspace else None
         stack = AsyncExitStack()
         try:
-            from mcp import ClientSession, StdioServerParameters
+            from mcp import ClientSession, StdioServerParameters, types
             from mcp.client.sse import sse_client
             from mcp.client.stdio import stdio_client
             from mcp.client.streamable_http import streamable_http_client
 
             if cfg.command:
                 command, args, env = _normalize_windows_stdio_command(cfg.command, cfg.args, cfg.env)
-                server_params = StdioServerParameters(command=command, args=args, env=env)
+                server_params = StdioServerParameters(
+                    command=command,
+                    args=args,
+                    env=env,
+                    cwd=workspace,
+                )
                 read, write = await stack.enter_async_context(stdio_client(server_params))
             else:
                 if not await _probe_http_url(cfg.url):
@@ -484,7 +492,20 @@ class MCPServerRegistration:
                 else:
                     raise ValueError(f"Unsupported MCP transport: {cfg.transport}")
 
-            session = await stack.enter_async_context(ClientSession(read, write))
+            async def list_roots_callback(_context: Any) -> types.ListRootsResult:
+                if workspace is None:
+                    return types.ListRootsResult(roots=[])
+                return types.ListRootsResult(
+                    roots=[types.Root(uri=workspace.as_uri(), name=workspace.name)]
+                )
+
+            session = await stack.enter_async_context(
+                ClientSession(
+                    read,
+                    write,
+                    list_roots_callback=list_roots_callback if workspace is not None else None,
+                )
+            )
             await session.initialize()
             self._session = session
             logger.info("MCP server '{}' connected", cfg.server_name)
@@ -588,6 +609,7 @@ class MCPServerRegistration:
 def create_mcp_registration(
     *,
     server_name: str,
+    workspace: str | Path | None = None,
     command: str | None = None,
     args: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
@@ -608,6 +630,7 @@ def create_mcp_registration(
     return MCPServerRegistration(
         MCPServerConfig(
             server_name=sanitized_server_name,
+            workspace=str(Path(workspace).expanduser().resolve()) if workspace is not None else None,
             command=command,
             args=tuple(args or ()),
             env=dict(env) if env is not None else None,
@@ -627,11 +650,16 @@ def _get_mcp_config_value(config: Any, name: str, default: Any = None, attr_name
     return getattr(config, attr_name or name, default)
 
 
-def create_mcp_registration_from_config(server_name: str, config: Any) -> MCPServerRegistration:
+def create_mcp_registration_from_config(
+    server_name: str,
+    config: Any,
+    workspace: str | Path | None = None,
+) -> MCPServerRegistration:
     env = _get_mcp_config_value(config, "env")
     headers = _get_mcp_config_value(config, "headers")
     return create_mcp_registration(
         server_name=server_name,
+        workspace=workspace,
         command=_get_mcp_config_value(config, "command"),
         args=_get_mcp_config_value(config, "args", []),
         env=dict(env) if env is not None else None,
@@ -657,6 +685,7 @@ def _hashable_mapping(value: Mapping[str, str] | None) -> tuple[tuple[str, str],
 def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
     return (
         config.server_name,
+        config.workspace,
         config.command,
         config.args,
         _hashable_mapping(config.env),
@@ -672,8 +701,9 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
 async def get_persistent_mcp_registration_from_config(
     server_name: str,
     config: Any,
+    workspace: str | Path | None = None,
 ) -> MCPServerRegistration:
-    registration = create_mcp_registration_from_config(server_name, config)
+    registration = create_mcp_registration_from_config(server_name, config, workspace=workspace)
     key = _persistent_registration_key(registration.config)
     async with _persistent_registration_lock():
         cached = _PERSISTENT_REGISTRATION_CACHE.get(key)
@@ -690,27 +720,6 @@ async def close_persistent_mcp_registrations() -> None:
 
     for registration in registrations:
         await registration.aclose()
-
-
-async def connect_persistent_mcp_registrations(mcp_servers: Mapping[str, Any]) -> None:
-    async def connect_one(server_name: str, config: Any) -> None:
-        try:
-            registration = await get_persistent_mcp_registration_from_config(server_name, config)
-            bindings = await registration._get_tool_bindings()
-        except Exception as exc:
-            logger.exception(
-                "MCP server '{}' failed to connect during application startup: {}",
-                server_name,
-                exc,
-            )
-            return
-        logger.info(
-            "MCP server '{}' ready during application startup with {} enabled tools",
-            server_name,
-            len(bindings),
-        )
-
-    await asyncio.gather(*(connect_one(name, config) for name, config in mcp_servers.items()))
 
 
 async def collect_mcp_tool(

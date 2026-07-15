@@ -32,7 +32,7 @@ max_result_chars = 20000
 
 # [tool.mcpServers.filesystem]
 # command = "npx"
-# args = ["-y", "@modelcontextprotocol/server-filesystem", "data/workspace_base"]
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 # enabled_tools = ["*"]
 # tool_timeout = 30
 

@@ -118,7 +118,11 @@ class AgentLoop:
 
         # MCP servers from config
         for mcp_server_name, mcp_server in settings.tool.mcp_servers.items():
-            registration = await get_persistent_mcp_registration_from_config(mcp_server_name, mcp_server)
+            registration = await get_persistent_mcp_registration_from_config(
+                mcp_server_name,
+                mcp_server,
+                workspace=self.workspace,
+            )
             await self.provider.register_tool("mcp")(registration)
 
     # ----------------- history会话读写 -----------------
