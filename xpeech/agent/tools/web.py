@@ -14,7 +14,7 @@ class WebSearchArgs(BaseModel):
 
 
 async def web_fetch(args: WebFetchArgs) -> str:
-    """Fetch URL and extract readable content (HTML → markdown)."""
+    """Fetch URL and extract readable content (HTML → markdown) without images."""
 
     is_valid, error_msg = validate_url_target(args.url)
     if not is_valid:
@@ -26,8 +26,10 @@ async def web_fetch(args: WebFetchArgs) -> str:
 
 async def web_search(args: WebSearchArgs) -> str:
     """
-    Search the web for the given keyword and return the top general and news results.
-    only retrieve the URL and the summary; you need to further read the content using web_fetch.
+    Use Bing to search the web for the given keyword.
+    Retrieve the top general results and the top news results.
+    For each result, return only the URL and the snippet/summary.
+    Then, read the full content of each page using web_fetch.
     """
 
     general_url = "https://www.bing.com/search?" + urlencode({"q": args.keyword})
