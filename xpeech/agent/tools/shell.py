@@ -131,6 +131,12 @@ def _inject_agent_browser_args(command: str, cdp_url: str, session_id: str | Non
     """Append the managed CDP and session arguments to agent-browser calls."""
     if not _AGENT_BROWSER_PATTERN.search(command):
         return command
+    
+    # Skip CDP and session injection for 'skills' subcommand
+    stripped = command.strip()
+    if re.match(r'agent-browser\s+skills\b', stripped):
+        return command
+    
     if not cdp_url.strip():
         raise RuntimeError("agent-browser requires tool.cdp_url to be configured")
     if not session_id:
@@ -138,12 +144,8 @@ def _inject_agent_browser_args(command: str, cdp_url: str, session_id: str | Non
 
     quoted_cdp_url = shlex.quote(cdp_url)
     quoted_session_id = shlex.quote(session_id)
-    return (
-        "agent-browser() {\n"
-        f'    command agent-browser "$@" --cdp {quoted_cdp_url} --session {quoted_session_id}\n'
-        "}\n"
-        f"{command}"
-    )
+    return f'{command} --cdp {quoted_cdp_url} --session {quoted_session_id}\n'
+
 
 
 async def _run_wrapped_command(command: str, workspace: Path) -> tuple[bytes, bytes, int | None]:
