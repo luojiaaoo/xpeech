@@ -27,6 +27,7 @@ def build_browser_preview_tool(
 
     def create_browser_preview(args: BrowserPreviewArgs) -> str:
         """
+        Copy path to a temporary directory and return a browser preview URL.
         Return a browser preview URL for a given path.
         If the path is a directory containing assets and HTML files,
         the directory's URL prefix is returned.
