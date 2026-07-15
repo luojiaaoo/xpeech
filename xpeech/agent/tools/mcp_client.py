@@ -10,13 +10,13 @@ Default MCP servers are configured in ``conf.toml``:
 from __future__ import annotations
 
 import asyncio
-import atexit
 import hashlib
 import inspect
 import json
 import os
 import re
 import shutil
+import urllib.parse
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field as dataclass_field
@@ -65,6 +65,34 @@ def _mcp_tool_name(server_name: str, tool_name: str) -> str:
 
 def _is_transient(exc: BaseException) -> bool:
     return type(exc).__name__ in _TRANSIENT_EXC_NAMES
+
+
+def _is_session_terminated(exc: BaseException) -> bool:
+    if _is_transient(exc):
+        return True
+    messages = [str(exc)]
+    error = getattr(exc, "error", None)
+    if error is not None:
+        messages.append(str(getattr(error, "message", "")))
+    return any(
+        marker in message.lower()
+        for marker in ("session terminated", "connection closed")
+        for message in messages
+    )
+
+
+async def _probe_http_url(url: str, timeout: float = 3.0) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+        writer.close()
+        with suppress(OSError, asyncio.TimeoutError):
+            await asyncio.wait_for(writer.wait_closed(), timeout=0.2)
+        return True
+    except (OSError, asyncio.TimeoutError):
+        return False
 
 
 def _persistent_registration_lock() -> asyncio.Lock:
@@ -293,10 +321,11 @@ class MCPToolBinding:
 @dataclass
 class MCPServerRegistration:
     config: MCPServerConfig
-    _stack: AsyncExitStack | None = dataclass_field(default=None, init=False, repr=False)
     _session: Any | None = dataclass_field(default=None, init=False, repr=False)
     _bindings: list[MCPToolBinding] | None = dataclass_field(default=None, init=False, repr=False)
     _lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock, init=False, repr=False)
+    _owner_task: asyncio.Task[None] | None = dataclass_field(default=None, init=False, repr=False)
+    _close_event: asyncio.Event | None = dataclass_field(default=None, init=False, repr=False)
 
     async def _get_tool_bindings(self) -> list[MCPToolBinding]:
         async with self._lock:
@@ -323,14 +352,25 @@ class MCPServerRegistration:
                     self.config.tool_timeout,
                 )
                 return f"(MCP tool call timed out after {self.config.tool_timeout}s)"
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                if task is not None and task.cancelling() > 0:
+                    raise
+                logger.warning(
+                    "MCP tool '{}.{}' was cancelled by the server or MCP SDK",
+                    self.config.server_name,
+                    tool_name,
+                )
+                return "(MCP tool call was cancelled)"
             except Exception as exc:
-                if attempt == 0 and _is_transient(exc):
+                if attempt == 0 and _is_session_terminated(exc):
                     logger.warning(
-                        "MCP server '{}' hit transient error ({}), reconnecting once",
+                        "MCP server '{}' session ended ({}), reconnecting once",
                         self.config.server_name,
                         type(exc).__name__,
                     )
                     await self.aclose()
+                    await asyncio.sleep(1)
                     continue
                 logger.exception(
                     "MCP tool '{}.{}' failed: {}: {}",
@@ -343,20 +383,15 @@ class MCPServerRegistration:
         return "(MCP tool call failed)"
 
     async def aclose(self) -> None:
-        stack = self._stack
-        self._stack = None
+        owner_task = self._owner_task
+        close_event = self._close_event
+        self._owner_task = None
+        self._close_event = None
         self._session = None
-        if stack is not None:
-            try:
-                await stack.aclose()
-            except (RuntimeError, BaseExceptionGroup) as exc:
-                logger.debug(
-                    "MCP server '{}' cleanup error ignored: {}",
-                    self.config.server_name,
-                    exc,
-                )
-            except Exception:
-                logger.exception("MCP server '{}' cleanup failed", self.config.server_name)
+        if close_event is not None:
+            close_event.set()
+        if owner_task is not None and owner_task is not asyncio.current_task():
+            await owner_task
 
     async def _ensure_session(self) -> None:
         if self._session is None:
@@ -366,6 +401,31 @@ class MCPServerRegistration:
 
     async def _connect(self) -> None:
         await self.aclose()
+        loop = asyncio.get_running_loop()
+        ready: asyncio.Future[None] = loop.create_future()
+        close_event = asyncio.Event()
+        owner_task = asyncio.create_task(
+            self._run_connection(ready, close_event),
+            name=f"mcp-{self.config.server_name}-connection",
+        )
+        self._owner_task = owner_task
+        self._close_event = close_event
+        try:
+            await ready
+        except BaseException:
+            close_event.set()
+            with suppress(BaseException):
+                await owner_task
+            if self._owner_task is owner_task:
+                self._owner_task = None
+                self._close_event = None
+            raise
+
+    async def _run_connection(
+        self,
+        ready: asyncio.Future[None],
+        close_event: asyncio.Event,
+    ) -> None:
         cfg = self.config
         stack = AsyncExitStack()
         try:
@@ -379,6 +439,8 @@ class MCPServerRegistration:
                 server_params = StdioServerParameters(command=command, args=args, env=env)
                 read, write = await stack.enter_async_context(stdio_client(server_params))
             else:
+                if not await _probe_http_url(cfg.url):
+                    raise ConnectionError(f"MCP server '{cfg.server_name}' is unreachable")
                 headers = dict(cfg.headers or {})
                 transport = "streamable_http" if cfg.transport == "http" else cfg.transport
                 if transport == "sse":
@@ -400,13 +462,30 @@ class MCPServerRegistration:
 
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
-            self._stack = stack
             self._session = session
             logger.info("MCP server '{}' connected", cfg.server_name)
-        except Exception:
-            with suppress(Exception):
+            ready.set_result(None)
+            await close_event.wait()
+        except BaseException as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+            elif not isinstance(exc, asyncio.CancelledError):
+                logger.exception("MCP server '{}' connection owner failed", cfg.server_name)
+        finally:
+            self._session = None
+            try:
                 await stack.aclose()
-            raise
+            except (RuntimeError, BaseExceptionGroup) as exc:
+                logger.debug(
+                    "MCP server '{}' cleanup error ignored: {}",
+                    cfg.server_name,
+                    exc,
+                )
+            except Exception:
+                logger.exception("MCP server '{}' cleanup failed", cfg.server_name)
+            if self._owner_task is asyncio.current_task():
+                self._owner_task = None
+                self._close_event = None
 
     async def _discover_tool_bindings(self) -> list[MCPToolBinding]:
         tools_result = await self._session.list_tools()
@@ -580,14 +659,25 @@ async def close_persistent_mcp_registrations() -> None:
         await registration.aclose()
 
 
-def close_persistent_mcp_registrations_at_exit() -> None:
-    try:
-        asyncio.run(close_persistent_mcp_registrations())
-    except RuntimeError as exc:
-        logger.debug("MCP cleanup at exit skipped: {}", exc)
+async def connect_persistent_mcp_registrations(mcp_servers: Mapping[str, Any]) -> None:
+    async def connect_one(server_name: str, config: Any) -> None:
+        try:
+            registration = await get_persistent_mcp_registration_from_config(server_name, config)
+            bindings = await registration._get_tool_bindings()
+        except Exception as exc:
+            logger.exception(
+                "MCP server '{}' failed to connect during application startup: {}",
+                server_name,
+                exc,
+            )
+            return
+        logger.info(
+            "MCP server '{}' ready during application startup with {} enabled tools",
+            server_name,
+            len(bindings),
+        )
 
-
-atexit.register(close_persistent_mcp_registrations_at_exit)
+    await asyncio.gather(*(connect_one(name, config) for name, config in mcp_servers.items()))
 
 
 async def collect_mcp_tool(
