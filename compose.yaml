@@ -22,7 +22,6 @@ x-xpeech-service: &xpeech-service
 services:
   playwright:
     image: mcr.microsoft.com/playwright/mcp
-    pull_policy: always
     init: true
     stdin_open: true
     restart: unless-stopped

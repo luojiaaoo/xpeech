@@ -150,7 +150,7 @@ HTML文件头部先写你的**assumptions+reasoning comments**，像junior给man
 
 - 只用 playwright-mcp 截图并读取控制台（见`references/verification.md`）
 - 查看 playwright-mcp 返回的截图与 snapshot，肉眼确认
-- 将完整 HTML 项目压缩为 ZIP，用 `unzip -t` 验证后通过 `send_file` 发送
+- 将完整 HTML 项目压缩为 ZIP，通过 `send_file` 发送
 - 用户还需要 PDF/PPTX 时，额外发送本地转换技能包
 - 总结**极简**：只说caveats和next steps
 

@@ -50,12 +50,9 @@ description: 当用户请求生成、创建、设计或修改 HTML、PDF、PPT/P
 完成 HTML 和所有浏览器验证后：
 
 1. 确认项目目录包含 `index.html`、所有逐页 HTML、CSS/JavaScript、图片、字体和 manifest 依赖。
-2. 在项目目录之外创建 `<project-name>-html.zip`，避免压缩包把自己包进去。同名 ZIP 已存在时使用新版本文件名，不要在旧包上增量更新。
-3. 压缩时排除 `.git/`、`node_modules/`、`__pycache__/`、`.DS_Store`、临时截图、浏览器缓存和其他非交付文件，但不得排除页面引用的静态资源。
-4. 用 `unzip -t <project-name>-html.zip` 检查压缩包完整性，并确认 ZIP 内的项目根目录可直接找到 `index.html`。
-5. 必须调用 `send_file` 发送 HTML 项目 ZIP。
-6. 如果用户还需要 PDF/PPTX，再发送 `assets/html-to-pptx-pdf-skill.zip`；这是第二个附件，不能替代 HTML 项目 ZIP。
-7. `send_file` 不可用或发送失败时，明确报告失败并返回 ZIP 的可访问链接或绝对路径，不得静默略过。
+2. 在项目目录之外创建 `<project-name>-html.zip`。同名 ZIP 已存在时使用新版本文件名，不要在旧包上增量更新。
+3. 如果用户还需要 PDF/PPTX，再发送 `assets/html-to-pptx-pdf-skill.zip`；这是第二个附件，不能替代 HTML 项目 ZIP。
+4. `send_file` 不可用或发送失败时，明确报告失败并返回 ZIP 的可访问链接或绝对路径，不得静默略过。
 
 ## 核心原则
 

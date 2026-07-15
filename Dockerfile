@@ -23,6 +23,7 @@ RUN sed -i \
         curl \
         ffmpeg \
         git \
+        zip \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
@@ -38,10 +39,11 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY xpeech/ ./xpeech/
 COPY custom_tools/ ./custom_tools/
+RUN uv sync --frozen --no-dev
+
 RUN mkdir /app/sandbox-home-defaults
 COPY data/sandbox-home/.npmrc /app/sandbox-home-defaults/.npmrc
 COPY data/sandbox-home/.pip/pip.conf /app/sandbox-home-defaults/.pip/pip.conf
 COPY data/sandbox-home/.config/uv/uv.toml /app/sandbox-home-defaults/.config/uv/uv.toml
-RUN uv sync --frozen --no-dev
 
 ENTRYPOINT ["/bin/sh", "-c", "cp -a /app/sandbox-home-defaults/. /app/data/sandbox-home/ && exec uv run -m xpeech \"$@\"", "--"]

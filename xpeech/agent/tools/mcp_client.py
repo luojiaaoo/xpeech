@@ -22,6 +22,7 @@ from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, Literal
 
+import httpx
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -383,8 +384,15 @@ class MCPServerRegistration:
                 if transport == "sse":
                     read, write = await stack.enter_async_context(sse_client(cfg.url, headers=headers or None))
                 elif transport == "streamable_http":
+                    http_client = await stack.enter_async_context(
+                        httpx.AsyncClient(
+                            headers=headers or None,
+                            follow_redirects=True,
+                            timeout=httpx.Timeout(30.0, connect=10.0, read=300.0),
+                        )
+                    )
                     transport_result = await stack.enter_async_context(
-                        streamable_http_client(cfg.url, headers=headers or None)
+                        streamable_http_client(cfg.url, http_client=http_client)
                     )
                     read, write = transport_result[:2]
                 else:
