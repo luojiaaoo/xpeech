@@ -20,7 +20,7 @@
  * 视觉自由度优先的场景（动画、web component、CSS 渐变、复杂 SVG）
  * 应改用 export_deck_pdf.mjs / export_deck_stage_pdf.mjs 导出 PDF。
  *
- * 依赖：npm install playwright-core pptxgenjs
+ * 依赖：npm install playwright-core pptxgenjs sharp
  *
  * 按文件名排序（01-xxx.html → 02-xxx.html → ...）。
  */
