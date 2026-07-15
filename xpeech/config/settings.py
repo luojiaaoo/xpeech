@@ -116,6 +116,7 @@ class LLMConfig(BaseModel):
     support_video: bool = False
     support_json_output: bool = False
     parallel: int = Field(default=4)
+    max_iterations: int = Field(default=40, ge=1)
 
     @field_validator("api_key_config")
     @classmethod

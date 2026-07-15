@@ -144,7 +144,7 @@ async def chat(
         provider=provider,
         workspace=workspace,
         tools=settings.llm.default_tools,
-        max_iterations=30,
+        max_iterations=settings.llm.max_iterations,
         provider_chat_kwargs=ProviderChatKwargs(
             reasoning_effort=None,
         ),

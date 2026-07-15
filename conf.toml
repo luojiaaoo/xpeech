@@ -18,6 +18,7 @@ support_image = true
 support_video = true
 support_json_output = true
 parallel = 4
+max_iterations = 40
 
 [tool.browser_preview]
 browser_preview_base_url = "http://backend:7878/browser_preview"
