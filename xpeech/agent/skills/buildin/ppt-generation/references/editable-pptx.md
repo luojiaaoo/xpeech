@@ -179,7 +179,7 @@ background: #FF6B6B;
 
 ---
 
-## 基本工作流（3 步出 PPTX）
+## 基本工作流（4 步出 PPTX）
 
 ### Step 1：按约束写每页独立 HTML
 
@@ -194,7 +194,13 @@ background: #FF6B6B;
     └── ...
 ```
 
-### Step 2：写 build.js 调用 `html2pptx.js`
+### Step 2：用 `create_browser_preview` 托管 slides
+
+对 `slides/` 目录调用 `create_browser_preview`，记住返回的 HTTP(S) 根 URL。远程浏览器不能打开工作区的 `file://` 路径。
+
+HTML 修改后必须重新调用 `create_browser_preview`，并使用新 URL 导出。
+
+### Step 3：写 build.js 调用 `html2pptx.js`
 
 ```js
 const pptxgen = require('pptxgenjs');
@@ -204,16 +210,19 @@ const html2pptx = require('../scripts/html2pptx.js');  // 本 skill 脚本
   const pres = new pptxgen();
   pres.layout = 'LAYOUT_WIDE';  // 13.333 × 7.5 inch，匹配 HTML 的 960×540pt
 
+  const baseUrl = '<create_browser_preview 返回的 slides URL>/';
   const slides = ['01-cover.html', '02-agenda.html', '03-content.html'];
   for (const file of slides) {
-    await html2pptx(`./slides/${file}`, pres);
+    await html2pptx(new URL(file, baseUrl).href, pres);
   }
 
   await pres.writeFile({ fileName: 'deck.pptx' });
 })();
 ```
 
-### Step 3：打开检查
+`html2pptx.js` 使用 `playwright-core` 的 `connectOverCDP` 连接远程浏览器，不会 `launch()` 本地 Chromium。
+
+### Step 4：打开检查
 
 - PowerPoint/Keynote 打开导出 PPTX
 - 双击任意文字应能直接编辑（如果是图片说明第 1 条违反了）

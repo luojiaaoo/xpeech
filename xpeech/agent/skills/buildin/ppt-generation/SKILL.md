@@ -174,7 +174,7 @@ AI默认产出 = 训练语料的平均 = 所有品牌混合 = 没有品牌被认
 
 6. **Full pass**：填placeholder，做variations
 
-7. **验证**：用Playwright截图，检查控制台错误
+7. **验证**：先用 `create_browser_preview` 托管 HTML，再用 `agent-browser` 通过注入的远程 CDP 会话截图，检查 console 和 page errors
 
 8. **总结**：caveats和next steps
 
@@ -202,9 +202,12 @@ AI默认产出 = 训练语料的平均 = 所有品牌混合 = 没有品牌被认
 
 **导出命令**：
 ```bash
-node scripts/export_deck_pptx.mjs path/to/index.html
+node scripts/export_deck_pptx.mjs \
+  --slides path/to/slides \
+  --base-url <create_browser_preview 返回的 slides URL> \
+  --out deck.pptx
 ```
-依赖：`playwright pptxgenjs sharp`（需提前安装）
+脚本从进程环境变量 `CDP_URL` 读取远程浏览器地址。依赖：`playwright-core pptxgenjs`（只作为远程 CDP 客户端，不安装本地浏览器）
 
 ---
 
@@ -218,7 +221,7 @@ node scripts/export_deck_pptx.mjs path/to/index.html
 
 **固定尺寸内容**（幻灯片）必须自己实现JS缩放（auto-scale + letterboxing）。
 
-**验证工具**：`npx playwright` 截图、检查`pageerror`。可写脚本`verify.py`封装。
+**验证工具**：`create_browser_preview` + `agent-browser`。使用 `snapshot`、`screenshot`、`console` 和 `errors` 检查页面；批量验证才使用连接远程 CDP 的 `scripts/verify.py`。
 
 ---
 
@@ -259,7 +262,7 @@ node scripts/export_deck_pptx.mjs path/to/index.html
 - 避免>1000行的大文件，拆成多个JSX文件import
 - 幻灯片固定尺寸内容，**播放位置**存localStorage——刷新不丢
 - HTML放项目目录，不要散落到`~/Downloads`
-- 最终产出用浏览器打开检查，或用Playwright截图
+- 最终产出必须用 `create_browser_preview` 生成预览 URL，再用 `agent-browser` 打开、逐页检查并截图
 - 如需可编辑PPTX，务必先过4条硬约束，再运行`export_deck_pptx.mjs`
 
 ---
@@ -274,4 +277,3 @@ node scripts/export_deck_pptx.mjs path/to/index.html
 - **反AI slop时时警醒**：每个渐变色/emoji/圆角边框前先问——这真的必要吗？
 - **涉及品牌**：走核心资产协议——Logo（必需）+产品图/UI截图（按实体/数字产品），色值只是辅助
 - **要导出PPTX**：HTML必须从第一行就遵守4条硬约束，否则返工成本极高
-

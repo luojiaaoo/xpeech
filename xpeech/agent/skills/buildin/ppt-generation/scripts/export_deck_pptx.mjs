@@ -3,7 +3,7 @@
  * export_deck_pptx.mjs — 把多文件 slide deck 导出为可编辑 PPTX
  *
  * 用法：
- *   node export_deck_pptx.mjs --slides <dir> --out <file.pptx>
+ *   CDP_URL=<ws-url> node export_deck_pptx.mjs --slides <dir> --base-url <preview-url> --out <file.pptx>
  *
  * 行为：
  *   - 调用 scripts/html2pptx.js 把 HTML DOM 逐元素翻译成 PowerPoint 原生对象
@@ -20,7 +20,7 @@
  * 视觉自由度优先的场景（动画、web component、CSS 渐变、复杂 SVG）
  * 应改用 export_deck_pdf.mjs / export_deck_stage_pdf.mjs 导出 PDF。
  *
- * 依赖：npm install playwright pptxgenjs sharp
+ * 依赖：npm install playwright-core pptxgenjs
  *
  * 按文件名排序（01-xxx.html → 02-xxx.html → ...）。
  */
@@ -39,8 +39,8 @@ function parseArgs() {
     const k = a[i].replace(/^--/, '');
     args[k] = a[i + 1];
   }
-  if (!args.slides || !args.out) {
-    console.error('用法: node export_deck_pptx.mjs --slides <dir> --out <file.pptx>');
+  if (!args.slides || !args['base-url'] || !args.out) {
+    console.error('用法: node export_deck_pptx.mjs --slides <dir> --base-url <preview-url> --out <file.pptx>');
     console.error('');
     console.error('⚠️ HTML 必须符合 4 条硬约束（见 references/editable-pptx.md）。');
     console.error('   视觉自由度优先的场景请改用 export_deck_pdf.mjs 导出 PDF。');
@@ -50,7 +50,11 @@ function parseArgs() {
 }
 
 async function main() {
-  const { slides, out } = parseArgs();
+  const { slides, out, 'base-url': baseUrl } = parseArgs();
+  if (!process.env.CDP_URL) {
+    console.error('错误: 缺少环境变量 CDP_URL');
+    process.exit(1);
+  }
   const slidesDir = path.resolve(slides);
   const outFile = path.resolve(out);
 
@@ -71,7 +75,7 @@ async function main() {
     html2pptx = require(path.join(__dirname, 'html2pptx.js'));
   } catch (e) {
     console.error(`✗ 加载 html2pptx.js 失败：${e.message}`);
-    console.error(`  依赖缺失时请跑：npm install playwright pptxgenjs sharp`);
+    console.error(`  依赖缺失时请跑：npm install playwright-core pptxgenjs`);
     process.exit(1);
   }
 
@@ -81,9 +85,9 @@ async function main() {
   const errors = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
-    const fullPath = path.join(slidesDir, f);
+    const slideUrl = new URL(f, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).href;
     try {
-      await html2pptx(fullPath, pres);
+      await html2pptx(slideUrl, pres);
       console.log(`  [${i + 1}/${files.length}] ${f} ✓`);
     } catch (e) {
       console.error(`  [${i + 1}/${files.length}] ${f} ✗  ${e.message}`);

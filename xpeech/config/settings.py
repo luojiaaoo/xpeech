@@ -1,6 +1,7 @@
 from pathlib import Path
 from threading import Lock
 from urllib.parse import urlsplit
+from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 from pydantic_settings import (
     BaseSettings,
@@ -12,16 +13,8 @@ from pydantic_settings import (
 from ..provider.schema import ReasoningEffort
 from ..utils.helper import ensure_path
 
-
+load_dotenv(".env")
 conf_toml_path = "conf.toml"  # Configuration TOML file path
-conf_env_path = ".env"  # Configuration environment file path
-
-env_conf = dict(
-    env_prefix="",
-    env_nested_delimiter="__",
-    env_file=conf_env_path,
-    extra="ignore",
-)
 
 
 class _RoundRobinApiKeySelector:
@@ -163,14 +156,18 @@ class Settings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,
-            dotenv_settings,
+            env_settings,
             TomlConfigSettingsSource(
                 settings_cls,
                 toml_file=conf_toml_path,
             ),
         )
 
-    model_config = SettingsConfigDict(**env_conf)
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        env_nested_delimiter="__",
+        extra="ignore",
+    )
 
 
 settings = Settings()

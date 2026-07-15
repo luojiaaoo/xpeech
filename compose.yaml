@@ -1,8 +1,6 @@
 name: xpeech
 
 configs:
-  xpeech_env:
-    file: ./.env
   xpeech_conf:
     file: ./conf.toml
 
@@ -11,9 +9,9 @@ x-xpeech-service: &xpeech-service
   build:
     context: .
     dockerfile: Dockerfile
+  env_file:
+    - ./.env
   configs:
-    - source: xpeech_env
-      target: /app/.env
     - source: xpeech_conf
       target: /app/conf.toml
   init: true

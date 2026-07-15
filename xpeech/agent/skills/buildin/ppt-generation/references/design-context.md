@@ -21,11 +21,14 @@
 **读代码抄exact values**：hex codes、spacing scale、font stack、border radius。不要凭记忆重画。
 
 ### 3. 用户已发布的产品
-如果用户有上线的产品但没给代码，用Playwright或让用户提供截图。
+如果用户有上线的产品但没给代码，用 `agent-browser` 通过注入的远程 CDP 会话查看，或让用户提供截图。
 
 ```bash
-# 用Playwright截图一个公开URL
-npx playwright screenshot https://example.com screenshot.png --viewport-size=1920,1080
+# 公开 URL 可直接用 agent-browser；本地 HTML 必须先调用 create_browser_preview
+agent-browser open https://example.com
+agent-browser set viewport 1920 1080
+agent-browser wait --load networkidle
+agent-browser screenshot screenshot.png
 ```
 
 让你看到真实的视觉vocabulary。

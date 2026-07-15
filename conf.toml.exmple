@@ -5,6 +5,7 @@ workspace_base_path = "data/workspace_base"
 sandbox_home_path = "data/sandbox-home"
 
 [llm]
+api_key = "xxxxxxxx"
 api_base = "http://llm-proxy.1393074507312057.cn-wulanchabu.pai-eas.aliyuncs.com/v1"
 default_model = "openai/Kimi-K2.6"
 default_context_token = 256000
@@ -42,5 +43,6 @@ browser_preview_path = "data/browser_preview"
 
 [feishu]
 app_id = "cli_aa8fcbaccae41cba"
+app_secret = "xxxxxxx"
 idle_timeout = 5
 cache_path = "data/feishu_cache"

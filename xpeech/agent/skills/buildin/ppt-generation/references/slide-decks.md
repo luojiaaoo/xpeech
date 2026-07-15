@@ -164,21 +164,21 @@ PPTX 可编辑的前提是 `html2pptx.js` 能把 DOM 逐元素翻译为 PowerPoi
 
 ## ⚠️ 常见踩坑（moxt 实战总结）
 
-### 1. Emoji 在 Chromium / Playwright 导出时不渲染
+### 1. Emoji 在远程 Chromium 渲染或导出时不渲染
 
 Chromium 默认不带彩色 emoji 字体，`page.pdf()` 或 `page.screenshot()` 时 emoji 显示为空方框。
 
 **对策**：用 Unicode 文字符号（`✦` `✓` `✕` `→` `·` `—`）替代，或直接改纯文字（「Email · 23」而不是「📧 23 emails」）。
 
-### 2. `export_deck_pdf.mjs` 报错 `Cannot find package 'playwright'`
+### 2. `export_deck_pdf.mjs` 报错 `Cannot find package 'playwright-core'`
 
-原因：ESM 模块解析从脚本所在位置向上找 `node_modules`。脚本在 `~/.claude/skills/huashu-design/scripts/`，那里没依赖。
+原因：ESM 模块解析从脚本所在位置向上找 `node_modules`，当前项目没有 CDP 客户端依赖。
 
-**对策**：把脚本复制到 deck 项目目录（例如 `brochure/build-pdf.mjs`），在项目根跑 `npm install playwright pdf-lib`，然后 `node build-pdf.mjs --slides slides --out output/deck.pdf`。
+**对策**：把脚本复制到 deck 项目目录，在项目根跑 `npm install playwright-core pdf-lib`，并通过进程环境变量 `CDP_URL` 连接远程浏览器。不要运行浏览器安装命令。
 
 ### 3. Google Fonts 没加载完就截图 → 中文显示为系统默认黑体
 
-Playwright 截图/PDF 前至少 `wait-for-timeout=3500` 让 webfont 下载并 paint。或者把字体 self-host 到 `shared/fonts/` 减少网络依赖。
+`agent-browser` 截图前先 `wait --load networkidle`，必要时再 `wait 3500` 让 webfont 下载并 paint。或者把字体 self-host 到 `shared/fonts/` 减少网络依赖。
 
 ### 4. 信息密度失衡：内容页塞太多
 
@@ -222,7 +222,7 @@ moxt philosophy 页第一版用 2×2 = 4 段 + 底部 3 信条 = 7 块内容，�
 1. **CSS 特异性覆盖**：`.emotion-slide { display: grid }` (特异性 10) 干翻 `deck-stage > section { display: none }` (特异性 2)，导致所有页同时渲染叠加。
 2. **Shadow DOM slot 规则被外层 CSS 压制**：`::slotted(section) { display: none }` 挡不住 outer rule 的覆盖，sections 不肯隐藏。
 3. **localStorage + hash 导航竞态**：刷新后不是跳到 hash 位置，而是停在 localStorage 记录的旧位置。
-4. **验证成本高**：必须 `page.evaluate(d => d.goTo(n))` 才能截某页，比直接 `goto(file://.../slides/05-X.html)` 慢一倍，还常报错。
+4. **验证成本高**：必须先在聚合页里用 JS 切到某页；多文件架构则可以用 `agent-browser` 直接打开预览根 URL 下的单页路径。
 
 全部根因是**单一全局命名空间**——多文件架构从物理层面把这些问题消除了。
 
@@ -293,13 +293,16 @@ window.DECK_MANIFEST = [
 
 ### 单页验证（这是多文件架构的杀手级优势）
 
-每张 slide 都是独立 HTML。**做完一张就在浏览器双击打开看**：
+每张 slide 都是独立 HTML。对 deck 根目录调用 `create_browser_preview` 后，可直接打开返回 URL 下的单页路径：
 
 ```bash
-open slides/05-personas.html
+agent-browser open <preview-root-url>/slides/05-personas.html
+agent-browser set viewport 1920 1080
+agent-browser wait --load networkidle
+agent-browser screenshot screenshots/05-personas.png
 ```
 
-Playwright 截图也是直接 `goto(file://.../slides/05-personas.html)`，不需要 JS 跳页，也不会被别的页的 CSS 干扰。这让「改一点验一点」的工作流成本接近零。
+远程浏览器不访问 `file://` 工作区路径。HTML 修改后重新调用 `create_browser_preview`，再用新 URL 复验。每页独立预览，不需要 JS 跳页，也不会被别页 CSS 干扰。
 
 ### 并行开发
 
@@ -570,11 +573,11 @@ node scripts/export_deck_pdf.mjs --slides <slides-dir> --out deck.pdf
 
 **特点**：
 - 文字**保留矢量**（可复制、可搜索）
-- 视觉 100% 保真（Playwright 内嵌 Chromium 渲染后打印）
+- 视觉 100% 保真（远程 CDP Chromium 渲染后打印）
 - **不需要改 HTML 任何一个字**
 - 每个 slide 独立 `page.pdf()`，再用 `pdf-lib` 合并
 
-**依赖**：`npm install playwright pdf-lib`
+**依赖**：`npm install playwright-core pdf-lib`，并通过进程环境变量 `CDP_URL` 提供远程 CDP 地址。脚本必须使用 `connectOverCDP`，不得 `launch()` 本地浏览器。
 
 **限制**：PDF 不能再编辑文字——要改回到 HTML 改。
 
@@ -637,8 +640,13 @@ await page.pdf({ width: '1920px', height: '1080px', printBackground: true, prefe
 
 ```bash
 # 唯一模式：文本框原生可编辑（字体会回落到系统字体）
-node scripts/export_deck_pptx.mjs --slides <dir> --out deck.pptx
+node scripts/export_deck_pptx.mjs \
+  --slides <dir> \
+  --base-url <create_browser_preview 返回的 slides URL> \
+  --out deck.pptx
 ```
+
+脚本只从进程环境变量 `CDP_URL` 读取远程 CDP 地址。
 
 工作原理：`html2pptx` 逐元素读 computedStyle 把 DOM 翻译成 PowerPoint 对象（text frame / shape / picture）。文字变成真文本框，PPT 里双击即可编辑。
 
@@ -653,7 +661,7 @@ node scripts/export_deck_pptx.mjs --slides <dir> --out deck.pptx
 脚本已内置**自动预处理器**——把 "叶子 div 里的裸文本" 自动包成 `<p>`（保留 class）。这解决了最常见的违规（裸文本）。但其他违规（p 上有 border、span 上有 margin 等）仍需 HTML 源头合规。
 
 **字体回落 caveat**：
-- Playwright 用 webfont 测量 text-box 尺寸；PowerPoint/Keynote 用本机字体渲染
+- 远程 CDP 浏览器用 webfont 测量 text-box 尺寸；PowerPoint/Keynote 用本机字体渲染
 - 两者不同时会有**溢出或错位**——每页都要肉眼过
 - 建议目标机器装好 HTML 里用的字体，或 fallback 到 `system-ui`
 
@@ -722,5 +730,5 @@ node scripts/export_deck_pptx.mjs --slides <dir> --out deck.pptx
 2. [ ] 按 → 键翻到每一页，没有空白页、没有布局错位
 3. [ ] 按 P 键打印预览，每页恰好一张 A4（或 1920×1080）且无裁切
 4. [ ] 随机选 3 页 Cmd+Shift+R 强刷，localStorage 记忆正常工作
-5. [ ] Playwright 批量截图（单页架构：遍历 `slides/*.html`；单文件架构：用 goTo 切换），人工肉眼过一遍
+5. [ ] 用 `create_browser_preview` 托管最新 HTML，再用 `agent-browser` 逐页截图（多文件遍历 `slides/*.html`；单文件用方向键切换），人工肉眼过一遍
 6. [ ] 搜一下 `TODO` / `placeholder` 残留，确认都清理了

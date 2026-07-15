@@ -5,7 +5,11 @@
  *   const pptx = new pptxgen();
  *   pptx.layout = 'LAYOUT_16x9';  // Must match HTML body dimensions
  *
- *   const { slide, placeholders } = await html2pptx('slide.html', pptx);
+ *   const { slide, placeholders } = await html2pptx(
+ *     'https://preview.example/slides/slide.html',
+ *     pptx
+ *   );
+ *   // Remote browser URL is read from process.env.CDP_URL.
  *   slide.addChart(pptx.charts.LINE, data, placeholders[0]);
  *
  *   await pptx.writeFile('output.pptx');
@@ -25,9 +29,7 @@
  *   { slide, placeholders } where placeholders is an array of { id, x, y, w, h }
  */
 
-const { chromium } = require('playwright');
-const path = require('path');
-const sharp = require('sharp');
+const { chromium } = require('playwright-core');
 
 const PT_PER_PX = 0.75;
 const PX_PER_IN = 96;
@@ -118,12 +120,9 @@ function validateTextBoxPosition(slideData, bodyDimensions) {
 }
 
 // Helper: Add background to slide
-async function addBackground(slideData, targetSlide, tmpDir) {
+async function addBackground(slideData, targetSlide) {
   if (slideData.background.type === 'image' && slideData.background.path) {
-    let imagePath = slideData.background.path.startsWith('file://')
-      ? slideData.background.path.replace('file://', '')
-      : slideData.background.path;
-    targetSlide.background = { path: imagePath };
+    targetSlide.background = { path: slideData.background.path };
   } else if (slideData.background.type === 'color' && slideData.background.value) {
     targetSlide.background = { color: slideData.background.value };
   }
@@ -133,9 +132,8 @@ async function addBackground(slideData, targetSlide, tmpDir) {
 function addElements(slideData, targetSlide, pres) {
   for (const el of slideData.elements) {
     if (el.type === 'image') {
-      let imagePath = el.src.startsWith('file://') ? el.src.replace('file://', '') : el.src;
       targetSlide.addImage({
-        path: imagePath,
+        path: el.src,
         x: el.position.x,
         y: el.position.y,
         w: el.position.w,
@@ -893,35 +891,44 @@ async function extractSlideData(page) {
   });
 }
 
-async function html2pptx(htmlFile, pres, options = {}) {
+async function html2pptx(htmlUrl, pres, options = {}) {
   const {
-    tmpDir = process.env.TMPDIR || '/tmp',
     slide = null
   } = options;
+  const cdpUrl = process.env.CDP_URL;
 
   try {
-    // Use Chrome on macOS, default Chromium on Unix
-    const launchOptions = { env: { TMPDIR: tmpDir } };
-    if (process.platform === 'darwin') {
-      launchOptions.channel = 'chrome';
+    if (!cdpUrl) {
+      throw new Error('Remote CDP URL is required. Set the CDP_URL environment variable.');
+    }
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(htmlUrl);
+    } catch {
+      throw new Error('HTML must be hosted by create_browser_preview and passed as an HTTP(S) URL.');
+    }
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      throw new Error('HTML must be hosted by create_browser_preview and passed as an HTTP(S) URL.');
     }
 
-    const browser = await chromium.launch(launchOptions);
+    const browser = await chromium.connectOverCDP(cdpUrl);
 
     let bodyDimensions;
     let slideData;
 
-    const filePath = path.isAbsolute(htmlFile) ? htmlFile : path.join(process.cwd(), htmlFile);
     const validationErrors = [];
 
     try {
-      const page = await browser.newPage();
+      const contexts = browser.contexts();
+      const context = contexts[0] || await browser.newContext();
+      const page = await context.newPage();
       page.on('console', (msg) => {
         // Log the message text to your test runner's console
         console.log(`Browser console: ${msg.text()}`);
       });
 
-      await page.goto(`file://${filePath}`);
+      await page.goto(parsedUrl.href, { waitUntil: 'networkidle' });
+      await page.evaluate(() => document.fonts.ready);
 
       bodyDimensions = await getBodyDimensions(page);
 
@@ -964,13 +971,13 @@ async function html2pptx(htmlFile, pres, options = {}) {
 
     const targetSlide = slide || pres.addSlide();
 
-    await addBackground(slideData, targetSlide, tmpDir);
+    await addBackground(slideData, targetSlide);
     addElements(slideData, targetSlide, pres);
 
     return { slide: targetSlide, placeholders: slideData.placeholders };
   } catch (error) {
-    if (!error.message.startsWith(htmlFile)) {
-      throw new Error(`${htmlFile}: ${error.message}`);
+    if (!error.message.startsWith(htmlUrl)) {
+      throw new Error(`${htmlUrl}: ${error.message}`);
     }
     throw error;
   }

@@ -148,8 +148,8 @@ HTML文件头部先写你的**assumptions+reasoning comments**，像junior给man
 
 ### Pass 4：验证+交付
 
-- 用Playwright截图（见`references/verification.md`）
-- 打开浏览器肉眼确认
+- 用 `create_browser_preview` 托管 HTML，每次修改后重新生成预览 URL
+- 用 `agent-browser` 通过注入的远程 CDP 会话截图、检查 console/page errors 并肉眼确认（见`references/verification.md`）
 - 总结**极简**：只说caveats和next steps
 
 ## Variations的深度逻辑

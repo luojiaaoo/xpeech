@@ -1,189 +1,142 @@
-# Verification：输出验证流程
+# Verification：远程浏览器验证流程
 
-一些 design-agent 原生环境（如 Claude.ai Artifacts）有内置的 `fork_verifier_agent` 起 subagent 用 iframe 截图检查。大部分 agent 环境（Claude Code / Codex / Cursor / Trae / 等）里没有这个内置能力——用 Playwright 手动做就能覆盖相同的验证场景。
+默认使用 `create_browser_preview` 托管工作区内的 HTML，再用 `agent-browser` 通过注入的远程 CDP 会话完成导航、截图、交互和错误检查。
 
-## 验证清单
+不要启动 `http.server`，不要打开 `file://` URL，不要安装或启动本地 Chrome/Chromium/Playwright 浏览器。
 
-每次产出HTML后，按这个清单做一遍：
+## 必做流程
 
-### 1. 浏览器渲染检查（必做）
+### 1. 创建预览 URL
 
-最基础：**HTML能不能打开**？在macOS上：
+对 deck 根目录或单个 HTML 调用 `create_browser_preview`，记住返回的 HTTP(S) URL。
 
-```bash
-open -a "Google Chrome" "/path/to/your/design.html"
-```
+`create_browser_preview` 会把当前内容复制到隔离的预览目录。**HTML 或资源修改后必须重新调用**，旧 URL 不会自动反映新内容。
 
-或者用Playwright截图（下一节）。
+### 2. 加载 agent-browser 当前说明
 
-### 2. 控制台错误检查
-
-HTML文件里最常见的问题是JS报错导致白屏。用Playwright跑一遍：
+本次任务第一次操作浏览器前执行：
 
 ```bash
-python ~/.claude/skills/claude-design/scripts/verify.py path/to/design.html
+agent-browser skills get core
 ```
 
-这个脚本会：
-1. 用headless chromium打开HTML
-2. 截图保存到项目目录
-3. 抓取控制台错误
-4. 报告status
+不要手动填写 `--cdp` 或 `--session`，Shell 执行层会自动注入。
 
-详见`scripts/verify.py`。
-
-### 3. 多视口检查
-
-如果是响应式设计，抓多个viewport：
+### 3. 打开、等待并检查结构
 
 ```bash
-python verify.py design.html --viewports 1920x1080,1440x900,768x1024,375x667
+agent-browser open <preview-url>
+agent-browser set viewport 1920 1080
+agent-browser wait --load networkidle
+agent-browser snapshot -c
 ```
 
-### 4. 交互检查
+先看 snapshot 是否有主标题、正确页数和导航元素，避免只靠截图猜测页面是否成功渲染。
 
-Tweaks、动画、按钮切换——默认的静态截图看不到。**建议让用户自己开浏览器点一遍**，或者用Playwright录屏：
-
-```python
-page.video.record('interaction.mp4')
-```
-
-### 5. 幻灯片逐页检查
-
-Deck类HTML，一张张截：
+### 4. 截图并检查错误
 
 ```bash
-python verify.py deck.html --slides 10  # 截前10张
+agent-browser screenshot screenshots/deck-cover.png
+agent-browser console
+agent-browser errors
 ```
 
-生成 `deck-slide-01.png`、`deck-slide-02.png`... 方便快速浏览。
+- 幻灯片默认截 viewport，不要用 full-page 把多页拼成一张长图。
+- 只有需要检查长页溢出时才使用 `agent-browser screenshot --full <path>`。
+- 只检查某个区域时可用 `agent-browser screenshot "#hero" screenshots/hero.png`。
+- 需要 retina 输出时用 `agent-browser set viewport 1920 1080 2`。
+- 截图是工作区产物，需要交付给用户时使用 `send_file`。
 
-## Playwright Setup
+## 多视口检查
 
-首次使用需要：
+每个视口都要重新设置尺寸、等待布局稳定后截图：
 
 ```bash
-# 如果还没装
-npm install -g playwright
-npx playwright install chromium
+agent-browser set viewport 1920 1080
+agent-browser wait 500
+agent-browser screenshot screenshots/deck-1920x1080.png
 
-# 或者Python版
+agent-browser set viewport 1440 900
+agent-browser wait 500
+agent-browser screenshot screenshots/deck-1440x900.png
+```
+
+幻灯片是固定画布，核心检查是 16:9 视口下的缩放、letterbox、裁切和字体加载。
+
+## 逐页和交互检查
+
+对聚合 deck：
+
+```bash
+agent-browser open <preview-index-url>
+agent-browser set viewport 1920 1080
+agent-browser wait --load networkidle
+agent-browser screenshot screenshots/slide-01.png
+agent-browser press ArrowRight
+agent-browser wait 300
+agent-browser screenshot screenshots/slide-02.png
+```
+
+按同样方式遍历每页，并额外检查：
+
+- `Home` / `End` / 方向键导航是否正确。
+- 计数器、hash 和 localStorage 位置恢复是否一致。
+- 按钮、Tweaks、动画和 iframe 内容是否可交互。
+- 每次交互后重新执行 `snapshot -c`，必要时再截图。
+
+## 批量脚本（仅需要自动化多视口/多页时）
+
+`scripts/verify.py` 也不启动本地浏览器。它要求：
+
+1. target 是 `create_browser_preview` 返回的 HTTP(S) URL。
+2. 通过进程环境变量 `CDP_URL` 传入远程 CDP WebSocket URL。
+3. 只安装 Python Playwright 客户端，不运行 `playwright install`。
+
+```bash
 pip install playwright
-playwright install chromium
+python scripts/verify.py <preview-url> \
+  --viewports 1920x1080,1440x900 \
+  --slides 10 \
+  --output ./screenshots/
 ```
 
-如果用户已经全局安装 Playwright，直接用即可。
-
-## 截图最佳实践
-
-### 截完整页面
-
-```python
-page.screenshot(path='full.png', full_page=True)
-```
-
-### 截viewport
-
-```python
-page.screenshot(path='viewport.png')  # 默认只截可见区域
-```
-
-### 截特定元素
-
-```python
-element = page.query_selector('.hero-section')
-element.screenshot(path='hero.png')
-```
-
-### 高清截图
-
-```python
-page = browser.new_page(device_scale_factor=2)  # retina
-```
-
-### 等动画结束再截
-
-```python
-page.wait_for_timeout(2000)  # 等2秒让动画settle
-page.screenshot(...)
-```
-
-## 把截图发给用户
-
-### 本地截图直接打开
-
-```bash
-open screenshot.png
-```
-
-用户会在自己的 Preview/Figma/VSCode/浏览器 里看。
-
-### 上传图床分享链接
-
-如果需要给远程协作者看（比如 Slack/飞书/微信），让用户用自己的图床工具或 MCP 上传：
-
-```bash
-python ~/Documents/写作/tools/upload_image.py screenshot.png
-```
-
-返回ImgBB的永久链接，可以粘贴到任何地方。
+在 Compose 中 `.env` 默认配置 `CDP_URL=ws://browserless:3000`。如果从宿主机运行脚本，需将环境变量设为 `CDP_URL=ws://localhost:3000`。
 
 ## 验证出错时
 
 ### 页面白屏
 
-控制台一定有错。先检查：
-
-1. React+Babel script tag的integrity hash对不对（见`react-setup.md`）
-2. 是不是`const styles = {...}`命名冲突
-3. 跨文件的组件有没有export到`window`
-4. JSX语法错误（babel.min.js不报错，换babel.js非压缩版）
-
-### 动画卡
-
-- 用Chrome DevTools Performance tab录一段
-- 找layout thrashing（频繁的reflow）
-- 动效优先用`transform`和`opacity`（GPU加速）
+1. 先运行 `agent-browser errors` 和 `agent-browser console`。
+2. 检查 React+Babel script tag 的 integrity hash（见 `react-setup.md`）。
+3. 检查 `const styles = {...}` 命名冲突。
+4. 检查跨文件组件是否 export 到 `window`。
+5. 检查 JSX 语法错误。
 
 ### 字体不对
 
-- 检查`@font-face`的url是否可访问
-- 检查fallback字体
-- 中文字体加载慢：先显示fallback，加载完再切换
+- 检查 `@font-face` URL 是否能从 Browserless 容器访问。
+- 检查 fallback 字体。
+- 截图前执行 `agent-browser wait --load networkidle`，必要时再 `agent-browser wait 3500`。
+
+### 动画卡顿
+
+- 先用 `agent-browser` 实际操作相关按钮或键盘路径，不要只看静态首帧。
+- 检查是否有频繁 reflow/layout thrashing。
+- 动效优先使用 `transform` 和 `opacity`。
 
 ### 布局错位
 
-- 检查`box-sizing: border-box`是否全局应用
-- 检查`*  margin: 0; padding: 0`reset
-- Chrome DevTools里打开gridlines看实际布局
+- 检查 `box-sizing: border-box` 是否全局应用。
+- 检查 reset 是否生效。
+- 用 snapshot 确认元素存在，再结合截图检查几何布局。
 
-## 验证=设计师的第二双眼
+## 交付前最终检查
 
-**永远要自己过一遍**。AI写代码时经常出现：
+- 首页和每一页都能渲染，无白屏。
+- `agent-browser errors` 无未处理 JavaScript 错误。
+- `agent-browser console` 无会影响演示的 error/warning。
+- 字体、图片、iframe 和 CDN 资源均已加载。
+- 随机抽查页和关键交互已截图人工确认。
+- HTML 修改后已重新调用 `create_browser_preview` 并用新 URL 复验。
 
-- 看起来对但interaction有bug
-- 静态截图好但scroll时错位
-- 宽屏好看但窄屏崩
-- Dark mode忘了测
-- Tweaks切换后某些组件没响应
-
-**最后1分钟的验证可以省1小时的返工**。
-
-## 常用验证脚本命令
-
-```bash
-# 基础：打开+截图+抓错
-python verify.py design.html
-
-# 多viewport
-python verify.py design.html --viewports 1920x1080,375x667
-
-# 多slide
-python verify.py deck.html --slides 10
-
-# 输出到指定目录
-python verify.py design.html --output ./screenshots/
-
-# headless=false，打开真实浏览器给你看
-python verify.py design.html --show
-```
+验证是设计工作的最后一道必做步骤：结构化 snapshot、视觉截图、console/errors 和真实交互四项都要覆盖，不能把“能打开”当成“已验证”。

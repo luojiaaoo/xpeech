@@ -15,7 +15,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 支持内置工具和自定义 Python 工具
 - 支持通过 MCP Server 扩展 Agent 工具
 - 支持飞书消息桥接
-- 使用 `conf.toml` 管理普通配置，使用 `.env` 管理密钥
+- 使用 `conf.toml` 统一管理应用配置和密钥
 - YAML 格式存储会话历史，可读性更好
 - 自动历史消息压缩（三级压缩策略），避免超出上下文限制
 - 内置记忆系统，自动总结和保存关键信息
@@ -59,6 +59,7 @@ workspace_base_path = "data/workspace_base"
 sandbox_home_path = "data/sandbox-home"
 
 [llm]
+api_key = "your_api_key_here"
 api_base = "https://api.siliconflow.cn/v1"
 default_model = "openai/Pro/moonshotai/Kimi-K2.6"
 default_context_token = 256000
@@ -96,21 +97,30 @@ tool_timeout = 30
 
 [feishu]
 app_id = "cli_xxx"
+app_secret = "your_feishu_app_secret_here"
 idle_timeout = 3
 cache_path = "data/feishu_cache"
 ```
 
-密钥写在 `.env`：
+可以从模板创建本地配置：
 
-```env
-LLM__API_KEY=your_api_key_here
-FEISHU__APP_SECRET=your_feishu_app_secret_here
+```bash
+cp conf.toml.exmple conf.toml
 ```
 
-`.env.example` 可以作为模板复制：
+进程环境变量写在 `.env`，例如 PPT 导出脚本使用的远程 CDP 地址：
+
+```env
+CDP_URL=ws://browserless:3000
+```
+
+Docker Compose 通过 `env_file` 将 `.env` 注入容器进程。本地直接启动前需先导入：
 
 ```bash
 cp .env.example .env
+set -a
+source .env
+set +a
 ```
 
 ## 启动
@@ -148,7 +158,7 @@ uv run -m xpeech feishu
 
 - `feishu.app_id`：飞书应用 ID
 - `feishu.idle_timeout`：同一会话消息合并等待时间，单位秒
-- `FEISHU__APP_SECRET`：飞书应用密钥，建议放在 `.env`
+- `feishu.app_secret`：飞书应用密钥
 
 如需连接非默认 API 地址，可以传入 API 基地址：
 
@@ -164,13 +174,15 @@ Compose 会启动三个容器：
 - `backend`：Xpeech API、Agent 和工具执行服务
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
 
-先准备密钥：
+先准备配置和环境变量：
 
 ```bash
+cp conf.toml.exmple conf.toml
 cp .env.example .env
 ```
 
-填写 `.env` 中的 `LLM__API_KEY` 和 `FEISHU__APP_SECRET`，并确认
+填写 `conf.toml` 中的 `llm.api_key` 和 `feishu.app_secret`，并确认
+`.env` 中的 `CDP_URL` 与容器网络一致，再确认
 `conf.toml` 中的 `llm`、`feishu.app_id` 等普通配置正确，然后构建并启动：
 
 ```bash
@@ -187,10 +199,11 @@ docker compose logs -f browserless backend feishu
 后端默认暴露在 `http://localhost:7878`。如需修改宿主机端口，请修改
 `compose.yaml` 中 `backend.ports` 的宿主机端口。持久化数据统一映射到宿主机
 的 `./data/` 目录，其中包含 `session`、`workspace_base`、`sandbox-home` 和
-`feishu_cache`；`conf.toml` 以只读方式挂载，修改后重启服务即可生效：
+`feishu_cache`；`conf.toml` 以只读方式挂载，`.env`
+通过 `env_file` 注入进程，修改后重建容器即可生效：
 
 ```bash
-docker compose restart browserless backend feishu
+docker compose up -d --force-recreate browserless backend feishu
 ```
 
 ## 发送消息
