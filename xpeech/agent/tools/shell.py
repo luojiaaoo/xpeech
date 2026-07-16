@@ -72,12 +72,17 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
     """Stop and reap the shell process without managing its background children."""
     if process.returncode is not None:
         return
-
-    process.terminate()
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        return
     try:
         await asyncio.wait_for(process.wait(), timeout=3.0)
     except asyncio.TimeoutError:
-        process.kill()
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return
         await process.wait()
 
 
