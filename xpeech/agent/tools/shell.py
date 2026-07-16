@@ -31,12 +31,16 @@ DENY_PATTERNS = [
     r":\(\)\s*\{.*\};\s*:",  # fork bomb
 ]
 _WORKSPACE_BOUNDARY_NOTE = (
-    "\n\nNote: this is a hard policy boundary, not a transient failure. "
+"\n\nNote: this is a hard policy boundary, not a transient failure. "
     "Do NOT retry with shell tricks (symlinks, base64 piping, alternative "
-    "tools, working_dir overrides). If the user genuinely needs this "
-    "resource, tell them you cannot reach it under the current "
-    "restrict to workspace policy and ask how to proceed."
+    "tools). Do NOT use absolute paths (e.g., "
+    "/usr/bin, /bin, /usr/local/bin) to bypass restrictions — these "
+    "will also be intercepted. Always invoke commands directly by name "
+    "(e.g., 'curl' instead of '/usr/bin/curl'). "
+    "If the user genuinely needs this resource, tell them you cannot "
+    "reach it under the current restrict policy"
 )
+
 _BENIGN_DEVICE_PATHS: frozenset[str] = frozenset(
     {
         "/dev/null",
@@ -91,6 +95,7 @@ def _guard_command(command: str, workspace: str | Path) -> str:
     for pattern in DENY_PATTERNS:
         if re.search(pattern, lower):
             raise RuntimeError(f"Command blocked by deny pattern filter: {cmd}")
+
     # 判断是否使用了 python 直接运行
     if is_direct_python_pip_exec(cmd):
         raise RuntimeError(
@@ -101,7 +106,7 @@ def _guard_command(command: str, workspace: str | Path) -> str:
     # 判断是否包含 ..\
     if "..\\" in cmd or "../" in cmd:
         raise RuntimeError(
-            f"Command blocked by safety guard (path traversal detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE
+            f"Command blocked by safety guard (path traversal ../ detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE
         )
     ## 提取所有路径，判断是否在工作路径下
     for path in _extract_absolute_paths(cmd):
@@ -118,7 +123,7 @@ def _guard_command(command: str, workspace: str | Path) -> str:
                 continue
         except PermissionError:
             raise RuntimeError(
-                f"Command blocked by safety guard (path outside working dir): {path}" + _WORKSPACE_BOUNDARY_NOTE
+                f"Command blocked by safety guard (a path outside the workspace or built-in skills was detected.): {path}" + _WORKSPACE_BOUNDARY_NOTE
             ) from None
         except Exception:
             continue
@@ -141,9 +146,10 @@ def _inject_agent_browser_args(command: str, cdp_url: str, session_id: str | Non
     quoted_session_id = shlex.quote(session_id)
     args_suffix = f' --cdp {quoted_cdp_url} --session {quoted_session_id}'
     
-    # Inject args after each 'agent-browser' that is NOT followed by 'skills'
+    # Inject args after each 'agent-browser' that is NOT preceded by 'npm install'
+    # and NOT followed by 'skills'
     result = re.sub(
-        r'(agent-browser)(?!\s+skills\b)',
+        r'(?<!npm\s+(?:install|i)\s+(?:-g\s+)?)(agent-browser)(?!\s+skills\b)',
         r'\1' + args_suffix,
         command
     )
