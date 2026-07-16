@@ -305,7 +305,7 @@ Trophy Fire FIREWORKS REDPACKET FORTUNE LUCK BeamingFace Delighted
 GoGoGo ThanksFace SaluteFace HappyDragon
 """.split()
 
-FEISHU_CACHE_DIR = ensure_path(settings.feishu.cache_path.resolve())
+FEISHU_CACHE_DIR = ensure_path(settings.path.cache_path.resolve())
 
 
 class FeishuBridge:

@@ -3,6 +3,7 @@ session_path = "data/session"
 session_history_path = "data/session/history"
 workspace_base_path = "data/workspace_base"
 sandbox_home_path = "data/sandbox-home"
+cache_path = "data/cache"
 
 [llm]
 api_key = "xxxxxxxx"
@@ -43,4 +44,3 @@ browser_preview_path = "data/browser_preview"
 app_id = "cli_aa8fcbaccae41cba"
 app_secret = "xxxxxxx"
 idle_timeout = 5
-cache_path = "data/feishu_cache"

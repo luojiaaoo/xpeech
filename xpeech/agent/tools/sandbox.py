@@ -36,6 +36,7 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
     workspace = Path(workspace).expanduser().resolve()
     workspace_python_env = workspace / ".venv"
     shared_home = get_sandbox_home()
+    cache_path = settings.path.cache_path.resolve()
     builtin_skills = BUILTIN_SKILLS_DIR.resolve()
 
     args = ["bwrap", "--new-session", "--die-with-parent"]
@@ -77,8 +78,10 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
             *("--tmpfs", str(workspace.parent)),
             *("--dir", str(workspace)),
             *("--dir", str(shared_home)),
+            *("--dir", str(cache_path)),
             *("--bind", str(workspace), str(workspace)),
             *("--bind", str(shared_home), str(shared_home)),
+            *("--bind", str(cache_path), str(cache_path)),
             *("--ro-bind", str(builtin_skills), str(builtin_skills)),
             *("--chdir", str(workspace)),
             *("--", "bash", "-c", command),

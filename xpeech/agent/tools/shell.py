@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from ...utils.helper import ensure_path
 from ..server.context import get_session_id
 from . import sandbox
+from ...config import settings
 from .helper import safe_resolve_workspace_path, is_direct_python_pip_exec
 
 EXEC_TIMEOUT = 60 * 2
@@ -165,7 +166,7 @@ def _inject_command_context(command: str, **context: object) -> tuple[str, dict[
             return match.group(0) + args_suffix
 
         command = _AGENT_BROWSER_PATTERN.sub(inject, command)
-        env["AGENT_BROWSER_SOCKET_DIR"] = "/tmp"
+        env["AGENT_BROWSER_SOCKET_DIR"] = str(settings.path.cache_path.resolve())
     return command, env
 
 

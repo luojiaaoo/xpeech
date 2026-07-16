@@ -56,5 +56,3 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    volumes:
-      - ./docker_data/feishu_cache:/app/data/feishu_cache

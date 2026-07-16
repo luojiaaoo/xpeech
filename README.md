@@ -57,6 +57,7 @@ session_path = "data/session"
 session_history_path = "data/session/history"
 workspace_base_path = "data/workspace_base"
 sandbox_home_path = "data/sandbox-home"
+cache_path = "data/cache"
 
 [llm]
 api_key = "your_api_key_here"
@@ -97,7 +98,6 @@ tool_timeout = 30
 app_id = "cli_xxx"
 app_secret = "your_feishu_app_secret_here"
 idle_timeout = 3
-cache_path = "data/feishu_cache"
 ```
 
 可以从模板创建本地配置：
@@ -187,8 +187,8 @@ docker compose logs -f browserless backend feishu
 
 后端默认暴露在 `http://localhost:7878`。如需修改宿主机端口，请修改
 `compose.yaml` 中 `backend.ports` 的宿主机端口。持久化数据统一映射到宿主机
-的 `./data/` 目录，其中包含 `session`、`workspace_base`、`sandbox-home` 和
-`feishu_cache`；`conf.toml` 以只读方式挂载，`.env`
+的 `./docker_data/` 目录，其中包含 `session`、`workspace_base`、`sandbox-home` 和
+`browser_preview`；缓存目录不做宿主机磁盘映射。`conf.toml` 以只读方式挂载，`.env`
 通过 `env_file` 注入进程，修改后重建容器即可生效：
 
 ```bash

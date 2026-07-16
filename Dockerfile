@@ -19,7 +19,7 @@ RUN sed -i \
     apt-get update && \
     apt-get -o Acquire::https::Verify-Peer=false update && \
     apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates && \
-    apt-get install -y --no-install-recommends bubblewrap curl ffmpeg git zip && \
+    apt-get install -y --no-install-recommends bubblewrap cron curl ffmpeg git zip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -50,4 +50,9 @@ COPY data/sandbox-home/.npmrc /app/sandbox-home-defaults/.npmrc
 COPY data/sandbox-home/.pip/pip.conf /app/sandbox-home-defaults/.pip/pip.conf
 COPY data/sandbox-home/.config/uv/uv.toml /app/sandbox-home-defaults/.config/uv/uv.toml
 
-ENTRYPOINT ["/bin/sh", "-c", "cp -a /app/sandbox-home-defaults/. /app/data/sandbox-home/ && exec uv run -m xpeech \"$@\"", "--"]
+RUN crontab -l > /tmp/crontab && \
+    printf '\n0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} +\n' >> /tmp/crontab && \
+    crontab /tmp/crontab && \
+    rm /tmp/crontab
+
+ENTRYPOINT ["/bin/sh", "-c", "/etc/init.d/cron start && cp -a /app/sandbox-home-defaults/. /app/data/sandbox-home/ && exec uv run -m xpeech \"$@\"", "--"]
