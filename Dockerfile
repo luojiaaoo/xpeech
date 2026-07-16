@@ -5,6 +5,7 @@ ENV PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
     UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple \
     UV_PYTHON=3.12 \
+    UV_HTTP_TIMEOUT=60 \
     UV_PYTHON_INSTALL_MIRROR=https://registry.npmmirror.com/-/binary/python-build-standalone/ \
     UV_DOWNLOAD_URL=https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease/ \
     UV_PYTHON_INSTALL_DIR=/opt/uv/python \

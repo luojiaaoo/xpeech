@@ -17,7 +17,7 @@ from ..server.context import get_session_id
 from . import sandbox
 from .helper import safe_resolve_workspace_path, is_direct_python_pip_exec
 
-EXEC_TIMEOUT = 60
+EXEC_TIMEOUT = 60 * 2
 _MAX_OUTPUT = 10000
 DENY_PATTERNS = [
     r"\brm\s+-[rf]{1,2}\b",  # rm -r, rm -rf, rm -fr
