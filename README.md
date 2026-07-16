@@ -76,8 +76,6 @@ parallel = 4
 max_iterations = 40
 
 [tool]
-cdp_url = "ws://browserless:3000"
-
 [tool.browser_preview]
 browser_preview_base_url = "http://backend:7878/browser_preview"
 browser_preview_path = "data/browser_preview"

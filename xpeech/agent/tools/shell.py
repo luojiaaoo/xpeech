@@ -141,9 +141,9 @@ def _inject_command_context(command: str, **context: object) -> tuple[str, dict[
     env: dict[str, str] = {}
 
     if _AGENT_BROWSER_PATTERN.search(command):
-        cdp_url = context.get("cdp_url")
-        if not isinstance(cdp_url, str) or not cdp_url.strip():
-            raise RuntimeError("agent-browser requires tool.cdp_url to be configured")
+        cdp_url = os.environ.get("CDP_URL", "").strip()
+        if not cdp_url:
+            raise RuntimeError("agent-browser requires the CDP_URL environment variable")
         session_id = context.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise RuntimeError("agent-browser requires a session ID in the current request context")
@@ -224,7 +224,7 @@ async def _ensure_workspace_uv_venv(workspace: Path) -> None:
         raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{result}")
 
 
-def build_shell_tools(workspace: str | Path, cdp_url: str):
+def build_shell_tools(workspace: str | Path):
     if platform.system() != "Linux":
         raise RuntimeError("Shell tool requires Linux with bubblewrap; Windows and other platforms are not supported.")
     missing = [name for name in ("bwrap", "bash", "uv") if shutil.which(name) is None]
@@ -238,7 +238,6 @@ def build_shell_tools(workspace: str | Path, cdp_url: str):
         command = _guard_command(args.command, workspace)
         command, env = _inject_command_context(
             command,
-            cdp_url=cdp_url,
             session_id=get_session_id(),
         )
         ensure_path(sandbox.get_sandbox_home())

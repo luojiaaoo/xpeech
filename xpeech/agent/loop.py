@@ -88,7 +88,6 @@ class AgentLoop:
         # shell执行
         shell = build_shell_tools(
             workspace=self.workspace,
-            cdp_url=settings.tool.cdp_url,
         )
         self.provider.register_tool()(shell)
 

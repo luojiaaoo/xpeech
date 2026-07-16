@@ -72,7 +72,6 @@ class BrowserPreviewConfig(BaseModel):
 class ToolConfig(BaseModel):
     """Tool safety configuration settings."""
 
-    cdp_url: str = ""
     browser_preview: BrowserPreviewConfig = Field(default_factory=BrowserPreviewConfig)
     mcp_servers: dict[str, "MCPServerSettings"] = Field(default_factory=dict, validation_alias="mcpServers")
 
