@@ -131,6 +131,7 @@ def _guard_command(command: str, workspace: str | Path) -> str:
     return cmd
 
 _AGENT_BROWSER_PATTERN = re.compile(r"(?<![\w./-])agent-browser(?=\s|$)")
+_NPM_INSTALL_PATTERN = re.compile(r"(?:^|&&|\|\||[;|\n])\s*npm\s+(?:install|i)\b[^;&|\n]*$")
 
 def _inject_agent_browser_args(command: str, cdp_url: str, session_id: str | None) -> str:
     """Append the managed CDP and session arguments to agent-browser calls."""
@@ -146,13 +147,14 @@ def _inject_agent_browser_args(command: str, cdp_url: str, session_id: str | Non
     quoted_session_id = shlex.quote(session_id)
     args_suffix = f' --cdp {quoted_cdp_url} --session {quoted_session_id}'
     
-    # Inject args after each 'agent-browser' that is NOT preceded by 'npm install'
-    # and NOT followed by 'skills'
-    result = re.sub(
-        r'(?<!npm\s+(?:install|i)\s+(?:-g\s+)?)(agent-browser)(?!\s+skills\b)',
-        r'\1' + args_suffix,
-        command
-    )
+    def inject(match: re.Match[str]) -> str:
+        if _NPM_INSTALL_PATTERN.search(command[:match.start()]):
+            return match.group(0)
+        if re.match(r"\s+skills\b", command[match.end():]):
+            return match.group(0)
+        return match.group(0) + args_suffix
+
+    result = _AGENT_BROWSER_PATTERN.sub(inject, command)
     
     return result
 
