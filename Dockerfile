@@ -50,9 +50,6 @@ COPY data/sandbox-home/.npmrc /app/sandbox-home-defaults/.npmrc
 COPY data/sandbox-home/.pip/pip.conf /app/sandbox-home-defaults/.pip/pip.conf
 COPY data/sandbox-home/.config/uv/uv.toml /app/sandbox-home-defaults/.config/uv/uv.toml
 
-RUN crontab -l > /tmp/crontab && \
-    printf '\n0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} +\n' >> /tmp/crontab && \
-    crontab /tmp/crontab && \
-    rm /tmp/crontab
+RUN printf '0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} +\n' | crontab -
 
 ENTRYPOINT ["/bin/sh", "-c", "/etc/init.d/cron start && cp -a /app/sandbox-home-defaults/. /app/data/sandbox-home/ && exec uv run -m xpeech \"$@\"", "--"]
