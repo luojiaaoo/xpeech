@@ -1,4 +1,3 @@
-from contextlib import suppress
 from pathlib import Path
 from textwrap import dedent
 
@@ -8,6 +7,8 @@ import platform
 import re
 import shlex
 import shutil
+import subprocess
+import tempfile
 
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -67,17 +68,17 @@ def _is_benign_device_path(path: str) -> bool:
     return path.startswith("/dev/fd/")
 
 
-async def _kill_process(process: asyncio.subprocess.Process) -> None:
-    """Kill a subprocess and reap it to prevent zombies."""
-    process.kill()
+async def _stop_process(process: asyncio.subprocess.Process) -> None:
+    """Stop and reap the shell process without managing its background children."""
+    if process.returncode is not None:
+        return
+
+    process.terminate()
     try:
-        with suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(process.wait(), timeout=5.0)
-    finally:
-        try:
-            os.waitpid(process.pid, os.WNOHANG)
-        except (ProcessLookupError, ChildProcessError) as e:
-            logger.debug("Process already reaped or not found: {}", e)
+        await asyncio.wait_for(process.wait(), timeout=3.0)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
 
 
 def _extract_absolute_paths(command: str) -> list[str]:
@@ -170,27 +171,28 @@ async def _run_wrapped_command(
 ) -> tuple[bytes, bytes, int | None]:
     wrapped_command = sandbox.wrap_command(command, workspace, env=env)
     logger.info(f"Running wrapped command: {wrapped_command}")
-    process = await asyncio.create_subprocess_exec(
-        "bash",
-        "-l",
-        "-c",
-        wrapped_command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=workspace,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=EXEC_TIMEOUT,
+    with tempfile.TemporaryFile(mode="w+b") as stdout_f, tempfile.TemporaryFile(mode="w+b") as stderr_f:
+        process = await asyncio.create_subprocess_exec(
+            "bash",
+            "-l",
+            "-c",
+            wrapped_command,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_f,
+            stderr=stderr_f,
+            cwd=workspace,
         )
-    except asyncio.TimeoutError:
-        await _kill_process(process)
-        raise TimeoutError(f"Command timed out after {EXEC_TIMEOUT} seconds")
-    except asyncio.CancelledError:
-        await _kill_process(process)
-        raise
-    return stdout, stderr, process.returncode
+        try:
+            await asyncio.wait_for(process.wait(), timeout=EXEC_TIMEOUT)
+        except asyncio.TimeoutError:
+            await _stop_process(process)
+        except asyncio.CancelledError:
+            await _stop_process(process)
+            raise
+
+        stdout_f.seek(0)
+        stderr_f.seek(0)
+        return stdout_f.read(), stderr_f.read(), process.returncode
 
 
 def _format_command_output(stdout: bytes, stderr: bytes, returncode: int | None) -> str:
