@@ -31,7 +31,7 @@ def _sandbox_path(shared_home: Path) -> str:
     return ":".join(entry for entry in path_entries if entry)
 
 
-def wrap_command(command: str, workspace: str | Path) -> list[str]:
+def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None = None) -> list[str]:
     """Wrap a command in a bubblewrap sandbox."""
     workspace = Path(workspace).expanduser().resolve()
     workspace_python_env = workspace / ".venv"
@@ -40,14 +40,16 @@ def wrap_command(command: str, workspace: str | Path) -> list[str]:
 
     args = ["bwrap", "--new-session", "--die-with-parent"]
 
-    for key, value in {
+    sandbox_env: dict[str, str | Path] = {
         "HOME": shared_home,  # 共享的用户主目录
         "PATH": _sandbox_path(shared_home),  # 共享的 PATH 环境变量
         "PIP_REQUIRE_VIRTUALENV": "true",  # 确保 pip 在虚拟环境中运行
         "UV_PROJECT_ENVIRONMENT": workspace_python_env,  # uv虚拟py环境路径
         "UV_CACHE_DIR": shared_home / ".cache" / "uv",  # 包缓存目录
         "NPM_CONFIG_PREFIX": shared_home / ".npm-global",  # npm 全局安装目录
-    }.items():
+    }
+    sandbox_env.update(env or {})
+    for key, value in sandbox_env.items():
         _add_setenv(args, key, value)
 
     args.extend(["--ro-bind", "/usr", "/usr"])

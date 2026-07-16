@@ -31,7 +31,7 @@ DENY_PATTERNS = [
     r":\(\)\s*\{.*\};\s*:",  # fork bomb
 ]
 _WORKSPACE_BOUNDARY_NOTE = (
-"\n\nNote: this is a hard policy boundary, not a transient failure. "
+    "\n\nNote: this is a hard policy boundary, not a transient failure. "
     "Do NOT retry with shell tricks (symlinks, base64 piping, alternative "
     "tools). Do NOT use absolute paths (e.g., "
     "/usr/bin, /bin, /usr/local/bin) to bypass restrictions — these "
@@ -108,7 +108,7 @@ def _guard_command(command: str, workspace: str | Path) -> str:
         raise RuntimeError(
             f"Command blocked by safety guard (path traversal ../ detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE
         )
-    ## 提取所有路径，判断是否在工作路径下
+    # 提取所有路径，判断是否在工作路径下
     for path in _extract_absolute_paths(cmd):
         try:
             expanded = os.path.expandvars(path.strip())
@@ -123,45 +123,52 @@ def _guard_command(command: str, workspace: str | Path) -> str:
                 continue
         except PermissionError:
             raise RuntimeError(
-                f"Command blocked by safety guard (a path outside the workspace or built-in skills was detected.): {path}" + _WORKSPACE_BOUNDARY_NOTE
+                f"Command blocked by safety guard (a path outside the workspace or built-in skills was detected.): {path}"
+                + _WORKSPACE_BOUNDARY_NOTE
             ) from None
         except Exception:
             continue
 
     return cmd
 
+
 _AGENT_BROWSER_PATTERN = re.compile(r"(?<![\w./-])agent-browser(?=\s|$)")
 _NPM_INSTALL_PATTERN = re.compile(r"(?:^|&&|\|\||[;|\n])\s*npm\s+(?:install|i)\b[^;&|\n]*$")
 
-def _inject_agent_browser_args(command: str, cdp_url: str, session_id: str | None) -> str:
-    """Append the managed CDP and session arguments to agent-browser calls."""
-    if not _AGENT_BROWSER_PATTERN.search(command):
-        return command
-    
-    if not cdp_url.strip():
-        raise RuntimeError("agent-browser requires tool.cdp_url to be configured")
-    if not session_id:
-        raise RuntimeError("agent-browser requires a session ID in the current request context")
 
-    quoted_cdp_url = shlex.quote(cdp_url)
-    quoted_session_id = shlex.quote(session_id)
-    args_suffix = f' --cdp {quoted_cdp_url} --session {quoted_session_id}'
-    
-    def inject(match: re.Match[str]) -> str:
-        if _NPM_INSTALL_PATTERN.search(command[:match.start()]):
-            return match.group(0)
-        if re.match(r"\s+skills\b", command[match.end():]):
-            return match.group(0)
-        return match.group(0) + args_suffix
+def _inject_command_context(command: str, **context: object) -> tuple[str, dict[str, str]]:
+    """Inject managed command arguments and sandbox environment variables."""
+    env: dict[str, str] = {}
 
-    result = _AGENT_BROWSER_PATTERN.sub(inject, command)
-    
-    return result
+    if _AGENT_BROWSER_PATTERN.search(command):
+        cdp_url = context.get("cdp_url")
+        if not isinstance(cdp_url, str) or not cdp_url.strip():
+            raise RuntimeError("agent-browser requires tool.cdp_url to be configured")
+        session_id = context.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise RuntimeError("agent-browser requires a session ID in the current request context")
+        quoted_cdp_url = shlex.quote(cdp_url)
+        quoted_session_id = shlex.quote(session_id)
+        args_suffix = f" --cdp {quoted_cdp_url} --session {quoted_session_id}"
+
+        def inject(match: re.Match[str]) -> str:
+            if _NPM_INSTALL_PATTERN.search(command[: match.start()]):
+                return match.group(0)
+            if re.match(r"\s+skills\b", command[match.end() :]):
+                return match.group(0)
+            return match.group(0) + args_suffix
+
+        command = _AGENT_BROWSER_PATTERN.sub(inject, command)
+        env["AGENT_BROWSER_SOCKET_DIR"] = "/tmp"
+    return command, env
 
 
-
-async def _run_wrapped_command(command: str, workspace: Path) -> tuple[bytes, bytes, int | None]:
-    wrapped_command = sandbox.wrap_command(command, workspace)
+async def _run_wrapped_command(
+    command: str,
+    workspace: Path,
+    env: dict[str, str] | None = None,
+) -> tuple[bytes, bytes, int | None]:
+    wrapped_command = sandbox.wrap_command(command, workspace, env=env)
     logger.info(f"Running wrapped command: {wrapped_command}")
     process = await asyncio.create_subprocess_exec(
         "bash",
@@ -229,10 +236,14 @@ def build_shell_tools(workspace: str | Path, cdp_url: str):
 
     async def shell(args: ShellArgs) -> str:
         command = _guard_command(args.command, workspace)
-        command = _inject_agent_browser_args(command, cdp_url, get_session_id())
+        command, env = _inject_command_context(
+            command,
+            cdp_url=cdp_url,
+            session_id=get_session_id(),
+        )
         ensure_path(sandbox.get_sandbox_home())
         await _ensure_workspace_uv_venv(workspace)
-        stdout, stderr, returncode = await _run_wrapped_command(command, workspace)
+        stdout, stderr, returncode = await _run_wrapped_command(command, workspace, env=env)
         return _format_command_output(stdout, stderr, returncode)
 
     shell.__doc__ = dedent(
