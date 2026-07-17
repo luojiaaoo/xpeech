@@ -44,8 +44,8 @@ services:
       - apparmor=unconfined
       - seccomp=unconfined
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:7878/docs"]
-      interval: 10s
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:7878/health"]
+      interval: 20s
       timeout: 5s
       retries: 6
       start_period: 60s
