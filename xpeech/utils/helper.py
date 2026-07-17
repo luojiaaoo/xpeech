@@ -167,7 +167,7 @@ async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> t
 
 def compress_image_bytes_to_jpg(
     input_bytes: bytes,
-    target_kb: int = 500,
+    target_kb: int = 300,
     min_quality: int = 10,
     max_quality: int = 95,
 ) -> bytes:
