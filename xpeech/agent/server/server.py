@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from ...utils.logging import configure_logging
 from ..tools.mcp_client import close_persistent_mcp_registrations
@@ -18,5 +20,11 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("assets" / "favicon.ico")
+
 
 app.add_middleware(ContextASGIMiddleware)

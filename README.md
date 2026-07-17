@@ -1,4 +1,8 @@
-# Xpeech
+<p align="center">
+  <img src="xpeech-logo.png" alt="Xpeech Logo" width="220">
+</p>
+
+<h1 align="center">Xpeech</h1>
 
 ![Xpeech screenshot](screenshot/image.png)
 
