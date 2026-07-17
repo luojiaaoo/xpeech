@@ -38,6 +38,7 @@ services:
       - ./docker_data/workspace_base:/app/data/workspace_base
       - ./docker_data/sandbox-home:/app/data/sandbox-home
       - ./docker_data/browser_preview:/app/data/browser_preview
+      - ./assets:/app/assets
     cap_add:
       - SYS_ADMIN
     security_opt:
