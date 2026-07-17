@@ -24,7 +24,7 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    return FileResponse("assets" / "favicon.ico")
+    return FileResponse(Path("assets") / "favicon.ico")
 
 
 @app.get("/health", include_in_schema=False)
