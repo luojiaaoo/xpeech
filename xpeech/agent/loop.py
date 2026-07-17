@@ -167,6 +167,58 @@ class AgentLoop:
 
     # ----------------- agent loop tool call -----------------
 
+    async def execute_tool_call(
+        self,
+        tool_calls: list[ToolCallRequest],
+        mapping_tool_call_funcs: dict[str, Any],
+        loop_count: int | None = None,
+    ) -> list[tuple[Any, bool]]:
+        """Resolve and execute model-requested tool calls concurrently."""
+
+        async def execute_one(tool_call: ToolCallRequest) -> tuple[Any, bool]:
+            start_time = time.time()
+            logger.info(
+                "Tool call started loop_count={} tool_name={} args={}",
+                loop_count,
+                tool_call.name,
+                tool_call.arguments,
+            )
+            try:
+                tool_call_func = mapping_tool_call_funcs.get(tool_call.name)
+                if tool_call_func is None:
+                    raise ValueError(f"Tool is not registered for this request: {tool_call.name}")
+                model_cls = get_tool_model_cls(tool_call_func)
+                if model_cls is None:
+                    result = await tool_call_func()
+                else:
+                    result = await tool_call_func(model_cls(**tool_call.arguments))
+            except Exception as exc:
+                duration = time.time() - start_time
+                logger.warning(
+                    "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
+                    loop_count,
+                    tool_call.name,
+                    tool_call.arguments,
+                    format_exception2llm(exc),
+                    duration,
+                )
+                return format_exception2llm(exc), False
+            else:
+                duration = time.time() - start_time
+                logger.info(
+                    "Tool call completed loop_count={} tool_name={} duration={:.2f}s",
+                    loop_count,
+                    tool_call.name,
+                    duration,
+                )
+                return result, True
+
+        tasks: list[asyncio.Task[tuple[Any, bool]]] = []
+        async with asyncio.TaskGroup() as task_group:
+            for tool_call in tool_calls:
+                tasks.append(task_group.create_task(execute_one(tool_call)))
+        return [task.result() for task in tasks]
+
     async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str):
         logger.info(
             "Processing tool calls loop_count={} count={}",
@@ -203,42 +255,13 @@ class AgentLoop:
         # 执行工具调用
         tool_call_result = []
         with_metas = []
-        for tool_call in response.tool_calls:
+        execution_results = await self.execute_tool_call(
+            response.tool_calls,
+            response.mapping_tool_call_funcs,
+            loop_count=loop_count,
+        )
+        for tool_call, (result, _) in zip(response.tool_calls, execution_results, strict=True):
             tool_call: ToolCallRequest = tool_call
-            model_cls = get_tool_model_cls(tool_call_func := response.mapping_tool_call_funcs[tool_call.name])
-
-            # 如果没有参数，则直接调用工具函数
-            try:
-                start_time = time.time()
-                logger.info(
-                    "Tool call started loop_count={} tool_name={} args={}",
-                    loop_count,
-                    tool_call.name,
-                    tool_call.arguments,
-                )
-                if model_cls is None:
-                    result = await tool_call_func()
-                else:
-                    result = await tool_call_func(model_cls(**tool_call.arguments))
-            except Exception as e:
-                duration = (time.time() - start_time)
-                logger.warning(
-                    "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
-                    loop_count,
-                    tool_call.name,
-                    tool_call.arguments,
-                    format_exception2llm(e),
-                    duration,
-                )
-                result = format_exception2llm(e)
-            else:
-                duration = (time.time() - start_time)
-                logger.info(
-                    "Tool call completed loop_count={} tool_name={} duration={:.2f}s",
-                    loop_count,
-                    tool_call.name,
-                    duration,
-                )
 
             def append_tool_result_messages_yaml(tool_call: ToolCallRequest, result_: Any):
                 # 创建工具调用结果消息
@@ -581,10 +604,21 @@ class AgentLoop:
             remove_default_tools=True,
         )
         if response.has_tool_calls:
-            for tool_call in response.tool_calls:
-                tool_call: ToolCallRequest = tool_call
-                model_cls = get_tool_model_cls(tool_call_func := response.mapping_tool_call_funcs[tool_call.name])
-                await tool_call_func(model_cls(**tool_call.arguments))
+            execution_results = await self.execute_tool_call(
+                response.tool_calls,
+                response.mapping_tool_call_funcs,
+            )
+            saved = any(
+                tool_call.name == "save_memory" and succeeded
+                for tool_call, (_, succeeded) in zip(
+                    response.tool_calls,
+                    execution_results,
+                    strict=True,
+                )
+            )
+            if not saved:
+                logger.info("记忆整理过程中未成功调用 save_memory 工具")
+                return "记忆整理失败：模型未成功调用 save_memory 工具"
             logger.info("Consolidating memory finished")
             return "已记忆本次会话关键内容"
         else:

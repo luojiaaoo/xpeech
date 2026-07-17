@@ -9,12 +9,13 @@ import json
 from pathlib import Path
 from uuid import UUID
 from ...config.settings import settings
-from ...utils.helper import save_to_workspace, ensure_path, is_relative_path
+from ...utils.helper import save_to_workspace, ensure_path
 from ...utils.session import create_workspace_templates
 from ...provider.litellm_provider import LiteLLMProvider
 from ..loop import AgentLoop, QuestionEvent
 from ...provider.schema import ProviderChatKwargs
 from fastapi.sse import EventSourceResponse
+from ..tools.helper import safe_resolve_workspace_path
 
 
 def session_metadata(
@@ -54,14 +55,10 @@ async def download_session_file(
     path: Annotated[str, Query(description="File path returned by a send_file event.")],
 ):
     workspace = (settings.path.workspace_base_path / session_id).resolve()
-    parsed = Path(path).expanduser()
-    if not parsed.is_absolute():
-        file_path = (workspace / parsed).resolve()
-    else:
-        file_path = parsed.resolve()
-
-    if not is_relative_path(file_path, workspace):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File is outside the session workspace")
+    try:
+        file_path = safe_resolve_workspace_path(path, workspace, True)
+    except PermissionError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File is outside the workspace or Built-in skills directory")
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
