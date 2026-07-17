@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from ...utils.helper import ensure_path
 from ..server.context import get_session_id
 from . import sandbox
-from ...config import settings
+from ...config.settings import settings
 from .helper import safe_resolve_workspace_path, is_direct_python_pip_exec
 
 EXEC_TIMEOUT = 60 * 2
