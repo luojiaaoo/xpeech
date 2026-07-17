@@ -32,4 +32,9 @@ async def health():
     return PlainTextResponse("ok")
 
 
+@app.get("/.well-known/appspecific/com.chrome.devtools.json", include_in_schema=False)
+async def well_known():
+    return PlainTextResponse("", status_code=204)
+
+
 app.add_middleware(ContextASGIMiddleware)
