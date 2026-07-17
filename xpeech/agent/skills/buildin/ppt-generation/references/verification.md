@@ -140,3 +140,14 @@ python scripts/verify.py <preview-url> \
 - HTML 修改后已重新调用 `create_browser_preview` 并用新 URL 复验。
 
 验证是设计工作的最后一道必做步骤：结构化 snapshot、视觉截图、console/errors 和真实交互四项都要覆盖，不能把“能打开”当成“已验证”。
+
+# 播放器首屏布局（每次必测）
+
+聚合页不能只检查“页面能打开”。至少在一个宽屏视口和一个窄屏视口中检查 stage 的 `getBoundingClientRect()`：
+
+- `left >= -1`、`top >= -1`
+- `right <= innerWidth + 1`、`bottom <= innerHeight + 1`
+- `abs((left + right) / 2 - innerWidth / 2) <= 1`
+- `abs((top + bottom) / 2 - innerHeight / 2) <= 1`
+
+然后让预览容器改变一次尺寸并重复断言。若首屏只出现半张、stage 左上角落在视口中心附近，说明缩放初始化没有执行；不得把它当成内容页问题继续调 CSS。

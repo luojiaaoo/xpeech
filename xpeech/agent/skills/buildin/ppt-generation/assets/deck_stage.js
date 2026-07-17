@@ -88,7 +88,8 @@
             position: absolute;
             top: 50%;
             left: 50%;
-            transform-origin: top left;
+            transform: translate(-50%, -50%) scale(var(--deck-scale, 0.1));
+            transform-origin: center center;
             will-change: transform;
             background: #fff;
           }
@@ -225,6 +226,15 @@
 
     _setupEventListeners() {
       window.addEventListener('resize', () => this._updateScale());
+      window.addEventListener('pageshow', () => this._updateScale());
+      window.addEventListener('load', () => this._updateScale(), { once: true });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', () => this._updateScale());
+      }
+      if ('ResizeObserver' in window) {
+        this._resizeObserver = new ResizeObserver(() => this._updateScale());
+        this._resizeObserver.observe(document.documentElement);
+      }
 
       document.addEventListener('keydown', (e) => {
         if (e.target.matches('input, textarea, [contenteditable]')) return;
@@ -311,14 +321,10 @@
       const viewportW = window.innerWidth;
       const viewportH = window.innerHeight;
       const scale = Math.min(viewportW / this._width, viewportH / this._height);
-      const scaledW = this._width * scale;
-      const scaledH = this._height * scale;
-      const offsetX = (viewportW - scaledW) / 2;
-      const offsetY = (viewportH - scaledH) / 2;
-
-      stage.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
-      stage.style.top = '0';
-      stage.style.left = '0';
+      if (!Number.isFinite(scale) || scale <= 0) return;
+      // Keep centering in CSS and update only the scale. This remains stable
+      // when an embedded preview changes size without a window resize event.
+      stage.style.setProperty('--deck-scale', String(scale));
     }
 
     _updateDisplay() {
@@ -332,6 +338,7 @@
       }
 
       this._updateScale();
+      requestAnimationFrame(() => requestAnimationFrame(() => this._updateScale()));
 
       try {
         window.postMessage({

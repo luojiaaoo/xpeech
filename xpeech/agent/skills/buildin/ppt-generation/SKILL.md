@@ -221,6 +221,12 @@ node scripts/export_deck_pptx.mjs \
 
 **固定尺寸内容**（幻灯片）必须自己实现JS缩放（auto-scale + letterboxing）。
 
+**播放器首屏硬约束（禁止自由发挥）**：
+- 多文件 deck 必须原样复用 `assets/deck_index.html` 的居中/缩放实现；单文件 deck 必须原样复用 `assets/deck_stage.js`。只编辑 manifest、画布尺寸和视觉样式，禁止自行重写 `fit()` / `_updateScale()`。
+- 居中必须由 CSS 的 `top: 50%; left: 50%; translate(-50%, -50%)` 持续保证；JS 只更新 `--deck-scale`，禁止在 JS 中来回切换 `top/left` 与像素位移。
+- 首屏缩放必须在同步初始化后再做双 `requestAnimationFrame` 复测，并监听 `ResizeObserver`；不能只依赖 `window.resize`。
+- 验证时至少检查两个非 16:9 视口；断言 stage 四边均在视口内，且 stage 中心与视口中心误差不超过 1px。
+
 **验证工具**：`create_browser_preview` + `agent-browser`。使用 `snapshot`、`screenshot`、`console` 和 `errors` 检查页面；批量验证才使用连接远程 CDP 的 `scripts/verify.py`。
 
 ---
