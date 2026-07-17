@@ -52,4 +52,4 @@ COPY data/sandbox-home/.config/uv/uv.toml /app/sandbox-home-defaults/.config/uv/
 
 RUN printf '0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} +\n' | crontab -
 
-ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /app/data/sandbox-home /app/data/cache && cp -a /app/sandbox-home-defaults/. /app/data/sandbox-home/ && /etc/init.d/cron start && exec uv run -m xpeech \"$@\"", "--"]
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /app/data/sandbox-home /app/data/cache && \\cp -a /app/sandbox-home-defaults/. /app/data/sandbox-home/ && /etc/init.d/cron start && exec uv run -m xpeech \"$@\"", "--"]
