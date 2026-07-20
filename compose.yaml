@@ -1,5 +1,3 @@
-name: xpeech
-
 configs:
   xpeech_conf:
     file: ./conf.toml
