@@ -14,6 +14,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from ...utils.helper import ensure_path
+from ...exceptions import PathProtectionError
 from ..server.context import get_session_id
 from . import sandbox
 from ...config.settings import settings
@@ -112,7 +113,7 @@ def _guard_command(command: str, workspace: str | Path) -> str:
 
     # 判断是否包含 ..\
     if "..\\" in cmd or "../" in cmd:
-        raise RuntimeError(
+        raise PathProtectionError(
             f"Command blocked by safety guard (path traversal ../ detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE
         )
     # 提取所有路径，判断是否在工作路径下
@@ -128,8 +129,8 @@ def _guard_command(command: str, workspace: str | Path) -> str:
             )
             if _is_benign_device_path(str(resolved)):
                 continue
-        except PermissionError:
-            raise RuntimeError(
+        except PathProtectionError:
+            raise PathProtectionError(
                 f"Command blocked by safety guard (a path outside the workspace or built-in skills was detected.): {path}"
                 + _WORKSPACE_BOUNDARY_NOTE
             ) from None

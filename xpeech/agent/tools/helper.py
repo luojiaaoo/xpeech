@@ -4,6 +4,7 @@ from typing import Callable, get_type_hints, Type
 from pydantic import BaseModel, create_model
 from ...utils.helper import dynamic_import, is_relative_path
 from ...config.settings import settings
+from ...exceptions import PathProtectionError
 from ..skills.skill import BUILTIN_SKILLS_DIR
 from . import sandbox
 from openai import pydantic_function_tool
@@ -44,7 +45,8 @@ def safe_resolve_workspace_path(
     ):
         return resolved_path
 
-    raise PermissionError(f"Path escapes workspace: {user_path}")
+    allowed_roots = "workspace and built-in skills directory" if include_builtin_skills_path else "workspace"
+    raise PathProtectionError(f"Path escapes {allowed_roots}")
 
 
 def get_tool_model_cls(func: Callable[Type[BaseModel] | None, str | dict]) -> type[BaseModel]:

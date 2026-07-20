@@ -11,6 +11,7 @@ from .tools.file_message import build_file_message_tools
 from .tools.mcp_client import get_persistent_mcp_registration_from_config
 from itertools import count
 from ..config.settings import settings
+from ..exceptions import PathProtectionError
 from typing import Any
 import json
 from .server.schema import InboundMessage
@@ -192,6 +193,18 @@ class AgentLoop:
                     result = await tool_call_func()
                 else:
                     result = await tool_call_func(model_cls(**tool_call.arguments))
+            except PathProtectionError as exc:
+                duration = time.time() - start_time
+                error_message = format_exception2llm(exc)
+                logger.warning(
+                    "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
+                    loop_count,
+                    tool_call.name,
+                    tool_call.arguments,
+                    error_message,
+                    duration,
+                )
+                return error_message, False
             except Exception as exc:
                 duration = time.time() - start_time
                 logger.exception(

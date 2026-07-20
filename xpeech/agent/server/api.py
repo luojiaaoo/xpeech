@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import UUID
 from ...config.settings import settings
 from ...utils.helper import save_to_workspace, ensure_path
+from ...exceptions import PathProtectionError
 from ...utils.session import create_workspace_templates
 from ...provider.litellm_provider import LiteLLMProvider
 from ..loop import AgentLoop, QuestionEvent
@@ -57,7 +58,7 @@ async def download_session_file(
     workspace = (settings.path.workspace_base_path / session_id).resolve()
     try:
         file_path = safe_resolve_workspace_path(path, workspace, True)
-    except PermissionError:
+    except PathProtectionError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File is outside the workspace or Built-in skills directory")
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
