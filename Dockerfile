@@ -45,10 +45,6 @@ RUN uv sync --frozen --no-dev
 RUN npm config set registry https://registry.npmmirror.com/ && \
     npm i -g agent-browser
 
-COPY data/sandbox-home/.npmrc /app/sandbox-home-defaults/.npmrc
-COPY data/sandbox-home/.pip/pip.conf /app/sandbox-home-defaults/.pip/pip.conf
-COPY data/sandbox-home/.config/uv/uv.toml /app/sandbox-home-defaults/.config/uv/uv.toml
-
 RUN printf '0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} + > /dev/null 2>&1\n' | crontab -
 
 ENTRYPOINT ["/bin/sh", "-c", "/etc/init.d/cron start && exec uv run -m xpeech \"$@\"", "--"]
