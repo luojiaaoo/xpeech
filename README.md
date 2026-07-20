@@ -62,6 +62,11 @@ session_history_path = "data/session/history"
 workspace_base_path = "data/workspace_base"
 sandbox_home_path = "data/sandbox-home"
 cache_path = "data/cache"
+log_path = "data/logs"
+
+[logging]
+retention_days = 7
+max_file_size_mb = 10
 
 [llm]
 api_key = "your_api_key_here"

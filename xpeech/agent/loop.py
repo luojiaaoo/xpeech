@@ -299,7 +299,7 @@ class AgentLoop:
             elif tool_call.name == "ask_user_question" and is_ok_question(result):
                 # 等待用户输入
                 logger.info(f"Waiting for user input, timeout={USER_TIMEOUT} seconds")
-                # 加协程锁，等待用户输入20秒
+                # 加协程锁，等待用户输入300秒
                 self.SESSION_QUESTION_EVENT[session_id] = QuestionEvent(event=asyncio.Event())
                 yield {"event": "question", "context": extract_question(result)}
                 try:

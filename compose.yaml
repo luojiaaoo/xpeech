@@ -45,6 +45,8 @@ services:
       - ./data/sandbox-home/.npmrc:/app/data/sandbox-home/.npmrc
       # 网页预览目录
       - ./docker_data/browser_preview:/app/data/browser_preview
+      # 运行日志目录
+      - ./docker_data/logs:/app/data/logs
       # 头像等
       - ./assets:/app/assets
     cap_add:

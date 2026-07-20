@@ -44,6 +44,7 @@ class PathConfig(BaseModel):
     workspace_base_path: Path
     sandbox_home_path: Path
     cache_path: Path
+    log_path: Path
 
 
 class BrowserPreviewConfig(BaseModel):
@@ -105,7 +106,7 @@ class LLMConfig(BaseModel):
     default_top_p: float
     tools_python_package: str
     default_tools: list[str]
-    system_name: str = "assistant"
+    system_name: str = ""
     custom_system_prompt: str = ""
     default_reasoning_effort: ReasoningEffort | None = None
     support_image: bool = False
@@ -140,11 +141,19 @@ class FeishuConfig(BaseModel):
     idle_timeout: int = 5
 
 
+class LoggingConfig(BaseModel):
+    """Runtime log file settings."""
+
+    retention_days: int = Field(default=7, ge=1)
+    max_file_size_mb: int = Field(default=10, ge=1)
+
+
 class Settings(BaseSettings):
     path: PathConfig
     tool: ToolConfig = ToolConfig()
     llm: LLMConfig
     feishu: FeishuConfig
+    logging: LoggingConfig = LoggingConfig()
 
     @classmethod
     def settings_customise_sources(
@@ -176,4 +185,5 @@ ensure_path(settings.path.session_path)
 ensure_path(settings.path.session_history_path)
 ensure_path(settings.path.workspace_base_path)
 ensure_path(settings.path.cache_path)
+ensure_path(settings.path.log_path)
 ensure_path(settings.tool.browser_preview.browser_preview_path)

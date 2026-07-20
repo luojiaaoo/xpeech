@@ -1,6 +1,9 @@
 import sys
+
 from loguru import logger
+
 from ..agent.server.context import get_request_id, get_session_id
+from ..config.settings import settings
 
 _FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
@@ -25,4 +28,12 @@ def configure_logging():
     logger.add(
         sys.stderr,
         format=_FORMAT,
+    )
+    logger.add(
+        settings.path.log_path / "xpeech.log",
+        format=_FORMAT,
+        encoding="utf-8",
+        rotation=f"{settings.logging.max_file_size_mb} MB",
+        retention=f"{settings.logging.retention_days} days",
+        enqueue=True,
     )

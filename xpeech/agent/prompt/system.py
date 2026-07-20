@@ -28,7 +28,8 @@ def _get_identity(workspace: Path) -> str:
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
     custom_system_prompt = settings.llm.custom_system_prompt.strip()
-    if settings.llm.system_name.strip():
+    system_name = settings.llm.system_name.strip()
+    if system_name:
         system_name = (
             dedent(
                 """
@@ -41,7 +42,7 @@ def _get_identity(workspace: Path) -> str:
             """
             )
             .lstrip()
-            .format(system_name=settings.llm.system_name.strip())
+            .format(system_name=system_name)
         )
     else:
         system_name = dedent(
