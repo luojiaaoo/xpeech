@@ -157,18 +157,16 @@ class LiteLLMProvider:
         parsed_tool_jsons, parsed_mapping_tool_call_funcs = await self._parse_tools(tools)
 
         # 确定工具列表
-        if remove_default_tools and remove_all_tools:
-            raise ValueError("remove_default_tools and remove_all_tools cannot be True at the same time.")
-        if remove_default_tools:
-            tool_jsons = parsed_tool_jsons
-            mapping_tool_call_funcs = parsed_mapping_tool_call_funcs
-        else:
-            tool_jsons = self.default_tool_jsons + parsed_tool_jsons
-            mapping_tool_call_funcs = self.default_mapping_tool_call_funcs | parsed_mapping_tool_call_funcs
-
         if remove_all_tools:
             tool_jsons = []
             mapping_tool_call_funcs = {}
+        else:
+            if remove_default_tools:
+                tool_jsons = parsed_tool_jsons
+                mapping_tool_call_funcs = parsed_mapping_tool_call_funcs
+            else:
+                tool_jsons = self.default_tool_jsons + parsed_tool_jsons
+                mapping_tool_call_funcs = self.default_mapping_tool_call_funcs | parsed_mapping_tool_call_funcs
 
         completion_kwargs = {
             "model": model,
