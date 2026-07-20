@@ -194,19 +194,18 @@ class AgentLoop:
                     result = await tool_call_func(model_cls(**tool_call.arguments))
             except Exception as exc:
                 duration = time.time() - start_time
-                logger.warning(
-                    "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
+                logger.exception(
+                    "Tool call failed loop_count={} tool_name={} args={} duration={:.2f}s",
                     loop_count,
                     tool_call.name,
                     tool_call.arguments,
-                    format_exception2llm(exc),
                     duration,
                 )
                 return format_exception2llm(exc), False
             else:
                 duration = time.time() - start_time
                 logger.info(
-                    "Tool call completed loop_count={} tool_name={} duration={:.2f}s",
+                    "Tool call successfully loop_count={} tool_name={} duration={:.2f}s",
                     loop_count,
                     tool_call.name,
                     duration,
