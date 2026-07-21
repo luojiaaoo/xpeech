@@ -20,17 +20,15 @@ services:
     image: ghcr.io/browserless/chromium:v2.55.0
     init: true
     restart: unless-stopped
-    ports:
-      - "3000:3000"
 
   backend:
     <<: *xpeech-service
-    command: ["api", "--host", "0.0.0.0", "--port", "7878"]
+    command: ["api", "--host", "0.0.0.0", "--port", "${BACKEND_PORT:-7878}"]
     depends_on:
       browserless:
         condition: service_started
     ports:
-      - "7878:7878"
+      - "${BACKEND_PORT:-7878}:${BACKEND_PORT:-7878}"
     volumes:
       # 会话上下文
       - ./docker_data/session:/app/data/session
@@ -53,7 +51,7 @@ services:
       - apparmor=unconfined
       - seccomp=unconfined
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:7878/health"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:${BACKEND_PORT:-7878}/health"]
       interval: 20s
       timeout: 5s
       retries: 6
@@ -61,7 +59,7 @@ services:
 
   feishu:
     <<: *xpeech-service
-    command: ["feishu", "--chat-url", "http://backend:7878"]
+    command: ["feishu", "--chat-url", "http://backend:${BACKEND_PORT:-7878}"]
     depends_on:
       backend:
         condition: service_healthy

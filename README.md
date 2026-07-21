@@ -168,7 +168,7 @@ uv run -m xpeech feishu --chat-url http://127.0.0.1:7878
 
 Compose 会启动三个容器：
 
-- `browserless`：Browserless Chromium CDP 服务，宿主机通过 `http://localhost:3000/docs` 查看文档
+- `browserless`：Browserless Chromium CDP 服务，仅限 Docker 内网访问
 - `backend`：Xpeech API、Agent 和工具执行服务
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
 
@@ -187,6 +187,12 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+后端默认暴露在 `http://localhost:7878`。可通过环境变量 `BACKEND_PORT` 修改端口：
+
+```bash
+BACKEND_PORT=8080 docker compose up -d --build
+```
+
 查看运行状态和日志：
 
 ```bash
@@ -194,8 +200,7 @@ docker compose ps
 docker compose logs -f browserless backend feishu
 ```
 
-后端默认暴露在 `http://localhost:7878`。如需修改宿主机端口，请修改
-`compose.yaml` 中 `backend.ports` 的宿主机端口。持久化数据统一映射到宿主机
+持久化数据统一映射到宿主机
 的 `./docker_data/` 目录，其中包含 `session`、`workspace_base`、`sandbox-home` 和
 `browser_preview`；缓存目录不做宿主机磁盘映射。`conf.toml` 以只读方式挂载，`.env`
 通过 `env_file` 注入进程，修改后重建容器即可生效：
@@ -287,8 +292,7 @@ def echo(message: Message):
 ## 浏览器自动化
 
 浏览器自动化通过内置 `agent-browser` 技能完成。Compose 内的 backend 通过
-`ws://browserless:3000` 连接 Browserless；宿主机上对应的地址是 `ws://localhost:3000`，
-文档页为 `http://localhost:3000/docs`。Agent 使用 Shell 执行
+`ws://browserless:3000` 连接 Browserless；browserless 不对外暴露端口，仅限容器内网访问。Agent 使用 Shell 执行
 `agent-browser` 命令时，执行层会自动追加当前请求的 `--session` 和配置的
 `--cdp` 参数。
 
