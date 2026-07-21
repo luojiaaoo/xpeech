@@ -17,7 +17,7 @@ x-xpeech-service: &xpeech-service
 
 services:
   browserless:
-    image: ghcr.io/browserless/chromium
+    image: ghcr.io/browserless/chromium:v2.55.0
     init: true
     restart: unless-stopped
     ports:
