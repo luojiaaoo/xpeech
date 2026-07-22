@@ -83,33 +83,18 @@ def validate_question_json(data: str | dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"问题表单 JSON 校验失败: {str(e)}") from e
 
 
-def is_ok_question(question: str) -> bool:
-    return question.startswith("OK ")
-
-
-def extract_question(question: str) -> str:
-    if is_ok_question(question):
-        return question.split(" ", 1)[-1]
-    raise ValueError("Invalid question format")
-
-
 class QuestionArgs(StrictBaseModel):
     question: str = Field(description="通用问题表单 JSON 对象")
     title: str | None = Field(default=None, description="表单标题。若 question.title 已提供，可省略。")
 
-    @property
-    def json(self):
-        try:
-            question = validate_question_json(self.question)
-            if self.title and question.get("title") == QuestionForm.model_fields["title"].default:
-                question["title"] = self.title
-            question["subtitle"] = f"您有{USER_TIMEOUT}秒时间填写表单"
-            json_str = json.dumps(question, ensure_ascii=False, indent=4)
-            return f"OK {json_str}"
-        except ValueError as error:
-            return f"NOTOK 校验失败：{error}"
+    def validate_and_format(self) -> str:
+        question = validate_question_json(self.question)
+        if self.title and question.get("title") == QuestionForm.model_fields["title"].default:
+            question["title"] = self.title
+        question["subtitle"] = f"您有{USER_TIMEOUT}秒时间填写表单"
+        return json.dumps(question, ensure_ascii=False, indent=4)
 
 
-def ask_user_question(args: QuestionArgs):
+def ask_user_question(args: QuestionArgs) -> str:
     """通过通用问题表单 JSON 向用户追问关键信息。"""
-    return args.json
+    return args.validate_and_format()

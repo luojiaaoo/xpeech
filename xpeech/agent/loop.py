@@ -6,7 +6,7 @@ from .tools.shell import build_shell_tools
 from .tools.web import web_fetch, web_search
 from .tools.office import office_read
 from .tools.browser_preview import build_browser_preview_tool
-from .tools.question import ask_user_question, is_ok_question, extract_question, USER_TIMEOUT
+from .tools.question import ask_user_question, USER_TIMEOUT
 from .tools.file_message import build_file_message_tools
 from .tools.mcp_client import get_persistent_mcp_registration_from_config
 from itertools import count
@@ -272,7 +272,7 @@ class AgentLoop:
             response.mapping_tool_call_funcs,
             loop_count=loop_count,
         )
-        for tool_call, (result, _) in zip(response.tool_calls, execution_results, strict=True):
+        for tool_call, (result, success) in zip(response.tool_calls, execution_results, strict=True):
             tool_call: ToolCallRequest = tool_call
 
             def append_tool_result_messages_yaml(tool_call: ToolCallRequest, result_: Any):
@@ -303,17 +303,16 @@ class AgentLoop:
                         }
                     )
 
-            if tool_call.name == "send_file":
+            if tool_call.name == "send_file" and success:
                 # 发送文件
                 logger.info("Sending file {}", result)
                 yield {"event": "send_file", "context": result}
                 append_tool_result_messages_yaml(tool_call, result)
-            elif tool_call.name == "ask_user_question" and is_ok_question(result):
+            elif tool_call.name == "ask_user_question" and success:
                 # 等待用户输入
-                logger.info(f"Waiting for user input, timeout={USER_TIMEOUT} seconds")
-                # 加协程锁，等待用户输入300秒
+                logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
                 self.SESSION_QUESTION_EVENT[session_id] = QuestionEvent(event=asyncio.Event())
-                yield {"event": "question", "context": extract_question(result)}
+                yield {"event": "question", "context": result}
                 try:
                     await asyncio.wait_for(self.SESSION_QUESTION_EVENT[session_id].event.wait(), timeout=USER_TIMEOUT)
                     logger.info("User answered the question {}", self.SESSION_QUESTION_EVENT[session_id].answer)
