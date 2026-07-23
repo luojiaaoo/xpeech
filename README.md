@@ -69,8 +69,8 @@ retention_days = 7
 max_file_size_mb = 10
 
 [docs]
-username = "stanleyjobson"
-password = "swordfish"
+username = "admin"
+password = "luojiaaoo"
 
 [llm]
 api_key = "your_api_key_here"
