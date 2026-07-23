@@ -68,6 +68,10 @@ log_path = "data/logs"
 retention_days = 7
 max_file_size_mb = 10
 
+[docs]
+username = "stanleyjobson"
+password = "swordfish"
+
 [llm]
 api_key = "your_api_key_here"
 api_base = "https://api.siliconflow.cn/v1"
@@ -145,6 +149,10 @@ http://localhost:7878
 
 - Swagger UI: `http://localhost:7878/docs`
 - ReDoc: `http://localhost:7878/redoc`
+
+Swagger UI、ReDoc 及 `/openapi.json` 使用 HTTP Basic Auth。账号密码由
+`conf.toml` 中的 `docs.username` 和 `docs.password` 配置；省略 `[docs]`
+配置时，默认账号为 `admin`，默认密码为 `luojiaaoo`。
 
 启动飞书桥接：
 
