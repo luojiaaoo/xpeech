@@ -7,6 +7,19 @@ import aiofiles
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent / "buildin"
 
+
+def iter_builtin_skill_dirs() -> list[Path]:
+    """Return valid built-in skill directories in a stable order."""
+    return sorted(
+        (
+            skill_dir
+            for skill_dir in BUILTIN_SKILLS_DIR.iterdir()
+            if skill_dir.is_dir() and (skill_dir / "SKILL.md").is_file()
+        ),
+        key=lambda skill_dir: skill_dir.name,
+    )
+
+
 class SkillsLoader:
     """
     Loader for agent skills.
@@ -32,21 +45,21 @@ class SkillsLoader:
         """
         skills = []
 
-        # Workspace skills (highest priority)
+        # Built-in skills (highest priority)
+        for skill_dir in iter_builtin_skill_dirs():
+            # Built-in skills are mounted into the workspace skills directory
+            # by the shell sandbox. Expose that unified path to the agent.
+            skill_file = self.workspace_skills / skill_dir.name / "SKILL.md"
+            skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
+
+        # Workspace skills cannot override a built-in skill with the same name.
         if self.workspace_skills.exists():
+            builtin_names = {skill["name"] for skill in skills}
             for skill_dir in self.workspace_skills.iterdir():
-                if skill_dir.is_dir():
+                if skill_dir.is_dir() and skill_dir.name not in builtin_names:
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists():
                         skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "workspace"})
-
-        # Built-in skills
-        if self.builtin_skills and self.builtin_skills.exists():
-            for skill_dir in self.builtin_skills.iterdir():
-                if skill_dir.is_dir():
-                    skill_file = skill_dir / "SKILL.md"
-                    if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
 
         return skills
 
@@ -60,18 +73,18 @@ class SkillsLoader:
         Returns:
             Skill content or None if not found.
         """
-        # Check workspace first
-        workspace_skill = self.workspace_skills / name / "SKILL.md"
-        if workspace_skill.exists():
-            async with aiofiles.open(workspace_skill, mode="r", encoding="utf-8") as f:
-                return await f.read()
-
-        # Check built-in
+        # Check built-in first
         if self.builtin_skills:
             builtin_skill = self.builtin_skills / name / "SKILL.md"
             if builtin_skill.exists():
                 async with aiofiles.open(builtin_skill, mode="r", encoding="utf-8") as f:
                     return await f.read()
+
+        # Fall back to workspace skills
+        workspace_skill = self.workspace_skills / name / "SKILL.md"
+        if workspace_skill.exists():
+            async with aiofiles.open(workspace_skill, mode="r", encoding="utf-8") as f:
+                return await f.read()
 
         return None
 

@@ -296,8 +296,8 @@ def echo(message: Message):
 `agent-browser` 命令时，执行层会自动追加当前请求的 `--session` 和配置的
 `--cdp` 参数。
 
-模型在首次进行浏览器操作前会加载
-`xpeech/agent/skills/buildin/agent-browser/SKILL.md`，并按其约束复用注入的
+模型在首次进行浏览器操作前会从工作区的
+`skills/agent-browser/SKILL.md` 加载内置技能；该目录由沙盒以只读方式映射，并按其约束复用注入的
 CDP 连接和 session。Xpeech 不提供本地浏览器回退；CDP 连接失败时会直接报错。
 
 ## MCP 工具

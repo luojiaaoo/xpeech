@@ -122,16 +122,12 @@ def _guard_command(command: str, workspace: str | Path) -> str:
             expanded = os.path.expandvars(path.strip())
             if _is_benign_device_path(expanded):
                 continue
-            resolved = safe_resolve_workspace_path(
-                expanded,
-                workspace,
-                include_builtin_skills_path=True,
-            )
+            resolved = safe_resolve_workspace_path(expanded, workspace)
             if _is_benign_device_path(str(resolved)):
                 continue
         except PathProtectionError:
             raise PathProtectionError(
-                f"Command blocked by safety guard (a path outside the workspace or built-in skills was detected.): {path}"
+                f"Command blocked by safety guard (a path outside the workspace was detected.): {path}"
                 + _WORKSPACE_BOUNDARY_NOTE
             ) from None
         except Exception:

@@ -6,7 +6,7 @@ from pathlib import Path
 from ...utils.helper import ensure_path
 
 from ...config.settings import settings
-from ..skills.skill import BUILTIN_SKILLS_DIR
+from ..skills.skill import iter_builtin_skill_dirs
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -31,13 +31,13 @@ def _sandbox_path(shared_home: Path) -> str:
     return ":".join(entry for entry in path_entries if entry)
 
 
-def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None = None) -> list[str]:
+def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None = None) -> str:
     """Wrap a command in a bubblewrap sandbox."""
     workspace = Path(workspace).expanduser().resolve()
     workspace_python_env = workspace / ".venv"
     shared_home = get_sandbox_home()
     cache_path = settings.path.cache_path.resolve()
-    builtin_skills = BUILTIN_SKILLS_DIR.resolve()
+    workspace_skills = workspace / "skills"
 
     args = ["bwrap", "--new-session", "--die-with-parent"]
 
@@ -82,9 +82,15 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
             *("--bind", str(workspace), str(workspace)),
             *("--bind", str(shared_home), str(shared_home)),
             *("--bind", str(cache_path), str(cache_path)),
-            *("--ro-bind", str(builtin_skills), str(builtin_skills)),
-            *("--chdir", str(workspace)),
-            *("--", "bash", "-c", command),
         ]
     )
+
+    # Present built-in and custom skills through one workspace/skills tree.
+    # Built-in directories are mounted read-only over same-named workspace
+    # skills so the built-in version always has priority inside the sandbox.
+    for builtin_skill in iter_builtin_skill_dirs():
+        target = workspace_skills / builtin_skill.name
+        args.extend(["--ro-bind", str(builtin_skill.resolve()), str(target)])
+
+    args.extend(["--chdir", str(workspace), "--", "bash", "-c", command])
     return shlex.join(args)

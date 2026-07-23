@@ -16,17 +16,13 @@ def build_file_message_tools(workspace: str | Path):
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
 
-    def safe_resolve(user_path: str, include_buildin_skills_path: bool = False) -> Path:
-        return safe_resolve_workspace_path(
-            user_path,
-            base,
-            include_builtin_skills_path=include_buildin_skills_path,
-        )
+    def safe_resolve(user_path: str) -> Path:
+        return safe_resolve_workspace_path(user_path, base)
 
     def send_file(args: FilePathArgs) -> str:
         """Send a file to the user."""
         path = args.source
-        file_path = safe_resolve(path, include_buildin_skills_path=True)
+        file_path = safe_resolve(path)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():

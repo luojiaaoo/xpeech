@@ -4,7 +4,6 @@ from ...agent.memory import MemoryStore
 from ...agent.skills.skill import SkillsLoader
 from ...config.settings import settings
 from pathlib import Path
-from ...agent.skills.skill import BUILTIN_SKILLS_DIR
 
 
 BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
@@ -79,8 +78,7 @@ def _get_identity(workspace: Path) -> str:
                 Your workspace is at: {workspace}
                 - Long-term memory: {workspace}/memory/MEMORY.md (write important facts here)
                 - History log: {workspace}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
-                - Built-in skills: {builtin_skills_dir}/{{skill-name}}/SKILL.md
-                - Custom skills: {workspace}/skills/{{skill-name}}/SKILL.md
+                - Skills: {workspace}/skills/{{skill-name}}/SKILL.md
 
                 ## Tools / Skills Guidelines
                 - State intent before tool calls, but NEVER predict or claim results before receiving them.
@@ -89,7 +87,7 @@ def _get_identity(workspace: Path) -> str:
                 - If a tool call fails, analyze the error before retrying with a different approach.
                 - For browser automation, load and follow the built-in `agent-browser` skill.
                 - When an HTML file must be previewed for a user or opened by `agent-browser`, you MUST use the `create_browser_preview` tool. NEVER start or manage your own HTTP server for HTML preview, including as a fallback.
-                - Except for installing required dependencies, you MUST never modify, delete, overwrite, or otherwise change any built-in SKILLS (Path: {builtin_skills_dir}), regardless of user requests.
+                - Skills marked as source='builtin' are read-only. Any attempt to modify, delete, or overwrite them will not take effect.
 
             """
         )
@@ -98,7 +96,6 @@ def _get_identity(workspace: Path) -> str:
             system_name=system_name,
             now=now,
             workspace=workspace.as_posix(),
-            builtin_skills_dir=BUILTIN_SKILLS_DIR.as_posix(),
         )
     )
     if custom_system_prompt:

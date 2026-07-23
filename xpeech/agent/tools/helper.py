@@ -25,7 +25,6 @@ def _expand_sandbox_home_path(user_path: str | Path) -> Path:
 def safe_resolve_workspace_path(
     user_path: str | Path,
     workspace: str | Path,
-    include_builtin_skills_path: bool = False,
 ) -> Path:
     """Resolve a user path and ensure it stays inside the allowed tool roots."""
     workspace = Path(workspace).expanduser().resolve()
@@ -36,17 +35,27 @@ def safe_resolve_workspace_path(
     else:
         resolved_path = (workspace / path).resolve()
 
-    if is_relative_path(path_target=resolved_path, base=workspace):
+    # 先确保用户输入没有逃离工作区。
+    if not is_relative_path(path_target=resolved_path, base=workspace):
+        raise PathProtectionError("Path escapes workspace")
+
+    # 非 skills 目录下的路径无需进行内置技能转换。
+    workspace_skills = workspace / "skills"
+    try:
+        skill_relative = resolved_path.relative_to(workspace_skills)
+    except ValueError:
         return resolved_path
 
-    if include_builtin_skills_path and is_relative_path(
-        path_target=resolved_path,
-        base=BUILTIN_SKILLS_DIR,
-    ):
+    # 访问 workspace/skills
+    if not skill_relative.parts:
         return resolved_path
 
-    allowed_roots = "workspace and built-in skills directory" if include_builtin_skills_path else "workspace"
-    raise PathProtectionError(f"Path escapes {allowed_roots}")
+    # 内置技能路径转换
+    builtin_skill = (BUILTIN_SKILLS_DIR / skill_relative.parts[0]).resolve()
+    if (builtin_skill / "SKILL.md").is_file():
+        return builtin_skill.joinpath(*skill_relative.parts[1:]).resolve()
+    else:
+        return resolved_path
 
 
 def get_tool_model_cls(func: Callable[Type[BaseModel] | None, str | dict]) -> type[BaseModel]:
