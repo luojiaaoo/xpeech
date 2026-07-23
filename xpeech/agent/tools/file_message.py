@@ -17,7 +17,11 @@ def build_file_message_tools(workspace: str | Path):
         raise ValueError(f"Invalid workspace: {workspace}")
 
     def safe_resolve(user_path: str) -> Path:
-        return safe_resolve_workspace_path(user_path, base)
+        return safe_resolve_workspace_path(
+            user_path,
+            base,
+            protect_builtin_skills=False,
+        )
 
     def send_file(args: FilePathArgs) -> str:
         """Send a file to the user."""

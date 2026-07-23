@@ -38,7 +38,11 @@ def build_browser_preview_tool(
             The preview URL. For a directory, the directory's URL prefix;
             for a single HTML file, the complete file URL.
         """
-        source = safe_resolve_workspace_path(args.path, base)
+        source = safe_resolve_workspace_path(
+            args.path,
+            base,
+            protect_builtin_skills=False,
+        )
         if not source.exists():
             raise FileNotFoundError(f"Path not found: {args.path}")
 

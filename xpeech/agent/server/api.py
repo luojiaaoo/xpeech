@@ -57,7 +57,11 @@ async def download_session_file(
 ):
     workspace = (settings.path.workspace_base_path / session_id).resolve()
     try:
-        file_path = safe_resolve_workspace_path(path, workspace)
+        file_path = safe_resolve_workspace_path(
+            path,
+            workspace,
+            protect_builtin_skills=False,
+        )
     except PathProtectionError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File is outside the workspace")
     if not file_path.exists() or not file_path.is_file():

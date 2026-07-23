@@ -120,9 +120,11 @@ def _guard_command(command: str, workspace: str | Path) -> str:
     for path in _extract_absolute_paths(cmd):
         try:
             expanded = os.path.expandvars(path.strip())
-            if _is_benign_device_path(expanded):
-                continue
-            resolved = safe_resolve_workspace_path(expanded, workspace)
+            resolved = safe_resolve_workspace_path(
+                expanded,
+                workspace,
+                protect_builtin_skills=False,
+            )
             if _is_benign_device_path(str(resolved)):
                 continue
         except PathProtectionError:

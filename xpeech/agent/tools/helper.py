@@ -25,8 +25,9 @@ def _expand_sandbox_home_path(user_path: str | Path) -> Path:
 def safe_resolve_workspace_path(
     user_path: str | Path,
     workspace: str | Path,
+    protect_builtin_skills: bool = True,
 ) -> Path:
-    """Resolve a user path and ensure it stays inside the allowed tool roots."""
+    """Resolve a workspace path and optionally reject access to built-in skills."""
     workspace = Path(workspace).expanduser().resolve()
     path = _expand_sandbox_home_path(user_path)
 
@@ -53,6 +54,8 @@ def safe_resolve_workspace_path(
     # 内置技能路径转换
     builtin_skill = (BUILTIN_SKILLS_DIR / skill_relative.parts[0]).resolve()
     if (builtin_skill / "SKILL.md").is_file():
+        if protect_builtin_skills:
+            raise PathProtectionError("Built-in skills are read-only")
         return builtin_skill.joinpath(*skill_relative.parts[1:]).resolve()
     else:
         return resolved_path

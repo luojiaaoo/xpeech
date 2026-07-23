@@ -78,15 +78,19 @@ def build_file_tools(workspace: str | Path):
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
 
-    def safe_resolve(user_path: str) -> Path:
-        return safe_resolve_workspace_path(user_path, base)
+    def safe_resolve(user_path: str, protect_builtin_skills: bool = True) -> Path:
+        return safe_resolve_workspace_path(
+            user_path,
+            base,
+            protect_builtin_skills=protect_builtin_skills,
+        )
 
     async def read_image(args: ReadImageArgs) -> str | list[dict[str, Any]]:
         """
         Read an image from a local file path.
         """
         path = args.path
-        file_path = safe_resolve(path)
+        file_path = safe_resolve(path, protect_builtin_skills=False)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
@@ -124,7 +128,7 @@ def build_file_tools(workspace: str | Path):
         The returned label includes duration, width, and height.
         """
         path = args.path
-        file_path = safe_resolve(path)
+        file_path = safe_resolve(path, protect_builtin_skills=False)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
@@ -193,7 +197,7 @@ def build_file_tools(workspace: str | Path):
         offset = args.offset
         limit = args.limit
 
-        file_path = safe_resolve(path)
+        file_path = safe_resolve(path, protect_builtin_skills=False)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
@@ -365,7 +369,7 @@ def build_file_tools(workspace: str | Path):
         path = args.path
         max_entries = args.max_entries
         recursive = args.recursive
-        dir_path = safe_resolve(path)
+        dir_path = safe_resolve(path, protect_builtin_skills=False)
         if not dir_path.exists():
             raise FileNotFoundError(f"Directory not found: {path}")
         if not dir_path.is_dir():
