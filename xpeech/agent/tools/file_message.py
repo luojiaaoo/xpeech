@@ -31,6 +31,6 @@ def build_file_message_tools(workspace: str | Path):
             raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
             raise ValueError(f"Not a file: {path}")
-        return str(file_path)
+        return args.source
 
     return send_file
