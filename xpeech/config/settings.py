@@ -148,12 +148,20 @@ class LoggingConfig(BaseModel):
     max_file_size_mb: int = Field(default=10, ge=1)
 
 
+class DocsConfig(BaseModel):
+    """API documentation authentication settings."""
+
+    username: str = Field(default="admin", min_length=1)
+    password: str = Field(default="luojiaaoo", min_length=1, repr=False)
+
+
 class Settings(BaseSettings):
     path: PathConfig
     tool: ToolConfig = ToolConfig()
     llm: LLMConfig
     feishu: FeishuConfig
     logging: LoggingConfig = LoggingConfig()
+    docs: DocsConfig = Field(default_factory=DocsConfig)
 
     @classmethod
     def settings_customise_sources(

@@ -10,6 +10,10 @@ log_path = "data/logs"
 retention_days = 7
 max_file_size_mb = 10
 
+[docs]
+username = "admin"
+password = "luojiaoo"
+
 [llm]
 api_key = "xxxxxxxx"
 api_base = "http://llm-proxy.1393074507312057.cn-wulanchabu.pai-eas.aliyuncs.com/v1"
