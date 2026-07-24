@@ -1,46 +1,36 @@
-from ..provider.litellm_provider import LiteLLMProvider
-from ..provider.schema import ProviderChatKwargs
-from pathlib import Path
-from .tools.filesystem import build_file_tools
-from .tools.shell import build_shell_tools
-from .tools.web import web_fetch, web_search
-from .tools.office import office_read
-from .tools.browser_preview import build_browser_preview_tool
-from .tools.question import ask_user_question, USER_TIMEOUT
-from .tools.file_message import build_file_message_tools
-from .tools.mcp_client import get_persistent_mcp_registration_from_config
-from itertools import count
-from ..config.settings import settings
-from ..exceptions import PathProtectionError
-from typing import Any
+import asyncio
 import json
-from .server.schema import InboundMessage
-import aiofiles
-from .prompt.system import build_system_prompt
+import time
+from dataclasses import dataclass
+from itertools import count
+from pathlib import Path
+from typing import Any, ClassVar
+
+from loguru import logger
+
+from ..agent.server.schema import InputText
+from ..config.settings import settings
+from ..provider.litellm_provider import LiteLLMProvider
+from ..provider.schema import LLMResponse, ProviderChatKwargs, ToolCallRequest
+from ..utils.helper import token_counter
+from .compression import ConversationCompressor
+from .helper import strip_internal_message_metadata
+from .history import get_history_repository
+from .memory import MemoryConsolidator, MemoryStore
 from .prompt.helper import (
     build_user_prompt,
-    prepend_system_messages,
-    remove_system_messages,
     set_system_prompt,
-    split_system_messages,
 )
-from ..agent.tools.helper import get_tool_model_cls
-from ..provider.schema import ToolCallRequest
-import yaml
-from ..utils.helper import LiteralDumper, format_exception2llm, token_counter
-from ..provider.schema import LLMResponse
-from datetime import timedelta
-from loguru import logger
-from ..agent.server.schema import InputText
-from .memory import MemoryStore
-from .prompt.compress import SUMMARY_PROMPT
-import asyncio
-from dataclasses import dataclass
-import time
+from .prompt.system import build_system_prompt
+from .server.schema import InboundMessage
+from .tool_executor import ToolExecutor
+from .tools.question import USER_TIMEOUT
 
 
 @dataclass
 class QuestionEvent:
+    """保存等待用户回答时使用的事件和答案。"""
+
     event: asyncio.Event
     answer: str = "User timeout answering the question"
 
@@ -48,8 +38,8 @@ class QuestionEvent:
 class AgentLoop:
     """Agent循环处理逻辑。"""
 
-    INTERATION_STOP_PROMPT = "You have reached the maximum number of iterations and MUST stop calling tools."
-    SESSION_QUESTION_EVENT: dict[str, QuestionEvent] = {}
+    ITERATION_STOP_PROMPT = "You have reached the maximum number of iterations and MUST stop calling tools."
+    SESSION_QUESTION_EVENT: ClassVar[dict[str, QuestionEvent]] = {}
 
     def __init__(
         self,
@@ -57,9 +47,10 @@ class AgentLoop:
         workspace: Path,
         tools: list[str],
         summary_tokens: int = 8192,
+        max_iterations: int = 40,
         provider_chat_kwargs: ProviderChatKwargs | None = None,
-        max_iterations: int | None = None,
     ):
+        """初始化模型提供方、会话组件和循环配置。"""
         self.provider = provider
         self.workspace = workspace
         self.tools = tools
@@ -67,171 +58,23 @@ class AgentLoop:
         self.provider_chat_kwargs = {} if provider_chat_kwargs is None else provider_chat_kwargs.to_dict()
         self.max_iterations = max_iterations
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
-
-    # ----------------- 默认工具 -----------------
-
-    async def register_default_tools(self):
-        """注册默认工具。"""
-
-        # 文件读写
-        read_image, read_video, read_file, write_file, edit_file, list_dir = build_file_tools(
-            workspace=self.workspace,
+        self.history = get_history_repository(settings.path.session_history_path)
+        self.tool_executor = ToolExecutor()
+        self.compressor = ConversationCompressor(
+            chat=self.chat,
+            summary_tokens=self.summary_tokens,
+            max_accept_tokens=self.max_accept_token,
+            target_tokens=int(self.provider.default_context_token * 0.4),
         )
-        if self.provider.support_image:
-            self.provider.register_tool()(read_image)
-        if self.provider.support_video:
-            self.provider.register_tool()(read_video)
-        self.provider.register_tool()(read_file)
-        self.provider.register_tool()(write_file)
-        self.provider.register_tool()(edit_file)
-        self.provider.register_tool()(list_dir)
-
-        # shell执行
-        shell = build_shell_tools(
-            workspace=self.workspace,
+        self.memory_consolidator = MemoryConsolidator(
+            store=MemoryStore(workspace=self.workspace),
+            chat=self.chat,
+            execute_tools=self.tool_executor.execute,
+            summary_tokens=self.summary_tokens,
         )
-        self.provider.register_tool()(shell)
-
-        # web fetch
-        self.provider.register_tool()(web_fetch)
-        self.provider.register_tool()(web_search)
-
-        # browser preview for workspace paths
-        browser_preview = settings.tool.browser_preview
-        create_browser_preview = build_browser_preview_tool(
-            workspace=self.workspace,
-            browser_preview_path=browser_preview.browser_preview_path,
-            browser_preview_base_url=browser_preview.browser_preview_base_url,
-        )
-        self.provider.register_tool()(create_browser_preview)
-
-        # office document reader
-        self.provider.register_tool()(office_read)
-
-        # outbound send file messages
-        send_file = build_file_message_tools(
-            workspace=self.workspace,
-        )
-        self.provider.register_tool()(send_file)
-
-        # question
-        self.provider.register_tool()(ask_user_question)
-
-        # MCP servers from config
-        for mcp_server_name, mcp_server in settings.tool.mcp_servers.items():
-            registration = await get_persistent_mcp_registration_from_config(
-                mcp_server_name,
-                mcp_server,
-                workspace=self.workspace,
-            )
-            await self.provider.register_tool("mcp")(registration)
-
-    # ----------------- history会话读写 -----------------
-
-    async def del_history_yaml(self, session_id: str):
-        """删除历史记录文件。"""
-        file = settings.path.session_history_path / f"{session_id}.yaml"
-        if file.exists():
-            file.unlink()
-        logger.info("Session history deleted")
-
-    async def save_history_yaml(self, session_id: str, history: list[dict[str, Any]]):
-        """保存历史记录到yaml文件。"""
-
-        file = settings.path.session_history_path / f"{session_id}.yaml"
-        async with aiofiles.open(file, "w", encoding="utf-8") as f:
-            await f.write(
-                yaml.dump(
-                    history,
-                    Dumper=LiteralDumper,
-                    default_flow_style=False,
-                    allow_unicode=True,
-                    indent=4,
-                    sort_keys=False,
-                    width=1000,
-                )
-            )
-        logger.info("Session history saved")
-
-    async def load_history_yaml(self, session_id: str) -> list[dict[str, Any]]:
-        """从yaml文件加载历史记录。"""
-
-        file = settings.path.session_history_path / f"{session_id}.yaml"
-        if not file.exists():
-            return []
-        async with aiofiles.open(file, "r", encoding="utf-8") as f:
-            content: list[dict[str, Any]] = yaml.safe_load(await f.read()) or []
-        # 剔除系统提示词
-        content = remove_system_messages(content)
-        logger.info("Session history loaded messages={}", len(content))
-        return content
-
-    # ----------------- agent loop tool call -----------------
-
-    async def execute_tool_call(
-        self,
-        tool_calls: list[ToolCallRequest],
-        mapping_tool_call_funcs: dict[str, Any],
-        loop_count: int | None = None,
-    ) -> list[tuple[Any, bool]]:
-        """Resolve and execute model-requested tool calls concurrently."""
-
-        async def execute_one(tool_call: ToolCallRequest) -> tuple[Any, bool]:
-            start_time = time.time()
-            logger.info(
-                "Tool call started loop_count={} tool_name={} args={}",
-                loop_count,
-                tool_call.name,
-                tool_call.arguments,
-            )
-            try:
-                tool_call_func = mapping_tool_call_funcs.get(tool_call.name)
-                if tool_call_func is None:
-                    raise ValueError(f"Tool is not registered for this request: {tool_call.name}")
-                model_cls = get_tool_model_cls(tool_call_func)
-                if model_cls is None:
-                    result = await tool_call_func()
-                else:
-                    result = await tool_call_func(model_cls(**tool_call.arguments))
-            except PathProtectionError as exc:
-                duration = time.time() - start_time
-                error_message = format_exception2llm(exc)
-                logger.warning(
-                    "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
-                    loop_count,
-                    tool_call.name,
-                    tool_call.arguments,
-                    error_message,
-                    duration,
-                )
-                return error_message, False
-            except Exception as exc:
-                duration = time.time() - start_time
-                logger.exception(
-                    "Tool call failed loop_count={} tool_name={} args={} duration={:.2f}s",
-                    loop_count,
-                    tool_call.name,
-                    tool_call.arguments,
-                    duration,
-                )
-                return format_exception2llm(exc), False
-            else:
-                duration = time.time() - start_time
-                logger.info(
-                    "Tool call successfully loop_count={} tool_name={} duration={:.2f}s",
-                    loop_count,
-                    tool_call.name,
-                    duration,
-                )
-                return result, True
-
-        tasks: list[asyncio.Task[tuple[Any, bool]]] = []
-        async with asyncio.TaskGroup() as task_group:
-            for tool_call in tool_calls:
-                tasks.append(task_group.create_task(execute_one(tool_call)))
-        return [task.result() for task in tasks]
 
     async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str):
+        """执行模型发起的工具调用，并逐步产生工具相关事件。"""
         logger.info(
             "Processing tool calls loop_count={} count={}",
             loop_count,
@@ -267,15 +110,18 @@ class AgentLoop:
         # 执行工具调用
         tool_call_result = []
         with_metas = []
-        execution_results = await self.execute_tool_call(
+        execution_results = await self.tool_executor.execute(
             response.tool_calls,
             response.mapping_tool_call_funcs,
             loop_count=loop_count,
         )
-        for tool_call, (result, success) in zip(response.tool_calls, execution_results, strict=True):
-            tool_call: ToolCallRequest = tool_call
+        for execution in execution_results:
+            tool_call = execution.call
+            result = execution.value
+            success = execution.succeeded
 
             def append_tool_result_messages_yaml(tool_call: ToolCallRequest, result_: Any):
+                """将一次工具调用结果转换为对话历史消息。"""
                 # 创建工具调用结果消息
                 if isinstance(result_, str):
                     messages_yaml.append(
@@ -316,7 +162,7 @@ class AgentLoop:
                 try:
                     await asyncio.wait_for(self.SESSION_QUESTION_EVENT[session_id].event.wait(), timeout=USER_TIMEOUT)
                     logger.info("User answered the question {}", self.SESSION_QUESTION_EVENT[session_id].answer)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning("User timeout answering the question")
                 append_tool_result_messages_yaml(tool_call, self.SESSION_QUESTION_EVENT[session_id].answer)
             else:
@@ -345,7 +191,7 @@ class AgentLoop:
             messages_yaml.append(
                 {
                     "role": "user",
-                    "content": self.INTERATION_STOP_PROMPT,
+                    "content": self.ITERATION_STOP_PROMPT,
                 }
             )
 
@@ -355,7 +201,7 @@ class AgentLoop:
         """运行一次Agent循环，处理一次用户消息。"""
         start_time = time.perf_counter()
         logger.info("Agent run started workspace={}", self.workspace)
-        messages_yaml: list[dict] = await self.load_history_yaml(message.session_id)
+        messages_yaml: list[dict] = await self.history.load(message.session_id)
         # 拼接系统提示词
         messages_yaml = set_system_prompt(messages_yaml, await build_system_prompt(workspace=self.workspace))
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
@@ -377,12 +223,12 @@ class AgentLoop:
                 yield {"event": "command", "context": "/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）"}
                 return
             elif command == "/new":
-                rt = await self.consolidate_memory(messages_yaml[:-1])
-                await self.del_history_yaml(message.session_id)
-                yield {"event": "command", "context": f"新会话, {rt}"}
+                result = await self.memory_consolidator.consolidate(messages_yaml[:-1])
+                await self.history.delete(message.session_id)
+                yield {"event": "command", "context": f"新会话, {result.message}"}
                 return
             elif command == "/clear":
-                await self.del_history_yaml(message.session_id)
+                await self.history.delete(message.session_id)
                 yield {"event": "command", "context": "上下文已清空"}
                 return
             yield {
@@ -392,6 +238,7 @@ class AgentLoop:
             return
 
         final_content = None
+        loop_count = -1
         for loop_count in count():
             if self.max_iterations is not None and loop_count >= self.max_iterations:
                 final_content = (
@@ -405,8 +252,9 @@ class AgentLoop:
                 break
 
             # 判断是否需要压缩
-            if await self.need_compress(messages_yaml):
-                messages_yaml = await self.compress(messages_yaml)
+            if await self.compressor.should_compress(messages_yaml):
+                await self.memory_consolidator.consolidate(messages_yaml)
+                messages_yaml = await self.compressor.compress(messages_yaml)
 
             logger.info("Calling provider chat loop_count={}", loop_count)
 
@@ -453,7 +301,7 @@ class AgentLoop:
         yield {"event": "assistant", "context": final_content}
 
         # 保存历史记录
-        await self.save_history_yaml(message.session_id, messages_yaml)
+        await self.history.save(message.session_id, messages_yaml)
 
         # 输出token使用百分比
         token_count = await token_counter(messages_yaml)
@@ -473,165 +321,6 @@ class AgentLoop:
 
         logger.info("Agent run completed")
 
-    # ----------------- 压缩 -----------------
-
-    async def need_compress(self, messages):
-        total_token = await token_counter(messages=messages)
-        return total_token >= self.max_accept_token
-
-    async def is_finish_compress(self, messages):
-        total_token = await token_counter(messages=messages)
-        max_accept_token = int(self.provider.default_context_token * 0.4)
-        return total_token < max_accept_token
-
     async def chat(self, messages: list[dict[str, Any]], **kwargs) -> LLMResponse:
-        return await self.provider.chat(messages=self._strip_internal_message_metadata(messages), **kwargs)
-
-    @classmethod
-    def _is_timestamped_user_message(cls, message: dict):
-        """判断是否是用户主动发送的消息， 主动发送的消息会打上时间戳"""
-        return message["role"] == "user" and "timestamp" in message
-
-    @classmethod
-    def _strip_internal_message_metadata(cls, messages: list[dict]):
-        rt = []
-        for i in messages:
-            if cls._is_timestamped_user_message(i):
-                # 不修改原始消息
-                i = i.copy()
-                # 剔除时间戳
-                i.pop("timestamp", None)
-            rt.append(i)
-        return rt
-
-    async def compress(self, messages):
-
-        logger.info("Compressing messages messages={}", len(messages))
-
-        await self.consolidate_memory(messages)
-
-        def truncate_tool_result(_messages: list, truncate_count: int):
-            rt = []
-            for i in _messages:
-                if i["role"] == "tool":
-                    i["content"] = i["content"][:truncate_count]
-                rt.append(i)
-            return rt
-
-        def split_recent_user_messages(_messages: list[dict], keep_count: int) -> int:
-            count = 0
-            for i in range(len(_messages) - 1, -1, -1):
-                if not self._is_timestamped_user_message(_messages[i]):
-                    continue
-                count += 1
-                if count == keep_count:
-                    return i
-            return 0
-
-        async def summary_messages(_messages: list[dict]):
-            system_messages, history_messages = split_system_messages(_messages)
-            messages_for_summary = [
-                {"role": "system", "content": SUMMARY_PROMPT},
-                *history_messages,
-                {"role": "user", "content": "Please summarize the history messages."},
-            ]
-            try:
-                summary = (
-                    await self.chat(
-                        messages=messages_for_summary,
-                        max_tokens=self.summary_tokens,
-                        top_p=0.1,
-                        remove_all_tools=True,
-                    )
-                ).content
-            except Exception:
-                logger.exception("Failed to summarize history")
-                raise
-            _messages = prepend_system_messages([{"role": "assistant", "content": summary}], system_messages)
-            return _messages
-
-        def keep_messages_for_day(days, _messages):
-            system_messages, _messages = split_system_messages(_messages)
-            last_timestamp = None
-            idx_split = 0
-            for i in range(len(_messages) - 1, -1, -1):
-                if not self._is_timestamped_user_message(_messages[i]):
-                    continue
-                if last_timestamp is None:
-                    last_timestamp = _messages[i]["timestamp"]
-                _timestamp = _messages[i]["timestamp"]
-                if last_timestamp - _timestamp > timedelta(days=days).total_seconds():
-                    break
-                idx_split = i
-            _messages = prepend_system_messages(_messages[idx_split:], system_messages)
-            return _messages
-
-        # 一级压缩：超过1000字的工具执行结果（保留最近4次对话消息的结果调用）
-        keep_count = 4
-        idx_split_keep = split_recent_user_messages(messages, keep_count)
-        messages = truncate_tool_result(messages[:idx_split_keep], 1000) + messages[idx_split_keep:]
-        if await self.is_finish_compress(messages):
-            logger.info("Compression finished level=1 messages={}", len(messages))
-            return messages
-
-        # 二级压缩：只保留最后一条消息的时间戳，往前追溯7/6/5/4/3/2天的消息
-        for days in range(7, 1, -1):
-            messages = keep_messages_for_day(days, messages)
-            if await self.is_finish_compress(messages):
-                logger.info("Compression finished level=2 messages={}", len(messages))
-                return messages
-
-        # 三级压缩：AI总结历史消息，只保留最近4次对话消息
-        for keep_count in range(4, 0, -1):
-            idx_split_keep = split_recent_user_messages(messages, keep_count)
-            recent_messages = messages[idx_split_keep:]
-            if (idx_split_keep > 0 and await self.is_finish_compress(recent_messages)) or keep_count == 1:
-                logger.info("Compression level=3 summarizing history")
-                messages = await summary_messages(messages[:idx_split_keep]) + recent_messages
-                logger.info("Compression finished level=3 messages={}", len(messages))
-                return messages
-
-    # ----------------- 记忆和历史(在/new 或者 压缩的时候触发) -----------------
-
-    async def consolidate_memory(self, mesages):
-        memory_store = MemoryStore(workspace=self.workspace)
-        _clean_messages = remove_system_messages(mesages)
-        if not _clean_messages:
-            return "当前上下文为空，无需记忆"
-        _system_prompt = "## Current Long-term Memory\n" + (await memory_store.get_memory_context() or "(empty)")
-        _clean_messages.insert(0, {"role": "system", "content": _system_prompt})
-        _clean_messages.append(
-            {
-                "role": "user",
-                "content": "Process this conversation and MUST call the save_memory tool with your consolidation.",
-            }
-        )
-        logger.info("Consolidating memory")
-        response = await self.chat(
-            messages=_clean_messages,
-            max_tokens=self.summary_tokens,
-            top_p=0.7,
-            tools=[memory_store.save_memory],
-            remove_default_tools=True,
-        )
-        if response.has_tool_calls:
-            execution_results = await self.execute_tool_call(
-                response.tool_calls,
-                response.mapping_tool_call_funcs,
-            )
-            saved = any(
-                tool_call.name == "save_memory" and succeeded
-                for tool_call, (_, succeeded) in zip(
-                    response.tool_calls,
-                    execution_results,
-                    strict=True,
-                )
-            )
-            if not saved:
-                logger.info("记忆整理过程中未成功调用 save_memory 工具")
-                return "记忆整理失败：模型未成功调用 save_memory 工具"
-            logger.info("Consolidating memory finished")
-            return "已记忆本次会话关键内容"
-        else:
-            logger.info("No worth consolidating memory")
-            return "未发现需要记忆的内容"
+        """移除内部元数据后调用模型提供方。"""
+        return await self.provider.chat(messages=strip_internal_message_metadata(messages), **kwargs)

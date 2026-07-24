@@ -1,22 +1,28 @@
-from .server import app
-from fastapi import Depends
-from typing import Annotated
-from datetime import datetime
-from fastapi import File, Form, UploadFile, HTTPException, status, Header, Query
-from fastapi.responses import FileResponse
-from .schema import InputContent, InboundMessage
 import json
+from collections.abc import AsyncIterator
+from datetime import datetime
 from pathlib import Path
+from typing import Annotated
 from uuid import UUID
-from ...config.settings import settings
-from ...utils.helper import save_to_workspace, ensure_path
-from ...exceptions import PathProtectionError
-from ...utils.session import create_workspace_templates
-from ...provider.litellm_provider import LiteLLMProvider
-from ..loop import AgentLoop, QuestionEvent
-from ...provider.schema import ProviderChatKwargs
+
+from fastapi import Depends, File, Form, Header, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse
+
+from ...config.settings import settings
+from ...exceptions import PathProtectionError
+from ...provider.litellm_provider import LiteLLMProvider
+from ...provider.schema import ProviderChatKwargs
+from ...utils.helper import ensure_path, save_to_workspace
+from ...utils.session import create_workspace_templates
+from ..loop import AgentLoop, QuestionEvent
 from ..tools.helper import safe_resolve_workspace_path
+from ..tools.registry import register_default_tools
+from .schema import InboundMessage, InputContent
+from .server import app
+from .session_guard import SessionChatGuard
+
+CHAT_GUARD = SessionChatGuard()
 
 
 def session_metadata(
@@ -55,6 +61,7 @@ async def download_session_file(
     session_id: str,
     path: Annotated[str, Query(description="File path returned by a send_file event.")],
 ):
+    """下载指定会话工作区内的文件。"""
     workspace = (settings.path.workspace_base_path / session_id).resolve()
     try:
         file_path = safe_resolve_workspace_path(
@@ -75,6 +82,7 @@ async def download_session_file(
     include_in_schema=False,
 )
 async def preview_file(preview_id: UUID, file_path: str):
+    """返回浏览器预览目录内经过路径校验的文件。"""
     relative_path = Path(file_path)
     if relative_path.is_absolute() or ".." in relative_path.parts:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid preview path")
@@ -89,7 +97,8 @@ async def answer_question(
     session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
     answer: Annotated[str, Form(description="回答内容")],
 ):
-    question_event: QuestionEvent = AgentLoop.SESSION_QUESTION_EVENT.get(session_id)
+    """提交用户答案并唤醒正在等待的 Agent 循环。"""
+    question_event: QuestionEvent | None = AgentLoop.SESSION_QUESTION_EVENT.get(session_id)
     if question_event is not None:
         question_event.answer = answer
         question_event.event.set()
@@ -98,7 +107,26 @@ async def answer_question(
         return {"message": "Question event not found"}
 
 
-@app.post("/chat", response_class=EventSourceResponse)
+async def acquire_chat_session(
+    session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
+) -> AsyncIterator[None]:
+    """占用会话直至响应结束，并拒绝同一会话的并发请求。"""
+    if not await CHAT_GUARD.try_acquire(session_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session '{session_id}' already has an active chat request",
+        )
+    try:
+        yield
+    finally:
+        await CHAT_GUARD.release(session_id)
+
+
+@app.post(
+    "/chat",
+    response_class=EventSourceResponse,
+    dependencies=[Depends(acquire_chat_session, scope="request")],
+)
 async def chat(
     session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
@@ -106,8 +134,7 @@ async def chat(
     timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
 ):
-    """Receive a message and return a response."""
-
+    """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
     workspace = (settings.path.workspace_base_path / session_id).resolve()
 
     # 创建工作目录
@@ -152,7 +179,11 @@ async def chat(
         ),
     )
     # 注册默认工具
-    await al.register_default_tools()
+    await register_default_tools(
+        provider=provider,
+        workspace=workspace,
+        config=settings.tool,
+    )
     # 运行Agent Loop
     async for i in al.run(message=message):
         yield i

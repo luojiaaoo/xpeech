@@ -1,16 +1,17 @@
-from textwrap import dedent
 from datetime import datetime
+from pathlib import Path
+from textwrap import dedent
+from typing import Any
+
 from ...agent.memory import MemoryStore
 from ...agent.skills.skill import SkillsLoader
 from ...config.settings import settings
-from pathlib import Path
-
 
 BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
 
 
 def _load_bootstrap_files(workspace) -> str:
-    """Load all bootstrap files from workspace."""
+    """加载工作区内的全部引导文件。"""
     parts = []
 
     for filename in BOOTSTRAP_FILES:
@@ -23,9 +24,9 @@ def _load_bootstrap_files(workspace) -> str:
 
 
 def _get_identity(workspace: Path) -> str:
-    """Get the configurable core identity section."""
+    """生成可配置的核心身份提示词。"""
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
+    now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%A)")
     custom_system_prompt = settings.llm.custom_system_prompt.strip()
     system_name = settings.llm.system_name.strip()
     if system_name:
@@ -104,7 +105,7 @@ def _get_identity(workspace: Path) -> str:
 
 
 def _get_ethical_guidelines() -> str:
-    """Get mandatory safety and ethical boundaries."""
+    """生成不可被后续指令削弱的安全与伦理边界。"""
 
     return dedent(
         """
@@ -121,7 +122,8 @@ def _get_ethical_guidelines() -> str:
     ).lstrip()
 
 
-async def build_system_prompt(workspace: Path) -> str:
+async def build_system_prompt(workspace: Path) -> dict[str, Any]:
+    """组合身份、安全、记忆和技能信息，生成系统消息。"""
     parts = []
 
     # Identity
