@@ -116,7 +116,7 @@ idle_timeout = 3
 可以从模板创建本地配置：
 
 ```bash
-cp conf.toml.exmple conf.toml
+cp conf.toml.example conf.toml
 ```
 
 进程环境变量写在 `.env`，例如 PPT 导出脚本使用的远程 CDP 地址：
@@ -183,7 +183,7 @@ Compose 会启动三个容器：
 先准备配置和环境变量：
 
 ```bash
-cp conf.toml.exmple conf.toml
+cp conf.toml.example conf.toml
 cp .env.example .env
 ```
 
@@ -385,7 +385,6 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 - **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到共享沙盒 HOME，便于不同会话复用 CLI 工具
 - **Shell 黑名单**：禁止执行 `rm -rf`、`format`、`dd` 等危险命令
 - **路径遍历检测**：拦截包含 `..` 的路径操作
-- **内网 URL 拦截**：防止访问内部网络接口
 
 ### 沙盒
 

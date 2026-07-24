@@ -476,13 +476,13 @@ class AgentLoop:
     # ----------------- 压缩 -----------------
 
     async def need_compress(self, messages):
-        totol_token = await token_counter(messages=messages)
-        return totol_token >= self.max_accept_token
+        total_token = await token_counter(messages=messages)
+        return total_token >= self.max_accept_token
 
     async def is_finish_compress(self, messages):
-        totol_token = await token_counter(messages=messages)
+        total_token = await token_counter(messages=messages)
         max_accept_token = int(self.provider.default_context_token * 0.4)
-        return totol_token < max_accept_token
+        return total_token < max_accept_token
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs) -> LLMResponse:
         return await self.provider.chat(messages=self._strip_internal_message_metadata(messages), **kwargs)
