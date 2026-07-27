@@ -81,6 +81,7 @@ default_top_p = 0.7
 tools_python_package = "custom_tools"
 default_tools = ["echo", "hello"]
 system_name = ""
+system_identity_prompt = ""
 custom_system_prompt = ""
 # default_reasoning_effort = "normal"
 support_image = true
@@ -112,6 +113,8 @@ app_id = "cli_xxx"
 app_secret = "your_feishu_app_secret_here"
 idle_timeout = 3
 ```
+
+`system_name` 仅用于保存系统名称，不会进入模型提示词。需要自定义助手身份时，请使用 `system_identity_prompt`；其他附加指令继续使用 `custom_system_prompt`。
 
 可以从模板创建本地配置：
 

@@ -28,24 +28,23 @@ def _get_identity(workspace: Path) -> str:
 
     now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%A)")
     custom_system_prompt = settings.llm.custom_system_prompt.strip()
-    system_name = settings.llm.system_name.strip()
-    if system_name:
-        system_name = (
+    system_identity_prompt = settings.llm.system_identity_prompt.strip()
+    if system_identity_prompt:
+        system_identity_prompt = (
             dedent(
                 """
-                {system_name}
+                {system_identity_prompt}
 
                 You are a helpful AI assistant.
                 Your name is not xpeech.
                 Do not introduce yourself as xpeech, do not claim that your name is xpeech, and do not treat xpeech as your identity.
-                Your identity/name is the system name specified above.
             """
             )
             .lstrip()
-            .format(system_name=system_name)
+            .format(system_identity_prompt=system_identity_prompt)
         )
     else:
-        system_name = dedent(
+        system_identity_prompt = dedent(
             """
                 # xpeech 🍑
 
@@ -60,7 +59,7 @@ def _get_identity(workspace: Path) -> str:
     identity = (
         dedent(
             """
-                {system_name}
+                {system_identity_prompt}
                 
                 You have access to tools that allow you to:
                 - Read, write, and edit files
@@ -94,7 +93,7 @@ def _get_identity(workspace: Path) -> str:
         )
         .lstrip()
         .format(
-            system_name=system_name,
+            system_identity_prompt=system_identity_prompt,
             now=now,
             workspace=workspace.as_posix(),
         )

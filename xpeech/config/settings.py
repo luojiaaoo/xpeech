@@ -107,6 +107,7 @@ class LLMConfig(BaseModel):
     tools_python_package: str
     default_tools: list[str]
     system_name: str = ""
+    system_identity_prompt: str = ""
     custom_system_prompt: str = ""
     default_reasoning_effort: ReasoningEffort | None = None
     support_image: bool = False
