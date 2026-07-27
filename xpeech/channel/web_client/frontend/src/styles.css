@@ -19,17 +19,17 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .settings-chevron { margin-inline-start: 2px; font-size: 10px; color: #8a919f; }
 .app-main { min-height: 0; background: #fff; }
 .chat-page { height: 100%; display: flex; flex-direction: column; background: radial-gradient(circle at 50% 0, #f6f9ff 0, #fff 35%); }
-.chat-content { flex: 1; min-height: 0; width: min(1120px, 100%); margin: 0 auto; }
+.chat-content { flex: 1; min-height: 0; width: min(1440px, 100%); margin: 0 auto; }
 .welcome-area { height: 100%; text-align: center; padding: 24px; }
 .welcome-icon { width: 54px; height: 54px; display: grid; place-items: center; font-size: 26px; border-radius: 18px; color: #3370ff; background: #e8f0ff; }
-.bubble-list { height: 100%; padding: 32px clamp(24px, 4vw, 52px) 24px; }
+.bubble-list { height: 100%; padding: 32px clamp(24px, 3vw, 56px) 24px; }
 .bubble-list .ant-bubble { width: 100%; }
 .chat-avatar { box-shadow: 0 1px 4px #1f23291a; }
 .user-avatar { color: #fff; background: #1677ff; }
 .assistant-avatar { color: #245bdb; background: #eef3ff; }
 .chat-user .ant-bubble-content {
   width: fit-content;
-  max-width: 640px;
+  max-width: 760px;
   color: #fff;
   background: #1677ff;
   border: 0;
@@ -37,8 +37,8 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   white-space: pre-wrap;
 }
 .chat-assistant .ant-bubble-content-wrapper {
-  flex: 0 1 820px;
-  max-width: min(820px, calc(100% - 40px));
+  flex: 0 1 1080px;
+  max-width: min(1080px, calc(100% - 40px));
 }
 .chat-assistant .ant-bubble-content {
   width: fit-content;
@@ -91,7 +91,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 }
 .token-usage-label { color: #8a919f; }
 .token-usage-value { color: #4b5260; font-weight: 500; }
-.sender-wrap { width: min(1016px, calc(100% - 48px)); margin: 0 auto 18px; text-align: center; }
+.sender-wrap { width: min(1328px, calc(100% - 48px)); margin: 0 auto 18px; text-align: center; }
 .sender-wrap .ant-sender { text-align: left; box-shadow: 0 8px 32px #1f23291a; border-color: #d9dce3; }
 .sender-tip { display: inline-block; margin-top: 8px; font-size: 11px; }
 .question-form { width: min(500px, 70vw); padding: 16px; background: #f7f9fc; border-radius: 12px; }
@@ -123,7 +123,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .header-brand-name, .header-divider, .header-user-copy { display: none; }
   .settings-button > span:not(.ant-btn-icon) { display: none; }
   .bubble-list { padding: 22px 14px 18px; }
-  .chat-user .ant-bubble-content { max-width: calc(100vw - 146px); }
+  .chat-user .ant-bubble-content { max-width: calc(100% - 40px); }
   .chat-assistant .ant-bubble-content-wrapper { max-width: calc(100% - 40px); }
   .sender-wrap { width: calc(100% - 28px); margin-bottom: 12px; }
   .admin-page { padding: 18px; }

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import { Attachments, Bubble, Prompts, Sender, Welcome } from '@ant-design/x';
 import { XMarkdown } from '@ant-design/x-markdown';
@@ -60,6 +60,10 @@ const privateStatusMessages: Record<string, string> = {
   tool_call_result: '工具处理完成，我继续整理结果。',
 };
 
+function renderStatus(content: string) {
+  return <Tag icon={<ToolOutlined />} bordered={false}>{content}</Tag>;
+}
+
 function renderTokenUsage(tokenUsage: string) {
   let metrics: { label: string; value: string }[];
   try {
@@ -119,7 +123,7 @@ function eventMessage(event: ChatEvent): ChatMessage | null {
   return {
     key,
     role: 'status',
-    content: <Tag icon={<ToolOutlined />} bordered={false}>{content}</Tag>,
+    content: renderStatus(content),
     transient: event.event !== 'command',
   };
 }
@@ -131,6 +135,15 @@ export default function ChatPage() {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
+  const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const list = bubbleListRef.current?.nativeElement;
+      list?.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messages]);
 
   function appendEvent(event: ChatEvent) {
     setMessages((current) => {
@@ -149,10 +162,16 @@ export default function ChatPage() {
     if (!text.trim() && files.length === 0) return;
     const sentFiles = files;
     const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
+    const thinkingKey = `thinking_${Date.now()}`;
     setMessages((current) => [
       ...current.filter((item) => !item.transient),
       { key: `user_${Date.now()}`, role: 'user', content: display },
-      { key: 'loading', role: 'assistant', content: '', loading: true, transient: true },
+      {
+        key: thinkingKey,
+        role: 'status',
+        content: renderStatus(privateStatusMessages.thinking),
+        transient: true,
+      },
     ]);
     setValue('');
     setFiles([]);
@@ -217,7 +236,7 @@ export default function ChatPage() {
               onItemClick={(info) => setValue(String(info.data.label))}
             />
           </Flex>
-        ) : <Bubble.List className="bubble-list" roles={roles} items={items} />}
+        ) : <Bubble.List ref={bubbleListRef} className="bubble-list" roles={roles} items={items} />}
       </div>
       <div className="sender-wrap">
         <Sender
