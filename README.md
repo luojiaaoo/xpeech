@@ -418,8 +418,28 @@ uv run -m xpeech api
 uv run python -c "from xpeech.config.settings import settings; print(settings.model_dump())"
 ```
 
-## TODO
+# Web SPA
 
-- [ ] 添加 cron
-- [ ] 添加心跳
-- [ ] 添加飞书 CLI
+Xpeech includes an authenticated React + Ant Design X web client. It keeps the
+existing agent API private behind a small FastAPI proxy and stores users and
+login sessions in SQLite.
+
+Build the frontend once:
+
+```bash
+cd xpeech/channel/web_client/frontend
+npm install
+npm run build
+```
+
+Start the agent backend and web gateway:
+
+```bash
+uv run python -m xpeech api --host 127.0.0.1 --port 7878
+uv run python -m xpeech web --host 0.0.0.0 --port 7880 --backend-url http://127.0.0.1:7878
+```
+
+Open `http://127.0.0.1:7880`. On a new database, the initial administrator is
+`admin` / `admin123456`. Set `XPEECH_WEB_ADMIN_USERNAME` and
+`XPEECH_WEB_ADMIN_PASSWORD` before the first start to override these values.
+For HTTPS deployments, set `XPEECH_WEB_SECURE_COOKIE=true`.
