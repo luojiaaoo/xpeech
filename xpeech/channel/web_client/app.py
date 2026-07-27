@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 COOKIE_NAME = "xpeech_session"
 SESSION_DAYS = 7
 PBKDF2_ITERATIONS = 600_000
+XPEECH_FAVICON = Path(__file__).resolve().parents[3] / "assets" / "favicon.ico"
 
 
 def _configured_system_name() -> str:
@@ -154,6 +155,14 @@ def create_app(config: WebConfig) -> FastAPI:
         redoc_url=None,
         lifespan=lifespan,
     )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return FileResponse(
+            XPEECH_FAVICON,
+            media_type="image/x-icon",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @app.get("/api/config")
     async def public_config():
