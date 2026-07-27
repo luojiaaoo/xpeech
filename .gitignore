@@ -180,7 +180,5 @@ data/sandbox-home/**
 # nodejs
 node_modules/
 package-lock.json
-# 客户端产物
-xpeech/channel/desktop_client/frontend/dist/
 # 本地自定义内置技能（以 x- 开头）
 xpeech/agent/skills/buildin/x-*/
