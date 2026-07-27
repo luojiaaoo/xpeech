@@ -25,12 +25,19 @@ SESSION_DAYS = 7
 PBKDF2_ITERATIONS = 600_000
 
 
+def _configured_system_name() -> str:
+    from ...config.settings import settings
+
+    return settings.llm.system_name.strip() or "AI 助手"
+
+
 @dataclass(frozen=True)
 class WebConfig:
     backend_url: str
     database_path: Path
     static_dir: Path
     secure_cookie: bool
+    system_name: str
 
 
 class LoginBody(BaseModel):
@@ -142,7 +149,16 @@ def create_app(config: WebConfig) -> FastAPI:
         database.initialize()
         yield
 
-    app = FastAPI(title="Xpeech Web", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app = FastAPI(
+        title=f"{config.system_name} Web",
+        docs_url=None,
+        redoc_url=None,
+        lifespan=lifespan,
+    )
+
+    @app.get("/api/config")
+    async def public_config():
+        return {"system_name": config.system_name}
 
     def current_user(token: Annotated[str | None, Cookie(alias=COOKIE_NAME)] = None):
         if not token:
@@ -375,12 +391,15 @@ def run(
         database_path=Path(database_path).resolve(),
         static_dir=static_dir.resolve(),
         secure_cookie=os.getenv("XPEECH_WEB_SECURE_COOKIE", "").lower() in {"1", "true", "yes"},
+        system_name=_configured_system_name(),
     )
     uvicorn.run(create_app(config), host=host, port=port)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the authenticated Xpeech web client.")
+    parser = argparse.ArgumentParser(
+        description=f"Run the authenticated {_configured_system_name()} web client."
+    )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7880)
     parser.add_argument("--backend-url", default="http://127.0.0.1:7878")

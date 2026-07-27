@@ -4,7 +4,13 @@ import { PlusOutlined } from '@ant-design/icons';
 import { userApi } from './api';
 import type { User } from './types';
 
-export default function UserManagement({ currentUser }: { currentUser: User }) {
+export default function UserManagement({
+  currentUser,
+  systemName,
+}: {
+  currentUser: User;
+  systemName: string;
+}) {
   const [users, setUsers] = useState<User[]>([]);
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
@@ -43,7 +49,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
   return (
     <div className="admin-page">
       <div className="page-heading">
-        <div><Typography.Title level={3}>用户管理</Typography.Title><Typography.Text type="secondary">管理可登录 Xpeech 的账号与权限</Typography.Text></div>
+        <div><Typography.Title level={3}>用户管理</Typography.Title><Typography.Text type="secondary">管理可登录 {systemName} 的账号与权限</Typography.Text></div>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>新建用户</Button>
       </div>
       <Table

@@ -128,7 +128,7 @@ function eventMessage(event: ChatEvent): ChatMessage | null {
   };
 }
 
-export default function ChatPage() {
+export default function ChatPage({ systemName }: { systemName: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [value, setValue] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -226,7 +226,7 @@ export default function ChatPage() {
       <div className="chat-content">
         {messages.length === 0 ? (
           <Flex vertical align="center" justify="center" className="welcome-area" gap={18}>
-            <Welcome icon={<div className="welcome-icon"><RobotOutlined /></div>} title="你好，我是 Xpeech" description="可以和我聊天，也可以上传图片和文件让我分析。" />
+            <Welcome icon={<div className="welcome-icon"><RobotOutlined /></div>} title={`你好，我是 ${systemName}`} description="可以和我聊天，也可以上传图片和文件让我分析。" />
             <Prompts
               items={[
                 { key: 'intro', label: '介绍一下你能做什么' },

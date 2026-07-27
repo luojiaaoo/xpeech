@@ -3,7 +3,13 @@ import { Button, Form, Input, Typography, message } from 'antd';
 import { authApi } from './api';
 import type { User } from './types';
 
-export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
+export default function LoginPage({
+  systemName,
+  onLogin,
+}: {
+  systemName: string;
+  onLogin: (user: User) => void;
+}) {
   async function submit(values: { username: string; password: string }) {
     try {
       onLogin(await authApi.login(values.username, values.password));
@@ -15,8 +21,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }
   return (
     <main className="login-page">
       <section className="login-brand">
-        <div className="brand-mark">X</div>
-        <Typography.Title>Xpeech</Typography.Title>
+        <div className="brand-mark">{Array.from(systemName.trim())[0]?.toUpperCase() || 'A'}</div>
+        <Typography.Title>{systemName}</Typography.Title>
         <Typography.Paragraph>你的智能工作助手</Typography.Paragraph>
         <div className="brand-orbit orbit-one" />
         <div className="brand-orbit orbit-two" />
@@ -24,7 +30,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: User) => void }
       <section className="login-panel">
         <div className="login-card">
           <Typography.Title level={2}>欢迎回来</Typography.Title>
-          <Typography.Paragraph type="secondary">登录后开始与 Xpeech 对话</Typography.Paragraph>
+          <Typography.Paragraph type="secondary">登录后开始与 {systemName} 对话</Typography.Paragraph>
           <Form layout="vertical" size="large" onFinish={submit}>
             <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
               <Input prefix={<UserOutlined />} autoComplete="username" placeholder="请输入用户名" />

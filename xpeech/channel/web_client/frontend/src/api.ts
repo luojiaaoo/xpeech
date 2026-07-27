@@ -1,4 +1,4 @@
-import type { ChatEvent, User } from './types';
+import type { AppConfig, ChatEvent, User } from './types';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -24,6 +24,10 @@ export const authApi = {
   login: (username: string, password: string) =>
     request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
+};
+
+export const appApi = {
+  config: () => request<AppConfig>('/api/config'),
 };
 
 export const userApi = {

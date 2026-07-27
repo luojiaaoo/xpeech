@@ -7,22 +7,27 @@ import {
   SettingOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
-import { authApi } from './api';
+import { appApi, authApi } from './api';
 import ChatPage from './ChatPage';
 import LoginPage from './LoginPage';
 import UserManagement from './UserManagement';
 import type { User } from './types';
 
 export default function App() {
+  const [systemName, setSystemName] = useState<string>();
   const [user, setUser] = useState<User | null>();
   const [userManagementOpen, setUserManagementOpen] = useState(false);
 
   useEffect(() => {
+    appApi.config().then(({ system_name }) => {
+      setSystemName(system_name);
+      document.title = system_name;
+    });
     authApi.me().then(setUser).catch(() => setUser(null));
   }, []);
 
-  if (user === undefined) return <div className="loading-page"><Skeleton active /></div>;
-  if (user === null) return <LoginPage onLogin={setUser} />;
+  if (user === undefined || systemName === undefined) return <div className="loading-page"><Skeleton active /></div>;
+  if (user === null) return <LoginPage systemName={systemName} onLogin={setUser} />;
 
   async function logout() {
     setUserManagementOpen(false);
@@ -54,8 +59,8 @@ export default function App() {
     <Layout className="app-shell">
       <Layout.Header className="app-header">
         <div className="header-heading">
-          <span className="header-brand-mark">X</span>
-          <Typography.Text strong className="header-brand-name">Xpeech</Typography.Text>
+          <span className="header-brand-mark">{Array.from(systemName.trim())[0]?.toUpperCase() || 'A'}</span>
+          <Typography.Text strong className="header-brand-name">{systemName}</Typography.Text>
           <span className="header-divider" />
           <Typography.Title level={4}>AI 助手</Typography.Title>
         </div>
@@ -79,7 +84,7 @@ export default function App() {
         </Space>
       </Layout.Header>
       <Layout.Content className="app-main">
-        <ChatPage />
+        <ChatPage systemName={systemName} />
       </Layout.Content>
       {user.is_admin ? (
         <Modal
@@ -91,7 +96,7 @@ export default function App() {
           className="user-management-modal"
           destroyOnHidden={false}
         >
-          <UserManagement currentUser={user} />
+          <UserManagement currentUser={user} systemName={systemName} />
         </Modal>
       ) : null}
     </Layout>

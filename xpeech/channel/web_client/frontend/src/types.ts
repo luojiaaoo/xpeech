@@ -8,6 +8,10 @@ export interface User {
   created_at: string;
 }
 
+export interface AppConfig {
+  system_name: string;
+}
+
 export type ChatEventType =
   | 'assistant'
   | 'thinking'
