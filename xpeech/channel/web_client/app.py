@@ -36,7 +36,6 @@ class WebConfig:
     backend_url: str
     database_path: Path
     static_dir: Path
-    secure_cookie: bool
     system_name: str
 
 
@@ -119,8 +118,8 @@ class Database:
             )
             db.execute("DELETE FROM sessions WHERE expires_at <= ?", (_now(),))
             if db.execute("SELECT 1 FROM users LIMIT 1").fetchone() is None:
-                username = os.getenv("XPEECH_WEB_ADMIN_USERNAME", "admin")
-                password = os.getenv("XPEECH_WEB_ADMIN_PASSWORD", "admin123456")
+                username = "admin"
+                password = "admin123456"
                 db.execute(
                     "INSERT INTO users(username, password_hash, is_admin, created_at) VALUES (?, ?, 1, ?)",
                     (username, _password_hash(password), _now()),
@@ -201,7 +200,7 @@ def create_app(config: WebConfig) -> FastAPI:
             token,
             max_age=SESSION_DAYS * 86400,
             httponly=True,
-            secure=config.secure_cookie,
+            secure=False,
             samesite="lax",
             path="/",
         )
@@ -391,7 +390,6 @@ def run(
         backend_url=backend_url.rstrip("/"),
         database_path=settings.web_client.database_path.resolve(),
         static_dir=static_dir.resolve(),
-        secure_cookie=os.getenv("XPEECH_WEB_SECURE_COOKIE", "").lower() in {"1", "true", "yes"},
         system_name=_configured_system_name(),
     )
     uvicorn.run(create_app(config), host=host, port=port)

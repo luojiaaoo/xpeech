@@ -366,6 +366,4 @@ npm run build
 `web_client.database_path` 配置，默认为 `data/web_client/users.db`。
 
 启动命令统一见[启动](#启动)章节。打开 `http://127.0.0.1:7939` 即可访问。
-新数据库的初始管理员为 `admin` / `admin123456`；首次启动前可通过
-`XPEECH_WEB_ADMIN_USERNAME` 和 `XPEECH_WEB_ADMIN_PASSWORD` 修改。
-HTTPS 部署时设置 `XPEECH_WEB_SECURE_COOKIE=true`。
+新数据库的初始管理员为 `admin` / `admin123456`；
