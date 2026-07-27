@@ -3,7 +3,7 @@ import type { ComponentProps } from 'react';
 import { Attachments, Bubble, Prompts, Sender, Welcome } from '@ant-design/x';
 import { XMarkdown } from '@ant-design/x-markdown';
 import type { AttachmentsProps } from '@ant-design/x';
-import { Button, Flex, Space, Tag, Tooltip, Typography, message } from 'antd';
+import { Button, Flex, Tag, Tooltip, Typography, message } from 'antd';
 import {
   CloudUploadOutlined,
   CopyOutlined,
@@ -193,10 +193,19 @@ export default function ChatPage({ systemName }: { systemName: string }) {
     content: item.content,
     loading: item.loading,
     footer: item.role === 'assistant' && item.rawText ? (
-      <Space size={4} wrap className="bubble-footer">
-        <Tooltip title="复制"><Button type="text" size="small" icon={<CopyOutlined />} onClick={() => navigator.clipboard.writeText(item.rawText!)} /></Tooltip>
+      <div className="bubble-footer">
         {item.tokenUsage ? renderTokenUsage(item.tokenUsage) : null}
-      </Space>
+        <Tooltip title="复制">
+          <Button
+            type="text"
+            size="small"
+            className="bubble-copy-button"
+            aria-label="复制消息"
+            icon={<CopyOutlined />}
+            onClick={() => navigator.clipboard.writeText(item.rawText!)}
+          />
+        </Tooltip>
+      </div>
     ) : undefined,
   })), [messages]);
 

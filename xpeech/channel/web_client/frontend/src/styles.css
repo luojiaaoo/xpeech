@@ -73,7 +73,9 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .assistant-markdown th,
 .assistant-markdown td { border: 1px solid #d9dce3; }
 .assistant-markdown a { color: #245bdb; }
-.bubble-footer { max-width: 100%; }
+.chat-assistant .ant-bubble-footer { width: 100%; }
+.bubble-footer { display: flex; width: 100%; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px; }
+.bubble-copy-button { margin-inline-start: auto; flex: 0 0 auto; }
 .token-usage { display: inline-flex; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px 6px; color: #646b78; }
 .token-usage-icon { margin-inline: 2px; color: #8a919f; }
 .token-usage-metric {
