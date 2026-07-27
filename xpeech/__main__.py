@@ -21,12 +21,14 @@ def main() -> None:
     feishu_parser.add_argument("--chat-url", default="http://127.0.0.1:7878", help="Xpeech /chat endpoint.")
     feishu_parser.set_defaults(service="feishu")
 
-    web_parser = subparsers.add_parser("web", help="Run the authenticated Xpeech web client.")
-    web_parser.add_argument("--host", default="0.0.0.0")
-    web_parser.add_argument("--port", type=int, default=7880)
-    web_parser.add_argument("--backend-url", default="http://127.0.0.1:7878")
-    web_parser.add_argument("--database", default="data/web/users.db")
-    web_parser.set_defaults(service="web")
+    web_client_parser = subparsers.add_parser(
+        "web_client",
+        help="Run the authenticated Xpeech web client.",
+    )
+    web_client_parser.add_argument("--host", default="0.0.0.0")
+    web_client_parser.add_argument("--port", type=int, default=7939)
+    web_client_parser.add_argument("--backend-url", default="http://127.0.0.1:7878")
+    web_client_parser.set_defaults(service="web_client")
 
     args = parser.parse_args()
     service = args.service or "api"
@@ -45,14 +47,13 @@ def main() -> None:
         run(chat_url=args.chat_url)
         return
 
-    if service == "web":
+    if service == "web_client":
         from .channel.web_client.app import run
 
         run(
             host=args.host,
             port=args.port,
             backend_url=args.backend_url,
-            database_path=args.database,
         )
         return
 

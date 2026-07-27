@@ -53,70 +53,7 @@ Docker 镜像已安装 `agent-browser`。Compose 通过 Browserless Chromium 容
 
 ## 配置
 
-普通配置写在 `conf.toml`：
-
-```toml
-[path]
-session_path = "data/session"
-session_history_path = "data/session/history"
-workspace_base_path = "data/workspace_base"
-sandbox_home_path = "data/sandbox-home"
-cache_path = "data/cache"
-log_path = "data/logs"
-
-[logging]
-retention_days = 7
-max_file_size_mb = 10
-
-[docs]
-username = "admin"
-password = "luojiaaoo"
-
-[llm]
-api_key = "your_api_key_here"
-api_base = "https://api.siliconflow.cn/v1"
-default_model = "openai/Pro/moonshotai/Kimi-K2.6"
-default_context_token = 256000
-default_top_p = 0.7
-tools_python_package = "custom_tools"
-default_tools = ["echo", "hello"]
-system_name = ""
-system_identity_prompt = ""
-custom_system_prompt = ""
-# default_reasoning_effort = "normal"
-support_image = true
-support_video = true
-support_json_output = true
-parallel = 4
-max_iterations = 40
-
-[tool]
-[tool.browser_preview]
-browser_preview_base_url = "http://backend:7878/browser_preview"
-browser_preview_path = "data/browser_preview"
-
-[tool.mcpServers.filesystem]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
-# env = { DATABASE_URL = "postgres://user:pass@localhost:5432/db" }
-enabled_tools = ["*"]
-tool_timeout = 30
-
-# [tool.mcpServers.my-api]
-# url = "https://mcp.example.com/sse"
-# headers = { Authorization = "Bearer xxx" }
-# enabled_tools = ["*"]
-# tool_timeout = 120
-
-[feishu]
-app_id = "cli_xxx"
-app_secret = "your_feishu_app_secret_here"
-idle_timeout = 3
-```
-
-`system_name` 仅用于保存系统名称，不会进入模型提示词。需要自定义助手身份时，请使用 `system_identity_prompt`；其他附加指令继续使用 `custom_system_prompt`。
-
-可以从模板创建本地配置：
+从模板创建本地配置：
 
 ```bash
 cp conf.toml.example conf.toml
@@ -130,38 +67,32 @@ CDP_URL=ws://browserless:3000
 
 ## 启动
 
-启动 API 服务：
+按需在独立终端启动各服务：
 
 ```bash
+# API 服务
 uv run -m xpeech api
-```
 
-如果不指定服务，默认也是启动 API：
-
-```bash
+# API 服务（省略服务名时的等价写法）
 uv run -m xpeech
+
+# Web 客户端（依赖 API 服务）
+uv run -m xpeech web_client
+
+# 飞书桥接（依赖 API 服务）
+uv run -m xpeech feishu
 ```
 
-服务默认运行在：
+默认访问地址：
 
-```text
-http://localhost:7878
-```
-
-启动后可以打开：
-
-- Swagger UI: `http://localhost:7878/docs`
-- ReDoc: `http://localhost:7878/redoc`
+- API：`http://localhost:7878`
+- Web 客户端：`http://localhost:7939`
+- Swagger UI：`http://localhost:7878/docs`
+- ReDoc：`http://localhost:7878/redoc`
 
 Swagger UI、ReDoc 及 `/openapi.json` 使用 HTTP Basic Auth。账号密码由
 `conf.toml` 中的 `docs.username` 和 `docs.password` 配置；省略 `[docs]`
 配置时，默认账号为 `admin`，默认密码为 `luojiaaoo`。
-
-启动飞书桥接：
-
-```bash
-uv run -m xpeech feishu
-```
 
 飞书桥接会从配置中读取：
 
@@ -169,19 +100,16 @@ uv run -m xpeech feishu
 - `feishu.idle_timeout`：同一会话消息合并等待时间，单位秒
 - `feishu.app_secret`：飞书应用密钥
 
-如需连接非默认 API 地址，可以传入 API 基地址：
-
-```bash
-uv run -m xpeech feishu --chat-url http://127.0.0.1:7878
-```
+需要修改监听地址、端口或后端地址时，可通过对应命令的 `--help` 查看参数。
 
 ## Docker Compose 部署
 
-Compose 会启动三个容器：
+Compose 会启动四个容器：
 
 - `browserless`：Browserless Chromium CDP 服务，仅限 Docker 内网访问
 - `backend`：Xpeech API、Agent 和工具执行服务
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
+- `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
 
 先准备配置和环境变量：
 
@@ -198,26 +126,27 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-后端默认暴露在 `http://localhost:7878`。可通过环境变量 `BACKEND_PORT` 修改端口：
+后端默认暴露在 `http://localhost:7878`，Web 客户端默认暴露在
+`http://localhost:7939`。可通过环境变量 `BACKEND_PORT` 和 `WEB_CLIENT_PORT` 修改端口：
 
 ```bash
-BACKEND_PORT=8080 docker compose up -d --build
+BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 ```
 
 查看运行状态和日志：
 
 ```bash
 docker compose ps
-docker compose logs -f browserless backend feishu
+docker compose logs -f browserless backend feishu web_client
 ```
 
 持久化数据统一映射到宿主机
 的 `./docker_data/` 目录，其中包含 `session`、`workspace_base`、`sandbox-home` 和
-`browser_preview`；缓存目录不做宿主机磁盘映射。`conf.toml` 以只读方式挂载，`.env`
-通过 `env_file` 注入进程，修改后重建容器即可生效：
+`browser_preview`，Web 用户数据库保存在 `web_client/users.db`；缓存目录不做宿主机磁盘
+映射。`conf.toml` 以只读方式挂载，`.env` 通过 `env_file` 注入进程，修改后重建容器即可生效：
 
 ```bash
-docker compose up -d --force-recreate browserless backend feishu
+docker compose up -d --force-recreate browserless backend feishu web_client
 ```
 
 ## 发送消息
@@ -412,7 +341,6 @@ Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `
 ```bash
 uv sync
 uv run pytest
-uv run -m xpeech api
 ```
 
 如果需要检查配置是否能读取：
@@ -421,13 +349,12 @@ uv run -m xpeech api
 uv run python -c "from xpeech.config.settings import settings; print(settings.model_dump())"
 ```
 
-# Web SPA
+## Web 客户端
 
-Xpeech includes an authenticated React + Ant Design X web client. It keeps the
-existing agent API private behind a small FastAPI proxy and stores users and
-login sessions in SQLite.
+Web 客户端基于 React 和 Ant Design X，使用 FastAPI 认证代理访问 Agent API，
+并通过 SQLite 保存用户与登录会话。
 
-Build the frontend once:
+首次运行前构建前端：
 
 ```bash
 cd xpeech/channel/web_client/frontend
@@ -435,14 +362,10 @@ npm install
 npm run build
 ```
 
-Start the agent backend and web gateway:
+用户与登录会话数据库路径由 `conf.toml` 的
+`web_client.database_path` 配置，默认为 `data/web_client/users.db`。
 
-```bash
-uv run python -m xpeech api --host 127.0.0.1 --port 7878
-uv run python -m xpeech web --host 0.0.0.0 --port 7880 --backend-url http://127.0.0.1:7878
-```
-
-Open `http://127.0.0.1:7880`. On a new database, the initial administrator is
-`admin` / `admin123456`. Set `XPEECH_WEB_ADMIN_USERNAME` and
-`XPEECH_WEB_ADMIN_PASSWORD` before the first start to override these values.
-For HTTPS deployments, set `XPEECH_WEB_SECURE_COOKIE=true`.
+启动命令统一见[启动](#启动)章节。打开 `http://127.0.0.1:7939` 即可访问。
+新数据库的初始管理员为 `admin` / `admin123456`；首次启动前可通过
+`XPEECH_WEB_ADMIN_USERNAME` 和 `XPEECH_WEB_ADMIN_PASSWORD` 修改。
+HTTPS 部署时设置 `XPEECH_WEB_SECURE_COOKIE=true`。

@@ -156,6 +156,12 @@ class DocsConfig(BaseModel):
     password: str = Field(default="luojiaaoo", min_length=1, repr=False)
 
 
+class WebClientConfig(BaseModel):
+    """Web client storage settings."""
+
+    database_path: Path
+
+
 class Settings(BaseSettings):
     path: PathConfig
     tool: ToolConfig = ToolConfig()
@@ -163,6 +169,7 @@ class Settings(BaseSettings):
     feishu: FeishuConfig
     logging: LoggingConfig = LoggingConfig()
     docs: DocsConfig = Field(default_factory=DocsConfig)
+    web_client: WebClientConfig = Field(default_factory=WebClientConfig)
 
     @classmethod
     def settings_customise_sources(

@@ -379,16 +379,17 @@ def create_app(config: WebConfig) -> FastAPI:
 
 def run(
     host: str = "0.0.0.0",
-    port: int = 7880,
+    port: int = 7939,
     backend_url: str = "http://127.0.0.1:7878",
-    database_path: str = "data/web/users.db",
     dev_frontend: bool = False,
 ) -> None:
+    from ...config.settings import settings
+
     frontend = Path(__file__).parent / "frontend"
     static_dir = frontend / ("dist" if not dev_frontend else "dist")
     config = WebConfig(
         backend_url=backend_url.rstrip("/"),
-        database_path=Path(database_path).resolve(),
+        database_path=settings.web_client.database_path.resolve(),
         static_dir=static_dir.resolve(),
         secure_cookie=os.getenv("XPEECH_WEB_SECURE_COOKIE", "").lower() in {"1", "true", "yes"},
         system_name=_configured_system_name(),
@@ -401,11 +402,10 @@ def main() -> None:
         description=f"Run the authenticated {_configured_system_name()} web client."
     )
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=7880)
+    parser.add_argument("--port", type=int, default=7939)
     parser.add_argument("--backend-url", default="http://127.0.0.1:7878")
-    parser.add_argument("--database", default="data/web/users.db")
     args = parser.parse_args()
-    run(args.host, args.port, args.backend_url, args.database)
+    run(args.host, args.port, args.backend_url)
 
 
 if __name__ == "__main__":

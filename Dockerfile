@@ -42,8 +42,14 @@ COPY xpeech/ ./xpeech/
 COPY custom_tools/ ./custom_tools/
 RUN uv sync --frozen --no-dev
 
-RUN npm config set registry https://registry.npmmirror.com/ && \
-    npm i -g agent-browser
+RUN npm config set registry https://registry.npmmirror.com/
+
+RUN cd xpeech/channel/web_client/frontend && \
+    npm install --no-audit --no-fund && \
+    npm run build && \
+    rm -rf node_modules
+
+RUN npm i -g agent-browser
 
 RUN printf '0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} + > /dev/null 2>&1\n' | crontab -
 

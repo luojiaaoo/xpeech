@@ -63,3 +63,15 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  web_client:
+    <<: *xpeech-service
+    command: ["web_client", "--host", "0.0.0.0", "--port", "${WEB_CLIENT_PORT:-7939}", "--backend-url", "http://backend:${BACKEND_PORT:-7878}"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_CLIENT_PORT:-7939}:${WEB_CLIENT_PORT:-7939}"
+    volumes:
+      # Web 用户和登录会话数据库
+      - ./docker_data/web_client:/app/data/web_client
