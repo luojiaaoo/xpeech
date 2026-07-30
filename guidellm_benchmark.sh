@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-uv sync --group benchmark
+uv sync --group benchmark --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 prompt() {
   local message="$1"
