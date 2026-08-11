@@ -63,6 +63,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    dns:
+      - 223.5.5.5
+      - 114.114.114.114
+      - 8.8.8.8
 
   web_client:
     <<: *xpeech-service
