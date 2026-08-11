@@ -26,6 +26,10 @@ dependencies = [
     "yarl>=1.23.0",
 ]
 
+[[tool.uv.index]]
+name = "tencent"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+
 [dependency-groups]
 benchmark = [
     "guidellm[recommended]>=0.7.2",
