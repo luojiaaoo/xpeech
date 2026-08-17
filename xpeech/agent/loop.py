@@ -15,7 +15,7 @@ from ..provider.schema import LLMResponse, ProviderChatKwargs, ToolCallRequest
 from ..utils.helper import token_counter
 from .compression import ConversationCompressor
 from .helper import strip_internal_message_metadata
-from .history import get_history_repository
+from .history import YamlHistoryRepository
 from .memory import MemoryConsolidator, MemoryStore
 from .prompt.helper import (
     build_user_prompt,
@@ -58,7 +58,7 @@ class AgentLoop:
         self.provider_chat_kwargs = {} if provider_chat_kwargs is None else provider_chat_kwargs.to_dict()
         self.max_iterations = max_iterations
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
-        self.history = get_history_repository(settings.path.session_history_path)
+        self.history = YamlHistoryRepository(settings.path.session_history_path)
         self.tool_executor = ToolExecutor()
         self.compressor = ConversationCompressor(
             chat=self.chat,

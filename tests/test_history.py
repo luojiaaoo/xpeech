@@ -2,14 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from xpeech.agent.history import YamlHistoryRepository, get_history_repository
+from xpeech.agent.history import YamlHistoryRepository
 from xpeech.exceptions import PathProtectionError
 
 
 class TestYamlHistoryRepository:
-    def test_reuses_repository_for_same_directory(self, tmp_path: Path):
-        assert get_history_repository(tmp_path) is get_history_repository(tmp_path)
-
     @pytest.mark.asyncio
     async def test_save_and_load_history_removes_system_messages(self, tmp_path: Path):
         repository = YamlHistoryRepository(tmp_path)
