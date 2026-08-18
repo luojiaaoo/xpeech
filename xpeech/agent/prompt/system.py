@@ -81,6 +81,7 @@ def _get_identity(workspace: Path) -> str:
                 - Skills: {workspace}/skills/{{skill-name}}/SKILL.md
 
                 ## Tools / Skills Guidelines
+                - All skill path references must use paths relative to the skill’s root directory (e.g., references/xxx.md, assets/xxx.js, scripts/xxx.py). Agents or users should resolve these paths based on their own installation location; do not rely on any absolute paths.
                 - State intent before tool calls, but NEVER predict or claim results before receiving them.
                 - Before modifying a file, read it first. Do not assume files or directories exist.
                 - After writing or editing a file, re-read it if accuracy matters.
