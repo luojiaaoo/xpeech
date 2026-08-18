@@ -586,9 +586,10 @@ class FeishuBridge:
                     message_id=inbound_msg.message_id,
                     chat_id=inbound_msg.chat_id,
                     session_id=session_id,
+                    sender_name=inbound_msg.sender_name,
                     content=[TextData(text=inbound_msg.content.text)],
                     timestamp=timestamp,
-                    session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
+                    session_metadata={"sender_id": inbound_msg.sender_id},
                 )
             elif isinstance(inbound_msg.content, ImageContent):
                 save_filepath = FEISHU_CACHE_DIR / session_id / inbound_msg.message_id
@@ -596,6 +597,7 @@ class FeishuBridge:
                     message_id=inbound_msg.message_id,
                     chat_id=inbound_msg.chat_id,
                     session_id=session_id,
+                    sender_name=inbound_msg.sender_name,
                     content=[
                         FileData(
                             file=await _save_resource(
@@ -607,7 +609,7 @@ class FeishuBridge:
                         )
                     ],
                     timestamp=timestamp,
-                    session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
+                    session_metadata={"sender_id": inbound_msg.sender_id},
                 )
             elif isinstance(inbound_msg.content, FileContent) or isinstance(inbound_msg.content, MediaContent):
                 save_filepath = FEISHU_CACHE_DIR / session_id / inbound_msg.content.file_name
@@ -615,6 +617,7 @@ class FeishuBridge:
                     message_id=inbound_msg.message_id,
                     chat_id=inbound_msg.chat_id,
                     session_id=session_id,
+                    sender_name=inbound_msg.sender_name,
                     content=[
                         FileData(
                             file=await _save_resource(
@@ -626,7 +629,7 @@ class FeishuBridge:
                         )
                     ],
                     timestamp=timestamp,
-                    session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
+                    session_metadata={"sender_id": inbound_msg.sender_id},
                 )
             elif isinstance(inbound_msg.content, PostContent):
                 parsed_content: list = []
@@ -667,9 +670,10 @@ class FeishuBridge:
                     message_id=inbound_msg.message_id,
                     chat_id=inbound_msg.chat_id,
                     session_id=session_id,
+                    sender_name=inbound_msg.sender_name,
                     content=parsed_content,
                     timestamp=timestamp,
-                    session_metadata={"sender_id": inbound_msg.sender_id, "sender_name": inbound_msg.sender_name},
+                    session_metadata={"sender_id": inbound_msg.sender_id},
                 )
 
     async def start(self) -> None:

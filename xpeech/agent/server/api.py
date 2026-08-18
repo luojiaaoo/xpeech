@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import unquote
 from uuid import UUID
 
 from fastapi import Depends, File, Form, Header, HTTPException, Query, UploadFile, status
@@ -23,6 +24,32 @@ from .server import app
 from .session_guard import SessionChatGuard
 
 CHAT_GUARD = SessionChatGuard()
+
+
+def sender_name_header(
+    sender_name: Annotated[
+        str,
+        Header(
+            description="发送者用户名；非 ASCII 字符可使用 UTF-8 URL 编码",
+            alias="sender-name",
+            min_length=1,
+        ),
+    ],
+) -> str:
+    """读取并规范化必填的发送者用户名请求头。"""
+    try:
+        decoded_sender_name = unquote(sender_name, errors="strict").strip()
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid UTF-8 encoding in sender-name header",
+        )
+    if not decoded_sender_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="sender-name header must not be blank",
+        )
+    return decoded_sender_name
 
 
 def session_metadata(
@@ -129,6 +156,7 @@ async def acquire_chat_session(
 )
 async def chat(
     session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
+    sender_name: Annotated[str, Depends(sender_name_header)],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],
     timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
@@ -150,6 +178,7 @@ async def chat(
     # 创建消息对象
     message = InboundMessage(
         session_id=session_id,
+        sender_name=sender_name,
         session_metadata=session_metadata,
         content=content,
         timestamp=timestamp,

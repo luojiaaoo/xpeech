@@ -74,6 +74,7 @@ async def build_user_prompt(message: InboundMessage, workspace: Path):
             "text": build_inbound_message_metadata(
                 {"session_id": message.session_id},
                 message.session_metadata,
+                {"sender_name": message.sender_name},
                 {"timestamp": message.timestamp.strftime("%Y-%m-%d %H:%M (%A)")},
             ),
         }

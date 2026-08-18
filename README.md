@@ -151,11 +151,13 @@ docker compose up -d --force-recreate browserless backend feishu web_client
 
 ## 发送消息
 
-`/chat` 需要通过请求头传入会话 ID：
+`/chat` 需要通过请求头传入会话 ID 和发送者用户名。两个请求头都是必填项；
+用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码：
 
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "x-session-id: demo-session" \
+  -H "sender-name: demo-user" \
   -F 'session_metadata={"channel":"curl"}' \
   -F 'content=[{"text":"你好，介绍一下你自己"}]'
 ```
@@ -165,6 +167,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "x-session-id: demo-session" \
+  -H "sender-name: demo-user" \
   -F 'session_metadata={"channel":"curl"}' \
   -F 'content=[{"text":"帮我看看这个文件"}]' \
   -F "files=@example.txt"

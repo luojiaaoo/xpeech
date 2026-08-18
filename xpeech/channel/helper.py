@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from email.message import Message as EmailMessage
 from pathlib import Path
 from typing import AsyncIterator
+from urllib.parse import quote
 import json
 import httpx
 from httpx_sse import aconnect_sse
@@ -31,6 +32,9 @@ async def iter_chat_events(
     session_id = messages[0].session_id
     if any(message.session_id != session_id for message in messages):
         raise ValueError("All messages must belong to the same session.")
+    sender_name = messages[0].sender_name
+    if any(message.sender_name != sender_name for message in messages):
+        raise ValueError("All messages must belong to the same sender.")
 
     content: list[dict[str, str]] = []
     files: list[Path] = []
@@ -53,7 +57,10 @@ async def iter_chat_events(
         ),
         "content": json.dumps(content, ensure_ascii=False),
     }
-    headers = {"x-session-id": session_id}
+    headers = {
+        "x-session-id": session_id,
+        "sender-name": quote(sender_name, safe=""),
+    }
 
     with ExitStack() as stack:
         upload_files = [

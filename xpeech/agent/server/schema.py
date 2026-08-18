@@ -21,6 +21,7 @@ class InboundMessage(BaseModel):
     """请求的消息的 schema。"""
 
     session_id: Annotated[str, Field(description="会话ID")]
+    sender_name: Annotated[str, Field(description="发送者用户名")]
     session_metadata: Annotated[dict[str, str], Field(description="会话元数据")]
     content: Annotated[list[InputText], Field(description="消息内容")]
     timestamp: Annotated[datetime, Field(description="消息时间戳")]

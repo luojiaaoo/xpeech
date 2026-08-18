@@ -279,7 +279,10 @@ def create_app(config: WebConfig) -> FastAPI:
         return _public_user(row)
 
     def backend_headers(user: sqlite3.Row) -> dict[str, str]:
-        return {"x-session-id": _web_session_id(user)}
+        return {
+            "x-session-id": _web_session_id(user),
+            "sender-name": quote(str(user["username"]), safe=""),
+        }
 
     @app.post("/api/chat")
     async def proxy_chat(

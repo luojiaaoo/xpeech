@@ -28,6 +28,7 @@ class Message(BaseModel):
     message_id: str  # Unique identifier for the message.
     chat_id: str  # Unique identifier for the chat.
     session_id: str  # Unique identifier for the session.
+    sender_name: str  # Username of the message sender.
     content: list[TextData | FileData]  # List of messages.
     timestamp: int  # Unix timestamp of the message, in seconds.
     session_metadata: dict[str, str | int]  # Metadata for the session.

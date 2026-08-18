@@ -1,13 +1,32 @@
 import pytest
 from fastapi import HTTPException
 
-from xpeech.agent.server.api import CHAT_GUARD, acquire_chat_session, content
+from xpeech.agent.server.api import CHAT_GUARD, acquire_chat_session, content, sender_name_header
+from xpeech.agent.server.server import app
 
 
 def test_content_dependency_returns_parsed_list():
     parsed = content('[{"text": "hello"}]')
 
     assert parsed == [{"text": "hello"}]
+
+
+def test_sender_name_header_is_required():
+    parameters = app.openapi()["paths"]["/chat"]["post"]["parameters"]
+    sender_name = next(parameter for parameter in parameters if parameter["name"] == "sender-name")
+
+    assert sender_name["in"] == "header"
+    assert sender_name["required"] is True
+
+
+def test_sender_name_header_decodes_and_rejects_blank_values():
+    assert sender_name_header("demo-user") == "demo-user"
+    assert sender_name_header("%E5%BC%A0%E4%B8%89") == "张三"
+
+    with pytest.raises(HTTPException) as exc_info:
+        sender_name_header("%20")
+
+    assert exc_info.value.status_code == 422
 
 
 @pytest.mark.asyncio
