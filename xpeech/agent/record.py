@@ -1,4 +1,3 @@
-from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel
@@ -37,9 +36,9 @@ class ConversationRecord(_RecordSQLModel, table=True):
     model_call_count: int
 
 
-async def create_db_and_tables():
-    async with record_engine.begin() as session:
-        await session.run_sync(_RecordSQLModel.metadata.create_all)
+async def create_db_and_tables(engine: AsyncEngine = record_engine) -> None:
+    async with engine.begin() as connection:
+        await connection.run_sync(_RecordSQLModel.metadata.create_all)
 
 
 class SqliteConversationRecordRepository:

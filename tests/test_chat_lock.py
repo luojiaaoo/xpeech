@@ -1,8 +1,8 @@
 import pytest
 from fastapi import HTTPException
 
-from xpeech.agent.server.api import CHAT_GUARD, acquire_chat_session, content, sender_name_header
-from xpeech.agent.server.server import app
+from xpeech.agent.server.api import app
+from xpeech.agent.server.dependencies import CHAT_GUARD, acquire_chat_session, content, sender_name_header
 
 
 def test_content_dependency_returns_parsed_list():

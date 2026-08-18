@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel import SQLModel, create_engine, select
+from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 import xpeech.agent.loop as loop_module
@@ -24,10 +24,8 @@ class TestSqliteConversationRecordRepository:
     @pytest.mark.asyncio
     async def test_appends_all_session_records_to_one_database(self, tmp_path: Path):
         database_path = tmp_path / "record.db"
-        schema_engine = create_engine(f"sqlite:///{database_path.as_posix()}")
         engine = create_async_engine(f"sqlite+aiosqlite:///{database_path.as_posix()}")
-        create_db_and_tables(schema_engine)
-        schema_engine.dispose()
+        await create_db_and_tables(engine)
         repository = SqliteConversationRecordRepository(engine)
         record = ConversationRecord(
             session_id="session-1",
@@ -162,10 +160,8 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     )
     agent_loop.history = YamlHistoryRepository(tmp_path / "history")
     database_path = tmp_path / "record.db"
-    schema_engine = create_engine(f"sqlite:///{database_path.as_posix()}")
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path.as_posix()}")
-    create_db_and_tables(schema_engine)
-    schema_engine.dispose()
+    await create_db_and_tables(engine)
     agent_loop.records = SqliteConversationRecordRepository(engine)
     message = InboundMessage(
         session_id="session",
