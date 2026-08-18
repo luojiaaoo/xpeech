@@ -175,6 +175,13 @@ curl -N -X POST "http://localhost:7878/chat" \
 
 响应是 SSE 流，可以边生成边读取。
 
+每次成功完成的普通对话都会通过 SQLModel 追加到统一的
+`session_record_path` 数据库文件。SQLite 表名为 `conversation_records`，
+包含 `session_id`、`sender_name`、`user_question`、`model_response`、`input_tokens`、
+`output_tokens` 和 `model_call_count` 七个业务字段，以及 ORM 使用的自增 `id`。
+`session_record_path` 默认是
+`data/session/record.db`，可在 `conf.toml` 的 `[path]` 中覆盖。
+
 ### 内置命令
 
 在聊天中输入以下命令可以使用快捷功能：

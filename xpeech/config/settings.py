@@ -45,6 +45,7 @@ class PathConfig(BaseModel):
     sandbox_home_path: Path
     cache_path: Path
     log_path: Path
+    session_record_path: Path
 
 
 class BrowserPreviewConfig(BaseModel):
@@ -199,6 +200,7 @@ class Settings(BaseSettings):
 settings = Settings()
 ensure_path(settings.path.session_path)
 ensure_path(settings.path.session_history_path)
+ensure_path(settings.path.session_record_path.expanduser().parent)
 ensure_path(settings.path.workspace_base_path)
 ensure_path(settings.path.cache_path)
 ensure_path(settings.path.log_path)

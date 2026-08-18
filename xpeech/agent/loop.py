@@ -22,6 +22,7 @@ from .prompt.helper import (
     set_system_prompt,
 )
 from .prompt.system import build_system_prompt
+from .record import ConversationRecord, SqliteConversationRecordRepository
 from .server.schema import InboundMessage
 from .tool_executor import ToolExecutor
 from .tools.question import USER_TIMEOUT
@@ -59,6 +60,10 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
         self.history = YamlHistoryRepository(settings.path.session_history_path)
+        self.records = SqliteConversationRecordRepository()
+        self._model_call_count = 0
+        self._input_tokens = 0
+        self._output_tokens = 0
         self.tool_executor = ToolExecutor()
         self.compressor = ConversationCompressor(
             chat=self.chat,
@@ -303,6 +308,22 @@ class AgentLoop:
         # 保存历史记录
         await self.history.save(message.session_id, messages_yaml)
 
+        # 追加本轮对话记录
+        user_question = "\n".join(
+            input_content.text for input_content in message.content if isinstance(input_content, InputText)
+        )
+        await self.records.append(
+            ConversationRecord(
+                session_id=message.session_id,
+                sender_name=message.sender_name,
+                user_question=user_question,
+                model_response=final_content,
+                input_tokens=self._input_tokens,
+                output_tokens=self._output_tokens,
+                model_call_count=self._model_call_count,
+            ),
+        )
+
         # 输出token使用百分比
         token_count = await token_counter(messages_yaml)
         token_percent = min(1, token_count / self.max_accept_token) * 100
@@ -313,7 +334,7 @@ class AgentLoop:
                 {
                     "上下文使用率": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}".strip(),
                     "会话时长": f"{time.perf_counter() - start_time:.0f}秒",
-                    "大模型请求次数": str(loop_count + 1),
+                    "大模型请求次数": str(self._model_call_count),
                 },
                 ensure_ascii=False,
             ),
@@ -323,4 +344,14 @@ class AgentLoop:
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs) -> LLMResponse:
         """移除内部元数据后调用模型提供方。"""
-        return await self.provider.chat(messages=strip_internal_message_metadata(messages), **kwargs)
+        response = await self.provider.chat(messages=strip_internal_message_metadata(messages), **kwargs)
+        self._model_call_count += 1
+        prompt_tokens = response.usage.get("prompt_tokens")
+        completion_tokens = response.usage.get("completion_tokens")
+        if prompt_tokens is None:
+            logger.warning("Provider response missing prompt_tokens")
+        if completion_tokens is None:
+            logger.warning("Provider response missing completion_tokens")
+        self._input_tokens += prompt_tokens or 0
+        self._output_tokens += completion_tokens or 0
+        return response

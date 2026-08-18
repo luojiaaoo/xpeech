@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,6 +15,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from ...config.settings import settings
 from ...utils.logging import configure_logging
+from ..record import create_db_and_tables, record_engine
 from ..tools.mcp_client import close_persistent_mcp_registrations
 from .middleware import ContextASGIMiddleware
 
@@ -22,10 +24,12 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    await create_db_and_tables()
     try:
         yield
     finally:
         await close_persistent_mcp_registrations()
+        await record_engine.dispose()
 
 
 app = FastAPI(
