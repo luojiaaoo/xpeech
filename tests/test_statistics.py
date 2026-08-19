@@ -6,14 +6,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from xpeech.agent.record import (
-    STATISTICS_CACHE_TTL_S,
     ConversationRecord,
     SqliteConversationRecordRepository,
-    SqliteConversationStatisticsRepository,
     create_db_and_tables,
 )
 from xpeech.agent.server.api import app
-from xpeech.agent.server.routes.statistics import get_statistics_repository
+from xpeech.agent.server.routes.statistics import (
+    STATISTICS_CACHE_TTL_S,
+    SqliteConversationStatisticsRepository,
+    get_statistics_repository,
+)
 from xpeech.utils.jwt_auth import create_access_token
 
 
