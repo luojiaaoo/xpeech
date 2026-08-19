@@ -3,14 +3,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac
-import os
 import secrets
 import sqlite3
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, AsyncIterator
+from typing import Annotated
 from urllib.parse import quote
 
 import httpx
@@ -19,6 +19,8 @@ from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+from ...utils.jwt_auth import create_access_token
 
 COOKIE_NAME = "xpeech_session"
 SESSION_DAYS = 7
@@ -280,6 +282,7 @@ def create_app(config: WebConfig) -> FastAPI:
 
     def backend_headers(user: sqlite3.Row) -> dict[str, str]:
         return {
+            "authorization": f"Bearer {create_access_token()}",
             "x-session-id": _web_session_id(user),
             "sender-name": quote(str(user["username"]), safe=""),
         }
@@ -354,6 +357,7 @@ def create_app(config: WebConfig) -> FastAPI:
         async with httpx.AsyncClient(timeout=None) as client:
             upstream = await client.get(
                 f"{config.backend_url}/sessions/{quote(session_id, safe='')}/files",
+                headers=backend_headers(user),
                 params={"path": path},
             )
         headers = {}

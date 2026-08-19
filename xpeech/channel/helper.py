@@ -1,17 +1,20 @@
+import json
+from collections.abc import AsyncIterator
 from contextlib import ExitStack
 from dataclasses import dataclass
 from email.message import Message as EmailMessage
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any
 from urllib.parse import quote
-import json
+
 import httpx
 from httpx_sse import aconnect_sse
 from loguru import logger
 from pydantic import ValidationError
-from .schema import ChatEvent, FileData, Message, TextData
-from typing import Any
 from yarl import URL
+
+from ..utils.jwt_auth import create_access_token
+from .schema import ChatEvent, FileData, Message, TextData
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,7 @@ async def iter_chat_events(
         "content": json.dumps(content, ensure_ascii=False),
     }
     headers = {
+        "authorization": f"Bearer {create_access_token()}",
         "x-session-id": session_id,
         "sender-name": quote(sender_name, safe=""),
     }
@@ -67,21 +71,20 @@ async def iter_chat_events(
             ("files", (file_path.name, stack.enter_context(file_path.open("rb")), "application/octet-stream"))
             for file_path in files
         ]
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with aconnect_sse(
-                client,
-                "POST",
-                chat_url,
-                headers=headers,
-                data=data,
-                files=upload_files,
-            ) as event_source:
-                event_source.response.raise_for_status()
-                async for event in event_source.aiter_sse():
-                    try:
-                        yield ChatEvent.model_validate_json(event.data)
-                    except ValidationError:
-                        logger.exception("Skipping invalid SSE event payload: {}", event.data[:200])
+        async with httpx.AsyncClient(timeout=None) as client, aconnect_sse(
+            client,
+            "POST",
+            chat_url,
+            headers=headers,
+            data=data,
+            files=upload_files,
+        ) as event_source:
+            event_source.response.raise_for_status()
+            async for event in event_source.aiter_sse():
+                try:
+                    yield ChatEvent.model_validate_json(event.data)
+                except ValidationError:
+                    logger.exception("Skipping invalid SSE event payload: {}", event.data[:200])
 
 
 async def notify_question(session_id: str, result: Any, chat_url: str) -> None:
@@ -90,7 +93,10 @@ async def notify_question(session_id: str, result: Any, chat_url: str) -> None:
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             answer_url,
-            headers={"x-session-id": session_id},
+            headers={
+                "authorization": f"Bearer {create_access_token()}",
+                "x-session-id": session_id,
+            },
             data={"answer": answer},
         )
         response.raise_for_status()
@@ -99,7 +105,11 @@ async def notify_question(session_id: str, result: Any, chat_url: str) -> None:
 async def download_file(session_id: str, path: str, api_base_url: str) -> DownloadedFile:
     file_url = str(URL(api_base_url) / "sessions" / session_id / "files")
     async with httpx.AsyncClient(timeout=None) as client:
-        response = await client.get(file_url, params={"path": path})
+        response = await client.get(
+            file_url,
+            headers={"authorization": f"Bearer {create_access_token()}"},
+            params={"path": path},
+        )
         response.raise_for_status()
 
     filename = _filename_from_content_disposition(response.headers.get("content-disposition")) or Path(path).name

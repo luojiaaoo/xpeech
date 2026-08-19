@@ -65,6 +65,22 @@ cp conf.toml.example conf.toml
 CDP_URL=ws://browserless:3000
 ```
 
+API 与各通道通过短期 JWT 认证。请在 `conf.toml` 中配置一个独立的共享密钥：
+
+```bash
+uv run python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+```toml
+[jwt]
+secret_key = "replace-with-the-random-value-generated-above"
+algorithm = "HS256"
+access_token_expire_seconds = 60
+```
+
+`secret_key` 至少 32 个字符；访问令牌最长有效 60 秒。Compose 中的 backend、feishu
+和 web_client 会读取同一份 `conf.toml`，无需分别配置。
+
 ## 启动
 
 按需在独立终端启动各服务：
@@ -90,9 +106,11 @@ uv run -m xpeech feishu
 - Swagger UI：`http://localhost:7878/docs`
 - ReDoc：`http://localhost:7878/redoc`
 
-Swagger UI、ReDoc 及 `/openapi.json` 使用 HTTP Basic Auth。账号密码由
-`conf.toml` 中的 `docs.username` 和 `docs.password` 配置；省略 `[docs]`
-配置时，默认账号为 `admin`，默认密码为 `luojiaaoo`。
+Swagger UI、ReDoc 及 `/openapi.json` 可直接访问，不再使用原来的文档账号密码。在
+Swagger UI 右上角点击 `Authorize`：`username` 可填写任意标识（例如 `docs`），
+`password` 填写 `jwt.secret_key`。Swagger 会调用 `/token` 校验密钥并签发一个有效期
+60 秒的 JWT，后续调试请求会自动携带该令牌。部署时必须使用 HTTPS，避免共享密钥在
+传输过程中泄露。
 
 飞书桥接会从配置中读取：
 
@@ -151,11 +169,12 @@ docker compose up -d --force-recreate browserless backend feishu web_client
 
 ## 发送消息
 
-`/chat` 需要通过请求头传入会话 ID 和发送者用户名。两个请求头都是必填项；
-用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码：
+`/chat` 需要 Bearer JWT，并通过请求头传入会话 ID 和发送者用户名。JWT、会话 ID
+和发送者用户名都是必填项；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码：
 
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
+  -H "Authorization: Bearer <JWT>" \
   -H "x-session-id: demo-session" \
   -H "sender-name: demo-user" \
   -F 'session_metadata={"channel":"curl"}' \
@@ -166,6 +185,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
+  -H "Authorization: Bearer <JWT>" \
   -H "x-session-id: demo-session" \
   -H "sender-name: demo-user" \
   -F 'session_metadata={"channel":"curl"}' \

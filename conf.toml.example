@@ -11,9 +11,11 @@ log_path = "data/logs"
 retention_days = 7
 max_file_size_mb = 10
 
-[docs]
-username = "admin"
-password = "luojiaoo"
+[jwt]
+# Generate a dedicated value with: python -c "import secrets; print(secrets.token_hex(32))"
+secret_key = "replace-with-a-random-secret-of-at-least-32-characters"
+algorithm = "HS256"
+access_token_expire_seconds = 60
 
 [web_client]
 database_path = "data/web_client/users.db"

@@ -10,6 +10,7 @@ from ....exceptions import PathProtectionError
 from ...tools.helper import safe_resolve_workspace_path
 
 router = APIRouter()
+preview_router = APIRouter()
 
 
 @router.get("/sessions/{session_id}/files")
@@ -33,7 +34,7 @@ async def download_session_file(
     return FileResponse(file_path, filename=file_path.name)
 
 
-@router.get(
+@preview_router.get(
     f"{settings.tool.browser_preview.route_path}/{{preview_id}}/{{file_path:path}}",
     include_in_schema=False,
 )

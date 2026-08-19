@@ -21,6 +21,7 @@ dependencies = [
     "moviepy>=1.0.3",
     "openai>=2.36.0",
     "pillow>=12.2.0",
+    "pyjwt>=2.12.1",
     "pydantic-settings>=2.14.0",
     "python-multipart>=0.0.27",
     "sqlmodel>=0.0.39",

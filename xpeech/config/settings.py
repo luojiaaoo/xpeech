@@ -1,6 +1,8 @@
 from pathlib import Path
 from threading import Lock
+from typing import Literal
 from urllib.parse import urlsplit
+
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 from pydantic_settings import (
@@ -150,11 +152,12 @@ class LoggingConfig(BaseModel):
     max_file_size_mb: int = Field(default=10, ge=1)
 
 
-class DocsConfig(BaseModel):
-    """API documentation authentication settings."""
+class JWTConfig(BaseModel):
+    """Shared JWT settings for channel-to-API authentication."""
 
-    username: str = Field(default="admin", min_length=1)
-    password: str = Field(default="luojiaaoo", min_length=1, repr=False)
+    secret_key: str = Field(min_length=32, repr=False)
+    algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
+    access_token_expire_seconds: int = Field(default=60, ge=1, le=60)
 
 
 class WebClientConfig(BaseModel):
@@ -169,7 +172,7 @@ class Settings(BaseSettings):
     llm: LLMConfig
     feishu: FeishuConfig
     logging: LoggingConfig = LoggingConfig()
-    docs: DocsConfig = Field(default_factory=DocsConfig)
+    jwt: JWTConfig
     web_client: WebClientConfig = Field(default_factory=WebClientConfig)
 
     @classmethod
