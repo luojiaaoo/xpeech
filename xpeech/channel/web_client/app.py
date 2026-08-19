@@ -11,16 +11,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import quote
 
-import httpx
 import uvicorn
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from yarl import URL
 
-from ...utils.jwt_auth import create_access_token
+from ..helper import fetch_file, open_chat_stream, submit_question
 
 COOKIE_NAME = "xpeech_session"
 SESSION_DAYS = 7
@@ -280,13 +279,6 @@ def create_app(config: WebConfig) -> FastAPI:
             row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         return _public_user(row)
 
-    def backend_headers(user: sqlite3.Row) -> dict[str, str]:
-        return {
-            "authorization": f"Bearer {create_access_token()}",
-            "x-session-id": _web_session_id(user),
-            "sender-name": quote(str(user["username"]), safe=""),
-        }
-
     @app.post("/api/chat")
     async def proxy_chat(
         request: Request,
@@ -296,27 +288,22 @@ def create_app(config: WebConfig) -> FastAPI:
         files: Annotated[list[UploadFile], File()] = [],
         user=Depends(current_user),
     ):
-        form_data = {"content": content, "session_metadata": session_metadata}
-        if timestamp:
-            form_data["timestamp"] = timestamp
         upload_data = []
         for file in files:
             upload_data.append(("files", (file.filename or "attachment", await file.read(), file.content_type)))
-        client = httpx.AsyncClient(timeout=None)
-        upstream = await client.send(
-            client.build_request(
-                "POST",
-                f"{config.backend_url}/chat",
-                headers=backend_headers(user),
-                data=form_data,
-                files=upload_data,
-            ),
-            stream=True,
+        chat_stream = await open_chat_stream(
+            _web_session_id(user),
+            str(user["username"]),
+            content,
+            session_metadata,
+            str(URL(config.backend_url) / "chat"),
+            timestamp=timestamp,
+            files=upload_data,
         )
+        upstream = chat_stream.response
         if upstream.status_code >= 400:
             body = await upstream.aread()
-            await upstream.aclose()
-            await client.aclose()
+            await chat_stream.aclose()
             return Response(body, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))
 
         async def stream() -> AsyncIterator[bytes]:
@@ -326,8 +313,7 @@ def create_app(config: WebConfig) -> FastAPI:
                         break
                     yield chunk
             finally:
-                await upstream.aclose()
-                await client.aclose()
+                await chat_stream.aclose()
 
         return StreamingResponse(
             stream(),
@@ -340,12 +326,7 @@ def create_app(config: WebConfig) -> FastAPI:
         answer: Annotated[str, Form()],
         user=Depends(current_user),
     ):
-        async with httpx.AsyncClient(timeout=30) as client:
-            upstream = await client.post(
-                f"{config.backend_url}/answer_question",
-                headers=backend_headers(user),
-                data={"answer": answer},
-            )
+        upstream = await submit_question(_web_session_id(user), answer, config.backend_url)
         return Response(upstream.content, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))
 
     @app.get("/api/files")
@@ -354,12 +335,7 @@ def create_app(config: WebConfig) -> FastAPI:
         user=Depends(current_user),
     ):
         session_id = _web_session_id(user)
-        async with httpx.AsyncClient(timeout=None) as client:
-            upstream = await client.get(
-                f"{config.backend_url}/sessions/{quote(session_id, safe='')}/files",
-                headers=backend_headers(user),
-                params={"path": path},
-            )
+        upstream = await fetch_file(session_id, path, config.backend_url)
         headers = {}
         if disposition := upstream.headers.get("content-disposition"):
             headers["Content-Disposition"] = disposition
