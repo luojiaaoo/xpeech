@@ -35,7 +35,7 @@ async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
         ),
         ConversationRecord(
             session_id="session-bob",
-            sender_name="bob",
+            sender_name="alice",
             user_question="second question",
             model_response="second answer",
             input_tokens=20,
@@ -63,7 +63,15 @@ async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
 
 
 def _clear_statistics_caches() -> None:
-    for method_name in ("overview", "timeseries", "users", "sessions", "latest_records", "records"):
+    for method_name in (
+        "overview",
+        "timeseries",
+        "users",
+        "sessions",
+        "latest_records",
+        "latest_data_at",
+        "records",
+    ):
         getattr(SqliteConversationStatisticsRepository, method_name).cache_clear()
 
 
@@ -92,9 +100,29 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
                 params={"limit": 2},
                 headers=headers,
             )
+            no_updates = client.get(
+                "/statistics/updates",
+                params={"data_as_of": "2026-08-19T01:02:00Z"},
+                headers=headers,
+            )
+            has_updates = client.get(
+                "/statistics/updates",
+                params={"data_as_of": "2026-08-18T16:01:00Z"},
+                headers=headers,
+            )
             incremental = client.get(
                 "/statistics/records",
                 params={"after_id": 1},
+                headers=headers,
+            )
+            searched = client.get(
+                "/statistics/records",
+                params=[
+                    ("session_id", "session-alice"),
+                    ("session_id", "session-bob"),
+                    ("keyword", "second"),
+                    ("limit", "10"),
+                ],
                 headers=headers,
             )
         cache_info = SqliteConversationStatisticsRepository.overview.cache_info()
@@ -122,7 +150,12 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
         "data_as_of": "2026-08-19T01:02:00Z",
     }
     assert [point["bucket"] for point in timeseries.json()["data"]] == ["2026-08-18", "2026-08-19"]
-    assert [user["sender_name"] for user in users.json()["data"]] == ["alice", "bob"]
+    assert [user["sender_name"] for user in users.json()["data"]] == ["alice", "alice"]
+    assert [user["session_id"] for user in users.json()["data"]] == [
+        "session-alice",
+        "session-bob",
+    ]
+    assert users.json()["total"] == 2
     assert users.json()["data"][0]["active_day_count"] == 2
     assert [session["session_id"] for session in sessions.json()["data"]] == [
         "session-alice",
@@ -139,11 +172,30 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
     assert latest_body["data"][0]["duration_s"] == 3.75
     assert latest_body["data"][0]["total_tokens"] == 36
 
+    assert no_updates.json() == {
+        "has_updates": False,
+        "data_as_of": "2026-08-19T01:02:00Z",
+    }
+    assert no_updates.headers["cache-control"] == "no-store"
+    assert has_updates.json() == {
+        "has_updates": True,
+        "data_as_of": "2026-08-19T01:02:00Z",
+    }
+
     incremental_body = incremental.json()
     assert incremental.status_code == 200
     assert incremental_body["total"] == 2
+    assert incremental_body["total_tokens"] == 60
     assert incremental_body["latest_id"] == 3
     assert [record["id"] for record in incremental_body["data"]] == [2, 3]
+
+    searched_body = searched.json()
+    assert searched.status_code == 200
+    assert searched_body["total"] == 1
+    assert searched_body["input_tokens"] == 20
+    assert searched_body["output_tokens"] == 4
+    assert searched_body["total_tokens"] == 24
+    assert [record["id"] for record in searched_body["data"]] == [2]
 
 
 def test_statistics_api_rejects_invalid_filters(tmp_path: Path):

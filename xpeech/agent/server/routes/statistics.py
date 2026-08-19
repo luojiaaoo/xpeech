@@ -48,6 +48,7 @@ class TimeseriesResponse(BaseModel):
 
 class UserStatistics(BaseModel):
     sender_name: str
+    session_id: str
     question_count: int
     active_day_count: int
     session_count: int
@@ -105,8 +106,16 @@ class LatestRecordsResponse(BaseModel):
     latest_id: int | None
 
 
+class UpdatesResponse(BaseModel):
+    has_updates: bool
+    data_as_of: datetime | None
+
+
 class RecordsResponse(LatestRecordsResponse):
     total: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
     limit: int
     offset: int
 
@@ -281,6 +290,7 @@ async def users(
         data.append(
             UserStatistics(
                 sender_name=row["sender_name"],
+                session_id=row["session_id"],
                 question_count=int(row["question_count"]),
                 active_day_count=int(row["active_day_count"]),
                 session_count=int(row["session_count"]),
@@ -347,6 +357,25 @@ async def latest_records(
     return LatestRecordsResponse(data=data, latest_id=data[0].id if data else None)
 
 
+@router.get("/updates", response_model=UpdatesResponse)
+async def updates(
+    response: Response,
+    repository: StatisticsRepository,
+    data_as_of: Annotated[datetime | None, Query(description="面板当前数据截止时间")] = None,
+    start_at: Annotated[datetime | None, Query(description="统计开始时间，包含该时间")] = None,
+    end_at: Annotated[datetime | None, Query(description="统计结束时间，不包含该时间")] = None,
+) -> UpdatesResponse:
+    """轻量检查统计范围内是否存在比面板更新的数据。"""
+    response.headers["Cache-Control"] = "no-store"
+    normalized_start, normalized_end = _period(start_at, end_at)
+    normalized_data_as_of = _as_database_datetime(data_as_of)
+    latest = await repository.latest_data_at(start_at=normalized_start, end_at=normalized_end)
+    has_updates = latest is not None and (
+        normalized_data_as_of is None or latest > normalized_data_as_of
+    )
+    return UpdatesResponse(has_updates=has_updates, data_as_of=_as_utc(latest))
+
+
 @router.get("/records", response_model=RecordsResponse)
 async def records(
     response: Response,
@@ -354,7 +383,8 @@ async def records(
     start_at: Annotated[datetime | None, Query(description="统计开始时间，包含该时间")] = None,
     end_at: Annotated[datetime | None, Query(description="统计结束时间，不包含该时间")] = None,
     sender_name: Annotated[str | None, Query(description="按发送者用户名筛选")] = None,
-    session_id: Annotated[str | None, Query(description="按会话 ID 筛选")] = None,
+    session_id: Annotated[list[str] | None, Query(description="按一个或多个会话 ID 筛选")] = None,
+    keyword: Annotated[str | None, Query(max_length=200, description="按问题内容关键词筛选")] = None,
     after_id: Annotated[int | None, Query(ge=0, description="只返回 ID 大于该值的新记录")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -362,15 +392,29 @@ async def records(
     """分页查询完整问答；传 after_id 时按 ID 正序返回增量记录。"""
     response.headers["Cache-Control"] = "no-store"
     normalized_start, normalized_end = _period(start_at, end_at)
-    result, total = await repository.records(
+    session_ids = tuple(dict.fromkeys(value.strip() for value in (session_id or []) if value.strip()))
+    normalized_keyword = keyword.strip() if keyword and keyword.strip() else None
+    result, summary = await repository.records(
         start_at=normalized_start,
         end_at=normalized_end,
         sender_name=sender_name,
-        session_id=session_id,
+        session_ids=session_ids,
+        question_keyword=normalized_keyword,
         after_id=after_id,
         limit=limit,
         offset=offset,
     )
     data = [_record_response(record) for record in result]
     latest_id = max((record.id for record in data), default=None)
-    return RecordsResponse(data=data, latest_id=latest_id, total=total, limit=limit, offset=offset)
+    input_tokens = int(summary["input_tokens"])
+    output_tokens = int(summary["output_tokens"])
+    return RecordsResponse(
+        data=data,
+        latest_id=latest_id,
+        total=int(summary["total"]),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        limit=limit,
+        offset=offset,
+    )

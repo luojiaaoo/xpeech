@@ -58,9 +58,10 @@ class TestSqliteConversationRecordRepository:
         assert database_path.is_file()
         try:
             async with engine.connect() as connection:
-                columns = await connection.run_sync(
-                    lambda sync_connection: tuple(
-                        column["name"] for column in inspect(sync_connection).get_columns(TABLE_NAME)
+                columns, indexes = await connection.run_sync(
+                    lambda sync_connection: (
+                        tuple(column["name"] for column in inspect(sync_connection).get_columns(TABLE_NAME)),
+                        {index["name"] for index in inspect(sync_connection).get_indexes(TABLE_NAME)},
                     )
                 )
             async with AsyncSession(engine) as session:
@@ -68,6 +69,10 @@ class TestSqliteConversationRecordRepository:
         finally:
             await engine.dispose()
         assert columns == tuple(ConversationRecord.model_fields)
+        assert {
+            "ix_conversation_records_sender_session_record",
+            "ix_conversation_records_created_sender_session",
+        } <= indexes
         assert ConversationRecord.metadata is not SQLModel.metadata
         assert records == [
             ConversationRecord(

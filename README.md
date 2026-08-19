@@ -210,7 +210,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 - `GET /statistics`：问答量、活跃用户、会话数、模型调用次数、Token 和平均耗时总览。
 - `GET /statistics/timeseries`：按 `hour`、`day`、`week` 或 `month` 返回使用趋势，默认使用
   `Asia/Shanghai` 时区分桶。
-- `GET /statistics/users`：按问答量倒序返回用户统计。
+- `GET /statistics/users`：按问答次数倒序返回用户统计。
 - `GET /statistics/sessions`：按最近活跃顺序返回会话统计。
 - `GET /statistics/records/latest?limit=20`：按 ID 倒序返回最新完整问答，供滚动大屏使用。
 - `GET /statistics/records?after_id=<id>`：按 ID 正序返回指定 ID 之后的完整问答，供大屏增量刷新使用。
@@ -405,6 +405,11 @@ uv run python -c "from xpeech.config.settings import settings; print(settings.mo
 
 Web 客户端基于 React 和 Ant Design X，使用 FastAPI 认证代理访问 Agent API，
 并通过 SQLite 保存用户与登录会话。
+
+登录后的管理员可从页面右上角的“设置”下拉框进入“数据大屏”，也可通过 `/api/statistics`、`/api/statistics/timeseries`、
+`/api/statistics/users`、`/api/statistics/sessions` 和 `/api/statistics/records*` 查询统计数据。
+Web 服务会签发短期后端 JWT，将请求及全部查询参数转发到后端对应的 `/statistics*` 接口。
+普通用户不会显示大屏入口，直接访问统计代理也会返回 403。
 
 首次运行前构建前端：
 

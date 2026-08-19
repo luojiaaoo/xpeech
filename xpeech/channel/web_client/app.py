@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import uvicorn
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -19,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from yarl import URL
 
-from ..helper import fetch_file, open_chat_stream, submit_question
+from ..helper import _backend_headers, fetch_file, open_chat_stream, submit_question
 
 COOKIE_NAME = "xpeech_session"
 SESSION_DAYS = 7
@@ -339,6 +340,34 @@ def create_app(config: WebConfig) -> FastAPI:
         headers = {}
         if disposition := upstream.headers.get("content-disposition"):
             headers["Content-Disposition"] = disposition
+        return Response(
+            upstream.content,
+            status_code=upstream.status_code,
+            media_type=upstream.headers.get("content-type"),
+            headers=headers,
+        )
+
+    @app.get("/api/statistics")
+    @app.get("/api/statistics/{statistics_path:path}")
+    async def proxy_statistics(
+        request: Request,
+        statistics_path: str = "",
+        user=Depends(admin_user),  # noqa: B008
+    ):
+        """将已登录 Web 用户的统计查询转发到后端统计接口。"""
+        upstream_url = str(URL(config.backend_url) / "statistics")
+        if statistics_path:
+            upstream_url = f"{upstream_url}/{statistics_path}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            upstream = await client.get(
+                upstream_url,
+                headers=_backend_headers(_web_session_id(user)),
+                params=request.query_params.multi_items(),
+            )
+
+        headers = {}
+        if cache_control := upstream.headers.get("cache-control"):
+            headers["Cache-Control"] = cache_control
         return Response(
             upstream.content,
             status_code=upstream.status_code,

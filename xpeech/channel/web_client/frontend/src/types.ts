@@ -12,6 +12,111 @@ export interface AppConfig {
   system_name: string;
 }
 
+export interface StatisticsOverview {
+  question_count: number;
+  active_user_count: number;
+  session_count: number;
+  model_call_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  average_tokens_per_question: number;
+  average_duration_s: number | null;
+  data_as_of: string | null;
+}
+
+export interface StatisticsTimeseriesPoint {
+  bucket: string;
+  question_count: number;
+  active_user_count: number;
+  session_count: number;
+  model_call_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  average_duration_s: number | null;
+}
+
+export interface StatisticsTimeseries {
+  granularity: 'hour' | 'day' | 'week' | 'month';
+  timezone: string;
+  data: StatisticsTimeseriesPoint[];
+}
+
+export interface StatisticsUser {
+  sender_name: string;
+  session_id: string;
+  question_count: number;
+  active_day_count: number;
+  session_count: number;
+  model_call_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  average_duration_s: number | null;
+  last_active_at: string | null;
+}
+
+export interface StatisticsUsers {
+  data: StatisticsUser[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface StatisticsSession {
+  session_id: string;
+  sender_name: string;
+  question_count: number;
+  model_call_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  average_duration_s: number | null;
+  first_active_at: string | null;
+  last_active_at: string | null;
+}
+
+export interface StatisticsSessions {
+  data: StatisticsSession[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface StatisticsRecord {
+  id: number;
+  created_at: string;
+  duration_s: number;
+  session_id: string;
+  sender_name: string;
+  user_question: string;
+  model_response: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  model_call_count: number;
+}
+
+export interface StatisticsLatestRecords {
+  data: StatisticsRecord[];
+  latest_id: number | null;
+}
+
+export interface StatisticsUpdates {
+  has_updates: boolean;
+  data_as_of: string | null;
+}
+
+export interface StatisticsRecords extends StatisticsLatestRecords {
+  total: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  limit: number;
+  offset: number;
+}
+
 export type ChatEventType =
   | 'assistant'
   | 'thinking'

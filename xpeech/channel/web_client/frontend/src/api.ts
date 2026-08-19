@@ -1,4 +1,15 @@
-import type { AppConfig, ChatEvent, User } from './types';
+import type {
+  AppConfig,
+  ChatEvent,
+  StatisticsLatestRecords,
+  StatisticsOverview,
+  StatisticsRecords,
+  StatisticsSessions,
+  StatisticsTimeseries,
+  StatisticsUpdates,
+  StatisticsUsers,
+  User,
+} from './types';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -36,6 +47,51 @@ export const userApi = {
     request<User>('/api/admin/users', { method: 'POST', body: JSON.stringify(values) }),
   update: (id: number, values: { password?: string; is_admin?: boolean; is_active?: boolean }) =>
     request<User>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(values) }),
+};
+
+function statisticsUrl(path: string, startAt?: string, extra: Record<string, string | string[]> = {}) {
+  const params = new URLSearchParams();
+  Object.entries(extra).forEach(([key, value]) => {
+    if (Array.isArray(value)) value.forEach((item) => params.append(key, item));
+    else params.set(key, value);
+  });
+  if (startAt) params.set('start_at', startAt);
+  const query = params.toString();
+  return `/api/statistics${path}${query ? `?${query}` : ''}`;
+}
+
+export const statisticsApi = {
+  overview: (startAt?: string) => request<StatisticsOverview>(statisticsUrl('', startAt)),
+  timeseries: (startAt?: string) => request<StatisticsTimeseries>(statisticsUrl('/timeseries', startAt, {
+    granularity: 'day',
+    timezone: 'Asia/Shanghai',
+  })),
+  users: (startAt?: string, limit = 20, offset = 0) => request<StatisticsUsers>(statisticsUrl('/users', startAt, {
+    timezone: 'Asia/Shanghai',
+    limit: String(limit),
+    offset: String(offset),
+  })),
+  sessions: (startAt?: string) => request<StatisticsSessions>(statisticsUrl('/sessions', startAt, {
+    limit: '8',
+  })),
+  latestRecords: () => request<StatisticsLatestRecords>('/api/statistics/records/latest?limit=20'),
+  updates: (dataAsOf: string | null, startAt?: string) => request<StatisticsUpdates>(
+    statisticsUrl('/updates', startAt, dataAsOf ? { data_as_of: dataAsOf } : {}),
+  ),
+  records: (senderName: string, sessionId: string, limit = 10) => request<StatisticsRecords>(
+    statisticsUrl('/records', undefined, {
+      sender_name: senderName,
+      session_id: sessionId,
+      limit: String(limit),
+    }),
+  ),
+  searchRecords: (sessionIds: string[], keyword: string, limit = 10) => request<StatisticsRecords>(
+    statisticsUrl('/records', undefined, {
+      session_id: sessionIds,
+      ...(keyword ? { keyword } : {}),
+      limit: String(limit),
+    }),
+  ),
 };
 
 function parseEventBlock(block: string): ChatEvent | null {
