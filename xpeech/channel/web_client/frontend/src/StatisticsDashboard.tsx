@@ -108,7 +108,6 @@ function TrendChart({ points }: { points: StatisticsTimeseriesPoint[] }) {
         crosshairs: true,
         marker: true,
       },
-      elementHighlightByX: { link: true },
     },
     children: [
       {
