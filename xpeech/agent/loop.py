@@ -312,6 +312,7 @@ class AgentLoop:
         user_question = "\n".join(
             input_content.text for input_content in message.content if isinstance(input_content, InputText)
         )
+        duration_s = time.perf_counter() - start_time
         await self.records.append(
             ConversationRecord(
                 session_id=message.session_id,
@@ -321,6 +322,7 @@ class AgentLoop:
                 input_tokens=self._input_tokens,
                 output_tokens=self._output_tokens,
                 model_call_count=self._model_call_count,
+                duration_s=duration_s,
             ),
         )
 
@@ -333,7 +335,7 @@ class AgentLoop:
             "context": json.dumps(
                 {
                     "上下文使用率": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}".strip(),
-                    "会话时长": f"{time.perf_counter() - start_time:.0f}秒",
+                    "会话时长": f"{duration_s:.0f}秒",
                     "大模型请求次数": str(self._model_call_count),
                 },
                 ensure_ascii=False,

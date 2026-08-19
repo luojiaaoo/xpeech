@@ -198,9 +198,31 @@ curl -N -X POST "http://localhost:7878/chat" \
 每次成功完成的普通对话都会通过 SQLModel 追加到统一的
 `session_record_path` 数据库文件。SQLite 表名为 `conversation_records`，
 包含 `session_id`、`sender_name`、`user_question`、`model_response`、`input_tokens`、
-`output_tokens` 和 `model_call_count` 七个业务字段，以及 ORM 使用的自增 `id`。
+`output_tokens`、`model_call_count`、`created_at` 和 `duration_s` 九个业务字段，以及 ORM 使用的自增
+`id`。`created_at` 是应用写入记录时的 UTC 时间，`duration_s` 是本轮 Agent 处理耗时（秒）。
 `session_record_path` 默认是
 `data/session/record.db`，可在 `conf.toml` 的 `[path]` 中覆盖。
+
+## 统计接口
+
+统计接口使用与 `/chat` 相同的 Bearer JWT，统一位于 `/statistics`：
+
+- `GET /statistics`：问答量、活跃用户、会话数、模型调用次数、Token 和平均耗时总览。
+- `GET /statistics/timeseries`：按 `hour`、`day`、`week` 或 `month` 返回使用趋势，默认使用
+  `Asia/Shanghai` 时区分桶。
+- `GET /statistics/users`：按问答量倒序返回用户统计。
+- `GET /statistics/sessions`：按最近活跃顺序返回会话统计。
+- `GET /statistics/records/latest?limit=20`：按 ID 倒序返回最新完整问答，供滚动大屏使用。
+- `GET /statistics/records?after_id=<id>`：按 ID 正序返回指定 ID 之后的完整问答，供大屏增量刷新使用。
+
+统计时间筛选使用左闭右开区间：`start_at <= created_at < end_at`。列表接口支持 `limit` 和
+`offset`，其中 `limit` 最大为 100。服务端会按完整查询参数缓存结果 5 秒，并合并相同参数的并发查询。
+完整问答接口仍返回 `Cache-Control: no-store`，避免浏览器或代理持久缓存问答内容。
+
+```bash
+curl "http://localhost:7878/statistics/records/latest?limit=20" \
+  -H "Authorization: Bearer <JWT>"
+```
 
 ### 内置命令
 

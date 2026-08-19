@@ -27,6 +27,8 @@ class TestSqliteConversationRecordRepository:
         engine = create_async_engine(f"sqlite+aiosqlite:///{database_path.as_posix()}")
         await create_db_and_tables(engine)
         repository = SqliteConversationRecordRepository(engine)
+        first_created_at = datetime(2026, 8, 19, 1, 2, 3, tzinfo=UTC)
+        second_created_at = datetime(2026, 8, 19, 1, 3, 4, tzinfo=UTC)
         record = ConversationRecord(
             session_id="session-1",
             sender_name="张三",
@@ -35,6 +37,8 @@ class TestSqliteConversationRecordRepository:
             input_tokens=12,
             output_tokens=4,
             model_call_count=1,
+            created_at=first_created_at,
+            duration_s=1.25,
         )
         second_record = ConversationRecord(
             session_id="session-2",
@@ -44,6 +48,8 @@ class TestSqliteConversationRecordRepository:
             input_tokens=8,
             output_tokens=3,
             model_call_count=1,
+            created_at=second_created_at,
+            duration_s=2.5,
         )
 
         await repository.append(record)
@@ -58,9 +64,7 @@ class TestSqliteConversationRecordRepository:
                     )
                 )
             async with AsyncSession(engine) as session:
-                records = list(
-                    (await session.exec(select(ConversationRecord).order_by(ConversationRecord.id))).all()
-                )
+                records = list((await session.exec(select(ConversationRecord).order_by(ConversationRecord.id))).all())
         finally:
             await engine.dispose()
         assert columns == tuple(ConversationRecord.model_fields)
@@ -75,6 +79,8 @@ class TestSqliteConversationRecordRepository:
                 input_tokens=12,
                 output_tokens=4,
                 model_call_count=1,
+                created_at=first_created_at.replace(tzinfo=None),
+                duration_s=1.25,
             ),
             ConversationRecord(
                 id=2,
@@ -85,6 +91,8 @@ class TestSqliteConversationRecordRepository:
                 input_tokens=8,
                 output_tokens=3,
                 model_call_count=1,
+                created_at=second_created_at.replace(tzinfo=None),
+                duration_s=2.5,
             ),
         ]
 
@@ -172,24 +180,27 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         files=[],
     )
 
+    started_at = datetime.now(UTC)
     events = [event async for event in agent_loop.run(message)]
+    completed_at = datetime.now(UTC)
 
     assert events[-2] == {"event": "assistant", "context": "final answer"}
-    assert "\"大模型请求次数\": \"2\"" in events[-1]["context"]
+    assert '"大模型请求次数": "2"' in events[-1]["context"]
     try:
         async with AsyncSession(engine) as session:
             records = list((await session.exec(select(ConversationRecord))).all())
     finally:
         await engine.dispose()
-    assert records == [
-        ConversationRecord(
-            id=1,
-            session_id="session",
-            sender_name="alice",
-            user_question="first question\nsecond line",
-            model_response="final answer",
-            input_tokens=30,
-            output_tokens=7,
-            model_call_count=2,
-        )
-    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.id == 1
+    assert record.session_id == "session"
+    assert record.sender_name == "alice"
+    assert record.user_question == "first question\nsecond line"
+    assert record.model_response == "final answer"
+    assert record.input_tokens == 30
+    assert record.output_tokens == 7
+    assert record.model_call_count == 2
+    assert started_at.replace(tzinfo=None) <= record.created_at <= completed_at.replace(tzinfo=None)
+    assert record.duration_s is not None
+    assert record.duration_s >= 0
