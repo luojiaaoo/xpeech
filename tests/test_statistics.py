@@ -1,4 +1,7 @@
 import asyncio
+import os
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,6 +20,27 @@ from xpeech.agent.server.routes.statistics import (
     get_statistics_repository,
 )
 from xpeech.utils.jwt_auth import create_access_token
+
+
+def test_statistics_timezone_does_not_depend_on_system_tzdata():
+    environment = {**os.environ, "PYTHONTZPATH": ""}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from datetime import datetime; "
+                "from zoneinfo import ZoneInfo; "
+                "print(datetime(2026, 8, 19, tzinfo=ZoneInfo('Asia/Shanghai')).utcoffset())"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "8:00:00"
 
 
 async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
