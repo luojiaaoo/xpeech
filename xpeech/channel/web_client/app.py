@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import hashlib
 import hmac
@@ -170,7 +168,9 @@ def create_app(config: WebConfig) -> FastAPI:
     async def public_config():
         return {"system_name": config.system_name}
 
-    def current_user(token: Annotated[str | None, Cookie(alias=COOKIE_NAME)] = None):
+    def current_user(
+        token: Annotated[str | None, Cookie(alias=COOKIE_NAME)] = None,
+    ) -> sqlite3.Row:
         if not token:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "请先登录")
         token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -187,10 +187,14 @@ def create_app(config: WebConfig) -> FastAPI:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
         return row
 
-    def admin_user(user=Depends(current_user)):
+    CurrentUser = Annotated[sqlite3.Row, Depends(current_user)]
+
+    def admin_user(user: CurrentUser) -> sqlite3.Row:
         if not user["is_admin"]:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "需要管理员权限")
         return user
+
+    AdminUser = Annotated[sqlite3.Row, Depends(admin_user)]
 
     @app.post("/api/auth/login")
     async def login(body: LoginBody, response: Response):
@@ -228,17 +232,17 @@ def create_app(config: WebConfig) -> FastAPI:
         response.delete_cookie(COOKIE_NAME, path="/")
 
     @app.get("/api/auth/me")
-    async def me(user=Depends(current_user)):
+    async def me(user: CurrentUser):
         return _public_user(user)
 
     @app.get("/api/admin/users")
-    async def list_users(_=Depends(admin_user)):
+    async def list_users(_admin: AdminUser):
         with database.connect() as db:
             rows = db.execute("SELECT * FROM users ORDER BY id").fetchall()
         return [_public_user(row) for row in rows]
 
     @app.post("/api/admin/users", status_code=201)
-    async def create_user(body: UserBody, _=Depends(admin_user)):
+    async def create_user(body: UserBody, _admin: AdminUser):
         try:
             with database.connect() as db:
                 cursor = db.execute(
@@ -254,7 +258,7 @@ def create_app(config: WebConfig) -> FastAPI:
     async def update_user(
         user_id: int,
         body: UserUpdateBody,
-        admin=Depends(admin_user),
+        admin: AdminUser,
     ):
         values = body.model_dump(exclude_none=True)
         if user_id == admin["id"] and values.get("is_active") is False:
@@ -284,13 +288,13 @@ def create_app(config: WebConfig) -> FastAPI:
     async def proxy_chat(
         request: Request,
         content: Annotated[str, Form()],
+        user: CurrentUser,
         session_metadata: Annotated[str, Form()] = "{}",
         timestamp: Annotated[str | None, Form()] = None,
-        files: Annotated[list[UploadFile], File()] = [],
-        user=Depends(current_user),
+        files: Annotated[list[UploadFile] | None, File()] = None,
     ):
         upload_data = []
-        for file in files:
+        for file in files or ():
             upload_data.append(("files", (file.filename or "attachment", await file.read(), file.content_type)))
         chat_stream = await open_chat_stream(
             _web_session_id(user),
@@ -325,7 +329,7 @@ def create_app(config: WebConfig) -> FastAPI:
     @app.post("/api/answer_question")
     async def proxy_answer(
         answer: Annotated[str, Form()],
-        user=Depends(current_user),
+        user: CurrentUser,
     ):
         upstream = await submit_question(_web_session_id(user), answer, config.backend_url)
         return Response(upstream.content, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))
@@ -333,7 +337,7 @@ def create_app(config: WebConfig) -> FastAPI:
     @app.get("/api/files")
     async def proxy_file(
         path: str,
-        user=Depends(current_user),
+        user: CurrentUser,
     ):
         session_id = _web_session_id(user)
         upstream = await fetch_file(session_id, path, config.backend_url)
@@ -351,8 +355,8 @@ def create_app(config: WebConfig) -> FastAPI:
     @app.get("/api/statistics/{statistics_path:path}")
     async def proxy_statistics(
         request: Request,
+        user: AdminUser,
         statistics_path: str = "",
-        user=Depends(admin_user),  # noqa: B008
     ):
         """将已登录 Web 用户的统计查询转发到后端统计接口。"""
         upstream_url = str(URL(config.backend_url) / "statistics")
