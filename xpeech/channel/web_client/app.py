@@ -2,9 +2,8 @@ import argparse
 import hashlib
 import hmac
 import secrets
-import sqlite3
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,6 +18,7 @@ from pydantic import BaseModel, Field
 from yarl import URL
 
 from ..helper import _backend_headers, fetch_file, open_chat_stream, submit_question
+from .dao import DuplicateUsernameError, User, WebClientDAO
 
 COOKIE_NAME = "xpeech_session"
 SESSION_DAYS = 7
@@ -57,10 +57,6 @@ class UserUpdateBody(BaseModel):
     is_active: bool | None = None
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def _password_hash(password: str, salt: bytes | None = None) -> str:
     salt = salt or secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ITERATIONS)
@@ -80,74 +76,30 @@ def _password_matches(password: str, encoded: str) -> bool:
         return False
 
 
-class Database:
-    def __init__(self, path: Path):
-        self.path = path
-
-    @contextmanager
-    def connect(self):
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        try:
-            with connection:
-                yield connection
-        finally:
-            connection.close()
-
-    def initialize(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.connect() as db:
-            db.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                    password_hash TEXT NOT NULL,
-                    is_admin INTEGER NOT NULL DEFAULT 0,
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS sessions (
-                    token_hash TEXT PRIMARY KEY,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    expires_at TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-                """
-            )
-            db.execute("DELETE FROM sessions WHERE expires_at <= ?", (_now(),))
-            if db.execute("SELECT 1 FROM users LIMIT 1").fetchone() is None:
-                username = "admin"
-                password = "admin123456"
-                db.execute(
-                    "INSERT INTO users(username, password_hash, is_admin, created_at) VALUES (?, ?, 1, ?)",
-                    (username, _password_hash(password), _now()),
-                )
-
-
-def _public_user(row: sqlite3.Row) -> dict[str, object]:
+def _public_user(user: User) -> dict[str, object]:
     return {
-        "id": row["id"],
-        "username": row["username"],
-        "is_admin": bool(row["is_admin"]),
-        "is_active": bool(row["is_active"]),
-        "created_at": row["created_at"],
+        "id": user.id,
+        "username": user.username,
+        "is_admin": user.is_admin,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat(),
     }
 
 
-def _web_session_id(user: sqlite3.Row) -> str:
-    return f"web_{user['username']}"
+def _web_session_id(user: User) -> str:
+    return f"web_{user.username}"
 
 
 def create_app(config: WebConfig) -> FastAPI:
-    database = Database(config.database_path)
+    dao = WebClientDAO(config.database_path)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        database.initialize()
-        yield
+        await dao.initialize(lambda: _password_hash("admin123456"))
+        try:
+            yield
+        finally:
+            await dao.close()
 
     app = FastAPI(
         title=f"{config.system_name} Web",
@@ -168,48 +120,44 @@ def create_app(config: WebConfig) -> FastAPI:
     async def public_config():
         return {"system_name": config.system_name}
 
-    def current_user(
+    async def current_user(
         token: Annotated[str | None, Cookie(alias=COOKIE_NAME)] = None,
-    ) -> sqlite3.Row:
+    ) -> User:
         if not token:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "请先登录")
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        with database.connect() as db:
-            row = db.execute(
-                """
-                SELECT users.* FROM sessions
-                JOIN users ON users.id = sessions.user_id
-                WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.is_active = 1
-                """,
-                (token_hash, _now()),
-            ).fetchone()
-        if row is None:
+        user = await dao.get_user_for_session(token_hash)
+        if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
-        return row
+        return user
 
-    CurrentUser = Annotated[sqlite3.Row, Depends(current_user)]
+    CurrentUser = Annotated[User, Depends(current_user)]
 
-    def admin_user(user: CurrentUser) -> sqlite3.Row:
-        if not user["is_admin"]:
+    def admin_user(user: CurrentUser) -> User:
+        if not user.is_admin:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "需要管理员权限")
         return user
 
-    AdminUser = Annotated[sqlite3.Row, Depends(admin_user)]
+    AdminUser = Annotated[User, Depends(admin_user)]
 
     @app.post("/api/auth/login")
     async def login(body: LoginBody, response: Response):
-        with database.connect() as db:
-            user = db.execute(
-                "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (body.username,)
-            ).fetchone()
-            if user is None or not user["is_active"] or not _password_matches(body.password, user["password_hash"]):
-                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或密码错误")
-            token = secrets.token_urlsafe(32)
-            expires = datetime.now(UTC) + timedelta(days=SESSION_DAYS)
-            db.execute(
-                "INSERT INTO sessions(token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
-                (hashlib.sha256(token.encode()).hexdigest(), user["id"], expires.isoformat(), _now()),
-            )
+        user = await dao.get_user_by_username(body.username)
+        if (
+            user is None
+            or not user.is_active
+            or not _password_matches(body.password, user.password_hash)
+        ):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或密码错误")
+        if user.id is None:
+            raise RuntimeError("数据库用户缺少主键")
+        token = secrets.token_urlsafe(32)
+        expires = datetime.now(UTC) + timedelta(days=SESSION_DAYS)
+        await dao.create_session(
+            token_hash=hashlib.sha256(token.encode()).hexdigest(),
+            user_id=user.id,
+            expires_at=expires,
+        )
         response.set_cookie(
             COOKIE_NAME,
             token,
@@ -227,8 +175,7 @@ def create_app(config: WebConfig) -> FastAPI:
         token: Annotated[str | None, Cookie(alias=COOKIE_NAME)] = None,
     ):
         if token:
-            with database.connect() as db:
-                db.execute("DELETE FROM sessions WHERE token_hash = ?", (hashlib.sha256(token.encode()).hexdigest(),))
+            await dao.delete_session(hashlib.sha256(token.encode()).hexdigest())
         response.delete_cookie(COOKIE_NAME, path="/")
 
     @app.get("/api/auth/me")
@@ -237,22 +184,19 @@ def create_app(config: WebConfig) -> FastAPI:
 
     @app.get("/api/admin/users")
     async def list_users(_admin: AdminUser):
-        with database.connect() as db:
-            rows = db.execute("SELECT * FROM users ORDER BY id").fetchall()
-        return [_public_user(row) for row in rows]
+        return [_public_user(user) for user in await dao.list_users()]
 
     @app.post("/api/admin/users", status_code=201)
     async def create_user(body: UserBody, _admin: AdminUser):
         try:
-            with database.connect() as db:
-                cursor = db.execute(
-                    "INSERT INTO users(username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)",
-                    (body.username, _password_hash(body.password), int(body.is_admin), _now()),
-                )
-                row = db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        except sqlite3.IntegrityError:
+            user = await dao.create_user(
+                username=body.username,
+                password_hash=_password_hash(body.password),
+                is_admin=body.is_admin,
+            )
+        except DuplicateUsernameError:
             raise HTTPException(status.HTTP_409_CONFLICT, "用户名已存在")
-        return _public_user(row)
+        return _public_user(user)
 
     @app.patch("/api/admin/users/{user_id}")
     async def update_user(
@@ -261,28 +205,23 @@ def create_app(config: WebConfig) -> FastAPI:
         admin: AdminUser,
     ):
         values = body.model_dump(exclude_none=True)
-        if user_id == admin["id"] and values.get("is_active") is False:
+        if user_id == admin.id and values.get("is_active") is False:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "不能停用当前管理员")
-        fields: list[str] = []
-        params: list[object] = []
-        if "password" in values:
-            fields.append("password_hash = ?")
-            params.append(_password_hash(values["password"]))
-        for key in ("is_admin", "is_active"):
-            if key in values:
-                fields.append(f"{key} = ?")
-                params.append(int(values[key]))
-        if not fields:
+        if not values:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "没有可更新字段")
-        params.append(user_id)
-        with database.connect() as db:
-            if db.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
-            db.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", params)
-            if values.get("is_active") is False:
-                db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        return _public_user(row)
+        user = await dao.update_user(
+            user_id,
+            password_hash=(
+                _password_hash(values["password"])
+                if "password" in values
+                else None
+            ),
+            is_admin=values.get("is_admin"),
+            is_active=values.get("is_active"),
+        )
+        if user is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
+        return _public_user(user)
 
     @app.post("/api/chat")
     async def proxy_chat(
@@ -298,7 +237,7 @@ def create_app(config: WebConfig) -> FastAPI:
             upload_data.append(("files", (file.filename or "attachment", await file.read(), file.content_type)))
         chat_stream = await open_chat_stream(
             _web_session_id(user),
-            str(user["username"]),
+            user.username,
             content,
             session_metadata,
             str(URL(config.backend_url) / "chat"),
