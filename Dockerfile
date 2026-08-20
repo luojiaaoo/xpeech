@@ -40,6 +40,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY xpeech/ ./xpeech/
 COPY custom_tools/ ./custom_tools/
+COPY assets/ ./assets/
 RUN uv sync --frozen --no-dev
 
 RUN npm config set registry https://registry.npmmirror.com/
