@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { DualAxes } from '@ant-design/charts';
 import type { DualAxesConfig } from '@ant-design/charts';
-import { XMarkdown } from '@ant-design/x-markdown';
 import { Alert, Button, Empty, Input, Modal, Segmented, Select, Skeleton, Tooltip } from 'antd';
 import {
   ApiOutlined,
@@ -27,6 +26,7 @@ import type {
   StatisticsUser,
   StatisticsUsers,
 } from './types';
+import MarkdownContent from './MarkdownContent';
 
 interface DashboardData {
   overview: StatisticsOverview;
@@ -741,8 +741,13 @@ export default function StatisticsDashboard({ systemName, onBack }: {
               <span>{formatNumber(selectedRecord.total_tokens)} Token</span>
               <span>{selectedRecord.model_call_count} 次模型调用</span>
             </div>
-            <section><small>用户问题</small><p>{selectedRecord.user_question || '（无文本问题）'}</p></section>
-            <section><small>模型回答</small><XMarkdown content={selectedRecord.model_response || '（无回答）'} /></section>
+            <section><small>用户问题</small><p className="statistics-record-question">{selectedRecord.user_question || '（无文本问题）'}</p></section>
+            <section>
+              <small>模型回答</small>
+              <MarkdownContent
+                content={selectedRecord.model_response || '（无回答）'}
+              />
+            </section>
           </div>
         ) : null}
       </Modal>

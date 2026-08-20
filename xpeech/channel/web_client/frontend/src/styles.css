@@ -36,7 +36,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   box-shadow: 0 2px 8px #1677ff26;
   white-space: pre-wrap;
 }
-.chat-assistant .ant-bubble-content-wrapper {
+.chat-assistant .ant-bubble-body {
   flex: 0 1 1080px;
   max-width: min(1080px, calc(100% - 40px));
 }
@@ -47,32 +47,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   border-color: #e1e5eb;
   box-shadow: 0 2px 10px #1f23290a;
 }
-.assistant-markdown { width: auto; min-width: 0; max-width: 100%; line-height: 1.75; }
-.assistant-markdown pre {
-  max-width: 100%;
-  overflow-x: auto;
-  padding: 12px 14px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #f6f8fa;
-}
-.assistant-markdown pre,
-.assistant-markdown pre code { white-space: pre; }
-.assistant-markdown code {
-  color: #c7254e;
-  background: #f6f8fa;
-}
-.assistant-markdown pre code { color: inherit; background: transparent; }
-.assistant-markdown blockquote {
-  margin-inline: 0;
-  padding-inline: 14px;
-  color: #5f6673;
-  border-inline-start: 4px solid #d9dce3;
-}
-.assistant-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
-.assistant-markdown th,
-.assistant-markdown td { border: 1px solid #d9dce3; }
-.assistant-markdown a { color: #245bdb; }
+.markdown-content { width: auto; min-width: 0; max-width: 100%; line-height: 1.75; }
 .chat-assistant .ant-bubble-footer { width: 100%; }
 .bubble-footer { display: flex; width: 100%; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px; }
 .bubble-copy-button { margin-inline-start: auto; flex: 0 0 auto; }
@@ -899,8 +874,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .statistics-record-meta span { padding: 3px 8px; border-radius: 5px; color: #53657a; background: #eef3f8; font-size: 11px; }
 .statistics-record-detail section { padding: 16px; border: 1px solid #e2e8ef; border-radius: 10px; background: #f8fafc; }
 .statistics-record-detail section > small { display: block; margin-bottom: 9px; color: #718096; font-weight: 700; }
-.statistics-record-detail section p { margin: 0; white-space: pre-wrap; }
-.statistics-record-detail section .ant-x-markdown { line-height: 1.75; }
+.statistics-record-question { margin: 0; white-space: pre-wrap; }
 .statistics-user-records { display: flex; flex-direction: column; gap: 14px; }
 .statistics-query-content, .statistics-query-result { display: flex; flex-direction: column; gap: 14px; }
 .statistics-query-controls {
@@ -1083,7 +1057,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .settings-button > span:not(.ant-btn-icon) { display: none; }
   .bubble-list { padding: 22px 14px 18px; }
   .chat-user .ant-bubble-content { max-width: calc(100% - 40px); }
-  .chat-assistant .ant-bubble-content-wrapper { max-width: calc(100% - 40px); }
+  .chat-assistant .ant-bubble-body { max-width: calc(100% - 40px); }
   .sender-wrap { width: calc(100% - 28px); margin-bottom: 12px; }
   .admin-page { padding: 18px; }
   .statistics-dashboard { padding: 12px; }

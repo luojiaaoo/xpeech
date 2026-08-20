@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import { Attachments, Bubble, Prompts, Sender, Welcome } from '@ant-design/x';
-import { XMarkdown } from '@ant-design/x-markdown';
 import type { AttachmentsProps } from '@ant-design/x';
-import { Button, Flex, Tag, Tooltip, Typography, message } from 'antd';
+import { Avatar, Button, Flex, Tag, Tooltip, Typography, message } from 'antd';
 import {
   CloudUploadOutlined,
   CopyOutlined,
@@ -15,20 +14,17 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { streamChat } from './api';
+import MarkdownContent from './MarkdownContent';
 import QuestionForm from './QuestionForm';
 import type { ChatEvent, ChatMessage } from './types';
 
-const roles: ComponentProps<typeof Bubble.List>['roles'] = {
+const roles: ComponentProps<typeof Bubble.List>['role'] = {
   user: {
     placement: 'start',
     variant: 'filled',
     shape: 'corner',
     rootClassName: 'chat-user',
-    avatar: {
-      icon: <UserOutlined />,
-      className: 'chat-avatar user-avatar',
-      style: { color: '#fff', background: '#1677ff' },
-    },
+    avatar: <Avatar icon={<UserOutlined />} className="chat-avatar user-avatar" />,
     styles: { content: { color: '#fff', background: '#1677ff', border: 0 } },
   },
   assistant: {
@@ -36,11 +32,7 @@ const roles: ComponentProps<typeof Bubble.List>['roles'] = {
     variant: 'outlined',
     shape: 'corner',
     rootClassName: 'chat-assistant',
-    avatar: {
-      icon: <RobotOutlined />,
-      className: 'chat-avatar assistant-avatar',
-      style: { color: '#245bdb', background: '#eef3ff' },
-    },
+    avatar: <Avatar icon={<RobotOutlined />} className="chat-avatar assistant-avatar" />,
     styles: { content: { background: '#fff', borderColor: '#e1e5eb' } },
   },
   status: { placement: 'start', variant: 'borderless' },
@@ -99,10 +91,8 @@ function eventMessage(event: ChatEvent): ChatMessage | null {
       key,
       role: 'assistant',
       content: (
-        <XMarkdown
+        <MarkdownContent
           content={event.context}
-          rootClassName="assistant-markdown"
-          openLinksInNewTab
         />
       ),
       rawText: event.context,
@@ -139,8 +129,7 @@ export default function ChatPage({ systemName }: { systemName: string }) {
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      const list = bubbleListRef.current?.nativeElement;
-      list?.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+      bubbleListRef.current?.scrollTo({ top: 'bottom', behavior: 'smooth' });
     });
     return () => cancelAnimationFrame(frame);
   }, [messages]);
@@ -245,7 +234,7 @@ export default function ChatPage({ systemName }: { systemName: string }) {
               onItemClick={(info) => setValue(String(info.data.label))}
             />
           </Flex>
-        ) : <Bubble.List ref={bubbleListRef} className="bubble-list" roles={roles} items={items} />}
+        ) : <Bubble.List ref={bubbleListRef} className="bubble-list" role={roles} items={items} />}
       </div>
       <div className="sender-wrap">
         <Sender
@@ -258,7 +247,7 @@ export default function ChatPage({ systemName }: { systemName: string }) {
           placeholder="输入消息，Enter 发送，Shift + Enter 换行"
           autoSize={{ minRows: 1, maxRows: 6 }}
           prefix={<Button type="text" icon={<PaperClipOutlined />} onClick={() => setAttachmentsOpen((open) => !open)} />}
-          onPasteFile={(_, pasted) => { setFiles((current) => [...current, ...Array.from(pasted)]); setAttachmentsOpen(true); }}
+          onPasteFile={(pasted) => { setFiles((current) => [...current, ...Array.from(pasted)]); setAttachmentsOpen(true); }}
         />
         <Typography.Text type="secondary" className="sender-tip">内容由 AI 生成，请核实重要信息</Typography.Text>
       </div>
