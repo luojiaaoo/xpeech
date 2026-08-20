@@ -164,6 +164,11 @@ class WebClientConfig(BaseModel):
     """Web client storage settings."""
 
     database_path: Path
+    cookie_name: str = Field(
+        default="xpeech_session",
+        min_length=1,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
 
 
 class Settings(BaseSettings):

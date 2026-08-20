@@ -420,7 +420,9 @@ npm run build
 ```
 
 用户与登录会话数据库路径由 `conf.toml` 的
-`web_client.database_path` 配置，默认为 `data/web_client/users.db`。
+`web_client.database_path` 配置，默认为 `data/web_client/users.db`。登录 Cookie 名称由
+`web_client.cookie_name` 配置，默认为 `xpeech_session`；同一 IP 上运行多个独立 Web
+实例时，应为每个实例配置不同的名称（如 `xpeech_session_7939`），避免不同端口之间覆盖 Cookie。
 
 启动命令统一见[启动](#启动)章节。打开 `http://127.0.0.1:7939` 即可访问。
 新数据库的初始管理员为 `admin` / `admin123456`；

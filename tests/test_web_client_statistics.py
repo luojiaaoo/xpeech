@@ -41,6 +41,7 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
             database_path=tmp_path / "users.db",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
+            cookie_name="xpeech_session_statistics",
         )
     )
 
@@ -68,6 +69,8 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
 
     assert unauthorized.status_code == 401
     assert login.status_code == 200
+    assert "xpeech_session_statistics=" in login.headers["set-cookie"]
+    assert "xpeech_session=" not in login.headers["set-cookie"]
     assert created_user.status_code == 201
     assert viewer_login.status_code == 200
     assert forbidden.status_code == 403

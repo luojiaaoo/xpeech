@@ -20,7 +20,6 @@ from yarl import URL
 from ..helper import _backend_headers, fetch_file, open_chat_stream, submit_question
 from .dao import DuplicateUsernameError, User, WebClientDAO
 
-COOKIE_NAME = "xpeech_session"
 SESSION_DAYS = 7
 PBKDF2_ITERATIONS = 600_000
 XPEECH_FAVICON = Path(__file__).resolve().parents[3] / "assets" / "favicon.ico"
@@ -38,6 +37,7 @@ class WebConfig:
     database_path: Path
     static_dir: Path
     system_name: str
+    cookie_name: str = "xpeech_session"
 
 
 class LoginBody(BaseModel):
@@ -121,7 +121,7 @@ def create_app(config: WebConfig) -> FastAPI:
         return {"system_name": config.system_name}
 
     async def current_user(
-        token: Annotated[str | None, Cookie(alias=COOKIE_NAME)] = None,
+        token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
     ) -> User:
         if not token:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "请先登录")
@@ -159,7 +159,7 @@ def create_app(config: WebConfig) -> FastAPI:
             expires_at=expires,
         )
         response.set_cookie(
-            COOKIE_NAME,
+            config.cookie_name,
             token,
             max_age=SESSION_DAYS * 86400,
             httponly=True,
@@ -172,11 +172,11 @@ def create_app(config: WebConfig) -> FastAPI:
     @app.post("/api/auth/logout", status_code=204)
     async def logout(
         response: Response,
-        token: Annotated[str | None, Cookie(alias=COOKIE_NAME)] = None,
+        token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
     ):
         if token:
             await dao.delete_session(hashlib.sha256(token.encode()).hexdigest())
-        response.delete_cookie(COOKIE_NAME, path="/")
+        response.delete_cookie(config.cookie_name, path="/")
 
     @app.get("/api/auth/me")
     async def me(user: CurrentUser):
@@ -355,6 +355,7 @@ def run(
         database_path=settings.web_client.database_path.resolve(),
         static_dir=static_dir.resolve(),
         system_name=_configured_system_name(),
+        cookie_name=settings.web_client.cookie_name,
     )
     uvicorn.run(create_app(config), host=host, port=port)
 

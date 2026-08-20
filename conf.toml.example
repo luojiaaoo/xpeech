@@ -19,6 +19,7 @@ access_token_expire_seconds = 60
 
 [web_client]
 database_path = "data/web_client/users.db"
+cookie_name = "xpeech_session"
 
 [llm]
 api_key = "xxxxxxxx"
