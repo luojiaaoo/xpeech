@@ -61,6 +61,10 @@ class ProtectedAdminIdentityError(Exception):
     """默认管理员的用户名和会话 ID 不允许修改。"""
 
 
+class ProtectedAdminDeletionError(Exception):
+    """默认管理员不允许删除。"""
+
+
 def create_web_client_engine(database_path: Path) -> AsyncEngine:
     """为指定 Web 客户端数据库创建异步 SQLite engine。"""
     resolved_path = database_path.expanduser().resolve()
@@ -274,6 +278,29 @@ class WebClientDAO:
             )
             await session.commit()
 
+    async def change_password(
+        self,
+        user_id: int,
+        *,
+        password_hash: str,
+        keep_token_hash: str,
+    ) -> bool:
+        """修改用户密码，并使当前登录之外的会话失效。"""
+        async with AsyncSession(self._engine) as session:
+            user = await session.get(User, user_id)
+            if user is None:
+                return False
+            user.password_hash = password_hash
+            session.add(user)
+            await session.exec(
+                delete(AuthenticationSession).where(
+                    AuthenticationSession.user_id == user_id,
+                    AuthenticationSession.token_hash != keep_token_hash,
+                )
+            )
+            await session.commit()
+            return True
+
     async def list_users(self) -> list[User]:
         async with AsyncSession(self._engine) as session:
             return list((await session.exec(select(User).order_by(User.id))).all())
@@ -349,3 +376,15 @@ class WebClientDAO:
                 raise
             await session.refresh(user)
             return user
+
+    async def delete_user(self, user_id: int) -> bool:
+        """删除用户；关联的登录会话由外键级联删除。"""
+        async with AsyncSession(self._engine) as session:
+            user = await session.get(User, user_id)
+            if user is None:
+                return False
+            if user.session_id == "admin":
+                raise ProtectedAdminDeletionError
+            await session.delete(user)
+            await session.commit()
+            return True

@@ -76,6 +76,8 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .admin-page { height: 100%; overflow: auto; padding: 32px; background: #f7f8fa; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
 .admin-page .ant-table-wrapper { background: #fff; padding: 8px 20px 20px; border-radius: 14px; border: 1px solid #e8e9ed; }
+.user-column-search { display: flex; width: 240px; flex-direction: column; gap: 8px; padding: 8px; }
+.initial-password-input .ant-input-affix-wrapper { min-width: 0; flex: 1; }
 .user-management-modal { width: min(1120px, calc(100vw - 32px)) !important; }
 .user-management-modal .ant-modal-body { max-height: calc(100vh - 150px); overflow: auto; }
 .user-management-modal .admin-page { height: auto; overflow: visible; padding: 0; background: #fff; }

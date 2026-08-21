@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { Avatar, Button, Dropdown, Layout, Modal, Skeleton, Space, Typography } from 'antd';
+import { Avatar, Button, Dropdown, Form, Input, Layout, Modal, Skeleton, Space, Typography, message } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   DashboardOutlined,
   DownOutlined,
+  LockOutlined,
   LogoutOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -21,6 +22,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>();
   const [userManagementOpen, setUserManagementOpen] = useState(false);
   const [statisticsOpen, setStatisticsOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [passwordForm] = Form.useForm();
 
   useEffect(() => {
     appApi.config().then(({ system_name }) => {
@@ -36,8 +39,29 @@ export default function App() {
   async function logout() {
     setUserManagementOpen(false);
     setStatisticsOpen(false);
+    setPasswordOpen(false);
     await authApi.logout();
     setUser(null);
+  }
+
+  async function changePassword(values: {
+    current_password: string;
+    new_password: string;
+    confirm_password: string;
+  }) {
+    try {
+      await authApi.changePassword(values.current_password, values.new_password);
+      passwordForm.resetFields();
+      setPasswordOpen(false);
+      message.success('密码已重置');
+    } catch (error) {
+      message.error(String(error));
+    }
+  }
+
+  function closePasswordModal() {
+    passwordForm.resetFields();
+    setPasswordOpen(false);
   }
 
   const settingsItems: MenuProps['items'] = [
@@ -53,6 +77,12 @@ export default function App() {
     }] : []),
     ...(user.is_admin ? [{ type: 'divider' as const }] : []),
     {
+      key: 'password',
+      icon: <LockOutlined />,
+      label: '重置密码',
+    },
+    { type: 'divider' as const },
+    {
       key: 'logout',
       icon: <LogoutOutlined />,
       label: '退出登录',
@@ -66,6 +96,10 @@ export default function App() {
       setStatisticsOpen(true);
     }
     if (key === 'users') setUserManagementOpen(true);
+    if (key === 'password') {
+      setUserManagementOpen(false);
+      setPasswordOpen(true);
+    }
     if (key === 'logout') void logout();
   };
 
@@ -114,6 +148,42 @@ export default function App() {
             <UserManagement currentUser={user} systemName={systemName} />
           </Modal>
         ) : null}
+        <Modal
+          title="重置密码"
+          open={passwordOpen}
+          footer={null}
+          onCancel={closePasswordModal}
+          destroyOnHidden
+        >
+          <Form form={passwordForm} layout="vertical" onFinish={changePassword}>
+            <Form.Item name="current_password" label="当前密码" rules={[{ required: true, message: '请输入当前密码' }]}>
+              <Input.Password autoComplete="current-password" />
+            </Form.Item>
+            <Form.Item name="new_password" label="新密码" rules={[{ required: true, min: 8, max: 256, message: '新密码长度为 8–256 位' }]}>
+              <Input.Password autoComplete="new-password" />
+            </Form.Item>
+            <Form.Item
+              name="confirm_password"
+              label="确认新密码"
+              dependencies={['new_password']}
+              rules={[
+                { required: true, message: '请再次输入新密码' },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    if (!value || getFieldValue('new_password') === value) return Promise.resolve();
+                    return Promise.reject(new Error('两次输入的新密码不一致'));
+                  },
+                }),
+              ]}
+            >
+              <Input.Password autoComplete="new-password" />
+            </Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">确认重置</Button>
+              <Button onClick={closePasswordModal}>取消</Button>
+            </Space>
+          </Form>
+        </Modal>
       </Layout>
       {user.is_admin && statisticsOpen ? (
         <div className="statistics-overlay" role="dialog" aria-label="数据大屏">

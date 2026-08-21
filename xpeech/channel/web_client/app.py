@@ -20,6 +20,7 @@ from yarl import URL
 from ..helper import _backend_headers, fetch_file, open_chat_stream, submit_question
 from .dao import (
     DuplicateSessionIdError,
+    ProtectedAdminDeletionError,
     ProtectedAdminIdentityError,
     User,
     WebClientDAO,
@@ -48,6 +49,11 @@ class WebConfig:
 class LoginBody(BaseModel):
     session_id: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordChangeBody(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
 
 
 class UserBody(BaseModel):
@@ -205,6 +211,26 @@ def create_app(config: WebConfig) -> FastAPI:
     async def me(user: CurrentUser):
         return _public_user(user)
 
+    @app.patch("/api/auth/password", status_code=204)
+    async def change_password(
+        body: PasswordChangeBody,
+        user: CurrentUser,
+        token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
+    ):
+        if not _password_matches(body.current_password, user.password_hash):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "当前密码错误")
+        if body.current_password == body.new_password:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "新密码不能与当前密码相同")
+        if user.id is None or token is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
+        changed = await dao.change_password(
+            user.id,
+            password_hash=_password_hash(body.new_password),
+            keep_token_hash=hashlib.sha256(token.encode()).hexdigest(),
+        )
+        if not changed:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
+
     @app.get("/api/admin/users")
     async def list_users(_admin: AdminUser):
         return [_public_user(user) for user in await dao.list_users()]
@@ -256,6 +282,20 @@ def create_app(config: WebConfig) -> FastAPI:
         if user is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
         return _public_user(user)
+
+    @app.delete("/api/admin/users/{user_id}", status_code=204)
+    async def delete_user(user_id: int, admin: AdminUser):
+        if user_id == admin.id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "不能删除当前管理员")
+        try:
+            deleted = await dao.delete_user(user_id)
+        except ProtectedAdminDeletionError:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "默认管理员不可删除",
+            )
+        if not deleted:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
 
     @app.post("/api/chat")
     async def proxy_chat(

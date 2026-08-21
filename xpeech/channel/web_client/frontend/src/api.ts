@@ -35,6 +35,10 @@ export const authApi = {
   login: (sessionId: string, password: string) =>
     request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ session_id: sessionId, password }) }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
+  changePassword: (currentPassword: string, newPassword: string) => request<void>('/api/auth/password', {
+    method: 'PATCH',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  }),
 };
 
 export const appApi = {
@@ -47,6 +51,7 @@ export const userApi = {
     request<User>('/api/admin/users', { method: 'POST', body: JSON.stringify(values) }),
   update: (id: number, values: { username?: string; session_id?: string; password?: string; is_admin?: boolean; is_active?: boolean }) =>
     request<User>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(values) }),
+  remove: (id: number) => request<void>(`/api/admin/users/${id}`, { method: 'DELETE' }),
 };
 
 function statisticsUrl(path: string, startAt?: string, extra: Record<string, string | string[]> = {}) {
