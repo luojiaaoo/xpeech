@@ -17,10 +17,10 @@ export default function LoginPage({
 }) {
   const [submitting, setSubmitting] = useState(false);
 
-  async function submit(values: { username: string; password: string }) {
+  async function submit(values: { session_id: string; password: string }) {
     setSubmitting(true);
     try {
-      onLogin(await authApi.login(values.username, values.password));
+      onLogin(await authApi.login(values.session_id, values.password));
     } catch (error) {
       message.error(String(error));
     } finally {
@@ -104,8 +104,8 @@ export default function LoginPage({
             登录你的账号，开始与 {systemName} 对话
           </Typography.Paragraph>
           <Form layout="vertical" size="large" onFinish={submit}>
-            <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
-              <Input prefix={<UserOutlined />} autoComplete="username" placeholder="请输入用户名" />
+            <Form.Item name="session_id" label="会话 ID" rules={[{ required: true, message: '请输入会话 ID' }]}>
+              <Input prefix={<UserOutlined />} autoComplete="username" placeholder="请输入会话 ID" />
             </Form.Item>
             <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
               <Input.Password prefix={<LockOutlined />} autoComplete="current-password" placeholder="请输入密码" />

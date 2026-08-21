@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 export interface User {
   id: number;
+  session_id: string;
   username: string;
   is_admin: boolean;
   is_active: boolean;

@@ -32,8 +32,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const authApi = {
   me: () => request<User>('/api/auth/me'),
-  login: (username: string, password: string) =>
-    request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  login: (sessionId: string, password: string) =>
+    request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ session_id: sessionId, password }) }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 };
 
@@ -43,9 +43,9 @@ export const appApi = {
 
 export const userApi = {
   list: () => request<User[]>('/api/admin/users'),
-  create: (values: { username: string; password: string; is_admin: boolean }) =>
+  create: (values: { username: string; session_id: string; password: string; is_admin: boolean }) =>
     request<User>('/api/admin/users', { method: 'POST', body: JSON.stringify(values) }),
-  update: (id: number, values: { password?: string; is_admin?: boolean; is_active?: boolean }) =>
+  update: (id: number, values: { username?: string; session_id?: string; password?: string; is_admin?: boolean; is_active?: boolean }) =>
     request<User>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(values) }),
 };
 

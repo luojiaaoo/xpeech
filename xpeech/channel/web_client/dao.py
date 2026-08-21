@@ -27,9 +27,8 @@ class User(_WebClientSQLModel, table=True):
     __tablename__ = "users"
 
     id: int | None = Field(default=None, primary_key=True)
-    username: str = Field(
-        sa_column=Column(String(collation="NOCASE"), nullable=False, unique=True)
-    )
+    session_id: str = Field(sa_column=Column(String, nullable=False, unique=True))
+    username: str = Field(sa_column=Column(String(collation="NOCASE"), nullable=False))
     password_hash: str
     is_admin: bool = Field(default=False)
     is_active: bool = Field(default=True)
@@ -54,8 +53,12 @@ class AuthenticationSession(_WebClientSQLModel, table=True):
     created_at: datetime = Field(default_factory=_now)
 
 
-class DuplicateUsernameError(Exception):
-    """用户名违反不区分大小写的唯一约束。"""
+class DuplicateSessionIdError(Exception):
+    """会话 ID 违反唯一约束。"""
+
+
+class ProtectedAdminIdentityError(Exception):
+    """默认管理员的用户名和会话 ID 不允许修改。"""
 
 
 def create_web_client_engine(database_path: Path) -> AsyncEngine:
@@ -81,6 +84,90 @@ async def create_db_and_tables(engine: AsyncEngine) -> None:
     """创建 Web 客户端认证表。"""
     async with engine.begin() as connection:
         await connection.run_sync(_WebClientSQLModel.metadata.create_all)
+
+    # TODO(legacy-user-migration): BEGIN
+    # 旧用户迁移完成后，删除本标记包围的全部代码。
+    async with engine.connect() as connection:
+        await connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
+        await connection.commit()
+        try:
+            async with connection.begin():
+                columns = await connection.exec_driver_sql("PRAGMA table_info(users)")
+                column_names = [row[1] for row in columns]
+                if "session_id" not in column_names:
+                    await connection.exec_driver_sql(
+                        "ALTER TABLE users ADD COLUMN session_id VARCHAR"
+                    )
+                    await connection.exec_driver_sql(
+                        "UPDATE users SET session_id = 'web_' || username"
+                    )
+                    column_names.append("session_id")
+
+                await connection.exec_driver_sql(
+                    "UPDATE users SET session_id = 'admin' "
+                    "WHERE username = 'admin' COLLATE NOCASE AND session_id = 'web_admin'"
+                )
+
+                username_is_unique = False
+                indexes = await connection.exec_driver_sql("PRAGMA index_list(users)")
+                for index in indexes:
+                    if not index[2]:
+                        continue
+                    index_name = str(index[1]).replace('"', '""')
+                    index_columns = await connection.exec_driver_sql(
+                        f'PRAGMA index_info("{index_name}")'
+                    )
+                    if [row[2] for row in index_columns] == ["username"]:
+                        username_is_unique = True
+                        break
+
+                session_after_username = column_names.index(
+                    "session_id"
+                ) > column_names.index("username")
+                if username_is_unique or session_after_username:
+                    await connection.exec_driver_sql(
+                        """
+                        CREATE TABLE users_new (
+                            id INTEGER NOT NULL PRIMARY KEY,
+                            session_id VARCHAR NOT NULL UNIQUE,
+                            username VARCHAR COLLATE NOCASE NOT NULL,
+                            password_hash VARCHAR NOT NULL,
+                            is_admin BOOLEAN NOT NULL,
+                            is_active BOOLEAN NOT NULL,
+                            created_at DATETIME NOT NULL
+                        )
+                        """
+                    )
+                    await connection.exec_driver_sql(
+                        """
+                        INSERT INTO users_new (
+                            id, session_id, username, password_hash,
+                            is_admin, is_active, created_at
+                        )
+                        SELECT
+                            id, session_id, username, password_hash,
+                            is_admin, is_active, created_at
+                        FROM users
+                        """
+                    )
+                    await connection.exec_driver_sql("DROP TABLE users")
+                    await connection.exec_driver_sql(
+                        "ALTER TABLE users_new RENAME TO users"
+                    )
+        finally:
+            await connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+            foreign_keys_enabled = (
+                await connection.exec_driver_sql("PRAGMA foreign_keys")
+            ).scalar_one()
+            violations = (
+                await connection.exec_driver_sql("PRAGMA foreign_key_check")
+            ).all()
+            await connection.commit()
+            if foreign_keys_enabled != 1:
+                raise RuntimeError("Failed to re-enable Web client database foreign keys")
+            if violations:
+                raise RuntimeError(f"Web client database foreign key violations: {violations}")
+    # TODO(legacy-user-migration): END
 
 
 class WebClientDAO:
@@ -121,6 +208,7 @@ class WebClientDAO:
                 session.add(
                     User(
                         username="admin",
+                        session_id="admin",
                         password_hash=default_admin_password_hash_factory(),
                         is_admin=True,
                     )
@@ -153,11 +241,11 @@ class WebClientDAO:
         async with AsyncSession(self._engine) as session:
             return (await session.exec(statement)).one_or_none()
 
-    async def get_user_by_username(self, username: str) -> User | None:
-        """按不区分大小写的用户名读取用户。"""
+    async def get_user_by_session_id(self, session_id: str) -> User | None:
+        """按唯一会话 ID 读取用户。"""
         async with AsyncSession(self._engine) as session:
             return (
-                await session.exec(select(User).where(User.username == username))
+                await session.exec(select(User).where(User.session_id == session_id))
             ).one_or_none()
 
     async def create_session(
@@ -194,11 +282,13 @@ class WebClientDAO:
         self,
         *,
         username: str,
+        session_id: str,
         password_hash: str,
         is_admin: bool,
     ) -> User:
         user = User(
             username=username,
+            session_id=session_id,
             password_hash=password_hash,
             is_admin=is_admin,
         )
@@ -208,7 +298,9 @@ class WebClientDAO:
                 await session.commit()
             except IntegrityError as error:
                 await session.rollback()
-                raise DuplicateUsernameError(username) from error
+                if "session_id" in str(error.orig):
+                    raise DuplicateSessionIdError(session_id) from error
+                raise
             await session.refresh(user)
         return user
 
@@ -216,6 +308,8 @@ class WebClientDAO:
         self,
         user_id: int,
         *,
+        username: str | None = None,
+        session_id: str | None = None,
         password_hash: str | None = None,
         is_admin: bool | None = None,
         is_active: bool | None = None,
@@ -224,6 +318,15 @@ class WebClientDAO:
             user = await session.get(User, user_id)
             if user is None:
                 return None
+            if user.session_id == "admin" and (
+                (username is not None and username != user.username)
+                or (session_id is not None and session_id != "admin")
+            ):
+                raise ProtectedAdminIdentityError
+            if username is not None:
+                user.username = username
+            if session_id is not None:
+                user.session_id = session_id
             if password_hash is not None:
                 user.password_hash = password_hash
             if is_admin is not None:
@@ -237,6 +340,12 @@ class WebClientDAO:
                     )
                 )
             session.add(user)
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError as error:
+                await session.rollback()
+                if "session_id" in str(error.orig):
+                    raise DuplicateSessionIdError(session_id or "") from error
+                raise
             await session.refresh(user)
             return user

@@ -18,7 +18,12 @@ from pydantic import BaseModel, Field
 from yarl import URL
 
 from ..helper import _backend_headers, fetch_file, open_chat_stream, submit_question
-from .dao import DuplicateUsernameError, User, WebClientDAO
+from .dao import (
+    DuplicateSessionIdError,
+    ProtectedAdminIdentityError,
+    User,
+    WebClientDAO,
+)
 
 SESSION_DAYS = 7
 PBKDF2_ITERATIONS = 600_000
@@ -41,17 +46,34 @@ class WebConfig:
 
 
 class LoginBody(BaseModel):
-    username: str = Field(min_length=1, max_length=64)
+    session_id: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=256)
 
 
 class UserBody(BaseModel):
+    session_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[\w@+-][\w.@+-]*$",
+    )
     username: str = Field(min_length=1, max_length=64, pattern=r"^[\w.@+-]+$")
     password: str = Field(min_length=8, max_length=256)
     is_admin: bool = False
 
 
 class UserUpdateBody(BaseModel):
+    username: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[\w.@+-]+$",
+    )
+    session_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[\w@+-][\w.@+-]*$",
+    )
     password: str | None = Field(default=None, min_length=8, max_length=256)
     is_admin: bool | None = None
     is_active: bool | None = None
@@ -79,6 +101,7 @@ def _password_matches(password: str, encoded: str) -> bool:
 def _public_user(user: User) -> dict[str, object]:
     return {
         "id": user.id,
+        "session_id": user.session_id,
         "username": user.username,
         "is_admin": user.is_admin,
         "is_active": user.is_active,
@@ -87,7 +110,7 @@ def _public_user(user: User) -> dict[str, object]:
 
 
 def _web_session_id(user: User) -> str:
-    return f"web_{user.username}"
+    return user.session_id
 
 
 def create_app(config: WebConfig) -> FastAPI:
@@ -142,13 +165,13 @@ def create_app(config: WebConfig) -> FastAPI:
 
     @app.post("/api/auth/login")
     async def login(body: LoginBody, response: Response):
-        user = await dao.get_user_by_username(body.username)
+        user = await dao.get_user_by_session_id(body.session_id)
         if (
             user is None
             or not user.is_active
             or not _password_matches(body.password, user.password_hash)
         ):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或密码错误")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "会话 ID 或密码错误")
         if user.id is None:
             raise RuntimeError("数据库用户缺少主键")
         token = secrets.token_urlsafe(32)
@@ -191,11 +214,12 @@ def create_app(config: WebConfig) -> FastAPI:
         try:
             user = await dao.create_user(
                 username=body.username,
+                session_id=body.session_id,
                 password_hash=_password_hash(body.password),
                 is_admin=body.is_admin,
             )
-        except DuplicateUsernameError:
-            raise HTTPException(status.HTTP_409_CONFLICT, "用户名已存在")
+        except DuplicateSessionIdError:
+            raise HTTPException(status.HTTP_409_CONFLICT, "会话 ID 已存在")
         return _public_user(user)
 
     @app.patch("/api/admin/users/{user_id}")
@@ -209,16 +233,26 @@ def create_app(config: WebConfig) -> FastAPI:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "不能停用当前管理员")
         if not values:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "没有可更新字段")
-        user = await dao.update_user(
-            user_id,
-            password_hash=(
-                _password_hash(values["password"])
-                if "password" in values
-                else None
-            ),
-            is_admin=values.get("is_admin"),
-            is_active=values.get("is_active"),
-        )
+        try:
+            user = await dao.update_user(
+                user_id,
+                username=values.get("username"),
+                session_id=values.get("session_id"),
+                password_hash=(
+                    _password_hash(values["password"])
+                    if "password" in values
+                    else None
+                ),
+                is_admin=values.get("is_admin"),
+                is_active=values.get("is_active"),
+            )
+        except DuplicateSessionIdError:
+            raise HTTPException(status.HTTP_409_CONFLICT, "会话 ID 已存在")
+        except ProtectedAdminIdentityError:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "默认管理员的用户名和会话 ID 不可修改",
+            )
         if user is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
         return _public_user(user)
