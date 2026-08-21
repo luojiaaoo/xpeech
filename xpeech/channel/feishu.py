@@ -8,6 +8,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
+from async_lru import alru_cache
 from lark_channel import (
     CardActionEvent,
     DedupConfig,
@@ -25,6 +26,7 @@ from lark_channel import (
     SendResult,
     TextContent,
 )
+from lark_channel.api.contact.v3.model.get_user_request import GetUserRequest
 from loguru import logger
 from yarl import URL
 
@@ -304,6 +306,7 @@ GoGoGo ThanksFace SaluteFace HappyDragon
 """.split()
 
 FEISHU_CACHE_DIR = ensure_path(settings.path.cache_path.resolve())
+FEISHU_USER_CACHE_TTL_SECONDS = 3600
 
 
 class FeishuBridge:
@@ -331,8 +334,29 @@ class FeishuBridge:
         self.channel.on(Events.MESSAGE, self._on_message)
         self.channel.on(Events.CARD_ACTION, self._on_card_action)
 
-    def session_id(self, chat_id: str):
-        return f"feishu_{chat_id}"
+    @alru_cache(maxsize=2048, ttl=FEISHU_USER_CACHE_TTL_SECONDS)
+    async def get_user_identity(self, open_id: str) -> tuple[str, str | None]:
+        if not open_id:
+            raise RuntimeError("Cannot resolve Feishu user identity without an open_id")
+
+        request = GetUserRequest.builder().user_id(open_id).user_id_type("open_id").build()
+        response = await self.channel.client.contact.v3.user.aget(request)
+        if not response.success():
+            raise RuntimeError(
+                f"Failed to get Feishu user identity: code={response.code}, msg={response.msg}, open_id={open_id}"
+            )
+
+        user = response.data.user if response.data else None
+        employee_no = user.employee_no if user else None
+        if not employee_no:
+            raise RuntimeError(f"Feishu user has no employee_no: open_id={open_id}")
+        email = (getattr(user, "email", None) or getattr(user, "enterprise_email", None)) if user else None
+        if not email:
+            logger.warning(
+                "Feishu user has no readable email; grant the user email field permission: open_id={}",
+                open_id,
+            )
+        return employee_no, email
 
     async def add_reaction(self, msg: Message):
         await self.channel.add_reaction(msg.message_id, random.choice(_EMOJI_TYPES))
@@ -344,7 +368,7 @@ class FeishuBridge:
         self.receive_queues[msg.session_id].put_nowait(msg)
 
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
-        session_id = self.session_id(card_action_event.chat_id)
+        session_id, _ = await self.get_user_identity(card_action_event.operator.open_id)
         form_data = card_action_event.action.form_value
         await notify_question(session_id, form_data, self.chat_url)
         result = await self.channel.update_card(card_action_event.message_id, FINISH_CARD_CONTENT)
@@ -583,7 +607,9 @@ class FeishuBridge:
             return await self.channel.download_resource_to_file(file_key, **kwargs)
 
         if inbound_msg.chat_type == "p2p":
-            session_id = self.session_id(inbound_msg.chat_id)
+            session_id, email = await self.get_user_identity(inbound_msg.sender_id)
+            resource_dest_dir = FEISHU_CACHE_DIR / session_id
+            session_metadata = {"email": email} if email else {}
             if isinstance(inbound_msg.content, TextContent):
                 return Message(
                     message_id=inbound_msg.message_id,
@@ -592,10 +618,9 @@ class FeishuBridge:
                     sender_name=inbound_msg.sender_name,
                     content=[TextData(text=inbound_msg.content.text)],
                     timestamp=timestamp,
-                    session_metadata={"sender_id": inbound_msg.sender_id},
+                    session_metadata=session_metadata,
                 )
             elif isinstance(inbound_msg.content, ImageContent):
-                dest_dir = FEISHU_CACHE_DIR / session_id
                 return Message(
                     message_id=inbound_msg.message_id,
                     chat_id=inbound_msg.chat_id,
@@ -607,15 +632,14 @@ class FeishuBridge:
                                 inbound_msg.message_id,
                                 inbound_msg.content.image_key,
                                 "image",
-                                dest_dir,
+                                resource_dest_dir,
                             )
                         )
                     ],
                     timestamp=timestamp,
-                    session_metadata={"sender_id": inbound_msg.sender_id},
+                    session_metadata=session_metadata,
                 )
             elif isinstance(inbound_msg.content, (FileContent, MediaContent)):
-                dest_dir = FEISHU_CACHE_DIR / session_id
                 resource_type = "video" if isinstance(inbound_msg.content, MediaContent) else "file"
                 return Message(
                     message_id=inbound_msg.message_id,
@@ -628,13 +652,13 @@ class FeishuBridge:
                                 inbound_msg.message_id,
                                 inbound_msg.content.file_key,
                                 resource_type,
-                                dest_dir,
+                                resource_dest_dir,
                                 inbound_msg.content.file_name,
                             )
                         )
                     ],
                     timestamp=timestamp,
-                    session_metadata={"sender_id": inbound_msg.sender_id},
+                    session_metadata=session_metadata,
                 )
             elif isinstance(inbound_msg.content, PostContent):
                 parsed_content: list = []
@@ -665,7 +689,7 @@ class FeishuBridge:
                             inbound_msg.message_id,
                             item["image_key"],
                             "image",
-                            FEISHU_CACHE_DIR / session_id,
+                            resource_dest_dir,
                         )
                         parsed_content.extend(
                             (
@@ -684,7 +708,7 @@ class FeishuBridge:
                     sender_name=inbound_msg.sender_name,
                     content=parsed_content,
                     timestamp=timestamp,
-                    session_metadata={"sender_id": inbound_msg.sender_id},
+                    session_metadata=session_metadata,
                 )
 
     async def start(self) -> None:

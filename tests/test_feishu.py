@@ -33,11 +33,17 @@ def _inbound_message(content, *, message_id: str = "om_message") -> InboundMessa
     )
 
 
-def _bridge_with_channel(channel) -> FeishuBridge:
+def _bridge_with_channel(
+    channel,
+    *,
+    employee_no: str = "E1001",
+    email: str | None = "alice@example.com",
+) -> FeishuBridge:
     bridge = object.__new__(FeishuBridge)
     bridge.chat_url = "http://backend.test"
     bridge.channel = channel
     bridge.session_update_message_id = {}
+    bridge.get_user_identity = AsyncMock(return_value=(employee_no, email))
     return bridge
 
 
@@ -57,18 +63,102 @@ def test_channel_uses_expected_compatibility_configuration():
 
 
 @pytest.mark.asyncio
-async def test_parse_text_message_preserves_sender_and_session_metadata():
+async def test_get_user_identity_queries_contact_api_and_caches_result():
+    response = SimpleNamespace(
+        success=lambda: True,
+        data=SimpleNamespace(user=SimpleNamespace(employee_no="E1001", email="alice@example.com")),
+    )
+    get_user = AsyncMock(return_value=response)
+    client = SimpleNamespace(contact=SimpleNamespace(v3=SimpleNamespace(user=SimpleNamespace(aget=get_user))))
+    bridge = object.__new__(FeishuBridge)
+    bridge.channel = SimpleNamespace(client=client)
+
+    first = await bridge.get_user_identity("ou_sender")
+    second = await bridge.get_user_identity("ou_sender")
+
+    assert first == second == ("E1001", "alice@example.com")
+    get_user.assert_awaited_once()
+    request = get_user.await_args.args[0]
+    assert request.user_id == "ou_sender"
+    assert request.user_id_type == "open_id"
+
+
+@pytest.mark.parametrize(
+    ("response", "error_message"),
+    [
+        (
+            SimpleNamespace(success=lambda: False, code=41050, msg="no user authority", data=None),
+            "Failed to get Feishu user identity",
+        ),
+        (
+            SimpleNamespace(
+                success=lambda: True,
+                code=0,
+                msg="success",
+                data=SimpleNamespace(user=SimpleNamespace(employee_no=None, email="alice@example.com")),
+            ),
+            "Feishu user has no employee_no",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_user_identity_rejects_api_failure_or_missing_fields(response, error_message: str):
+    get_user = AsyncMock(return_value=response)
+    client = SimpleNamespace(contact=SimpleNamespace(v3=SimpleNamespace(user=SimpleNamespace(aget=get_user))))
+    bridge = object.__new__(FeishuBridge)
+    bridge.channel = SimpleNamespace(client=client)
+
+    with pytest.raises(RuntimeError, match=error_message):
+        await FeishuBridge.get_user_identity.__wrapped__(bridge, "ou_missing")
+
+
+@pytest.mark.parametrize(
+    ("email", "enterprise_email", "expected_email"),
+    [
+        ("alice@example.com", "alice@company.example", "alice@example.com"),
+        (None, "alice@company.example", "alice@company.example"),
+        (None, None, None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_user_identity_supports_enterprise_or_missing_email(email, enterprise_email, expected_email):
+    response = SimpleNamespace(
+        success=lambda: True,
+        data=SimpleNamespace(user=SimpleNamespace(employee_no="E1001", email=email, enterprise_email=enterprise_email)),
+    )
+    get_user = AsyncMock(return_value=response)
+    client = SimpleNamespace(contact=SimpleNamespace(v3=SimpleNamespace(user=SimpleNamespace(aget=get_user))))
+    bridge = object.__new__(FeishuBridge)
+    bridge.channel = SimpleNamespace(client=client)
+
+    identity = await FeishuBridge.get_user_identity.__wrapped__(bridge, "ou_sender")
+
+    assert identity == ("E1001", expected_email)
+
+
+@pytest.mark.asyncio
+async def test_parse_text_message_uses_employee_number_and_email_metadata():
     bridge = _bridge_with_channel(SimpleNamespace())
 
     message = await bridge._parse_msg(_inbound_message(TextContent(text="hello")))
 
     assert message.message_id == "om_message"
     assert message.chat_id == "oc_chat"
-    assert message.session_id == "feishu_oc_chat"
+    assert message.session_id == "E1001"
     assert message.sender_name == "Alice"
     assert message.timestamp == 123
     assert message.content == [TextData(text="hello")]
-    assert message.session_metadata == {"sender_id": "ou_sender"}
+    assert message.session_metadata == {"email": "alice@example.com"}
+
+
+@pytest.mark.asyncio
+async def test_parse_text_message_allows_missing_email():
+    bridge = _bridge_with_channel(SimpleNamespace(), email=None)
+
+    message = await bridge._parse_msg(_inbound_message(TextContent(text="hello")))
+
+    assert message.session_id == "E1001"
+    assert message.session_metadata == {}
 
 
 @pytest.mark.parametrize(
@@ -89,7 +179,7 @@ async def test_parse_resource_message_uses_channel_download_helper(
     downloaded_name: str,
 ):
     monkeypatch.setattr(feishu, "FEISHU_CACHE_DIR", tmp_path)
-    downloaded_path = tmp_path / "feishu_oc_chat" / downloaded_name
+    downloaded_path = tmp_path / "E1001" / downloaded_name
     download_resource = AsyncMock(return_value=downloaded_path)
     bridge = _bridge_with_channel(SimpleNamespace(download_resource_to_file=download_resource))
 
@@ -98,7 +188,7 @@ async def test_parse_resource_message_uses_channel_download_helper(
     expected_kwargs = {
         "resource_type": resource_type,
         "message_id": "om_message",
-        "dest_dir": tmp_path / "feishu_oc_chat",
+        "dest_dir": tmp_path / "E1001",
     }
     if file_name:
         expected_kwargs["file_name"] = file_name
@@ -113,7 +203,7 @@ async def test_parse_post_reads_locale_document_and_preserves_attachment_order(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(feishu, "FEISHU_CACHE_DIR", tmp_path)
-    downloaded_path = tmp_path / "feishu_oc_chat" / "img_post.png"
+    downloaded_path = tmp_path / "E1001" / "img_post.png"
     download_resource = AsyncMock(return_value=downloaded_path)
     bridge = _bridge_with_channel(SimpleNamespace(download_resource_to_file=download_resource))
     post = PostContent(
@@ -144,7 +234,7 @@ async def test_parse_post_reads_locale_document_and_preserves_attachment_order(
         "img_post",
         resource_type="image",
         message_id="om_message",
-        dest_dir=tmp_path / "feishu_oc_chat",
+        dest_dir=tmp_path / "E1001",
     )
 
 
@@ -165,10 +255,11 @@ async def test_card_action_uses_typed_form_value(monkeypatch: pytest.MonkeyPatch
     await bridge._on_card_action(event)
 
     notify_question.assert_awaited_once_with(
-        "feishu_oc_chat",
+        "E1001",
         {"answer": "typed"},
         "http://backend.test",
     )
+    bridge.get_user_identity.assert_awaited_once_with("ou_sender")
     update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
 
 
