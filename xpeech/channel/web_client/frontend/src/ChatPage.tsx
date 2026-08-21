@@ -52,6 +52,33 @@ const privateStatusMessages: Record<string, string> = {
   tool_call_result: '工具处理完成，我继续整理结果。',
 };
 
+async function copyText(text: string) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('浏览器未允许复制');
+}
+
+async function copyMessage(text: string) {
+  try {
+    await copyText(text);
+    message.success('消息已复制');
+  } catch (error) {
+    message.error(`复制失败：${String(error)}`);
+  }
+}
+
 function renderStatus(content: string) {
   return <Tag icon={<ToolOutlined />} bordered={false}>{content}</Tag>;
 }
@@ -191,7 +218,7 @@ export default function ChatPage({ systemName }: { systemName: string }) {
             className="bubble-copy-button"
             aria-label="复制消息"
             icon={<CopyOutlined />}
-            onClick={() => navigator.clipboard.writeText(item.rawText!)}
+            onClick={() => void copyMessage(item.rawText!)}
           />
         </Tooltip>
       </div>
