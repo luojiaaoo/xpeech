@@ -131,6 +131,8 @@ async def iter_chat_events(
             files=upload_files,
         )
         try:
+            if not stream.response.is_success:
+                await stream.response.aread()
             stream.response.raise_for_status()
             event_source = EventSource(stream.response)
             async for event in event_source.aiter_sse():
