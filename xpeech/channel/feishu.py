@@ -1,42 +1,39 @@
 from __future__ import annotations
 
-from lark_oapi.core import LogLevel
-from lark_oapi.channel.config import PolicyConfig
-from lark_oapi.channel import (
+import asyncio
+import json
+import random
+from datetime import datetime
+from itertools import chain
+from pathlib import Path
+from typing import Any, NotRequired, TypedDict
+
+from lark_channel import (
+    CardActionEvent,
     DedupConfig,
+    Events,
     FeishuChannel,
+    FileContent,
+    ImageContent,
+    InboundMessage,
+    MediaContent,
     OutboundConfig,
+    PolicyConfig,
+    PostContent,
     RetryConfig,
     SafetyConfig,
-    InboundMessage,
-    TextContent,
-    ImageContent,
-    FileContent,
-    MediaContent,
-    PostContent,
     SendResult,
-    CardActionEvent,
+    TextContent,
 )
-import asyncio
-from .schema import ChatEvent, ChatEventType, Message, TextData, FileData
-import json
-import mimetypes
-import lark_oapi as lark
-from lark_oapi.api.im.v1 import GetMessageResourceRequest, GetMessageResourceResponse
+from loguru import logger
+from yarl import URL
+
+from ..agent.tools.question import validate_question_json
+from ..config.settings import settings
+from ..utils.helper import ensure_path
 from .helper import download_file as download_channel_file
 from .helper import iter_chat_events, notify_question
-import random
-from pathlib import Path
-import aiofiles
-from itertools import chain
-from datetime import datetime
-from typing import Any, NotRequired, TypedDict
-from loguru import logger
-from ..config.settings import settings
-from ..agent.tools.question import validate_question_json
-from ..utils.helper import detect_image_mime, ensure_path
-from lark_oapi.channel import Events
-from yarl import URL
+from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
 class OutputEventType(TypedDict):
@@ -257,6 +254,7 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
         },
     }
 
+
 # 图标： https://open.feishu.cn/document/feishu-cards/enumerations-for-icons
 OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
     ChatEventType.ASSISTANT: {
@@ -311,8 +309,6 @@ FEISHU_CACHE_DIR = ensure_path(settings.path.cache_path.resolve())
 class FeishuBridge:
     """Bridge normalized Feishu messages into the Xpeech /chat SSE endpoint."""
 
-    LOG_LEVEL = LogLevel.INFO
-
     def __init__(self, chat_url: str, app_id: str, app_secret: str):
         self.chat_url = chat_url
         self.app_id = app_id
@@ -322,7 +318,6 @@ class FeishuBridge:
         self.session_update_message_id: dict[str, str] = {}
         # 初始化通道
         self.channel = FeishuChannel(
-            log_level=self.LOG_LEVEL,
             app_id=self.app_id,
             app_secret=self.app_secret,
             policy=PolicyConfig(
@@ -350,29 +345,50 @@ class FeishuBridge:
 
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
         session_id = self.session_id(card_action_event.chat_id)
-        form_data = card_action_event.raw["event"]["action"]["form_value"]
+        form_data = card_action_event.action.form_value
         await notify_question(session_id, form_data, self.chat_url)
-        await self.channel.update_card(card_action_event.message_id, FINISH_CARD_CONTENT)
+        result = await self.channel.update_card(card_action_event.message_id, FINISH_CARD_CONTENT)
+        self._ensure_send_success(result, operation="update completed question card")
+
+    @staticmethod
+    def _ensure_send_success(
+        result: SendResult,
+        *,
+        operation: str,
+        require_message_id: bool = False,
+    ) -> SendResult:
+        if not result.success:
+            raise RuntimeError(f"Feishu {operation} failed: {result.error}")
+        if require_message_id and not result.message_id:
+            raise RuntimeError(f"Feishu {operation} succeeded without a message_id")
+        return result
 
     async def channel_send(
         self, to: str, message: dict, opts: dict | None, session_id: str, message_type: ChatEventType
     ):
-        persistence_tyle = (
+        persistence_types = (
             ChatEventType.ASSISTANT,
             ChatEventType.COMMAND,
             ChatEventType.TOKEN_USAGE,
             ChatEventType.QUESTION,
         )
-        if message_type in persistence_tyle:
-            await self.channel.send(to=to, message=message, opts=opts)
+        if message_type in persistence_types:
+            result = await self.channel.send(to=to, message=message, opts=opts)
+            self._ensure_send_success(result, operation="send message")
             self.session_update_message_id.pop(session_id, None)
         else:
             if (_message_id := self.session_update_message_id.get(session_id)) is None:
                 send_result: SendResult = await self.channel.send(to=to, message=message, opts=opts)
+                self._ensure_send_success(
+                    send_result,
+                    operation="send progress card",
+                    require_message_id=True,
+                )
                 self.session_update_message_id[session_id] = send_result.message_id
             else:
                 await asyncio.sleep(0.25)
-                await self.channel.update_card(_message_id, message["card"])
+                result = await self.channel.update_card(_message_id, message["card"])
+                self._ensure_send_success(result, operation="update progress card")
 
     async def consume(self, session_id: str, idle_timeout: int | None = None) -> None:
         idle_timeout = settings.feishu.idle_timeout if idle_timeout is None else idle_timeout
@@ -404,13 +420,15 @@ class FeishuBridge:
                 # 检测有没有文件发送请求
                 if event.event == ChatEventType.SEND_FILE:
                     downloaded_file = await download_channel_file(session_id, event.context, self.chat_url)
-                    await self.channel.send(
+                    result = await self.channel.send(
                         chat_id,
                         {"file": {"source": downloaded_file.content, "file_name": downloaded_file.filename}},
                     )
+                    self._ensure_send_success(result, operation="send file")
                     continue
                 if event.event == ChatEventType.QUESTION:
-                    await self.channel.send(chat_id, {"card": build_feishu_question_card(event.context)})
+                    result = await self.channel.send(chat_id, {"card": build_feishu_question_card(event.context)})
+                    self._ensure_send_success(result, operation="send question card")
                     continue
 
                 # 返回给用户消息
@@ -433,11 +451,12 @@ class FeishuBridge:
                 ChatEvent(event=ChatEventType.ASSISTANT, context="这次处理消息时出错了，请稍后再试。")
             )
             if card:
-                await self.channel.send(
+                result = await self.channel.send(
                     chat_id,
                     card,
                     *([{"reply_to": reply_to}] if reply_to is not None else []),
                 )
+                self._ensure_send_success(result, operation="send error message")
 
     def _format_chat_event(self, event: ChatEvent) -> dict[str, Any] | None:
         if event.event not in OUTPUT_EVENT_TYPES:
@@ -483,7 +502,7 @@ class FeishuBridge:
         elif event.event == ChatEventType.TOOL_CALL_RESULT:
             return f"**[工具调用结果]** {self._format_json_context(event.context)}"
         elif event.event == ChatEventType.TOKEN_USAGE:
-            return f'**[词元]** {self._format_token_usage(event.context)}'
+            return f"**[词元]** {self._format_token_usage(event.context)}"
         return f"[{event.event}]\n{event.context}"
 
     def _format_tool_call_event(self, event: ChatEvent) -> str:
@@ -551,33 +570,17 @@ class FeishuBridge:
             message_id: str,
             file_key: str,
             resource_type: str,
-            save_filepath: Path,
+            dest_dir: Path,
+            file_name: str | None = None,
         ) -> Path:
-            client = self.channel.client
-            request: GetMessageResourceRequest = (
-                GetMessageResourceRequest.builder()
-                .message_id(message_id)
-                .file_key(file_key)
-                .type(resource_type)
-                .build()
-            )
-            response: GetMessageResourceResponse = client.im.v1.message_resource.get(request)
-            if not response.success():
-                error = (
-                    f"client.im.v1.message_resource.get failed, code: {response.code}, msg: {response.msg}, "
-                    f"log_id: {response.get_log_id()}, resp: \n"
-                    f"{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}"
-                )
-                lark.logger.error(error)
-                raise RuntimeError(error)
-            raw = response.file.read()
-            if resource_type == "image" and not save_filepath.suffix:
-                mime = detect_image_mime(raw)
-                save_filepath = save_filepath.with_suffix(mimetypes.guess_extension(mime or "") or ".jpg")
-            save_filepath.parent.mkdir(parents=True, exist_ok=True)
-            async with aiofiles.open(save_filepath, "wb") as f:
-                await f.write(raw)
-            return save_filepath
+            kwargs: dict[str, Any] = {
+                "resource_type": resource_type,
+                "message_id": message_id,
+                "dest_dir": dest_dir,
+            }
+            if file_name:
+                kwargs["file_name"] = file_name
+            return await self.channel.download_resource_to_file(file_key, **kwargs)
 
         if inbound_msg.chat_type == "p2p":
             session_id = self.session_id(inbound_msg.chat_id)
@@ -592,7 +595,7 @@ class FeishuBridge:
                     session_metadata={"sender_id": inbound_msg.sender_id},
                 )
             elif isinstance(inbound_msg.content, ImageContent):
-                save_filepath = FEISHU_CACHE_DIR / session_id / inbound_msg.message_id
+                dest_dir = FEISHU_CACHE_DIR / session_id
                 return Message(
                     message_id=inbound_msg.message_id,
                     chat_id=inbound_msg.chat_id,
@@ -604,15 +607,16 @@ class FeishuBridge:
                                 inbound_msg.message_id,
                                 inbound_msg.content.image_key,
                                 "image",
-                                save_filepath,
+                                dest_dir,
                             )
                         )
                     ],
                     timestamp=timestamp,
                     session_metadata={"sender_id": inbound_msg.sender_id},
                 )
-            elif isinstance(inbound_msg.content, FileContent) or isinstance(inbound_msg.content, MediaContent):
-                save_filepath = FEISHU_CACHE_DIR / session_id / inbound_msg.content.file_name
+            elif isinstance(inbound_msg.content, (FileContent, MediaContent)):
+                dest_dir = FEISHU_CACHE_DIR / session_id
+                resource_type = "video" if isinstance(inbound_msg.content, MediaContent) else "file"
                 return Message(
                     message_id=inbound_msg.message_id,
                     chat_id=inbound_msg.chat_id,
@@ -623,8 +627,9 @@ class FeishuBridge:
                             file=await _save_resource(
                                 inbound_msg.message_id,
                                 inbound_msg.content.file_key,
-                                "file",
-                                save_filepath,
+                                resource_type,
+                                dest_dir,
+                                inbound_msg.content.file_name,
                             )
                         )
                     ],
@@ -634,27 +639,33 @@ class FeishuBridge:
             elif isinstance(inbound_msg.content, PostContent):
                 parsed_content: list = []
                 text_buffer: list[str] = []
-                image_index = 0
-                for item in chain.from_iterable(inbound_msg.content.post["content"]):
+                post = inbound_msg.content.post
+                post_document = (
+                    post
+                    if "content" in post
+                    else next(
+                        (document for document in post.values() if isinstance(document, dict)),
+                        {},
+                    )
+                )
+                for item in chain.from_iterable(post_document.get("content") or []):
                     tag = item["tag"]
                     if tag == "text":
                         text_buffer.append(item["text"])
                         continue
                     elif tag == "a":
-                        text_buffer.append(f'[{item["text"]}]({item["href"]})')
+                        text_buffer.append(f"[{item['text']}]({item['href']})")
                         continue
                     # 多行合并成整体Text数据
                     if text_buffer:
                         parsed_content.append(TextData(text="\n".join(text_buffer)))
                         text_buffer = []
                     if tag == "img":
-                        image_index += 1
-                        save_filepath = FEISHU_CACHE_DIR / session_id / f"{inbound_msg.message_id}_{image_index}"
                         saved_file = await _save_resource(
                             inbound_msg.message_id,
                             item["image_key"],
                             "image",
-                            save_filepath,
+                            FEISHU_CACHE_DIR / session_id,
                         )
                         parsed_content.extend(
                             (

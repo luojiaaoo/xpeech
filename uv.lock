@@ -1403,8 +1403,8 @@ wheels = [
 ]
 
 [[package]]
-name = "lark-oapi"
-version = "1.6.5"
+name = "lark-channel-sdk"
+version = "1.2.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple/" }
 dependencies = [
     { name = "httpx" },
@@ -1413,9 +1413,9 @@ dependencies = [
     { name = "requests-toolbelt" },
     { name = "websockets" },
 ]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/a1/6a/cfaa24851e05000a3bede7a3d30b834116d684d56738d08980da621e9c1a/lark_oapi-1.6.5.tar.gz", hash = "sha256:abf1fd348bd527502c70f2fe771c6fd37c2b8bbed188c9313596063864d43f59", size = 2079307, upload-time = "2026-05-14T06:00:44.608Z" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/2f/09/1f914c7d834953c8a41589b1850fce63a501c5ed9af97a48239109d654e2/lark_channel_sdk-1.2.0.tar.gz", hash = "sha256:5e9e8f275446be13cb1ab2cc5085fb34eb334cab53876acf5fc6207166ca1451", size = 384430, upload-time = "2026-07-14T09:07:22.941Z" }
 wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/40/28/a425593c6de71b80ad642ed8e624468a2848ea0e4ad7cb32a8380941fd7f/lark_oapi-1.6.5-py3-none-any.whl", hash = "sha256:a56fa548aebdae9c36ef0114fbbc6e5d004eb2e15398e11cf88a5737f0cf8641", size = 7143193, upload-time = "2026-05-14T06:00:39.816Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/dd/3a/7dc6f49866902b86232d2b8de0299d3c59a972abb9746ce30d23daf26317/lark_channel_sdk-1.2.0-py3-none-any.whl", hash = "sha256:c08690572a099377cdeddc3a2a1402d9645879ad137e780d80060053dc8c1570", size = 561156, upload-time = "2026-07-14T09:07:19.728Z" },
 ]
 
 [[package]]
@@ -4121,7 +4121,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "httpx-sse" },
-    { name = "lark-oapi" },
+    { name = "lark-channel-sdk" },
     { name = "litellm" },
     { name = "loguru" },
     { name = "markitdown", extra = ["all"] },
@@ -4158,7 +4158,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.136.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-sse", specifier = ">=0.4.3" },
-    { name = "lark-oapi", specifier = ">=1.6.5" },
+    { name = "lark-channel-sdk", specifier = ">=1.2.0" },
     { name = "litellm", specifier = ">=1.83.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "markitdown", extras = ["all"], specifier = ">=0.1.5" },
