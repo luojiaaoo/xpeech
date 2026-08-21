@@ -8,6 +8,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
+import httpx
 from async_lru import alru_cache
 from lark_channel import (
     CardActionEvent,
@@ -469,10 +470,27 @@ class FeishuBridge:
                         session_id=session_id,
                         message_type=event.event,
                     )
-        except Exception:
-            logger.exception("Failed to consume Feishu messages session_id={}", session_id)
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "Feishu backend request failed session_id={} status_code={}",
+                session_id,
+                exc.response.status_code,
+            )
+            try:
+                response_data = exc.response.json()
+            except json.JSONDecodeError:
+                response_content = exc.response.text
+            else:
+                response_content = (
+                    response_data.get("detail", response_data) if isinstance(response_data, dict) else response_data
+                )
+                if not isinstance(response_content, str):
+                    response_content = json.dumps(response_content, ensure_ascii=False)
             card = self._format_chat_event(
-                ChatEvent(event=ChatEventType.ASSISTANT, context="这次处理消息时出错了，请稍后再试。")
+                ChatEvent(
+                    event=ChatEventType.ASSISTANT,
+                    context=f"{exc.response.status_code}: {response_content}",
+                )
             )
             if card:
                 result = await self.channel.send(
@@ -481,6 +499,8 @@ class FeishuBridge:
                     *([{"reply_to": reply_to}] if reply_to is not None else []),
                 )
                 self._ensure_send_success(result, operation="send error message")
+        except Exception:
+            logger.exception("Failed to consume Feishu messages session_id={}", session_id)
 
     def _format_chat_event(self, event: ChatEvent) -> dict[str, Any] | None:
         if event.event not in OUTPUT_EVENT_TYPES:

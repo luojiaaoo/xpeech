@@ -1,7 +1,9 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from lark_channel import (
     CardActionEvent,
@@ -20,7 +22,7 @@ from lark_channel import (
 
 from xpeech.channel import feishu
 from xpeech.channel.feishu import FINISH_CARD_CONTENT, FeishuBridge
-from xpeech.channel.schema import ChatEventType, FileData, TextData
+from xpeech.channel.schema import ChatEventType, FileData, Message, TextData
 
 
 def _inbound_message(content, *, message_id: str = "om_message") -> InboundMessage:
@@ -301,3 +303,47 @@ async def test_successful_progress_send_caches_message_id():
     )
 
     assert bridge.session_update_message_id == {"feishu_oc_chat": "om_progress"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "detail"),
+    [
+        (409, "Session 'E1001' already has an active chat request"),
+        (500, "Backend unavailable"),
+    ],
+)
+async def test_consume_returns_backend_http_error_to_user(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    detail: str,
+):
+    request = httpx.Request("POST", "http://backend.test/chat")
+    response = httpx.Response(status_code, request=request, json={"detail": detail})
+
+    async def busy_chat_events(*_args):
+        raise httpx.HTTPStatusError("Conflict", request=request, response=response)
+        yield
+
+    monkeypatch.setattr(feishu, "iter_chat_events", busy_chat_events)
+    send = AsyncMock(return_value=SendResult(success=True, message_id="om_busy"))
+    channel = SimpleNamespace(add_reaction=AsyncMock(), send=send)
+    bridge = _bridge_with_channel(channel)
+    bridge.receive_queues = {"E1001": asyncio.Queue()}
+    bridge.receive_queues["E1001"].put_nowait(
+        Message(
+            message_id="om_message",
+            chat_id="oc_chat",
+            session_id="E1001",
+            sender_name="Alice",
+            content=[TextData(text="hello")],
+            timestamp=0,
+            session_metadata={},
+        )
+    )
+
+    await bridge.consume("E1001", idle_timeout=0)
+
+    send.assert_awaited_once()
+    sent_card = send.await_args.args[1]
+    assert sent_card["card"]["body"]["elements"][0]["content"] == f"{status_code}: {detail}"
