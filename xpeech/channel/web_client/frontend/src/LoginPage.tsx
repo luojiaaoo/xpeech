@@ -117,14 +117,12 @@ export default function LoginPage({
             <div className="oauth2-link-icon"><ExportOutlined /></div>
             <Typography.Text strong>使用 {oauth2.provider_name} 授权登录</Typography.Text>
             <Typography.Text type="secondary" className="oauth2-login-hint">
-              授权页将在新标签页打开，授权完成后返回本页即可自动登录
+              点击下方按钮前往授权页
             </Typography.Text>
             <Button
               type="primary"
               icon={<ExportOutlined />}
               href={qrLogin.authorization_url}
-              target="_blank"
-              rel="noopener noreferrer"
               className="oauth2-link-button"
             >
               {oauth2.provider_name}登录

@@ -11,7 +11,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from yarl import URL
 
 from ..dao import DuplicateSessionIdError, User, WebClientDAO
@@ -307,6 +307,15 @@ def create_auth_router(
         if not user.is_active:
             attempt.error = "账号已停用"
             return _oauth2_result_page(False, attempt.error)
+
+        if oauth2.display_type == "link":
+            callback_response = RedirectResponse(
+                url="/",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+            await create_login_session(user, callback_response)
+            discard_oauth2_attempt(login_id or "")
+            return callback_response
 
         attempt.user_session_id = user.session_id
         return _oauth2_result_page(True, "请返回原设备，登录页将自动进入系统。")

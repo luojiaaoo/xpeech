@@ -2,6 +2,7 @@ from importlib import import_module
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from fastapi.testclient import TestClient
 
 web_client_app = import_module("xpeech.channel.web_client.app")
@@ -36,7 +37,12 @@ def test_oauth2_claim_resolves_nested_feishu_userinfo():
     assert oauth2_claim(userinfo, "data.employee_no.value") is None
 
 
-def test_oauth2_qr_login_maps_to_an_existing_web_user(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("display_type", ["link", "qrcode"])
+def test_oauth2_login_maps_to_an_existing_web_user(
+    tmp_path: Path,
+    monkeypatch,
+    display_type: str,
+):
     oauth_requests: list[tuple[str, str, dict[str, object]]] = []
 
     class FakeOAuthClient:
@@ -76,7 +82,7 @@ def test_oauth2_qr_login_maps_to_an_existing_web_user(tmp_path: Path, monkeypatc
             cookie_name="xpeech_session_oauth",
             oauth2=OAuth2WebConfig(
                 provider_name="XX",
-                display_type="link",
+                display_type=display_type,
                 client_id="oauth-client",
                 client_secret="oauth-secret",
                 authorization_url="https://login.example.test/authorize",
@@ -98,7 +104,7 @@ def test_oauth2_qr_login_maps_to_an_existing_web_user(tmp_path: Path, monkeypatc
         assert public_config["oauth2"] == {
             "enabled": True,
             "provider_name": "XX",
-            "display_type": "link",
+            "display_type": display_type,
         }
 
         assert client.post(
@@ -145,25 +151,40 @@ def test_oauth2_qr_login_maps_to_an_existing_web_user(tmp_path: Path, monkeypatc
         callback = client.get(
             "/api/auth/oauth2/callback",
             params={"state": authorization_query["state"][0], "code": "oauth-code"},
+            follow_redirects=False,
         )
-        assert callback.status_code == 200
-        assert "授权成功" in callback.text
-        assert "3 秒后自动关闭" in callback.text
-        assert "`${seconds} 秒后自动关闭`" in callback.text
-        assert "window.close()" in callback.text
-        assert "script-src 'nonce-" in callback.headers["content-security-policy"]
-        repeated_callback = client.get(
-            "/api/auth/oauth2/callback",
-            params={"state": authorization_query["state"][0], "code": "oauth-code"},
-        )
-        assert repeated_callback.status_code == 200
-        assert len(oauth_requests) == 2
+        if display_type == "link":
+            assert callback.status_code == 303
+            assert callback.headers["location"] == "/"
+            assert client.get("/api/auth/me").json()["session_id"] == "oauth-user-42"
 
-        approved = client.post("/api/auth/oauth2/poll", json=poll_body)
-        assert approved.status_code == 200
-        assert approved.json()["status"] == "approved"
-        assert approved.json()["user"]["session_id"] == "oauth-user-42"
-        assert client.get("/api/auth/me").json()["session_id"] == "oauth-user-42"
+            repeated_callback = client.get(
+                "/api/auth/oauth2/callback",
+                params={"state": authorization_query["state"][0], "code": "oauth-code"},
+            )
+            assert repeated_callback.status_code == 400
+            assert client.post("/api/auth/oauth2/poll", json=poll_body).status_code == 404
+        else:
+            assert callback.status_code == 200
+            assert "授权成功" in callback.text
+            assert "3 秒后自动关闭" in callback.text
+            assert "`${seconds} 秒后自动关闭`" in callback.text
+            assert "window.close()" in callback.text
+            assert "script-src 'nonce-" in callback.headers["content-security-policy"]
+
+            repeated_callback = client.get(
+                "/api/auth/oauth2/callback",
+                params={"state": authorization_query["state"][0], "code": "oauth-code"},
+            )
+            assert repeated_callback.status_code == 200
+
+            approved = client.post("/api/auth/oauth2/poll", json=poll_body)
+            assert approved.status_code == 200
+            assert approved.json()["status"] == "approved"
+            assert approved.json()["user"]["session_id"] == "oauth-user-42"
+            assert client.get("/api/auth/me").json()["session_id"] == "oauth-user-42"
+
+        assert len(oauth_requests) == 2
 
     token_request = oauth_requests[0]
     assert token_request[0:2] == ("POST", "https://login.example.test/token")
