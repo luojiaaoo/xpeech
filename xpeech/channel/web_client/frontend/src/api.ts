@@ -35,9 +35,9 @@ export const authApi = {
   login: (sessionId: string, password: string) =>
     request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ session_id: sessionId, password }) }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
-  changePassword: (currentPassword: string, newPassword: string) => request<void>('/api/auth/password', {
+  changePassword: (newPassword: string) => request<void>('/api/auth/password', {
     method: 'PATCH',
-    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    body: JSON.stringify({ new_password: newPassword }),
   }),
 };
 

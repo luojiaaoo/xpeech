@@ -45,12 +45,11 @@ export default function App() {
   }
 
   async function changePassword(values: {
-    current_password: string;
     new_password: string;
     confirm_password: string;
   }) {
     try {
-      await authApi.changePassword(values.current_password, values.new_password);
+      await authApi.changePassword(values.new_password);
       passwordForm.resetFields();
       setPasswordOpen(false);
       message.success('密码已重置');
@@ -156,9 +155,6 @@ export default function App() {
           destroyOnHidden
         >
           <Form form={passwordForm} layout="vertical" onFinish={changePassword}>
-            <Form.Item name="current_password" label="当前密码" rules={[{ required: true, message: '请输入当前密码' }]}>
-              <Input.Password autoComplete="current-password" />
-            </Form.Item>
             <Form.Item name="new_password" label="新密码" rules={[{ required: true, min: 8, max: 256, message: '新密码长度为 8–256 位' }]}>
               <Input.Password autoComplete="new-password" />
             </Form.Item>

@@ -52,7 +52,6 @@ class LoginBody(BaseModel):
 
 
 class PasswordChangeBody(BaseModel):
-    current_password: str = Field(min_length=1, max_length=256)
     new_password: str = Field(min_length=8, max_length=256)
 
 
@@ -217,10 +216,6 @@ def create_app(config: WebConfig) -> FastAPI:
         user: CurrentUser,
         token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
     ):
-        if not _password_matches(body.current_password, user.password_hash):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "当前密码错误")
-        if body.current_password == body.new_password:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "新密码不能与当前密码相同")
         if user.id is None or token is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
         changed = await dao.change_password(

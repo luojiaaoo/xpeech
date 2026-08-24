@@ -62,7 +62,7 @@ def test_regular_user_can_change_their_own_password(tmp_path: Path):
     with TestClient(app) as client:
         assert client.patch(
             "/api/auth/password",
-            json={"current_password": "old-password", "new_password": "new-password"},
+            json={"new_password": "new-password"},
         ).status_code == 401
         client.post(
             "/api/auth/login",
@@ -82,19 +82,13 @@ def test_regular_user_can_change_their_own_password(tmp_path: Path):
             "/api/auth/login",
             json={"session_id": "regular-user", "password": "old-password"},
         )
-        wrong_password = client.patch(
-            "/api/auth/password",
-            json={"current_password": "wrong-password", "new_password": "new-password"},
-        )
         changed = client.patch(
             "/api/auth/password",
-            json={"current_password": "old-password", "new_password": "new-password"},
+            json={"new_password": "new-password"},
         )
 
         assert login.status_code == 200
         assert login.json()["is_admin"] is False
-        assert wrong_password.status_code == 400
-        assert wrong_password.json()["detail"] == "当前密码错误"
         assert changed.status_code == 204
         assert client.get("/api/auth/me").status_code == 200
 
