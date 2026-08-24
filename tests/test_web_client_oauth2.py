@@ -5,10 +5,11 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi.testclient import TestClient
 
 web_client_app = import_module("xpeech.channel.web_client.app")
+oauth_routes = import_module("xpeech.channel.web_client.routes.auth")
 OAuth2WebConfig = web_client_app.OAuth2WebConfig
 WebConfig = web_client_app.WebConfig
 create_app = web_client_app.create_app
-oauth2_claim = web_client_app._oauth2_claim
+oauth2_claim = oauth_routes.oauth2_claim
 
 
 class FakeOAuthResponse:
@@ -65,7 +66,7 @@ def test_oauth2_qr_login_maps_to_an_existing_web_user(tmp_path: Path, monkeypatc
             )
 
     monkeypatch.setattr(web_client_app, "PBKDF2_ITERATIONS", 1)
-    monkeypatch.setattr(web_client_app.httpx, "AsyncClient", FakeOAuthClient)
+    monkeypatch.setattr(oauth_routes.httpx, "AsyncClient", FakeOAuthClient)
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
@@ -147,6 +148,10 @@ def test_oauth2_qr_login_maps_to_an_existing_web_user(tmp_path: Path, monkeypatc
         )
         assert callback.status_code == 200
         assert "授权成功" in callback.text
+        assert "3 秒后自动关闭" in callback.text
+        assert "`${seconds} 秒后自动关闭`" in callback.text
+        assert "window.close()" in callback.text
+        assert "script-src 'nonce-" in callback.headers["content-security-policy"]
         repeated_callback = client.get(
             "/api/auth/oauth2/callback",
             params={"state": authorization_query["state"][0], "code": "oauth-code"},
