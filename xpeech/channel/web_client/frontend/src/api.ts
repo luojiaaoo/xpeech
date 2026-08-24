@@ -8,6 +8,8 @@ import type {
   StatisticsTimeseries,
   StatisticsUpdates,
   StatisticsUsers,
+  OAuth2PollResult,
+  OAuth2QrLogin,
   User,
 } from './types';
 
@@ -38,6 +40,11 @@ export const authApi = {
   changePassword: (newPassword: string) => request<void>('/api/auth/password', {
     method: 'PATCH',
     body: JSON.stringify({ new_password: newPassword }),
+  }),
+  createOAuth2Qr: () => request<OAuth2QrLogin>('/api/auth/oauth2/qr', { method: 'POST' }),
+  pollOAuth2: (loginId: string, pollToken: string) => request<OAuth2PollResult>('/api/auth/oauth2/poll', {
+    method: 'POST',
+    body: JSON.stringify({ login_id: loginId, poll_token: pollToken }),
   }),
 };
 

@@ -424,5 +424,38 @@ npm run build
 `web_client.cookie_name` 配置，默认为 `xpeech_session`；同一 IP 上运行多个独立 Web
 实例时，应为每个实例配置不同的名称（如 `xpeech_session_7939`），避免不同端口之间覆盖 Cookie。
 
+### OAuth2 登录
+
+Web 客户端支持通用 OAuth2 Authorization Code 登录。启用后，登录页会显示“账号密码”和
+“`provider_name` 登录”两个标签页。`display_type = "qrcode"` 会显示一次性二维码；
+`display_type = "link"` 会显示授权按钮，并在新标签页打开 OAuth2 授权页。两种方式授权
+成功后都会自动登录原页面。授权请求默认使用 PKCE 和 `state`，授权链接有效期为 5 分钟。
+
+```toml
+[web_client.oauth2]
+enabled = true
+provider_name = "XX"
+display_type = "qrcode" # qrcode 或 link
+client_id = "your-client-id"
+client_secret = "your-client-secret"
+authorization_url = "https://login.example.com/oauth2/authorize"
+token_url = "https://login.example.com/oauth2/token"
+userinfo_url = "https://login.example.com/oauth2/userinfo"
+redirect_uri = "https://assistant.example.com/api/auth/oauth2/callback"
+scopes = ["openid", "profile"]
+session_id_claim = "sub"
+username_claim = "name"
+auto_create_users = false
+use_pkce = true
+token_auth_method = "client_secret_post"
+```
+
+需要在 OAuth2 服务商后台将 `redirect_uri` 注册为回调地址。服务端会用
+`session_id_claim` 指定的用户信息字段查找本地用户的 `session_id`。默认
+`auto_create_users = false`，管理员需要预先创建匹配的本地账号；设为 `true` 时会自动创建
+普通用户，并使用 `username_claim` 作为显示名称。若服务商要求 HTTP Basic 方式提交客户端
+密钥，可将 `token_auth_method` 改为 `client_secret_basic`。额外的授权参数可通过
+`extra_authorization_params = { prompt = "login" }` 配置。
+
 启动命令统一见[启动](#启动)章节。打开 `http://127.0.0.1:7939` 即可访问。
 新数据库的初始管理员为 `admin` / `admin123456`；

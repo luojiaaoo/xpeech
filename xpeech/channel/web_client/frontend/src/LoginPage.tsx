@@ -1,21 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  ExportOutlined,
   LockOutlined,
+  ScanOutlined,
   SafetyCertificateOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { Button, Form, Input, Typography, message } from 'antd';
+import { Alert, Button, Form, Input, QRCode, Skeleton, Tabs, Typography, message } from 'antd';
 import { authApi } from './api';
-import type { User } from './types';
+import type { AppConfig, OAuth2QrLogin, User } from './types';
 
 export default function LoginPage({
   systemName,
+  oauth2,
   onLogin,
 }: {
   systemName: string;
+  oauth2: AppConfig['oauth2'];
   onLogin: (user: User) => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
+  const [loginMethod, setLoginMethod] = useState('password');
+  const [qrLogin, setQrLogin] = useState<OAuth2QrLogin>();
+  const [qrError, setQrError] = useState<string>();
+  const [qrRefreshKey, setQrRefreshKey] = useState(0);
 
   async function submit(values: { session_id: string; password: string }) {
     setSubmitting(true);
@@ -27,6 +35,121 @@ export default function LoginPage({
       setSubmitting(false);
     }
   }
+
+  useEffect(() => {
+    if (!oauth2.enabled || loginMethod !== 'oauth2') return;
+
+    let cancelled = false;
+    let pollTimer: number | undefined;
+
+    async function beginOAuth2Login() {
+      setQrLogin(undefined);
+      setQrError(undefined);
+      try {
+        const qr = await authApi.createOAuth2Qr();
+        if (cancelled) return;
+        setQrLogin(qr);
+
+        async function poll() {
+          try {
+            const result = await authApi.pollOAuth2(qr.login_id, qr.poll_token);
+            if (cancelled) return;
+            if (result.status === 'approved') {
+              onLogin(result.user);
+              return;
+            }
+            pollTimer = window.setTimeout(poll, 1500);
+          } catch (error) {
+            if (!cancelled) setQrError(String(error));
+          }
+        }
+
+        pollTimer = window.setTimeout(poll, 1200);
+      } catch (error) {
+        if (!cancelled) setQrError(String(error));
+      }
+    }
+
+    void beginOAuth2Login();
+    return () => {
+      cancelled = true;
+      if (pollTimer !== undefined) window.clearTimeout(pollTimer);
+    };
+  }, [loginMethod, oauth2.enabled, onLogin, qrRefreshKey]);
+
+  const passwordLogin = (
+    <Form layout="vertical" size="large" onFinish={submit}>
+      <Form.Item name="session_id" label="会话 ID" rules={[{ required: true, message: '请输入会话 ID' }]}>
+        <Input prefix={<UserOutlined />} autoComplete="username" placeholder="请输入会话 ID" />
+      </Form.Item>
+      <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
+        <Input.Password prefix={<LockOutlined />} autoComplete="current-password" placeholder="请输入密码" />
+      </Form.Item>
+      <Button block type="primary" htmlType="submit" loading={submitting}>
+        {submitting ? '正在登录' : '登录'}
+      </Button>
+    </Form>
+  );
+
+  const oauth2Login = (
+    <div className="oauth2-login">
+      {qrError ? (
+        <Alert
+          type="error"
+          showIcon
+          message={oauth2.display_type === 'qrcode' ? '二维码登录失败' : '授权登录失败'}
+          description={qrError}
+        />
+      ) : qrLogin ? (
+        oauth2.display_type === 'qrcode' ? (
+          <>
+            <div className="oauth2-qr-frame">
+              <QRCode value={qrLogin.authorization_url} size={204} bordered={false} />
+              <span className="oauth2-qr-badge"><ScanOutlined /></span>
+            </div>
+            <Typography.Text strong>请使用 {oauth2.provider_name} 扫码登录</Typography.Text>
+            <Typography.Text type="secondary" className="oauth2-login-hint">
+              二维码 {Math.floor(qrLogin.expires_in / 60)} 分钟内有效，授权后本页面会自动登录
+            </Typography.Text>
+          </>
+        ) : (
+          <div className="oauth2-link-login">
+            <div className="oauth2-link-icon"><ExportOutlined /></div>
+            <Typography.Text strong>使用 {oauth2.provider_name} 授权登录</Typography.Text>
+            <Typography.Text type="secondary" className="oauth2-login-hint">
+              授权页将在新标签页打开，授权完成后返回本页即可自动登录
+            </Typography.Text>
+            <Button
+              type="primary"
+              icon={<ExportOutlined />}
+              href={qrLogin.authorization_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="oauth2-link-button"
+            >
+              {oauth2.provider_name}登录
+            </Button>
+          </div>
+        )
+      ) : (
+        <div className="oauth2-qr-loading">
+          {oauth2.display_type === 'qrcode' ? (
+            <Skeleton.Avatar active shape="square" size={204} />
+          ) : (
+            <Skeleton.Button active size="large" block />
+          )}
+          <Typography.Text type="secondary">
+            {oauth2.display_type === 'qrcode' ? '正在生成登录二维码…' : '正在生成授权链接…'}
+          </Typography.Text>
+        </div>
+      )}
+      {qrError ? (
+        <Button className="oauth2-refresh" onClick={() => setQrRefreshKey((value) => value + 1)}>
+          {oauth2.display_type === 'qrcode' ? '刷新二维码' : '重新生成链接'}
+        </Button>
+      ) : null}
+    </div>
+  );
 
   return (
     <main className="login-page">
@@ -103,17 +226,17 @@ export default function LoginPage({
           <Typography.Paragraph type="secondary" className="login-subtitle">
             登录你的账号，开始与 {systemName} 对话
           </Typography.Paragraph>
-          <Form layout="vertical" size="large" onFinish={submit}>
-            <Form.Item name="session_id" label="会话 ID" rules={[{ required: true, message: '请输入会话 ID' }]}>
-              <Input prefix={<UserOutlined />} autoComplete="username" placeholder="请输入会话 ID" />
-            </Form.Item>
-            <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
-              <Input.Password prefix={<LockOutlined />} autoComplete="current-password" placeholder="请输入密码" />
-            </Form.Item>
-            <Button block type="primary" htmlType="submit" loading={submitting}>
-              {submitting ? '正在登录' : '登录'}
-            </Button>
-          </Form>
+          {oauth2.enabled ? (
+            <Tabs
+              activeKey={loginMethod}
+              onChange={setLoginMethod}
+              centered
+              items={[
+                { key: 'password', label: '账号密码', children: passwordLogin },
+                { key: 'oauth2', label: `${oauth2.provider_name}登录`, children: oauth2Login },
+              ]}
+            />
+          ) : passwordLogin}
           <Typography.Text type="secondary" className="login-safe-tip">
             <SafetyCertificateOutlined /> 智能 · 可靠
           </Typography.Text>

@@ -497,6 +497,96 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   margin-bottom: 30px !important;
   line-height: 1.7;
 }
+.login-card .ant-tabs-nav { margin-bottom: 24px; }
+.login-card .ant-tabs-nav::before { border-bottom-color: #e7eaf3; }
+.login-card .ant-tabs-tab {
+  padding: 9px 4px;
+  color: #68718a;
+  font-weight: 600;
+}
+.login-card .ant-tabs-tab-active .ant-tabs-tab-btn { color: #315fdd; }
+.oauth2-login {
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+}
+.oauth2-qr-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin-bottom: 3px;
+  padding: 10px;
+  border: 1px solid #e1e6f2;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 34px #30456f17;
+}
+.oauth2-qr-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(145deg, #3370ff, #6957f5);
+  box-shadow: 0 5px 16px #385ee04d;
+  font-size: 15px;
+}
+.oauth2-login-hint {
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.oauth2-link-login {
+  min-height: 245px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.oauth2-link-icon {
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  border: 1px solid #dbe3fb;
+  border-radius: 22px;
+  color: #3262e9;
+  background: linear-gradient(145deg, #f3f7ff, #e9edff);
+  box-shadow: 0 12px 32px #385ee026;
+  font-size: 28px;
+}
+.login-card .oauth2-link-button.ant-btn { width: min(260px, 100%); margin-top: 12px; }
+.oauth2-qr-loading {
+  min-height: 270px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.oauth2-qr-loading .ant-skeleton-button { width: 260px; height: 48px; border-radius: 10px; }
+.oauth2-qr-loading .ant-skeleton-avatar {
+  border: 1px solid #e7eaf3;
+  border-radius: 16px;
+}
+.oauth2-login .ant-alert { width: 100%; text-align: left; }
+.login-card .oauth2-refresh.ant-btn {
+  width: 140px;
+  height: 38px;
+  margin-top: 8px;
+  letter-spacing: .04em;
+}
 .login-card .ant-form-item { margin-bottom: 22px; }
 .login-card .ant-form-item-label > label {
   color: #313a56;

@@ -4,7 +4,14 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -160,6 +167,61 @@ class JWTConfig(BaseModel):
     access_token_expire_seconds: int = Field(default=60, ge=1, le=60)
 
 
+class OAuth2Config(BaseModel):
+    """Optional OAuth2 authorization-code login settings for the web client."""
+
+    enabled: bool = False
+    provider_name: str = Field(default="OAuth2", min_length=1, max_length=32)
+    display_type: Literal["qrcode", "link"] = "qrcode"
+    client_id: str = ""
+    client_secret: str = Field(default="", repr=False)
+    authorization_url: str = ""
+    token_url: str = ""
+    userinfo_url: str = ""
+    redirect_uri: str | None = None
+    scopes: list[str] = Field(default_factory=lambda: ["openid", "profile"])
+    session_id_claim: str = Field(default="sub", min_length=1)
+    username_claim: str = Field(default="name", min_length=1)
+    auto_create_users: bool = False
+    use_pkce: bool = True
+    token_auth_method: Literal["client_secret_post", "client_secret_basic"] = (
+        "client_secret_post"
+    )
+    extra_authorization_params: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator(
+        "authorization_url",
+        "token_url",
+        "userinfo_url",
+        "redirect_uri",
+    )
+    @classmethod
+    def validate_http_url(cls, value: str | None) -> str | None:
+        if not value:
+            return value
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("OAuth2 endpoints must be absolute HTTP(S) URLs")
+        return value
+
+    @model_validator(mode="after")
+    def validate_enabled_settings(self) -> "OAuth2Config":
+        if self.enabled:
+            required = {
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "authorization_url": self.authorization_url,
+                "token_url": self.token_url,
+                "userinfo_url": self.userinfo_url,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                raise ValueError(
+                    f"enabled OAuth2 login requires: {', '.join(missing)}"
+                )
+        return self
+
+
 class WebClientConfig(BaseModel):
     """Web client storage settings."""
 
@@ -169,6 +231,7 @@ class WebClientConfig(BaseModel):
         min_length=1,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
+    oauth2: OAuth2Config = Field(default_factory=OAuth2Config)
 
 
 class Settings(BaseSettings):

@@ -13,12 +13,12 @@ import { appApi, authApi } from './api';
 import ChatPage from './ChatPage';
 import LoginPage from './LoginPage';
 import UserManagement from './UserManagement';
-import type { User } from './types';
+import type { AppConfig, User } from './types';
 
 const StatisticsDashboard = lazy(() => import('./StatisticsDashboard'));
 
 export default function App() {
-  const [systemName, setSystemName] = useState<string>();
+  const [appConfig, setAppConfig] = useState<AppConfig>();
   const [user, setUser] = useState<User | null>();
   const [userManagementOpen, setUserManagementOpen] = useState(false);
   const [statisticsOpen, setStatisticsOpen] = useState(false);
@@ -26,15 +26,16 @@ export default function App() {
   const [passwordForm] = Form.useForm();
 
   useEffect(() => {
-    appApi.config().then(({ system_name }) => {
-      setSystemName(system_name);
-      document.title = system_name;
+    appApi.config().then((config) => {
+      setAppConfig(config);
+      document.title = config.system_name;
     });
     authApi.me().then(setUser).catch(() => setUser(null));
   }, []);
 
-  if (user === undefined || systemName === undefined) return <div className="loading-page"><Skeleton active /></div>;
-  if (user === null) return <LoginPage systemName={systemName} onLogin={setUser} />;
+  if (user === undefined || appConfig === undefined) return <div className="loading-page"><Skeleton active /></div>;
+  const systemName = appConfig.system_name;
+  if (user === null) return <LoginPage systemName={systemName} oauth2={appConfig.oauth2} onLogin={setUser} />;
 
   async function logout() {
     setUserManagementOpen(false);

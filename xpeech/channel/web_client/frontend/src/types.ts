@@ -11,7 +11,23 @@ export interface User {
 
 export interface AppConfig {
   system_name: string;
+  oauth2: {
+    enabled: boolean;
+    provider_name: string;
+    display_type: 'qrcode' | 'link';
+  };
 }
+
+export interface OAuth2QrLogin {
+  authorization_url: string;
+  login_id: string;
+  poll_token: string;
+  expires_in: number;
+}
+
+export type OAuth2PollResult =
+  | { status: 'pending' }
+  | { status: 'approved'; user: User };
 
 export interface StatisticsOverview {
   question_count: number;

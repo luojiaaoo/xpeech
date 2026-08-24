@@ -21,6 +21,27 @@ access_token_expire_seconds = 60
 database_path = "data/web_client/users.db"
 cookie_name = "xpeech_session"
 
+[web_client.oauth2]
+enabled = false
+provider_name = "XX"
+# qrcode: display a QR code; link: display a button that opens a new tab.
+display_type = "qrcode"
+client_id = ""
+client_secret = ""
+authorization_url = "https://login.example.com/oauth2/authorize"
+token_url = "https://login.example.com/oauth2/token"
+userinfo_url = "https://login.example.com/oauth2/userinfo"
+# Set this explicitly when the Web client is behind a reverse proxy.
+redirect_uri = "http://127.0.0.1:7939/api/auth/oauth2/callback"
+scopes = ["openid", "profile"]
+session_id_claim = "sub"
+username_claim = "name"
+# Keep false to require administrators to pre-create matching local accounts.
+auto_create_users = false
+use_pkce = true
+token_auth_method = "client_secret_post"
+# extra_authorization_params = { prompt = "login" }
+
 [llm]
 api_key = "xxxxxxxx"
 api_base = "http://llm-proxy.1393074507312057.cn-wulanchabu.pai-eas.aliyuncs.com/v1"
