@@ -120,6 +120,22 @@ Swagger UI 右上角点击 `Authorize`：`username` 可填写任意标识（例�
 
 需要修改监听地址、端口或后端地址时，可通过对应命令的 `--help` 查看参数。
 
+## 快速部署平台
+
+如果需要通过可视化界面快速部署和集中管理一个或多个 Xpeech 实例，可以使用
+[Xpeech Deck](https://github.com/luojiaaoo/xpeech-deck)。它会为每个实例维护独立的 Xpeech Git
+工作树和 Docker Compose 环境，并提供：
+
+- 创建 Xpeech 实例，自动更新并在远程分支、标签和近期提交之间切换版本
+- 在线配置 Backend / Web Client 端口、`conf.toml` 和自定义内置技能
+- 执行 Up、Start、Stop、Restart、Down 和 PS 等常用 Docker Compose 操作
+- 检查和拉取 Xpeech 所需镜像，通过 System Console 查看命令及执行结果
+
+![Xpeech Deck 多实例管理平台](screenshot/PixPin_2026-08-25_10-40-18.jpg)
+
+Xpeech Deck 是自托管平台，需要与 Docker 和所有受管 Xpeech 实例运行在同一台机器上。
+安装、配置和访问方式请参阅 [Xpeech Deck 使用说明](https://github.com/luojiaaoo/xpeech-deck#readme)。
+
 ## Docker Compose 部署
 
 Compose 会启动四个容器：
@@ -405,6 +421,8 @@ uv run python -c "from xpeech.config.settings import settings; print(settings.mo
 
 Web 客户端基于 React 和 Ant Design X，使用 FastAPI 认证代理访问 Agent API，
 并通过 SQLite 保存用户与登录会话。
+
+![Xpeech Web 客户端](screenshot/PixPin_2026-08-25_10-44-39.jpg)
 
 登录后的管理员可从页面右上角的“设置”下拉框进入“数据大屏”，也可通过 `/api/statistics`、`/api/statistics/timeseries`、
 `/api/statistics/users`、`/api/statistics/sessions` 和 `/api/statistics/records*` 查询统计数据。
