@@ -9,6 +9,8 @@ x-xpeech-service: &xpeech-service
     dockerfile: Dockerfile
   env_file:
     - ./.env
+  environment:
+    - TZ=Asia/Shanghai
   configs:
     - source: xpeech_conf
       target: /app/conf.toml

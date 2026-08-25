@@ -19,7 +19,7 @@ RUN sed -i \
     apt-get update && \
     apt-get -o Acquire::https::Verify-Peer=false update && \
     apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates && \
-    apt-get install -y --no-install-recommends bubblewrap cron curl ffmpeg git zip && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bubblewrap cron curl ffmpeg git zip tzdata && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
