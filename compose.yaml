@@ -32,21 +32,23 @@ services:
     ports:
       - "${BACKEND_PORT:-7878}:${BACKEND_PORT:-7878}"
     volumes:
+      # 内置技能及本地自定义内置技能（x-*）
+      - ./xpeech/agent/skills/buildin:/app/xpeech/agent/skills/buildin:ro
       # 会话上下文
       - ./docker_data/session:/app/data/session
       # 工作目录
       - ./docker_data/workspace_base:/app/data/workspace_base
       # 沙盒HOME目录及加速文件
       - ./docker_data/sandbox-home:/app/data/sandbox-home
-      - ./data/sandbox-home/.config/uv.toml:/app/data/sandbox-home/.config/uv.toml
-      - ./data/sandbox-home/.pip/pip.conf:/app/data/sandbox-home/.pip/pip.conf
-      - ./data/sandbox-home/.npmrc:/app/data/sandbox-home/.npmrc
+      - ./data/sandbox-home/.config/uv.toml:/app/data/sandbox-home/.config/uv.toml:ro
+      - ./data/sandbox-home/.pip/pip.conf:/app/data/sandbox-home/.pip/pip.conf:ro
+      - ./data/sandbox-home/.npmrc:/app/data/sandbox-home/.npmrc:ro
       # 网页预览目录
       - ./docker_data/browser_preview:/app/data/browser_preview
       # 运行日志目录
       - ./docker_data/logs:/app/data/logs
       # 头像等
-      - ./assets:/app/assets
+      - ./assets:/app/assets:ro
     cap_add:
       - SYS_ADMIN
     security_opt:
