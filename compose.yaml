@@ -38,11 +38,8 @@ services:
       - ./docker_data/session:/app/data/session
       # 工作目录
       - ./docker_data/workspace_base:/app/data/workspace_base
-      # 沙盒HOME目录及加速文件
-      - ./docker_data/sandbox-home:/app/data/sandbox-home
-      - ./data/sandbox-home/.config/uv.toml:/app/data/sandbox-home/.config/uv.toml:ro
-      - ./data/sandbox-home/.pip/pip.conf:/app/data/sandbox-home/.pip/pip.conf:ro
-      - ./data/sandbox-home/.npmrc:/app/data/sandbox-home/.npmrc:ro
+      # 沙盒内包管理器的国内镜像配置（逐用户只读映射到 HOME）
+      - ./data/sandbox-home:/app/data/sandbox-home:ro
       # 网页预览目录
       - ./docker_data/browser_preview:/app/data/browser_preview
       # 运行日志目录

@@ -13,7 +13,6 @@ import tempfile
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from ...utils.helper import ensure_path
 from ...exceptions import PathProtectionError
 from ..server.context import get_session_id
 from . import sandbox
@@ -247,7 +246,6 @@ def build_shell_tools(workspace: str | Path):
             command,
             session_id=get_session_id(),
         )
-        ensure_path(sandbox.get_sandbox_home())
         await _ensure_workspace_uv_venv(workspace)
         stdout, stderr, returncode = await _run_wrapped_command(command, workspace, env=env)
         return _format_command_output(stdout, stderr, returncode)

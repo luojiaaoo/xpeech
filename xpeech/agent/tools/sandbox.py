@@ -3,9 +3,9 @@
 import os
 import shlex
 from pathlib import Path
-from ...utils.helper import ensure_path
 
 from ...config.settings import settings
+from ...utils.helper import ensure_path
 from ..skills.skill import iter_builtin_skill_dirs
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -15,39 +15,60 @@ def _add_setenv(args: list[str], key: str, value: Path | str) -> None:
     args.extend(["--setenv", key, str(value)])
 
 
-def get_sandbox_home() -> Path:
-    """Return the shared sandbox home for all sessions under a workspace base."""
-    return ensure_path(settings.path.sandbox_home_path.resolve())
+def get_sandbox_home(workspace: str | Path) -> Path:
+    """Return the current workspace's private sandbox home, creating it if needed."""
+    workspace = Path(workspace).expanduser().resolve()
+    home = workspace / "home"
+    if home.is_symlink():
+        raise ValueError(f"Sandbox home must not be a symlink: {home}")
+    return ensure_path(home).resolve()
 
 
-def _sandbox_path(shared_home: Path) -> str:
+def _sandbox_path(home: Path) -> str:
     inherited_path = os.environ.get("PATH") or ""
     path_entries = [
-        str(shared_home / ".local" / "bin"),
-        str(shared_home / ".npm-global" / "bin"),
+        str(home / ".local" / "bin"),
+        str(home / ".npm-global" / "bin"),
         inherited_path,
         _DEFAULT_PATH,
     ]
     return ":".join(entry for entry in path_entries if entry)
 
 
+def _iter_sandbox_home_config_files() -> list[tuple[Path, Path]]:
+    """Return (source, relative path) pairs for sandbox HOME config files."""
+    config_root = settings.path.sandbox_home_path.expanduser().resolve()
+    if not config_root.is_dir():
+        return []
+
+    config_files: list[tuple[Path, Path]] = []
+    for source in sorted(config_root.rglob("*")):
+        if not source.is_file() or source.is_symlink():
+            continue
+        resolved_source = source.resolve()
+        if not resolved_source.is_relative_to(config_root):
+            continue
+        config_files.append((resolved_source, source.relative_to(config_root)))
+    return config_files
+
+
 def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None = None) -> str:
     """Wrap a command in a bubblewrap sandbox."""
     workspace = Path(workspace).expanduser().resolve()
     workspace_python_env = workspace / ".venv"
-    shared_home = get_sandbox_home()
+    home = get_sandbox_home(workspace)
     cache_path = settings.path.cache_path.resolve()
     workspace_skills = workspace / "skills"
 
     args = ["bwrap", "--new-session", "--die-with-parent"]
 
     sandbox_env: dict[str, str | Path] = {
-        "HOME": shared_home,  # 共享的用户主目录
-        "PATH": _sandbox_path(shared_home),  # 共享的 PATH 环境变量
+        "HOME": home,
+        "PATH": _sandbox_path(home),
         "PIP_REQUIRE_VIRTUALENV": "true",  # 确保 pip 在虚拟环境中运行
         "UV_PROJECT_ENVIRONMENT": workspace_python_env,  # uv虚拟py环境路径
-        "UV_CACHE_DIR": shared_home / ".cache" / "uv",  # 包缓存目录
-        "NPM_CONFIG_PREFIX": shared_home / ".npm-global",  # npm 全局安装目录
+        "UV_CACHE_DIR": home / ".cache" / "uv",  # 包缓存目录
+        "NPM_CONFIG_PREFIX": home / ".npm-global",  # npm 全局安装目录
     }
     sandbox_env.update(env or {})
     for key, value in sandbox_env.items():
@@ -77,13 +98,16 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
             *("--tmpfs", "/tmp"),
             *("--tmpfs", str(workspace.parent)),
             *("--dir", str(workspace)),
-            *("--dir", str(shared_home)),
             *("--dir", str(cache_path)),
             *("--bind", str(workspace), str(workspace)),
-            *("--bind", str(shared_home), str(shared_home)),
             *("--bind", str(cache_path), str(cache_path)),
         ]
     )
+
+    # Keep centrally managed HOME config files read-only while all writable
+    # HOME state remains private to the current workspace.
+    for source, relative_path in _iter_sandbox_home_config_files():
+        args.extend(["--ro-bind", str(source), str(home / relative_path)])
 
     # Present built-in and custom skills through one workspace/skills tree.
     # Built-in directories are mounted read-only over same-named workspace

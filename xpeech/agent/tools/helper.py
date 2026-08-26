@@ -13,12 +13,12 @@ import re
 import shlex
 
 
-def _expand_sandbox_home_path(user_path: str | Path) -> Path:
+def _expand_sandbox_home_path(user_path: str | Path, workspace: str | Path) -> Path:
     path_text = str(user_path)
     if path_text == "~":
-        return sandbox.get_sandbox_home()
+        return sandbox.get_sandbox_home(workspace)
     if path_text.startswith("~/") or path_text.startswith("~\\"):
-        return sandbox.get_sandbox_home() / path_text[2:]
+        return sandbox.get_sandbox_home(workspace) / path_text[2:]
     return Path(user_path).expanduser()
 
 
@@ -29,7 +29,7 @@ def safe_resolve_workspace_path(
 ) -> Path:
     """Resolve a workspace path and optionally reject access to built-in skills."""
     workspace = Path(workspace).expanduser().resolve()
-    path = _expand_sandbox_home_path(user_path)
+    path = _expand_sandbox_home_path(user_path, workspace)
 
     if path.is_absolute():
         resolved_path = path.resolve()

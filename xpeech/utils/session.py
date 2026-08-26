@@ -103,3 +103,7 @@ async def create_workspace_templates(workspace: Path):
     # Create skills directory for custom user skills
     skills_dir = workspace / "skills"
     skills_dir.mkdir(exist_ok=True)
+
+    # Each workspace owns an isolated HOME for sandboxed commands.
+    home_dir = workspace / "home"
+    home_dir.mkdir(exist_ok=True)

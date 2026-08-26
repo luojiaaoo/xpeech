@@ -166,11 +166,9 @@ cython_debug/
 # Ignore data except the sandbox-home config files listed below.
 # docker data directory
 docker_data/
-# Home directory for acceleration download
+# Package-manager mirror settings mapped into each sandbox HOME
 data/*
 !data/sandbox-home/
-data/sandbox-home/**
-!data/sandbox-home/**/
 # npm
 !data/sandbox-home/.npmrc
 # pip
