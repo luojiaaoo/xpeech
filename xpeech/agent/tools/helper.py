@@ -27,7 +27,7 @@ def safe_resolve_workspace_path(
     workspace: str | Path,
     protect_builtin_skills: bool = True,
 ) -> Path:
-    """Resolve a workspace path and optionally reject access to built-in skills."""
+    """Resolve a workspace path, including read-only sandbox mount mappings."""
     workspace = Path(workspace).expanduser().resolve()
     path = _expand_sandbox_home_path(user_path, workspace)
 
@@ -39,6 +39,22 @@ def safe_resolve_workspace_path(
     # 先确保用户输入没有逃离工作区。
     if not is_relative_path(path_target=resolved_path, base=workspace):
         raise PathProtectionError("Path escapes workspace")
+
+    # shell 工具会把公共 HOME 配置映射到工作区 HOME，
+    # 文件工具在沙盒外运行，需要在这里做相同的路径映射。
+    workspace_home = workspace / "home"
+    try:
+        home_relative = resolved_path.relative_to(workspace_home)
+    except ValueError:
+        pass
+    else:
+        if home_relative.parts:
+            config_root = settings.path.sandbox_home_path.expanduser().resolve()
+            config_path = config_root.joinpath(*home_relative.parts)
+            if config_path.is_file():
+                if protect_builtin_skills:
+                    raise PathProtectionError("Sandbox HOME config files are read-only")
+                return config_path.resolve()
 
     # 非 skills 目录下的路径无需进行内置技能转换。
     workspace_skills = workspace / "skills"

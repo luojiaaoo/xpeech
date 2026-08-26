@@ -63,16 +63,6 @@ class EditFileArgs(BaseModel):
     )
 
 
-class ListDirArgs(BaseModel):
-    path: str = Field(description="The directory path to list")
-    recursive: bool = Field(description="Recursively list all files (default false)", default=False)
-    max_entries: int = Field(
-        description="Maximum entries to return (default 200)",
-        default=200,
-        ge=1,
-    )
-
-
 def build_file_tools(workspace: str | Path):
     base = Path(workspace).expanduser().resolve()
     if not base.exists():
@@ -344,64 +334,4 @@ def build_file_tools(workspace: str | Path):
             await f.write(new_content)
         return f"Successfully edited {path}"
 
-    async def list_dir(args: ListDirArgs) -> str:
-        """
-        List the contents of a directory.
-        Set recursive=true to explore nested structure.
-        Common noise directories (.git, node_modules, __pycache__, etc.) are auto-ignored.
-        """
-        _DEFAULT_MAX = 200
-        _IGNORE_DIRS = {
-            ".git",
-            "node_modules",
-            "__pycache__",
-            ".venv",
-            "venv",
-            "dist",
-            "build",
-            ".tox",
-            ".mypy_cache",
-            ".pytest_cache",
-            ".ruff_cache",
-            ".coverage",
-            "htmlcov",
-        }
-        path = args.path
-        max_entries = args.max_entries
-        recursive = args.recursive
-        dir_path = safe_resolve(path, protect_builtin_skills=False)
-        if not dir_path.exists():
-            raise FileNotFoundError(f"Directory not found: {path}")
-        if not dir_path.is_dir():
-            raise NotADirectoryError(f"Not a directory: {path}")
-
-        cap = max_entries or _DEFAULT_MAX
-        items: list[str] = []
-        total = 0
-
-        if recursive:
-            for item in sorted(dir_path.rglob("*")):
-                if any(p in _IGNORE_DIRS for p in item.parts):
-                    continue
-                total += 1
-                if len(items) < cap:
-                    rel = item.relative_to(dir_path)
-                    items.append(f"{rel}/" if item.is_dir() else str(rel))
-        else:
-            for item in sorted(dir_path.iterdir()):
-                if item.name in _IGNORE_DIRS:
-                    continue
-                total += 1
-                if len(items) < cap:
-                    kind = "[dir] " if item.is_dir() else "[file] "
-                    items.append(f"{kind}{item.name}")
-
-        if not items and total == 0:
-            return f"Directory {path} is empty"
-
-        result = "\n".join(items)
-        if total > cap:
-            result += f"\n\n(truncated, showing first {cap} of {total} entries)"
-        return result
-
-    return read_image, read_video, read_file, write_file, edit_file, list_dir
+    return read_image, read_video, read_file, write_file, edit_file
