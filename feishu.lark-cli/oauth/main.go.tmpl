@@ -313,11 +313,14 @@ func ensureUserToken(ctx context.Context, requested []string) (*ensureResult, er
 	if err := savePrivateJSON(pendingPath, pending); err != nil {
 		return nil, err
 	}
-	return &ensureResult{
+	result := &ensureResult{
 		AuthorizationURL: firstNonEmpty(device.VerificationUriComplete, device.VerificationUri),
-		UserCode:         device.UserCode,
 		Scopes:           desiredScopes,
-	}, nil
+	}
+	if device.VerificationUriComplete == "" {
+		result.UserCode = device.UserCode
+	}
+	return result, nil
 }
 
 func desiredScopeSet(cached *cachedUserToken, requested []string) []string {

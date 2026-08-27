@@ -46,6 +46,9 @@ def test_render_oauth_source_injects_credentials_and_fixed_scopes(tmp_path: Path
     assert '`json:"poll_attempts,omitempty"`' in source
     assert "context.WithTimeout(ctx, time.Duration(pollSeconds)*time.Second)" in source
     assert 'errors.New("用户未授权' in source
+    assert 'if device.VerificationUriComplete == "" {' in source
+    assert "result.UserCode = device.UserCode" in source
+    assert "UserCode:         device.UserCode" not in source
     assert "redirectURI" not in source
     assert "authorizationEndpoint" not in source
     assert "codeVerifier" not in source
