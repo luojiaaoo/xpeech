@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import aiofiles
+import aiofiles.os
 from loguru import logger
 
 from ..exceptions import PathProtectionError
@@ -39,13 +41,14 @@ class ToolExecutor:
         self._workspace = Path(workspace).expanduser().resolve()
         self._max_result_chars = max_result_chars
 
-    def _limit_text(self, tool_call: ToolCallRequest, text: str, max_chars: int) -> str:
+    async def _limit_text(self, tool_call: ToolCallRequest, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
             return text
         result_directory = self._workspace / TOOL_RESULT_DIRECTORY
-        result_directory.mkdir(parents=True, exist_ok=True)
+        await aiofiles.os.makedirs(result_directory, exist_ok=True)
         result_path = result_directory / f"{tool_call.name}-{uuid4().hex[:12]}.txt"
-        result_path.write_text(text, encoding="utf-8")
+        async with aiofiles.open(result_path, "w", encoding="utf-8") as result_file:
+            await result_file.write(text)
         saved_path = result_path.relative_to(self._workspace).as_posix()
         return (
             text[:max_chars] + f"\n\n... [tool result contains {len(text):,} characters; showing the first "
@@ -79,7 +82,7 @@ class ToolExecutor:
                 else:
                     value = await tool_call_func(model_cls(**tool_call.arguments))
                 if isinstance(value, str):
-                    value = self._limit_text(tool_call, value, self._max_result_chars)
+                    value = await self._limit_text(tool_call, value, self._max_result_chars)
             except PathProtectionError as exc:
                 duration = time.perf_counter() - start_time
                 error = format_exception2llm(exc)
