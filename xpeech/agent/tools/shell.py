@@ -1,6 +1,3 @@
-from pathlib import Path
-from textwrap import dedent
-
 import asyncio
 import os
 import platform
@@ -9,15 +6,18 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
+from textwrap import dedent
 
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from ...config.settings import settings
 from ...exceptions import PathProtectionError
+from ...utils.helper import ensure_path
 from ..server.context import get_session_id
 from . import sandbox
-from ...config.settings import settings
-from .helper import safe_resolve_workspace_path, is_direct_python_pip_exec
+from .helper import is_direct_python_pip_exec, safe_resolve_workspace_path
 
 EXEC_TIMEOUT = 60 * 2
 _MAX_OUTPUT = 10000
@@ -79,7 +79,7 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
         return
     try:
         await asyncio.wait_for(process.wait(), timeout=3.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             process.kill()
         except ProcessLookupError:
@@ -132,6 +132,7 @@ def _guard_command(command: str, workspace: str | Path) -> str:
                 + _WORKSPACE_BOUNDARY_NOTE
             ) from None
         except Exception:
+            logger.debug("Skipping path that could not be resolved by workspace guard: {}", path)
             continue
 
     return cmd
@@ -144,12 +145,14 @@ _NPM_INSTALL_PATTERN = re.compile(r"(?:^|&&|\|\||[;|\n])\s*npm\s+(?:install|i)\b
 def _inject_command_context(command: str, **context: object) -> tuple[str, dict[str, str]]:
     """Inject managed command arguments and sandbox environment variables."""
     env: dict[str, str] = {}
+    session_id = context.get("session_id")
+    user_cache_path = ensure_path(settings.path.cache_path / session_id)
+    agent_browser_socket_dir = ensure_path(user_cache_path / "agent-browser")
 
     if _AGENT_BROWSER_PATTERN.search(command):
         cdp_url = os.environ.get("CDP_URL", "").strip()
         if not cdp_url:
             raise RuntimeError("agent-browser requires the CDP_URL environment variable")
-        session_id = context.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise RuntimeError("agent-browser requires a session ID in the current request context")
         quoted_cdp_url = shlex.quote(cdp_url)
@@ -164,7 +167,7 @@ def _inject_command_context(command: str, **context: object) -> tuple[str, dict[
             return match.group(0) + args_suffix
 
         command = _AGENT_BROWSER_PATTERN.sub(inject, command)
-        env["AGENT_BROWSER_SOCKET_DIR"] = str(settings.path.cache_path.resolve())
+        env["AGENT_BROWSER_SOCKET_DIR"] = str(agent_browser_socket_dir)
     return command, env
 
 
@@ -188,7 +191,7 @@ async def _run_wrapped_command(
         )
         try:
             await asyncio.wait_for(process.wait(), timeout=EXEC_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await _stop_process(process)
         except asyncio.CancelledError:
             await _stop_process(process)

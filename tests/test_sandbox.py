@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from xpeech.agent.tools import sandbox
+from xpeech.agent.server.context import session_id_var
+from xpeech.agent.tools import sandbox, shell
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import safe_resolve_workspace_path
 from xpeech.exceptions import PathProtectionError
@@ -77,11 +78,14 @@ def test_sandbox_home_config_paths_map_to_managed_files_for_reading(
     config_file.write_text("managed config", encoding="utf-8")
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
 
-    assert safe_resolve_workspace_path(
-        user_path,
-        workspace,
-        protect_builtin_skills=False,
-    ) == config_file
+    assert (
+        safe_resolve_workspace_path(
+            user_path,
+            workspace,
+            protect_builtin_skills=False,
+        )
+        == config_file
+    )
 
 
 def test_sandbox_home_config_paths_are_read_only_to_file_tools(
@@ -157,17 +161,77 @@ def test_wrap_command_uses_private_home_and_maps_mirror_configs(
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
     monkeypatch.setattr(sandbox.settings.path, "cache_path", cache)
     monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    session_id = "test-session"
+    agent_browser_cache = cache / session_id / "agent-browser"
+    agent_browser_cache.mkdir(parents=True)
 
-    args = shlex.split(sandbox.wrap_command("pwd", workspace))
+    session_token = session_id_var.set(session_id)
+    try:
+        args = shlex.split(sandbox.wrap_command("pwd", workspace))
+    finally:
+        session_id_var.reset(session_token)
     environment = dict(_option_pairs(args, "--setenv"))
     read_only_binds = set(_option_pairs(args, "--ro-bind"))
+    writable_binds = set(_option_pairs(args, "--bind"))
     home = workspace / "home"
 
     assert environment["HOME"] == str(home)
     assert environment["UV_CACHE_DIR"] == str(home / ".cache/uv")
     assert environment["NPM_CONFIG_PREFIX"] == str(home / ".npm-global")
     assert environment["PATH"].startswith(f"{home}/.local/bin:{home}/.npm-global/bin:")
+    assert (str(agent_browser_cache), str(agent_browser_cache)) in writable_binds
+    assert (str(cache), str(cache)) not in writable_binds
     assert {
-        (str(config_home / relative_path), str(home / relative_path))
-        for relative_path in config_files
+        (str(config_home / relative_path), str(home / relative_path)) for relative_path in config_files
     } <= read_only_binds
+
+
+def test_agent_browser_context_creates_session_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(shell.settings.path, "cache_path", cache)
+    monkeypatch.setenv("CDP_URL", "http://browserless:3000")
+
+    command, environment = shell._inject_command_context(
+        "agent-browser open example.com",
+        session_id="session-a",
+    )
+
+    session_cache = cache / "session-a" / "agent-browser"
+    assert session_cache.is_dir()
+    assert environment["AGENT_BROWSER_SOCKET_DIR"] == str(session_cache)
+    assert command == "agent-browser --cdp http://browserless:3000 --session session-a open example.com"
+
+
+def test_agent_browser_cache_binds_are_isolated_by_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    cache = tmp_path / "cache"
+    config_home = tmp_path / "sandbox-home"
+    config_home.mkdir()
+    monkeypatch.setattr(sandbox.settings.path, "cache_path", cache)
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
+    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setenv("CDP_URL", "http://browserless:3000")
+
+    session_binds: dict[str, set[tuple[str, str]]] = {}
+    for session_id in ("session-a", "session-b"):
+        command, environment = shell._inject_command_context("agent-browser open example.com", session_id=session_id)
+        session_token = session_id_var.set(session_id)
+        try:
+            args = shlex.split(sandbox.wrap_command(command, workspace, env=environment))
+        finally:
+            session_id_var.reset(session_token)
+        session_binds[session_id] = set(_option_pairs(args, "--bind"))
+
+    first_cache = cache / "session-a" / "agent-browser"
+    second_cache = cache / "session-b" / "agent-browser"
+    assert (str(first_cache), str(first_cache)) in session_binds["session-a"]
+    assert (str(second_cache), str(second_cache)) not in session_binds["session-a"]
+    assert (str(second_cache), str(second_cache)) in session_binds["session-b"]
+    assert (str(first_cache), str(first_cache)) not in session_binds["session-b"]

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ...config.settings import settings
 from ...utils.helper import ensure_path
+from ..server.context import get_session_id
 from ..skills.skill import iter_builtin_skill_dirs
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -57,7 +58,8 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
     workspace = Path(workspace).expanduser().resolve()
     workspace_python_env = workspace / ".venv"
     home = get_sandbox_home(workspace)
-    cache_path = settings.path.cache_path.resolve()
+    session_id = get_session_id()
+    agent_browser_cache_path = (settings.path.cache_path / session_id / "agent-browser").resolve()
     workspace_skills = workspace / "skills"
 
     args = ["bwrap", "--new-session", "--die-with-parent"]
@@ -98,9 +100,9 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
             *("--tmpfs", "/tmp"),
             *("--tmpfs", str(workspace.parent)),
             *("--dir", str(workspace)),
-            *("--dir", str(cache_path)),
+            *("--dir", str(agent_browser_cache_path)),
             *("--bind", str(workspace), str(workspace)),
-            *("--bind", str(cache_path), str(cache_path)),
+            *("--bind", str(agent_browser_cache_path), str(agent_browser_cache_path)),  # for AGENT_BROWSER_SOCKET_DIR
         ]
     )
 
