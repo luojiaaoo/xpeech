@@ -1,9 +1,9 @@
 ---
-name: lark-cli
-description: 不要运行 `lark-cli auth login`、`lark-cli config` 或自行创建 profile，只允许通过 lark-oauth 命令授权，主动读取，获取授权步骤；当用户需要执行 lark-cli 命令之前应该首先加载。
+name: lark-oauth
+description: 当用户需要执行 lark-cli 命令之前必须读取本技能。禁止运行 `lark-cli auth login`、`lark-cli config` 或自行创建 profile，只允许通过 lark-oauth 命令授权，授权之后 lark-cli 命令才能正常执行。
 ---
 
-# 飞书 lark-cli
+# 飞书 lark-oauth
 
 使用内置 `lark-cli` 执行飞书开放平台操作。应用凭据已在镜像构建时注入，优先使用用户身份执行；用户令牌由独立的 `lark-oauth` 命令通过 Device Authorization Flow 获取、刷新和管理。
 
