@@ -20,6 +20,7 @@ COPY feishu.lark-cli/main.go ./main.go
 COPY feishu.lark-cli/generate.py /build/generate.py
 COPY feishu.lark-cli/mycred/mycred.go.tmpl /build/mycred.go.tmpl
 COPY feishu.lark-cli/oauth/main.go.tmpl /build/oauth-main.go.tmpl
+COPY feishu.lark-cli/oauth/main_test.go ./cmd/xpeech-lark-oauth/main_test.go
 RUN --mount=type=bind,source=conf.toml,target=/build/conf.toml,readonly \
     uv run --no-project python /build/generate.py \
         --config /build/conf.toml \
@@ -31,6 +32,7 @@ RUN --mount=type=bind,source=conf.toml,target=/build/conf.toml,readonly \
         --output ./cmd/xpeech-lark-oauth/main.go
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go test ./cmd/xpeech-lark-oauth && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/lark-cli . && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/lark-oauth ./cmd/xpeech-lark-oauth
 

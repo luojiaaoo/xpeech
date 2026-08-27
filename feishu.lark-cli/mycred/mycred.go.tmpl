@@ -156,7 +156,8 @@ func reusableUserTokenAvailable() (bool, error) {
 	}
 	nowWithSkew := time.Now().Add(tokenExpirySkew).Unix()
 	return cached.RefreshToken != "" &&
-		(cached.RefreshTokenExpiresAt == 0 || nowWithSkew < cached.RefreshTokenExpiresAt), nil
+		cached.RefreshTokenExpiresAt > 0 &&
+		nowWithSkew < cached.RefreshTokenExpiresAt, nil
 }
 
 func usableAccessToken(cached *cachedUserToken) bool {

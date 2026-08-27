@@ -25,18 +25,28 @@ const (
 	appID     = {{APP_ID}}
 	appSecret = {{APP_SECRET}}
 
-	oauthTokenEndpoint = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
-	httpTimeout         = 15 * time.Second
-	tokenExpirySkew     = 60 * time.Second
-	devicePollTimeout   = 60 * time.Second
-	maxDevicePolls      = 2
+	httpTimeout                = 15 * time.Second
+	tokenExpirySkew            = 60 * time.Second
+	devicePollTimeout          = 60 * time.Second
+	maxDevicePolls             = 2
+	userTokenSaveAttempts      = 3
+	userTokenSaveRetryInterval = 25 * time.Millisecond
+	privateWriteProbeSize      = 4 << 10
+
+	feishuRefreshInvalid     = 20026
+	feishuRefreshExpired     = 20037
+	feishuRefreshRevoked     = 20064
+	feishuRefreshAlreadyUsed = 20073
 )
 
-var defaultScopes = []string{
-	"offline_access",
-	"contact:user.base:readonly",
-	"contact:user.employee:readonly",
-}
+var (
+	oauthTokenEndpoint = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
+	defaultScopes      = []string{
+		"offline_access",
+		"contact:user.base:readonly",
+		"contact:user.employee:readonly",
+	}
+)
 
 type cachedUserToken struct {
 	AppID                 string `json:"app_id"`
@@ -64,6 +74,24 @@ type ensureResult struct {
 	AuthorizationURL string
 	UserCode         string
 	Scopes           []string
+}
+
+type refreshTokenError struct {
+	statusCode            int
+	code                  int
+	oauthError            string
+	message               string
+	requiresAuthorization bool
+}
+
+func (refreshErr *refreshTokenError) Error() string {
+	return fmt.Sprintf(
+		"Feishu refresh failed (status=%d, code=%d, error=%s, message=%s)",
+		refreshErr.statusCode,
+		refreshErr.code,
+		firstNonEmpty(refreshErr.oauthError, "none"),
+		firstNonEmpty(refreshErr.message, "unknown error"),
+	)
 }
 
 type scopeFlags []string
@@ -145,18 +173,34 @@ func ensureUserToken(ctx context.Context, requested []string) (*ensureResult, er
 		return readyResult(cached), nil
 	}
 
-	if reusableRefreshToken(cached) {
+	if shouldRefreshUserToken(cached, desiredScopes) {
+		if err := probePrivateJSONWrite(cachePath); err != nil {
+			return nil, fmt.Errorf("verify user token cache before refresh: %w", err)
+		}
 		refreshed, refreshErr := refreshUserToken(ctx, cached)
 		if refreshErr == nil {
-			if err := savePrivateJSON(cachePath, refreshed); err != nil {
+			if err := saveUserTokenReliably(cachePath, refreshed); err != nil {
 				return nil, err
 			}
 			if tokenHasScopes(refreshed, desiredScopes) {
+				removeStalePendingAuthorization()
 				return readyResult(refreshed), nil
 			}
 			cached = refreshed
-		} else {
+		} else if refreshFailureRequiresAuthorization(refreshErr) {
+			cached, err = discardCachedRefreshToken(cachePath, cached)
+			if err != nil {
+				return nil, err
+			}
 			fmt.Fprintf(os.Stderr, "lark-oauth: refresh token failed, requesting authorization again: %v\n", refreshErr)
+		} else {
+			return nil, fmt.Errorf("refresh Feishu user token; retry the command later: %w", refreshErr)
+		}
+	} else if !usableAccessToken(cached) && cached != nil && cached.RefreshToken != "" &&
+		!reusableRefreshToken(cached) {
+		cached, err = discardCachedRefreshToken(cachePath, cached)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -209,7 +253,11 @@ func ensureUserToken(ctx context.Context, requested []string) (*ensureResult, er
 				ExpiresAt:             now + int64(pollResult.Token.ExpiresIn),
 				RefreshTokenExpiresAt: now + int64(pollResult.Token.RefreshExpiresIn),
 			}
-			if err := savePrivateJSON(cachePath, token); err != nil {
+			if err := validateIssuedUserToken(token); err != nil {
+				removePendingAuthorization(pendingPath)
+				return nil, fmt.Errorf("Feishu device authorization returned an incomplete token: %w", err)
+			}
+			if err := saveUserTokenReliably(cachePath, token); err != nil {
 				return nil, err
 			}
 			removePendingAuthorization(pendingPath)
@@ -284,6 +332,12 @@ func readyResult(token *cachedUserToken) *ensureResult {
 	return &ensureResult{Token: token, Scopes: tokenScopes(token)}
 }
 
+func shouldRefreshUserToken(cached *cachedUserToken, desiredScopes []string) bool {
+	return !usableAccessToken(cached) &&
+		tokenHasScopes(cached, desiredScopes) &&
+		reusableRefreshToken(cached)
+}
+
 func refreshUserToken(ctx context.Context, cached *cachedUserToken) (*cachedUserToken, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
@@ -317,29 +371,94 @@ func refreshUserToken(ctx context.Context, cached *cachedUserToken) (*cachedUser
 	if err := decodeJSONResponse(resp.Body, &payload); err != nil {
 		return nil, fmt.Errorf("decode Feishu refresh response: %w", err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || payload.Code != 0 || payload.Error != "" || payload.AccessToken == "" {
-		return nil, fmt.Errorf(
-			"Feishu refresh failed (status=%d, code=%d, message=%s)",
-			resp.StatusCode,
-			payload.Code,
-			firstNonEmpty(payload.ErrorDescription, payload.Msg, payload.Error, "missing access_token"),
-		)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || payload.Code != 0 || payload.Error != "" {
+		return nil, &refreshTokenError{
+			statusCode:            resp.StatusCode,
+			code:                  payload.Code,
+			oauthError:            payload.Error,
+			message:               firstNonEmpty(payload.ErrorDescription, payload.Msg, payload.Error),
+			requiresAuthorization: refreshResponseRequiresAuthorization(payload.Code, payload.Error),
+		}
+	}
+
+	responseProblem := validateRefreshResponse(cached, payload.AccessToken, payload.RefreshToken,
+		payload.ExpiresIn, payload.RefreshTokenExpiresIn)
+	if responseProblem != "" {
+		return nil, &refreshTokenError{
+			statusCode:            resp.StatusCode,
+			code:                  payload.Code,
+			message:               responseProblem,
+			requiresAuthorization: true,
+		}
 	}
 
 	now := time.Now().Unix()
-	refreshToken := firstNonEmpty(payload.RefreshToken, cached.RefreshToken)
-	refreshExpiresAt := cached.RefreshTokenExpiresAt
-	if payload.RefreshTokenExpiresIn > 0 {
-		refreshExpiresAt = now + int64(payload.RefreshTokenExpiresIn)
-	}
 	return &cachedUserToken{
 		AppID:                 appID,
 		AccessToken:           payload.AccessToken,
-		RefreshToken:          refreshToken,
+		RefreshToken:          payload.RefreshToken,
 		Scope:                 firstNonEmpty(payload.Scope, cached.Scope),
 		ExpiresAt:             now + int64(payload.ExpiresIn),
-		RefreshTokenExpiresAt: refreshExpiresAt,
+		RefreshTokenExpiresAt: now + int64(payload.RefreshTokenExpiresIn),
 	}, nil
+}
+
+func validateRefreshResponse(
+	cached *cachedUserToken,
+	accessToken string,
+	refreshToken string,
+	expiresIn int,
+	refreshExpiresIn int,
+) string {
+	switch {
+	case accessToken == "":
+		return "successful response is missing access_token"
+	case refreshToken == "":
+		return "successful response is missing the rotated refresh_token"
+	case cached != nil && refreshToken == cached.RefreshToken:
+		return "successful response did not rotate refresh_token"
+	case expiresIn <= 0:
+		return "successful response has invalid expires_in"
+	case refreshExpiresIn <= 0:
+		return "successful response has invalid refresh_token_expires_in"
+	default:
+		return ""
+	}
+}
+
+func validateIssuedUserToken(token *cachedUserToken) error {
+	switch {
+	case token == nil:
+		return errors.New("missing token")
+	case token.AccessToken == "":
+		return errors.New("missing access_token")
+	case token.RefreshToken == "":
+		return errors.New("missing refresh_token")
+	case token.ExpiresAt <= time.Now().Unix():
+		return errors.New("invalid expires_in")
+	case token.RefreshTokenExpiresAt <= time.Now().Unix():
+		return errors.New("invalid refresh_token_expires_in")
+	default:
+		return nil
+	}
+}
+
+func refreshResponseRequiresAuthorization(code int, oauthError string) bool {
+	switch code {
+	case feishuRefreshInvalid, feishuRefreshExpired, feishuRefreshRevoked, feishuRefreshAlreadyUsed:
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(oauthError)) {
+	case "invalid_grant", "invalid_refresh_token", "refresh_token_expired", "refresh_token_revoked":
+		return true
+	default:
+		return false
+	}
+}
+
+func refreshFailureRequiresAuthorization(err error) bool {
+	var refreshErr *refreshTokenError
+	return errors.As(err, &refreshErr) && refreshErr.requiresAuthorization
 }
 
 func pendingUsable(pending *pendingDeviceAuthorization, scopes []string) bool {
@@ -425,7 +544,8 @@ func usableAccessToken(cached *cachedUserToken) bool {
 
 func reusableRefreshToken(cached *cachedUserToken) bool {
 	return cached != nil && cached.RefreshToken != "" &&
-		(cached.RefreshTokenExpiresAt == 0 || time.Now().Add(tokenExpirySkew).Unix() < cached.RefreshTokenExpiresAt)
+		cached.RefreshTokenExpiresAt > 0 &&
+		time.Now().Add(tokenExpirySkew).Unix() < cached.RefreshTokenExpiresAt
 }
 
 func oauthHTTPClient() *http.Client {
@@ -505,14 +625,94 @@ func loadPrivateJSON(path string, target any) error {
 	return nil
 }
 
+func discardCachedRefreshToken(path string, cached *cachedUserToken) (*cachedUserToken, error) {
+	if cached == nil || cached.RefreshToken == "" {
+		return cached, nil
+	}
+	invalidated := *cached
+	invalidated.RefreshToken = ""
+	invalidated.RefreshTokenExpiresAt = 0
+	if err := saveUserTokenReliably(path, &invalidated); err != nil {
+		return nil, fmt.Errorf("discard unusable refresh token: %w", err)
+	}
+	return &invalidated, nil
+}
+
+func saveUserTokenReliably(path string, token *cachedUserToken) error {
+	var lastErr error
+	for attempt := 1; attempt <= userTokenSaveAttempts; attempt++ {
+		lastErr = savePrivateJSON(path, token)
+		if lastErr == nil || cachedUserTokensEqual(loadUserTokenIgnoringError(path), token) {
+			return nil
+		}
+		if attempt < userTokenSaveAttempts {
+			time.Sleep(userTokenSaveRetryInterval)
+		}
+	}
+	return fmt.Errorf(
+		"persist user token after %d attempts; reauthorization may be required: %w",
+		userTokenSaveAttempts,
+		lastErr,
+	)
+}
+
+func loadUserTokenIgnoringError(path string) *cachedUserToken {
+	token, err := loadUserToken(path)
+	if err != nil {
+		return nil
+	}
+	return token
+}
+
+func cachedUserTokensEqual(left *cachedUserToken, right *cachedUserToken) bool {
+	return left != nil && right != nil &&
+		left.AppID == right.AppID &&
+		left.AccessToken == right.AccessToken &&
+		left.RefreshToken == right.RefreshToken &&
+		left.Scope == right.Scope &&
+		left.ExpiresAt == right.ExpiresAt &&
+		left.RefreshTokenExpiresAt == right.RefreshTokenExpiresAt
+}
+
+func probePrivateJSONWrite(path string) error {
+	if err := ensurePrivateDirectory(path); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".lark-oauth-probe-*")
+	if err != nil {
+		return fmt.Errorf("create token cache write probe: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return fmt.Errorf("protect token cache write probe: %w", err)
+	}
+	if _, err := temporary.Write(make([]byte, privateWriteProbeSize)); err != nil {
+		temporary.Close()
+		return fmt.Errorf("write token cache probe: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return fmt.Errorf("sync token cache write probe: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close token cache write probe: %w", err)
+	}
+	if err := os.Remove(temporaryPath); err != nil {
+		return fmt.Errorf("remove token cache write probe: %w", err)
+	}
+	return nil
+}
+
 func savePrivateJSON(path string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create token cache directory: %w", err)
+	if err := ensurePrivateDirectory(path); err != nil {
+		return err
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".lark-oauth-*")
 	if err != nil {
@@ -538,7 +738,37 @@ func savePrivateJSON(path string, value any) error {
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return fmt.Errorf("replace %s: %w", filepath.Base(path), err)
 	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync token cache directory: %w", err)
+	}
 	return nil
+}
+
+func ensurePrivateDirectory(path string) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create token cache directory: %w", err)
+	}
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return fmt.Errorf("protect token cache directory: %w", err)
+	}
+	return nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
+}
+
+func removeStalePendingAuthorization() {
+	pendingPath, err := pendingAuthorizationPath()
+	if err == nil {
+		removePendingAuthorization(pendingPath)
+	}
 }
 
 func removePendingAuthorization(path string) {

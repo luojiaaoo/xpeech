@@ -11,7 +11,6 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-
 APP_ID_MARKER = "{{APP_ID}}"
 APP_SECRET_MARKER = "{{APP_SECRET}}"
 
@@ -79,9 +78,7 @@ def write_source(output_path: Path, source: str) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Inject [feishu] values into Go source."
-    )
+    parser = argparse.ArgumentParser(description="Inject [feishu] values into Go source.")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

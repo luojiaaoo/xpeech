@@ -127,6 +127,11 @@ CLI 会调用 `lark-oauth`，输出设备授权 URL（以及可能出现的用�
 `workspace_base_path/<session-id>/home/.config/xpeech/` 中，不会写入公共 `sandbox_home_path`。
 用户完成授权后重新执行原命令，`lark-oauth` 会轮询完成令牌申请；不需要 backend 回调，也不需要在
 飞书应用中配置 CLI 回调地址。令牌后续到期时会使用飞书 OAuth v2 token 接口刷新。
+refresh token 按单次轮换处理：只有 access token 已过期、现有授权范围仍满足请求且 refresh token
+尚未过期时才会刷新；刷新成功必须取得并持久化新的 refresh token。明确失效、过期、撤销或已使用的
+refresh token 会被丢弃并重新进入设备授权，网络错误、限流和服务端临时错误则保留现有状态供下次重试。
+刷新前会验证私有缓存目录可写，刷新后的令牌使用原子替换、目录同步和有限次数重试落盘。运行时必须保证
+同一会话内只有一个 `lark-oauth` 或可能触发它的 `lark-cli` 命令正在执行。
 
 首次授权默认申请 `offline_access`、`contact:user.base:readonly` 和
 `contact:user.employee:readonly`。需要增加权限时可单独执行 `lark-oauth`，`--scope` 可以重复，

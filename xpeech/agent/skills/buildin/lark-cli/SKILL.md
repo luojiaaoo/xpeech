@@ -33,12 +33,14 @@ description: 通过 lark-cli 查询或操作飞书/Lark 开放平台资源；当
 
 当命令输出包含飞书设备授权 URL 时，这是正常的 Device Authorization Flow。记住是哪一条命令生成了这个 URL，然后按以下流程处理：
 
+- `lark-oauth` 使用单次轮换的 refresh token。在任何时刻只执行一个 `lark-oauth`，也不要并发执行多个可能触发 `lark-oauth` 的 `lark-cli` 命令；必须等待当前工具调用结束后再执行下一条。
+
 - 立即把完整 URL 原样发送给用户，确保可以直接点击。
 - 不要打开 URL、替用户授权或修改 URL。把 URL 发出后结束当前飞书任务，后续只根据命令返回的授权状态处理，不要求用户额外回复“已完成授权”。
 - 再次执行触发授权的命令时，`lark-oauth` 会使用已保存的 `device_code` 轮询，单次最多等待 60 秒。取得令牌后，业务命令会继续执行。
 - 如果命令返回“用户未授权（第 1/2 次等待结束）”，只允许再执行同一命令一次；不要询问用户是否已经完成授权，也不要增加额外重试。
 - 如果命令返回“用户未授权”且提示 `device_code 已删除`（通常是第 2/2 次等待结束，也可能是用户拒绝或授权已过期），停止重试并把结果告诉用户。下一次执行会生成新的授权 URL。
-- 如果授权由显式的 `lark-oauth --scope ...` 发起，后续轮询也必须使用 scope 集合相同的 `lark-oauth` 命令；获得令牌后再重新执行原业务命令。不要并发执行多个轮询命令。
+- 如果授权由显式的 `lark-oauth --scope ...` 发起，后续轮询也必须使用 scope 集合相同的 `lark-oauth` 命令；获得令牌后再重新执行原业务命令。
 
 不要运行 `lark-cli auth login`、`lark-cli config` 或自行创建 profile。当前构建使用自定义 Credential Provider，CLI 自带登录所保存的令牌不会回退给该 Provider 使用。不要读取、修改或展示 lark-cli、`lark-oauth` 的令牌或设备授权缓存。
 
