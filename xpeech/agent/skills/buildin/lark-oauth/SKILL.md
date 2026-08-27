@@ -21,6 +21,29 @@ description: 当加载 lark-skills 技能之前必须先加载本技能。禁止
 
 不要运行 `lark-cli auth login`、`lark-cli config` 或自行创建 profile。当前构建使用自定义 Credential Provider，CLI 自带登录所保存的令牌不会回退给该 Provider 使用。不要读取、修改或展示 lark-cli、`lark-oauth` 的令牌或设备授权缓存。
 
+## 授权流程
+
+`lark-oauth` 内部按以下顺序处理，只需了解状态如何流转，无需记忆代码细节：
+
+1. 解析 `--scope`（可重复传，或用逗号/空格分隔；`--scopes` 为别名，也接受位置参数）。
+2. 计算期望 scope 集合 = 已有令牌已包含的 scope ∪ 本次请求的 scope；若尚无缓存令牌，则用默认 scope（`offline_access` + 通讯录只读）。
+3. 若缓存的 access_token 尚未过期且已覆盖所有期望 scope → 直接输出「令牌已就绪」，业务命令继续执行。
+4. 若 access_token 已过期但 refresh_token 可用 → 用 refresh_token 静默刷新（refresh token 单次轮换，必须换新才有效）。
+5. 若刷新失败且属于「需重新授权」（refresh token 无效 / 过期 / 已吊销 / 已使用，即飞书错误码 20026 / 20037 / 20064 / 20073）→ 丢弃缓存的 refresh_token，转设备授权。
+6. 若存在可用的进行中授权（device_code 未过期且 scope 一致）→ 用已保存的 device_code 轮询，单次最多 60 秒、最多 2 次。
+7. 否则发起新的 Device Authorization Flow，保存进行中状态，向用户输出授权 URL。
+
+## 缓存文件
+
+`lark-oauth` 的所有状态都保存在 xpeech 配置目录（`$XDG_CONFIG_HOME/xpeech/`，未设置时为 `~/.config/xpeech/`）下，目录权限 `0700`、文件权限 `0600`。共两个 JSON 文件，均由 `lark-oauth` 自行读写，不要手动读取、修改或删除：
+
+| 文件 | 作用 | 关键字段 |
+|------|------|---------|
+| `lark-cli-user-token.json` | 用户令牌缓存。保存 access_token、可轮换的 refresh_token、scope 及各自过期时间；下次执行时据此判断是直接复用、静默刷新还是重新授权 | `app_id`、`access_token`、`refresh_token`、`scope`、`expires_at`、`refresh_token_expires_at` |
+| `lark-cli-oauth-pending.json` | 设备授权「进行中」状态。保存 device_code 与授权 URL，供后续轮询复用，避免每次执行都生成新的授权链接 | `app_id`、`device_code`、`user_code`、`verification_uri`、`verification_uri_complete`、`scopes`、`interval`、`expires_at`、`poll_attempts` |
+
+两个文件都可能随状态推进被删除：令牌就绪后会清理 pending 文件；refresh token 失效时会清空令牌中的 `refresh_token` 字段；pending 过期、授权被拒或轮询达上限（2 次）时会删除 pending 文件。
+
 ## 写操作与风险
 
 - 读取操作可以在用户请求范围内直接执行。
