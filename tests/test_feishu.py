@@ -10,12 +10,14 @@ from lark_channel import (
     CardActionPayload,
     Conversation,
     EventOperator,
+    FeishuChannelErrorCode,
     FileContent,
     Identity,
     ImageContent,
     InboundMessage,
     MediaContent,
     PostContent,
+    SendError,
     SendResult,
     TextContent,
 )
@@ -303,6 +305,57 @@ async def test_successful_progress_send_caches_message_id():
     )
 
     assert bridge.session_update_message_id == {"feishu_oc_chat": "om_progress"}
+
+
+@pytest.mark.asyncio
+async def test_persistent_card_format_error_falls_back_to_markdown():
+    format_error = SendResult(
+        success=False,
+        error=SendError(
+            code=FeishuChannelErrorCode.FORMAT_ERROR,
+            retryable=False,
+            hint="card table number over limit",
+            raw_code=230099,
+        ),
+    )
+    send = AsyncMock(
+        side_effect=[
+            format_error,
+            SendResult(success=True, message_id="om_fallback"),
+        ]
+    )
+    bridge = _bridge_with_channel(SimpleNamespace(send=send))
+    bridge.session_update_message_id["feishu_oc_chat"] = "om_progress"
+    message = {
+        "card": {
+            "body": {
+                "elements": [
+                    {"tag": "markdown", "content": "| A | B |\n|---|---|\n| 1 | 2 |"},
+                ]
+            }
+        }
+    }
+
+    await bridge.channel_send(
+        to="oc_chat",
+        message=message,
+        opts={"reply_to": "om_original"},
+        session_id="feishu_oc_chat",
+        message_type=ChatEventType.ASSISTANT,
+    )
+
+    assert send.await_count == 2
+    assert send.await_args_list[0].kwargs == {
+        "to": "oc_chat",
+        "message": message,
+        "opts": {"reply_to": "om_original"},
+    }
+    assert send.await_args_list[1].kwargs == {
+        "to": "oc_chat",
+        "message": {"markdown": "| A | B |\n|---|---|\n| 1 | 2 |"},
+        "opts": {"reply_to": "om_original"},
+    }
+    assert "feishu_oc_chat" not in bridge.session_update_message_id
 
 
 @pytest.mark.asyncio

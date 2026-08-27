@@ -15,6 +15,7 @@ from lark_channel import (
     DedupConfig,
     Events,
     FeishuChannel,
+    FeishuChannelErrorCode,
     FileContent,
     ImageContent,
     InboundMessage,
@@ -388,6 +389,28 @@ class FeishuBridge:
             raise RuntimeError(f"Feishu {operation} succeeded without a message_id")
         return result
 
+    @staticmethod
+    def _card_markdown_content(message: dict[str, Any]) -> str | None:
+        card = message.get("card")
+        if not isinstance(card, dict):
+            return None
+        body = card.get("body")
+        if not isinstance(body, dict):
+            return None
+        elements = body.get("elements")
+        if not isinstance(elements, list):
+            return None
+
+        contents = [
+            element["content"]
+            for element in elements
+            if isinstance(element, dict)
+            and element.get("tag") == "markdown"
+            and isinstance(element.get("content"), str)
+            and element["content"]
+        ]
+        return "\n\n".join(contents) or None
+
     async def channel_send(
         self, to: str, message: dict, opts: dict | None, session_id: str, message_type: ChatEventType
     ):
@@ -399,6 +422,26 @@ class FeishuBridge:
         )
         if message_type in persistence_types:
             result = await self.channel.send(to=to, message=message, opts=opts)
+
+            # 降级为markdown发送，避免卡片格式被拒绝
+            fallback_content = self._card_markdown_content(message)
+            if (
+                not result.success
+                and result.error is not None
+                and result.error.code == FeishuChannelErrorCode.FORMAT_ERROR
+                and fallback_content is not None
+            ):
+                logger.warning(
+                    "Feishu card format rejected; retrying as markdown raw_code={} hint={}",
+                    result.error.raw_code,
+                    result.error.hint,
+                )
+                result = await self.channel.send(
+                    to=to,
+                    message={"markdown": fallback_content},
+                    opts=opts,
+                )
+
             self._ensure_send_success(result, operation="send message")
             self.session_update_message_id.pop(session_id, None)
         else:
