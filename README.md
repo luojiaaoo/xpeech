@@ -118,6 +118,29 @@ Swagger UI 右上角点击 `Authorize`：`username` 可填写任意标识（例�
 - `feishu.idle_timeout`：同一会话消息合并等待时间，单位秒
 - `feishu.app_secret`：飞书应用密钥
 
+Docker 镜像会从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签编译
+wrapper 和独立的 `/usr/local/bin/lark-oauth`。`lark-cli` 只消费缓存中的用户令牌；
+`lark-oauth` 复用该版本 lark-cli 内置的 Device Authorization Flow，并负责刷新令牌。
+`app_id`、`app_secret` 属于构建时配置，修改后必须重新构建镜像。首次执行需要用户身份的命令时，
+CLI 会调用 `lark-oauth`，输出设备授权 URL（以及可能出现的用户码）并退出；程序会把短期设备授权状态
+`lark-cli-oauth-pending.json` 和令牌 `lark-cli-user-token.json` 保存到当前用户私有的
+`workspace_base_path/<session-id>/home/.config/xpeech/` 中，不会写入公共 `sandbox_home_path`。
+用户完成授权后重新执行原命令，`lark-oauth` 会轮询完成令牌申请；不需要 backend 回调，也不需要在
+飞书应用中配置 CLI 回调地址。令牌后续到期时会使用飞书 OAuth v2 token 接口刷新。
+
+首次授权默认申请 `offline_access`、`contact:user.base:readonly` 和
+`contact:user.employee:readonly`。需要增加权限时可单独执行 `lark-oauth`，`--scope` 可以重复，
+也可以用逗号或空格一次传入多个 scope；已有令牌的 scope 会被保留：
+
+```bash
+lark-oauth --scope docs:doc:readonly --scope drive:drive:readonly
+lark-oauth --scope "docs:doc:readonly,drive:drive:readonly"
+```
+
+再次运行 scope 集合相同的 `lark-oauth` 命令时，程序会使用已保存的 `device_code` 轮询，每次最多
+等待 60 秒。第一次仍未授权时保留设备授权状态，允许再运行一次；第二次仍未授权时删除
+`device_code` 文件并返回“用户未授权”，下一次运行将生成新的授权 URL。取得新令牌后再重跑原业务命令。
+
 需要修改监听地址、端口或后端地址时，可通过对应命令的 `--help` 查看参数。
 
 ## 快速部署平台
@@ -161,7 +184,8 @@ docker compose up -d --build
 ```
 
 后端默认暴露在 `http://localhost:7878`，Web 客户端默认暴露在
-`http://localhost:7939`。可通过环境变量 `BACKEND_PORT` 和 `WEB_CLIENT_PORT` 修改端口：
+`http://localhost:7939`。可通过环境变量 `BACKEND_PORT` 和 `WEB_CLIENT_PORT` 修改端口；
+lark-cli 使用设备授权流程，不依赖这两个端口：
 
 ```bash
 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
@@ -177,10 +201,15 @@ docker compose logs -f browserless backend feishu web_client
 持久化数据统一映射到宿主机
 的 `./docker_data/` 目录，其中包含 `session`、`workspace_base` 和
 `browser_preview`，Web 用户数据库保存在 `web_client/users.db`；缓存目录不做宿主机磁盘
-映射。`conf.toml` 以只读方式挂载，`.env` 通过 `env_file` 注入进程，修改后重建容器即可生效：
+映射。`conf.toml` 以只读方式挂载，`.env` 通过 `env_file` 注入进程。普通运行时配置修改后重建容器
+即可生效；`feishu.app_id` 或 `feishu.app_secret` 修改后需要增加 `--build` 重新编译 lark-cli 和
+lark-oauth：
 
 ```bash
 docker compose up -d --force-recreate browserless backend feishu web_client
+
+# lark-cli 构建配置发生变化时
+docker compose up -d --build --force-recreate backend
 ```
 
 ## 发送消息
