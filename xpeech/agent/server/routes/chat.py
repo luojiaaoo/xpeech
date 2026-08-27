@@ -7,7 +7,7 @@ from fastapi.sse import EventSourceResponse
 from ....config.settings import settings
 from ....provider.litellm_provider import LiteLLMProvider
 from ....provider.schema import ProviderChatKwargs
-from ....utils.helper import ensure_path, save_to_workspace
+from ....utils.helper import ensure_path_async, save_to_workspace
 from ....utils.session import create_workspace_templates
 from ...loop import AgentLoop, QuestionEvent
 from ...tools.registry import register_default_tools
@@ -48,7 +48,7 @@ async def chat(
     workspace = (settings.path.workspace_base_path / session_id).resolve()
 
     if not workspace.exists():
-        await create_workspace_templates(ensure_path(workspace))
+        await create_workspace_templates(await ensure_path_async(workspace))
 
     saved_files = []
     for file in files:

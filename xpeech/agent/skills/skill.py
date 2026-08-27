@@ -2,7 +2,8 @@
 
 import re
 from pathlib import Path
-import aiofiles
+
+from ...utils.helper import read_text_async
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent / "buildin"
@@ -77,14 +78,12 @@ class SkillsLoader:
         if self.builtin_skills:
             builtin_skill = self.builtin_skills / name / "SKILL.md"
             if builtin_skill.exists():
-                async with aiofiles.open(builtin_skill, mode="r", encoding="utf-8") as f:
-                    return await f.read()
+                return await read_text_async(builtin_skill)
 
         # Fall back to workspace skills
         workspace_skill = self.workspace_skills / name / "SKILL.md"
         if workspace_skill.exists():
-            async with aiofiles.open(workspace_skill, mode="r", encoding="utf-8") as f:
-                return await f.read()
+            return await read_text_async(workspace_skill)
 
         return None
 

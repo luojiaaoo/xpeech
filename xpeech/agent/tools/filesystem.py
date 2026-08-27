@@ -5,15 +5,17 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import aiofiles
 from pydantic import BaseModel, Field
 
 from ...utils.helper import (
     compress_image_bytes_to_jpg,
     compress_video_to_mp4,
     detect_image_mime,
+    ensure_path_async,
+    read_bytes_async,
     read_video_metadata,
     super_read_text,
+    write_text_async,
 )
 from .helper import safe_resolve_workspace_path
 
@@ -96,8 +98,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         if not file_path.is_file():
             raise ValueError(f"Not a file: {path}")
 
-        async with aiofiles.open(file_path, "rb") as f:
-            raw = await f.read()
+        raw = await read_bytes_async(file_path)
         if not raw:
             return f"(Empty file: {path})"
 
@@ -166,8 +167,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
                     start_time=start_time,
                     end_time=end_time,
                 )
-                async with aiofiles.open(output_path, "rb") as f:
-                    raw = await f.read()
+                raw = await read_bytes_async(output_path)
                 output_mime = mimetypes.guess_type(output_path)[0] or "video/mp4"
         except Exception as e:
             raise RuntimeError(f"Cannot read video file {path}: {e}") from e
@@ -202,8 +202,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         if not file_path.is_file():
             raise ValueError(f"Not a file: {path}")
 
-        async with aiofiles.open(file_path, "rb") as f:
-            raw = await f.read()
+        raw = await read_bytes_async(file_path)
         if not raw:
             return f"(Empty file: {path})"
 
@@ -247,9 +246,8 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         path = args.path
         content = args.content
         file_path = safe_resolve(path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
-            await f.write(content)
+        await ensure_path_async(file_path.parent)
+        await write_text_async(file_path, content)
         return f"Successfully wrote {len(content)} bytes to {path}"
 
     async def edit_file(args: EditFileArgs) -> str:
@@ -340,8 +338,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         # 原本是纯英文，后面加了中文，encoding会变成utf-8
         if encoding == "ascii":
             encoding = "utf-8"
-        async with aiofiles.open(file_path, "w", encoding=encoding) as f:
-            await f.write(new_content)
+        await write_text_async(file_path, new_content, encoding=encoding)
         return f"Successfully edited {path}"
 
     return read_image, read_video, read_file, write_file, edit_file

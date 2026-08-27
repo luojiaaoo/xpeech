@@ -5,6 +5,7 @@ import math
 import re
 from typing import Union
 import aiofiles
+import aiofiles.os
 import inspect
 from asyncer import asyncify
 import yaml
@@ -32,9 +33,47 @@ def ensure_async(func):
         return asyncify(func)
 
 
-def ensure_path(path_: Path):
+def ensure_path(path_: Path) -> Path:
     path_.mkdir(parents=True, exist_ok=True)
     return path_
+
+
+async def ensure_path_async(path_: Path) -> Path:
+    await aiofiles.os.makedirs(path_, exist_ok=True)
+    return path_
+
+
+async def read_text_async(file_path: str | Path, encoding: str | None = "utf-8") -> str:
+    async with aiofiles.open(file_path, "r", encoding=encoding) as file:
+        return await file.read()
+
+
+async def write_text_async(
+    file_path: str | Path,
+    content: str,
+    encoding: str | None = "utf-8",
+) -> None:
+    async with aiofiles.open(file_path, "w", encoding=encoding) as file:
+        await file.write(content)
+
+
+async def append_text_async(
+    file_path: str | Path,
+    content: str,
+    encoding: str | None = "utf-8",
+) -> None:
+    async with aiofiles.open(file_path, "a", encoding=encoding) as file:
+        await file.write(content)
+
+
+async def read_bytes_async(file_path: str | Path) -> bytes:
+    async with aiofiles.open(file_path, "rb") as file:
+        return await file.read()
+
+
+async def write_bytes_async(file_path: str | Path, content: bytes) -> None:
+    async with aiofiles.open(file_path, "wb") as file:
+        await file.write(content)
 
 
 def is_relative_path(path_target: Path, base: Path):
@@ -281,8 +320,7 @@ async def read_video_metadata_by_bytes(raw: bytes) -> dict[str, object]:
 
     with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
         output_path = Path(temp_dir) / "video.mp4"
-        async with aiofiles.open(output_path, "wb") as out_file:
-            await out_file.write(raw)
+        await write_bytes_async(output_path, raw)
         return await asyncify(_get)(output_path)
 
 
@@ -291,8 +329,7 @@ async def read_video_metadata(input_path: Union[str, Path]) -> dict[str, object]
     input_path = Path(input_path)
     if not input_path.exists():
         raise FileNotFoundError(f"Input video file not found: {input_path}")
-    async with aiofiles.open(input_path, "rb") as f:
-        raw = await f.read()
+    raw = await read_bytes_async(input_path)
     return await read_video_metadata_by_bytes(raw)
 
 

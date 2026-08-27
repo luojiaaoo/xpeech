@@ -3,12 +3,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-import aiofiles
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from ..provider.schema import LLMResponse, ToolCallRequest
-from ..utils.helper import ensure_path
+from ..utils.helper import append_text_async, ensure_path, read_text_async, write_text_async
 from .prompt.helper import remove_system_messages
 from .tool_executor import ToolExecutionResult
 
@@ -54,19 +53,16 @@ class MemoryStore:
     async def read_long_term(self) -> str:
         """读取长期记忆；文件不存在时返回空字符串。"""
         if self.memory_file.exists():
-            async with aiofiles.open(self.memory_file, "r", encoding="utf-8") as f:
-                return await f.read()
+            return await read_text_async(self.memory_file)
         return ""
 
     async def write_long_term(self, content: str) -> None:
         """使用给定内容覆盖长期记忆文件。"""
-        async with aiofiles.open(self.memory_file, "w", encoding="utf-8") as f:
-            await f.write(content)
+        await write_text_async(self.memory_file, content)
 
     async def append_history(self, entry: str) -> None:
         """向历史摘要文件追加一条记录。"""
-        async with aiofiles.open(self.history_file, "a", encoding="utf-8") as f:
-            await f.write(entry.rstrip() + "\n\n")
+        await append_text_async(self.history_file, entry.rstrip() + "\n\n")
 
     async def get_memory_context(self) -> str:
         """生成可直接注入系统提示词的长期记忆上下文。"""

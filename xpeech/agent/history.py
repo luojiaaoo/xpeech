@@ -4,12 +4,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import aiofiles
 import yaml
 from loguru import logger
 
 from ..exceptions import PathProtectionError
-from ..utils.helper import LiteralDumper, ensure_path
+from ..utils.helper import LiteralDumper, ensure_path, read_text_async, write_text_async
 from .prompt.helper import remove_system_messages
 
 
@@ -43,8 +42,7 @@ class YamlHistoryRepository:
         path = self._history_path(session_id)
         if not path.exists():
             return []
-        async with aiofiles.open(path, "r", encoding="utf-8") as file:
-            content = yaml.safe_load(await file.read()) or []
+        content = yaml.safe_load(await read_text_async(path)) or []
 
         if not isinstance(content, list) or any(not isinstance(message, dict) for message in content):
             raise ValueError(f"Invalid session history format: {path.name}")
@@ -68,9 +66,7 @@ class YamlHistoryRepository:
         temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
 
         try:
-            async with aiofiles.open(temporary_path, "w", encoding="utf-8") as file:
-                await file.write(serialized)
-                await file.flush()
+            await write_text_async(temporary_path, serialized)
             await asyncio.to_thread(os.replace, temporary_path, path)
         finally:
             if temporary_path.exists():
