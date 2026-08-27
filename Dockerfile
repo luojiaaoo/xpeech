@@ -4,12 +4,11 @@ ENV GOPROXY=https://goproxy.cn,direct \
     UV_PYTHON=3.12 \
     UV_HTTP_TIMEOUT=200 \
     UV_PYTHON_INSTALL_MIRROR=https://registry.npmmirror.com/-/binary/python-build-standalone/ \
-    UV_DOWNLOAD_URL=https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease \
     UV_PYTHON_INSTALL_DIR=/opt/uv/python \
     UV_INSTALL_DIR=/usr/local/bin \
     UV_NO_MODIFY_PATH=1
 
-RUN curl -fsSL https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease/uv-installer.sh | sh && \
+RUN curl -fsSL https://gitee.com/luojiaaoo/uv/releases/download/0.12.5/uv-installer.sh | sh && \
     uv --version && \
     uv python install
 
@@ -44,7 +43,6 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PYTHON=3.12 \
     UV_HTTP_TIMEOUT=200 \
     UV_PYTHON_INSTALL_MIRROR=https://registry.npmmirror.com/-/binary/python-build-standalone/ \
-    UV_DOWNLOAD_URL=https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease \
     UV_PYTHON_INSTALL_DIR=/opt/uv/python \
     UV_INSTALL_DIR=/usr/local/bin \
     UV_NO_MODIFY_PATH=1
@@ -66,7 +64,7 @@ RUN ARCH=$(uname -m) && \
     node --version && \
     npm --version
 
-RUN curl -fsSL https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease/uv-installer.sh | sh && \
+RUN curl -fsSL https://gitee.com/luojiaaoo/uv/releases/download/0.12.5/uv-installer.sh | sh && \
     uv --version && \
     uv python install
 
