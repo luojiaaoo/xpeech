@@ -7,27 +7,48 @@ description: 通过 lark-cli 查询或操作飞书/Lark 开放平台资源；当
 
 使用内置 `lark-cli` 执行飞书开放平台操作。应用凭据已在镜像构建时注入，优先使用用户身份执行；用户令牌由独立的 `lark-oauth` 命令通过 Device Authorization Flow 获取、刷新和管理。
 
-## 执行流程
+## 直接执行原则
 
-1. 根据用户目标确定命令域，并先查看该域的帮助：
+- 先按下方“高频任务速查”选择命令。已有匹配项时直接执行，不要先调用 `lark-cli --help`，也不要从顶层域逐级查询帮助。
+- 只有速查表没有覆盖，或实际缺少必填参数时，才查询一次最具体命令的帮助：`lark-cli <domain> <command> --help`。不要依次查询顶层帮助、域帮助和子命令帮助。
+- 普通的搜索、列表和读取无需先读 CLI 内置 skill。复杂文档编辑、多维表格分析或不熟悉的领域约定，才执行一次 `lark-cli skills read <skill-name>`。
+- 优先使用 `+shortcut`；没有合适 shortcut 时使用类型化命令。只有参数仍不明确时才执行 `lark-cli schema <service.resource.method>`，原始 `lark-cli api` 是最后的兜底。
+- 用户说“所有”“全部”时要处理分页。支持 `--page-all` 的命令同时设置合理的 `--page-limit`；`drive +search` 不支持 `--page-all`，根据响应的 `page_token` 继续请求。
 
-   ```bash
-   lark-cli <domain> --help
-   ```
+## 高频任务速查
 
-2. 优先使用匹配任务的 `+shortcut`。没有合适 shortcut 时，使用类型化 API 命令；不确定参数、权限或风险等级时先查看 schema：
+`docs` 用于读取或修改一篇已知文档；搜索、枚举用户可见的云文档必须直接使用 `drive +search`，不要先去 `docs` 域查找搜索命令。
 
-   ```bash
-   lark-cli schema <service.resource.method>
-   ```
+| 用户目标 | 直接使用 |
+|---|---|
+| 浏览最近的云文档 | `lark-cli drive +search --as user --query '' --sort edit_time --page-size 20` |
+| 搜索云文档 | `lark-cli drive +search --as user --query '<关键词>' --page-size 20` |
+| 只搜索标题 | 在 `drive +search` 后加 `--only-title` |
+| 我拥有的文档 | 在 `drive +search` 后加 `--mine` |
+| 我最初创建的文档 | 在 `drive +search` 后加 `--created-by-me` |
+| 限定文档类型 | 在 `drive +search` 后加 `--doc-types docx,sheet,bitable,slides,wiki` |
+| 读取已知文档 URL/token | `lark-cli docs +fetch --as user --doc '<URL或token>' --doc-format markdown` |
+| 创建 Markdown 文档 | `lark-cli docs +create --as user --title '<标题>' --doc-format markdown --content @<文件>` |
+| 列出知识库空间 | `lark-cli wiki +space-list --as user --page-all --page-limit 10` |
+| 列出个人文档库 | `lark-cli wiki +node-list --as user --space-id my_library --page-all --page-limit 10` |
+| 列出知识库节点 | `lark-cli wiki +node-list --as user --space-id '<space_id>' --page-all --page-limit 10` |
+| 解析多维表格 URL | `lark-cli base +url-resolve --as user --url '<URL>'` |
+| 列出多维表格记录 | `lark-cli base +record-list --as user --base-token '<token>' --table-id '<ID或名称>' --limit 100` |
+| 搜索多维表格记录 | `lark-cli base +record-search --as user --base-token '<token>' --table-id '<ID或名称>' --keyword '<关键词>' --search-field '<字段>' --limit 20` |
+| 读取电子表格单元格 | `lark-cli sheets +cells-get --as user --url '<URL>' --sheet-name '<工作表名>' --range 'A1:F20'` |
+| 查看今日日程 | `lark-cli calendar +agenda --as user` |
+| 查看我的任务 | `lark-cli task +get-my-tasks --as user --page-all --page-limit 20` |
+| 列出我加入的群聊 | `lark-cli im +chat-list --as user --page-all --page-limit 10` |
+| 读取指定会话消息 | `lark-cli im +chat-messages-list --as user --chat-id '<chat_id>' --page-all --page-limit 10` |
+| 跨会话搜索消息 | `lark-cli im +messages-search --as user --query '<关键词>' --page-all --page-limit 20` |
 
-3. 只有在 shortcut 和类型化命令都不适用时，才使用原始 API：
+补充约定：
 
-   ```bash
-   lark-cli api <method> <path> --params '<json>' --data '<json>'
-   ```
-
-4. 执行命令并根据结果向用户返回必要信息。结果较大时使用 `--jq` 筛选，不要把无关的大段 JSON 全部返回给用户。
+- 个人云盘、知识库、日历、任务和消息默认显式传 `--as user`；只有用户明确要求机器人身份或操作应用级资源时才使用 `--as bot`。
+- `drive +search --query ''` 表示按筛选条件浏览文档；单页最多 20 条。`--mine` 是当前所有者，`--created-by-me` 是原始创建者，两者语义不同。
+- 已有飞书 URL 时直接交给支持 URL 的 shortcut，不要先手工解析 token。多维表格先用 `base +url-resolve` 获取 base、table、view 坐标。
+- 面向用户展示少量数据可使用 `--format table`；程序化筛选使用 `--format json --jq '<表达式>'`。大批量数据优先用命令自身的 `--output` 或 `--output-path` 写入工作区文件。
+- 多行内容和复杂 JSON 先写入工作区文件，再使用 `@文件` 参数，避免 shell 引号错误。
 
 ## 用户授权
 
@@ -53,16 +74,15 @@ description: 通过 lark-cli 查询或操作飞书/Lark 开放平台资源；当
 
 ## 错误处理
 
-- 参数不确定：查看对应 `--help` 或 `schema`，不要猜测参数名。
+- 参数不确定：只查看最具体命令的 `--help`；类型化 API 参数才查看 `schema`，不要逐级探测或猜测参数名。
 - 权限不足：报告缺少的 scope，并执行 `lark-oauth --scope <缺少的 scope>` 发起增量设备授权；把输出的授权 URL 发送给用户。后续使用 scope 集合相同的命令轮询，每次最多 60 秒且最多两次；取得令牌后再重跑原业务命令。不要切换到其他凭据或绕过权限。
 - 授权 URL 之外的命令失败：保留有用的错误信息，修正命令后最多重试一次；仍失败则向用户说明原因。
 - 不要执行 `lark-cli update`，也不要安装另一个 lark-cli 覆盖镜像内的定制版本。
 
-## 常用发现命令
+## 低频发现命令
 
 ```bash
-lark-cli --help
-lark-cli <domain> --help
+lark-cli <domain> <command> --help
 lark-cli schema <service.resource.method>
-lark-cli calendar +agenda
+lark-cli skills read <skill-name>
 ```
