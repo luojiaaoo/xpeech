@@ -1,6 +1,6 @@
 ---
 name: lark-oauth
-description: 当用户需要执行 lark-cli 命令之前必须读取本技能。禁止运行 `lark-cli auth login`、`lark-cli config` 或自行创建 profile，只允许通过 lark-oauth 命令授权，授权之后 lark-cli 命令才能正常执行。
+description: 当加载 lark-skills 技能之前必须先加载本技能。禁止运行 `lark-cli auth login`、`lark-cli config` 或自行创建 profile，只允许通过 lark-oauth 命令授权，授权之后 lark-cli 命令才能正常执行。
 ---
 
 # 飞书 lark-oauth
