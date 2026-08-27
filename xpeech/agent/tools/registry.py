@@ -19,7 +19,10 @@ async def register_default_tools(
     config: ToolConfig,
 ) -> None:
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
-    read_image, read_video, read_file, write_file, edit_file = build_file_tools(workspace=workspace)
+    read_image, read_video, read_file, write_file, edit_file = build_file_tools(
+        workspace=workspace,
+        max_result_chars=config.max_result_chars,
+    )
     if provider.support_image:
         provider.register_tool()(read_image)
     if provider.support_video:

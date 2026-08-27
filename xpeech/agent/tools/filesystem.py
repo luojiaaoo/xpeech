@@ -1,19 +1,21 @@
+import base64
+import difflib
+import mimetypes
+import tempfile
 from pathlib import Path
 from typing import Any
+
+import aiofiles
 from pydantic import BaseModel, Field
+
 from ...utils.helper import (
-    detect_image_mime,
-    super_read_text,
     compress_image_bytes_to_jpg,
     compress_video_to_mp4,
+    detect_image_mime,
     read_video_metadata,
+    super_read_text,
 )
 from .helper import safe_resolve_workspace_path
-import aiofiles
-import mimetypes
-import difflib
-import tempfile
-import base64
 
 
 class ReadImageArgs(BaseModel):
@@ -46,6 +48,12 @@ class ReadFileArgs(BaseModel):
         default=2000,
         ge=1,
     )
+    max_line_chars: int = Field(
+        description="Reject any selected line longer than this many characters (default 2000, maximum 10000)",
+        default=2000,
+        ge=1,
+        le=10_000,
+    )
 
 
 class WriteFileArgs(BaseModel):
@@ -63,10 +71,12 @@ class EditFileArgs(BaseModel):
     )
 
 
-def build_file_tools(workspace: str | Path):
+def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
     base = Path(workspace).expanduser().resolve()
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
+    if max_result_chars < 1:
+        raise ValueError("max_result_chars must be positive")
 
     def safe_resolve(user_path: str, protect_builtin_skills: bool = True) -> Path:
         return safe_resolve_workspace_path(
@@ -138,7 +148,7 @@ def build_file_tools(workspace: str | Path):
         width = video_info.get("width")
         height = video_info.get("height")
         if not isinstance(duration, (int, float)) or not isinstance(width, int) or not isinstance(height, int):
-            raise RuntimeError(f"Cannot read required video metadata {path}: {video_info}")
+            raise TypeError(f"Cannot read required video metadata {path}: {video_info}")
         if start_time >= duration:
             raise ValueError(f"start_time must be less than video duration: {path} (total {duration} seconds)")
         if end_time is not None and end_time > duration:
@@ -164,7 +174,7 @@ def build_file_tools(workspace: str | Path):
 
         if not raw:
             return f"(Empty video file: {path})"
-        video_info = dict(duration=effective_duration, width=width, height=height, path=path)
+        video_info = {"duration": effective_duration, "width": width, "height": height, "path": path}
         label = "\n".join(f"{key}: {value}" for key, value in video_info.items())
         b64 = base64.b64encode(raw).decode()
         return [
@@ -182,7 +192,6 @@ def build_file_tools(workspace: str | Path):
         Read the contents of a file. Returns numbered lines.
         Use offset and limit to paginate through large files.
         """
-        _MAX_CHARS = 128_000
         path = args.path
         offset = args.offset
         limit = args.limit
@@ -206,30 +215,31 @@ def build_file_tools(workspace: str | Path):
         all_lines = text_content.splitlines()
         total = len(all_lines)
 
-        if offset < 1:
-            offset = 1
+        offset = max(offset, 1)
         if offset > total:
             raise ValueError(f"offset {offset} is beyond end of file ({total} lines)")
 
         start = offset - 1
         end = min(start + limit, total)
-        numbered = [f"{start + i + 1}| {line}" for i, line in enumerate(all_lines[start:end])]
+        selected_lines = all_lines[start:end]
+        for index, line in enumerate(selected_lines, start=offset):
+            if len(line) > args.max_line_chars:
+                raise ValueError(
+                    f"Cannot read {path}: line {index} contains {len(line)} characters, "
+                    f"exceeding max_line_chars={args.max_line_chars}."
+                )
+        numbered = [f"{start + i + 1}| {line}" for i, line in enumerate(selected_lines)]
         result = "\n".join(numbered)
-
-        if len(result) > _MAX_CHARS:
-            trimmed, chars = [], 0
-            for line in numbered:
-                chars += len(line) + 1
-                if chars > _MAX_CHARS:
-                    break
-                trimmed.append(line)
-            end = start + len(trimmed)
-            result = "\n".join(trimmed)
 
         if end < total:
             result += f"\n\n(Showing lines {offset}-{end} of {total}. Use offset={end + 1} to continue.)"
         else:
             result += f"\n\n(End of file — {total} lines total)"
+        if len(result) > max_result_chars:
+            raise ValueError(
+                f"Cannot read {path}: lines {offset}-{end} would return {len(result)} characters, "
+                f"exceeding the maximum {max_result_chars}. Reduce limit and try again."
+            )
         return result
 
     async def write_file(args: WriteFileArgs) -> str:

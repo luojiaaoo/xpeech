@@ -20,7 +20,6 @@ from . import sandbox
 from .helper import is_direct_python_pip_exec, safe_resolve_workspace_path
 
 EXEC_TIMEOUT = 60 * 2
-_MAX_OUTPUT = 10000
 DENY_PATTERNS = [
     r"\brm\s+-[rf]{1,2}\b",  # rm -r, rm -rf, rm -fr
     r"\bdel\s+/[fq]\b",  # del /f, del /q
@@ -214,14 +213,7 @@ def _format_command_output(stdout: bytes, stderr: bytes, returncode: int | None)
             output_parts.append(f"STDERR:\n{stderr_text}")
 
     output_parts.append(f"\nExit code: {returncode}")
-    result = "\n".join(output_parts) if output_parts else "(no output)"
-
-    max_len = _MAX_OUTPUT
-    if len(result) > max_len:
-        half = max_len // 2
-        result = result[:half] + f"\n\n... ({len(result) - max_len:,} chars truncated) ...\n\n" + result[-half:]
-
-    return result
+    return "\n".join(output_parts) if output_parts else "(no output)"
 
 
 async def _ensure_workspace_uv_venv(workspace: Path) -> None:
@@ -263,5 +255,4 @@ def build_shell_tools(workspace: str | Path):
             uv run python script.py
         """
     ).lstrip()
-
     return shell

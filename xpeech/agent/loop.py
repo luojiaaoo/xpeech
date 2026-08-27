@@ -64,7 +64,10 @@ class AgentLoop:
         self._model_call_count = 0
         self._input_tokens = 0
         self._output_tokens = 0
-        self.tool_executor = ToolExecutor()
+        self.tool_executor = ToolExecutor(
+            workspace=self.workspace,
+            max_result_chars=settings.tool.max_result_chars,
+        )
         self.compressor = ConversationCompressor(
             chat=self.chat,
             summary_tokens=self.summary_tokens,

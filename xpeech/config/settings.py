@@ -84,6 +84,7 @@ class BrowserPreviewConfig(BaseModel):
 class ToolConfig(BaseModel):
     """Tool safety configuration settings."""
 
+    max_result_chars: int = Field(default=10_000, ge=1_000, validation_alias="max_result_chars")
     browser_preview: BrowserPreviewConfig = Field(default_factory=BrowserPreviewConfig)
     mcp_servers: dict[str, "MCPServerSettings"] = Field(default_factory=dict, validation_alias="mcpServers")
 
@@ -100,7 +101,6 @@ class MCPServerSettings(BaseModel):
     headers: dict[str, str] | None = None
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")
     tool_timeout: float = Field(default=30.0, validation_alias="tool_timeout")
-    max_result_chars: int = Field(default=50_000, ge=1_000, validation_alias="max_result_chars")
 
 
 class LLMConfig(BaseModel):
