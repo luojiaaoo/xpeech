@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -189,6 +190,10 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     events = [event async for event in agent_loop.run(message)]
     completed_at = datetime.now(UTC)
 
+    tool_result_event = next(event for event in events if event["event"] == "tool_call_result")
+    [[tool_call_id, tool_name, tool_value, duration_seconds]] = json.loads(tool_result_event["context"])
+    assert (tool_call_id, tool_name, tool_value) == ("call-1", "fake_tool", "tool result")
+    assert duration_seconds >= 0
     assert events[-2] == {"event": "assistant", "context": "final answer"}
     assert '"大模型请求次数": "2"' in events[-1]["context"]
     try:

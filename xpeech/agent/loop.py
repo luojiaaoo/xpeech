@@ -127,6 +127,7 @@ class AgentLoop:
             tool_call = execution.call
             result = execution.value
             success = execution.succeeded
+            duration_seconds = execution.duration_seconds
 
             def append_tool_result_messages_yaml(tool_call: ToolCallRequest, result_: Any):
                 """将一次工具调用结果转换为对话历史消息。"""
@@ -175,7 +176,9 @@ class AgentLoop:
                 append_tool_result_messages_yaml(tool_call, self.SESSION_QUESTION_EVENT[session_id].answer)
             else:
                 append_tool_result_messages_yaml(tool_call, result)
-                tool_call_result.append((tool_call.id, tool_call.name, result))
+                tool_call_result.append(
+                    (tool_call.id, tool_call.name, result, duration_seconds)
+                )
 
         # 如果包含_meta属性，则把这类消息转成user消息
         if with_metas:

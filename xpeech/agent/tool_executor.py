@@ -25,7 +25,6 @@ class ToolExecutionResult:
     value: Any
     succeeded: bool
     duration_seconds: float
-    error: str | None = None
 
 
 class ToolExecutor:
@@ -101,7 +100,6 @@ class ToolExecutor:
                     value=error,
                     succeeded=False,
                     duration_seconds=duration,
-                    error=error,
                 )
             except Exception as exc:  # noqa: BLE001 - tool failures are returned to the model
                 duration = time.perf_counter() - start_time
@@ -118,7 +116,6 @@ class ToolExecutor:
                     value=error,
                     succeeded=False,
                     duration_seconds=duration,
-                    error=error,
                 )
 
             duration = time.perf_counter() - start_time

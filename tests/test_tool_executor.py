@@ -55,7 +55,6 @@ class TestToolExecutor:
         assert [result.call.id for result in results] == ["2", "1"]
         assert [result.value for result in results] == ["second", "first"]
         assert all(result.succeeded for result in results)
-        assert all(result.error is None for result in results)
 
     @pytest.mark.asyncio
     async def test_returns_failure_for_unregistered_tool(self, tmp_path: Path):
@@ -65,7 +64,6 @@ class TestToolExecutor:
 
         assert not result.succeeded
         assert result.value == "ValueError: Tool is not registered for this request: missing"
-        assert result.error == result.value
 
     @pytest.mark.asyncio
     async def test_saves_oversized_result_and_returns_prefix_with_path(self, tmp_path: Path):
@@ -138,7 +136,6 @@ class TestToolExecutor:
         )
 
         assert not result.succeeded
-        assert result.error == result.value
         assert result.value == "RuntimeError: " + "x" * 40
         assert not (tmp_path / "tool-results").exists()
 
