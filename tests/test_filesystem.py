@@ -2,7 +2,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
 
 from xpeech.agent.tools import filesystem
 from xpeech.agent.tools.filesystem import OfficeReadArgs, ReadFileArgs, build_file_tools
@@ -16,31 +15,31 @@ def _read_file_tool(workspace: Path, max_result_chars: int = 10_000):
     return read_file
 
 
-def test_read_file_args_limit_each_line():
-    assert ReadFileArgs(path="example.txt").max_line_chars == 2_000
-    with pytest.raises(ValidationError, match="max_line_chars"):
-        ReadFileArgs(path="example.txt", max_line_chars=10_001)
+def test_read_file_args_default_limit():
+    assert ReadFileArgs(path="example.txt").limit == 2_000
+    assert ReadFileArgs(path="example.txt", limit=None).limit is None
 
 
 @pytest.mark.asyncio
-async def test_read_file_rejects_oversized_line(tmp_path: Path):
+async def test_read_file_accepts_long_line(tmp_path: Path):
     file_path = tmp_path / "long-line.txt"
     file_path.write_text("x" * 2_001, encoding="utf-8")
     read_file = _read_file_tool(tmp_path)
 
-    with pytest.raises(ValueError, match=r"line 1 contains 2001 characters.*max_line_chars=2000"):
-        await read_file(ReadFileArgs(path=file_path.name))
+    result = await read_file(ReadFileArgs(path=file_path.name))
+
+    assert result == f"1| {'x' * 2_001}\n\n(End of file — 1 lines total)"
 
 
 @pytest.mark.asyncio
-async def test_read_file_rejects_oversized_result_without_creating_result_file(tmp_path: Path):
+async def test_read_file_trims_oversized_result_at_line_boundary(tmp_path: Path):
     file_path = tmp_path / "many-lines.txt"
-    file_path.write_text("\n".join("x" * 1_900 for _ in range(6)), encoding="utf-8")
+    file_path.write_text("\n".join("x" * 1_900 for _ in range(70)), encoding="utf-8")
     read_file = _read_file_tool(tmp_path)
 
-    with pytest.raises(ValueError, match=r"would return .* exceeding the maximum 10000"):
-        await read_file(ReadFileArgs(path=file_path.name, limit=6))
+    result = await read_file(ReadFileArgs(path=file_path.name, limit=70))
 
+    assert result.endswith("(Showing lines 1-67 of 70. Use offset=68 to continue.)")
     assert not (tmp_path / "tool-results").exists()
 
 

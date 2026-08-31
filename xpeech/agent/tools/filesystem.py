@@ -40,6 +40,10 @@ class ReadVideoArgs(BaseModel):
     )
 
 
+_READ_FILE_MAX_CHARS = 128_000
+_READ_FILE_DEFAULT_LIMIT = 2000
+
+
 class ReadFileArgs(BaseModel):
     path: str = Field(description="The file path to read")
     offset: int = Field(
@@ -47,16 +51,10 @@ class ReadFileArgs(BaseModel):
         default=1,
         ge=1,
     )
-    limit: int = Field(
+    limit: int | None = Field(
         description="Maximum number of lines to read (default 2000)",
-        default=2000,
+        default=_READ_FILE_DEFAULT_LIMIT,
         ge=1,
-    )
-    max_line_chars: int = Field(
-        description="Reject any selected line longer than this many characters (default 2000, maximum 10000)",
-        default=2000,
-        ge=1,
-        le=10_000,
     )
 
 
@@ -225,26 +223,25 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
             raise ValueError(f"offset {offset} is beyond end of file ({total} lines)")
 
         start = offset - 1
-        end = min(start + limit, total)
-        selected_lines = all_lines[start:end]
-        for index, line in enumerate(selected_lines, start=offset):
-            if len(line) > args.max_line_chars:
-                raise ValueError(
-                    f"Cannot read {path}: line {index} contains {len(line)} characters, "
-                    f"exceeding max_line_chars={args.max_line_chars}."
-                )
-        numbered = [f"{start + i + 1}| {line}" for i, line in enumerate(selected_lines)]
+        end = min(start + (limit or _READ_FILE_DEFAULT_LIMIT), total)
+        numbered = [f"{start + i + 1}| {line}" for i, line in enumerate(all_lines[start:end])]
         result = "\n".join(numbered)
+
+        if len(result) > _READ_FILE_MAX_CHARS:
+            trimmed: list[str] = []
+            chars = 0
+            for line in numbered:
+                chars += len(line) + 1
+                if chars > _READ_FILE_MAX_CHARS:
+                    break
+                trimmed.append(line)
+            end = start + len(trimmed)
+            result = "\n".join(trimmed)
 
         if end < total:
             result += f"\n\n(Showing lines {offset}-{end} of {total}. Use offset={end + 1} to continue.)"
         else:
             result += f"\n\n(End of file — {total} lines total)"
-        if len(result) > max_result_chars:
-            raise ValueError(
-                f"Cannot read {path}: lines {offset}-{end} would return {len(result)} characters, "
-                f"exceeding the maximum {max_result_chars}. Reduce limit and try again."
-            )
         return result
 
     async def read_office_file(args: OfficeReadArgs) -> str:
@@ -260,7 +257,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         if not file_path.is_file():
             raise ValueError(f"Not a file: {path}")
 
-        supported_extensions = {".docx", ".xlsx", ".pdf", ".pptx" , ".xls"}
+        supported_extensions = {".docx", ".xlsx", ".pdf", ".pptx", ".xls"}
         if file_path.suffix.lower() not in supported_extensions:
             raise ValueError(
                 f"Unsupported file format: {file_path.suffix}. "
