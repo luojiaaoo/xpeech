@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import difflib
-import mimetypes
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -10,16 +9,15 @@ from markitdown import MarkItDown
 from pydantic import BaseModel, Field
 
 from ...utils.helper import (
-    compress_image_bytes_to_jpg,
+    compress_image,
     compress_video_to_mp4,
-    detect_image_mime,
     ensure_path_async,
     read_bytes_async,
     read_video_metadata,
     super_read_text,
     write_text_async,
 )
-from .helper import safe_resolve_workspace_path
+from .helper import get_mime_type, safe_resolve_workspace_path
 
 
 class ReadImageArgs(BaseModel):
@@ -106,14 +104,14 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         if not raw:
             return f"(Empty file: {path})"
 
-        try:
-            raw = compress_image_bytes_to_jpg(raw)
-        except Exception as e:
-            raise RuntimeError(f"Cannot read image file {path}: {e}") from e
-
-        mime = detect_image_mime(raw) or mimetypes.guess_type(file_path)[0]
+        mime = get_mime_type(file_path)
         if not mime or not mime.startswith("image/"):
             raise ValueError(f"Not an image file: {path} (MIME: {mime or 'unknown'})")
+
+        try:
+            raw, mime = compress_image(raw)
+        except Exception as e:
+            raise RuntimeError(f"Cannot read image file {path}: {e}") from e
 
         b64 = base64.b64encode(raw).decode()
         return [
@@ -172,7 +170,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
                     end_time=end_time,
                 )
                 raw = await read_bytes_async(output_path)
-                output_mime = mimetypes.guess_type(output_path)[0] or "video/mp4"
+                output_mime = get_mime_type(output_path)
         except Exception as e:
             raise RuntimeError(f"Cannot read video file {path}: {e}") from e
 

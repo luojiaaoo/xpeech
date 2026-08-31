@@ -5,6 +5,32 @@ import pytest
 
 from xpeech.agent.tools import filesystem
 from xpeech.agent.tools.filesystem import OfficeReadArgs, ReadFileArgs, build_file_tools
+from xpeech.agent.tools.helper import get_mime_type
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        (b"\x89PNG\r\n\x1a\ncontent", "image/png"),
+        (b"\xff\xd8\xffcontent", "image/jpeg"),
+        (b"GIF87acontent", "image/gif"),
+        (b"GIF89acontent", "image/gif"),
+        (b"RIFF\x00\x00\x00\x00WEBPcontent", "image/webp"),
+    ],
+)
+def test_get_mime_type_detects_content_before_extension(tmp_path: Path, data: bytes, expected: str):
+    file_path = tmp_path / "misleading.txt"
+    file_path.write_bytes(data)
+
+    assert get_mime_type(file_path) == expected
+
+
+def test_get_mime_type_falls_back_to_extension():
+    assert get_mime_type(Path("example.mp4")) == "video/mp4"
+
+
+def test_get_mime_type_returns_none_when_unknown():
+    assert get_mime_type("example.unknown") is None
 
 
 def _read_file_tool(workspace: Path, max_result_chars: int = 10_000):

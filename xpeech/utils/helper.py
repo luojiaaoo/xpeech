@@ -137,19 +137,6 @@ async def save_to_workspace(file: UploadFile, workspace: Path):
     return file_path
 
 
-def detect_image_mime(data: bytes) -> str | None:
-    """Detect image MIME type from magic bytes, ignoring file extension."""
-    if data[:8] == b"\x89PNG\r\n\x1a\n":
-        return "image/png"
-    if data[:3] == b"\xff\xd8\xff":
-        return "image/jpeg"
-    if data[:6] in (b"GIF87a", b"GIF89a"):
-        return "image/gif"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
-
-
 async def token_counter(messages: list[dict]):
     cleaned_messages, video_tokens = await _strip_video_blocks_and_count_tokens(messages)
     return _token_counter(model="gpt-4o", messages=cleaned_messages) + video_tokens
@@ -204,12 +191,12 @@ async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> t
         return None, None
 
 
-def compress_image_bytes_to_jpg(
+def compress_image(
     input_bytes: bytes,
     target_kb: int = 300,
     min_quality: int = 10,
     max_quality: int = 95,
-) -> bytes:
+) -> tuple[bytes, str]:
     target_bytes = target_kb * 1024
     img = Image.open(BytesIO(input_bytes))
     if img.mode != "RGB":
@@ -230,7 +217,7 @@ def compress_image_bytes_to_jpg(
         buffer = BytesIO()
         img.save(buffer, format="JPEG", quality=min_quality, optimize=True)
         best_data = buffer.getvalue()
-    return best_data
+    return best_data, "image/jpeg"
 
 
 async def compress_video_to_mp4(

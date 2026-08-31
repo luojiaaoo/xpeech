@@ -1,4 +1,5 @@
 import inspect
+import mimetypes
 from pathlib import Path
 from typing import Callable, get_type_hints, Type
 from pydantic import BaseModel, create_model
@@ -11,6 +12,30 @@ from openai import pydantic_function_tool
 import os
 import re
 import shlex
+
+
+def get_mime_type(path: str | Path) -> str | None:
+    """Return a best-effort MIME type, preferring file content over its name."""
+    try:
+        with open(path, "rb") as file:
+            data = file.read(12)
+    except OSError:
+        data = b""
+
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+
+    mime_type, _ = mimetypes.guess_type(path)
+    if mime_type:
+        return mime_type
+
+    return None
 
 
 def _expand_sandbox_home_path(user_path: str | Path, workspace: str | Path) -> Path:
