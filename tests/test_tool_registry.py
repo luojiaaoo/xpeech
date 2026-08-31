@@ -41,7 +41,7 @@ class FakeProvider:
 async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     file_tools = tuple(
         named_tool(name)
-        for name in ("read_image", "read_video", "read_file", "write_file", "edit_file", "office_read")
+        for name in ("read_image", "read_video", "read_file", "write_file", "edit_file", "read_office_file")
     )
     monkeypatch.setattr(registry, "build_file_tools", lambda **_kwargs: file_tools)
     monkeypatch.setattr(registry, "build_shell_tools", lambda **_kwargs: named_tool("shell"))
@@ -72,7 +72,7 @@ async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeyp
         "web_fetch",
         "web_search",
         "browser_preview",
-        "office_read",
+        "read_office_file",
         "send_file",
         "ask_user_question",
     ]

@@ -247,7 +247,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
             )
         return result
 
-    async def office_read(args: OfficeReadArgs) -> str:
+    async def read_office_file(args: OfficeReadArgs) -> str:
         """
         Read content from office documents (docx, xlsx, pdf, pptx, xls.) and extract as markdown.
         Supports Word documents, Excel spreadsheets, PDF files, PowerPoint presentations.
@@ -379,4 +379,4 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         await write_text_async(file_path, new_content, encoding=encoding)
         return f"Successfully edited {path}"
 
-    return read_image, read_video, read_file, write_file, edit_file, office_read
+    return read_image, read_video, read_file, write_file, edit_file, read_office_file

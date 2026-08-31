@@ -407,7 +407,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `web_search` | 搜索网页并返回结果 |
 | `create_browser_preview` | 将工作区内目录或单个 HTML 复制到 UUID 预览目录，返回目录 URL 前缀或完整文件 URL |
 | `shell` + `agent-browser` | 通过注入的 CDP 连接搜索、打开、读取、检查和操作网页 |
-| `office_read` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
+| `read_office_file` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |
 | `ask_user_question` | 向用户发送表单提问 |
 

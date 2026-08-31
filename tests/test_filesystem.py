@@ -56,7 +56,7 @@ async def test_read_file_returns_paginated_result_under_limit(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_office_read_resolves_relative_path_in_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_read_office_file_resolves_relative_path_in_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     document = tmp_path / "example.docx"
     document.write_bytes(b"placeholder")
     converted_paths: list[str] = []
@@ -67,9 +67,9 @@ async def test_office_read_resolves_relative_path_in_workspace(tmp_path: Path, m
             return SimpleNamespace(title="Example", text_content="# Content")
 
     monkeypatch.setattr(filesystem, "MarkItDown", FakeMarkItDown)
-    _, _, _, _, _, office_read = build_file_tools(tmp_path)
+    _, _, _, _, _, read_office_file = build_file_tools(tmp_path)
 
-    result = await office_read(OfficeReadArgs(path=document.name))
+    result = await read_office_file(OfficeReadArgs(path=document.name))
 
     assert converted_paths == [str(document)]
     assert result == "[TITLE: Example]\n\n# Content"
