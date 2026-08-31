@@ -13,6 +13,8 @@ from ..utils.helper import ensure_path_async, format_exception2llm, write_text_a
 from .tools.helper import get_tool_model_cls
 
 TOOL_RESULT_DIRECTORY = "tool-results"
+# read_file 是持久化结果的恢复路径。将其豁免，以避免出现“工具结果 -> read_file -> 另一个持久化工具结果”的循环。
+TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS = frozenset({"read_file"})
 
 
 @dataclass(frozen=True)
@@ -78,7 +80,10 @@ class ToolExecutor:
                     value = await tool_call_func()
                 else:
                     value = await tool_call_func(model_cls(**tool_call.arguments))
-                if isinstance(value, str):
+                if (
+                    isinstance(value, str)
+                    and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS
+                ):
                     value = await self._limit_text(tool_call, value, self._max_result_chars)
             except PathProtectionError as exc:
                 duration = time.perf_counter() - start_time

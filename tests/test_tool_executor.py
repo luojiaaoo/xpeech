@@ -88,6 +88,23 @@ class TestToolExecutor:
         assert result_path.name.startswith("large_tool-")
 
     @pytest.mark.asyncio
+    async def test_does_not_offload_oversized_read_file_result(self, tmp_path: Path):
+        full_result = "abcdefghij" * 4
+
+        async def read_file() -> str:
+            return full_result
+
+        call = ToolCallRequest(id="1", name="read_file", arguments={})
+        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=12).execute(
+            [call],
+            {"read_file": read_file},
+        )
+
+        assert result.succeeded
+        assert result.value == full_result
+        assert not (tmp_path / "tool-results").exists()
+
+    @pytest.mark.asyncio
     async def test_does_not_limit_list_result(self, tmp_path: Path):
         image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}
         full_result = [
