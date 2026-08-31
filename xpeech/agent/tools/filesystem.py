@@ -260,7 +260,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         if not file_path.is_file():
             raise ValueError(f"Not a file: {path}")
 
-        supported_extensions = {".docx", ".xlsx", ".pdf", ".pptx", ".doc", ".xls", ".ppt"}
+        supported_extensions = {".docx", ".xlsx", ".pdf", ".pptx" , ".xls"}
         if file_path.suffix.lower() not in supported_extensions:
             raise ValueError(
                 f"Unsupported file format: {file_path.suffix}. "
