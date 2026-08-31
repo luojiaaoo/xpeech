@@ -76,9 +76,7 @@ class LiteLLMProvider:
         register_default: bool = False,
     ):
         def format_result(rt) -> str:
-            if isinstance(rt, str):
-                return rt
-            elif isinstance(rt, list) and all("type" in item for item in rt):  # 必须是合法的消息
+            if isinstance(rt, str) or (isinstance(rt, list) and all("type" in item for item in rt)):  # 必须是合法的消息
                 return rt
             else:
                 raise TypeError(f"Invalid return type: {type(rt)}")
