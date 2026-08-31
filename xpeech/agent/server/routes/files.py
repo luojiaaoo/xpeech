@@ -24,7 +24,7 @@ async def download_session_file(
         file_path = safe_resolve_workspace_path(
             path,
             workspace,
-            protect_builtin_skills=False,
+            protect_read_only_file=False,
         )
     except PathProtectionError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File is outside the workspace")

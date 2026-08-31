@@ -20,7 +20,7 @@ def build_file_message_tools(workspace: str | Path):
         return safe_resolve_workspace_path(
             user_path,
             base,
-            protect_builtin_skills=False,
+            protect_read_only_file=False,
         )
 
     def send_file(args: FilePathArgs) -> str:

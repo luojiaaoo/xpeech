@@ -25,7 +25,7 @@ def _expand_sandbox_home_path(user_path: str | Path, workspace: str | Path) -> P
 def safe_resolve_workspace_path(
     user_path: str | Path,
     workspace: str | Path,
-    protect_builtin_skills: bool = True,
+    protect_read_only_file: bool = True,
 ) -> Path:
     """Resolve a workspace path, including read-only sandbox mount mappings."""
     workspace = Path(workspace).expanduser().resolve()
@@ -52,7 +52,7 @@ def safe_resolve_workspace_path(
             config_root = settings.path.sandbox_home_path.expanduser().resolve()
             config_path = config_root.joinpath(*home_relative.parts)
             if config_path.is_file():
-                if protect_builtin_skills:
+                if protect_read_only_file:
                     raise PathProtectionError("Sandbox HOME config files are read-only")
                 return config_path.resolve()
 
@@ -70,7 +70,7 @@ def safe_resolve_workspace_path(
     # 内置技能路径转换
     builtin_skill = (BUILTIN_SKILLS_DIR / skill_relative.parts[0]).resolve()
     if (builtin_skill / "SKILL.md").is_file():
-        if protect_builtin_skills:
+        if protect_read_only_file:
             raise PathProtectionError("Built-in skills are read-only")
         return builtin_skill.joinpath(*skill_relative.parts[1:]).resolve()
     else:

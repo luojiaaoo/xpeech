@@ -82,7 +82,7 @@ def test_sandbox_home_config_paths_map_to_managed_files_for_reading(
         safe_resolve_workspace_path(
             user_path,
             workspace,
-            protect_builtin_skills=False,
+            protect_read_only_file=False,
         )
         == config_file
     )

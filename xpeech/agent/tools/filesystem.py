@@ -80,11 +80,11 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
     if max_result_chars < 1:
         raise ValueError("max_result_chars must be positive")
 
-    def safe_resolve(user_path: str, protect_builtin_skills: bool = True) -> Path:
+    def safe_resolve(user_path: str, protect_read_only_file: bool = True) -> Path:
         return safe_resolve_workspace_path(
             user_path,
             base,
-            protect_builtin_skills=protect_builtin_skills,
+            protect_read_only_file=protect_read_only_file,
         )
 
     async def read_image(args: ReadImageArgs) -> str | list[dict[str, Any]]:
@@ -92,7 +92,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         Read an image from a local file path.
         """
         path = args.path
-        file_path = safe_resolve(path, protect_builtin_skills=False)
+        file_path = safe_resolve(path, protect_read_only_file=False)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
@@ -129,7 +129,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         The returned label includes duration, width, and height.
         """
         path = args.path
-        file_path = safe_resolve(path, protect_builtin_skills=False)
+        file_path = safe_resolve(path, protect_read_only_file=False)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
@@ -196,7 +196,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         offset = args.offset
         limit = args.limit
 
-        file_path = safe_resolve(path, protect_builtin_skills=False)
+        file_path = safe_resolve(path, protect_read_only_file=False)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():

@@ -41,7 +41,7 @@ def build_browser_preview_tool(
         source = safe_resolve_workspace_path(
             args.path,
             base,
-            protect_builtin_skills=False,
+            protect_read_only_file=False,
         )
         if not source.exists():
             raise FileNotFoundError(f"Path not found: {args.path}")

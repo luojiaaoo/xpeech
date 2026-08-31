@@ -121,7 +121,7 @@ def _guard_command(command: str, workspace: str | Path) -> str:
             resolved = safe_resolve_workspace_path(
                 expanded,
                 workspace,
-                protect_builtin_skills=False,
+                protect_read_only_file=False,
             )
             if _is_benign_device_path(str(resolved)):
                 continue
