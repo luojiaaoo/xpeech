@@ -166,7 +166,10 @@ async def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[li
                 cleaned_content.append(block)
                 continue
             _, _bytes = _parse_base64_url(block["video_url"]["url"])
-            duration = (await read_video_metadata_by_bytes(_bytes))["duration"]
+            with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
+                video_path = Path(temp_dir) / "video.mp4"
+                await write_bytes_async(video_path, _bytes)
+                duration = (await read_video_metadata(video_path))["duration"]
             video_tokens += math.ceil(duration * 100)
             has_video = True
 
@@ -220,7 +223,7 @@ def compress_image(
     return best_data, "image/jpeg"
 
 
-async def compress_video_to_mp4(
+async def compress_video(
     input_path: Union[str, Path],
     output_path: Union[str, Path],
     start_time: float | None = None,
@@ -229,7 +232,7 @@ async def compress_video_to_mp4(
     bitrate: str = "2000k",
     max_width: int | None = 1920,
     max_height: int | None = 1080,
-) -> Path:
+) -> tuple[bytes, str]:
     """
     压缩视频文件并转换为 MP4 格式，支持剪辑和时间段选择。
 
@@ -244,7 +247,7 @@ async def compress_video_to_mp4(
         max_height: 最大高度，如果视频超过此高度则会缩放，默认 1080
 
     Returns:
-        输出视频文件的 Path 对象
+        压缩后的视频字节和 MIME 类型
     """
     input_path = Path(input_path)
     output_path = Path(output_path).with_suffix(".mp4")
@@ -294,30 +297,24 @@ async def compress_video_to_mp4(
     # 异步执行视频处理
     await asyncify(_process_video)()
 
-    return output_path
+    return await read_bytes_async(output_path), "video/mp4"
 
 
 @alru_cache(maxsize=1000)
-async def read_video_metadata_by_bytes(raw: bytes) -> dict[str, object]:
-    def _get(_path):
-        clip = VideoFileClip(str(_path))
-        width, height = clip.size
-        clip.close()
-        return {"duration": clip.duration, "width": width, "height": height}
-
-    with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
-        output_path = Path(temp_dir) / "video.mp4"
-        await write_bytes_async(output_path, raw)
-        return await asyncify(_get)(output_path)
-
-
-async def read_video_metadata(input_path: Union[str, Path]) -> dict[str, object]:
+async def read_video_metadata(input_path: Path) -> dict[str, object]:
     """Read basic video metadata without loading the video into the LLM context."""
-    input_path = Path(input_path)
     if not input_path.exists():
         raise FileNotFoundError(f"Input video file not found: {input_path}")
-    raw = await read_bytes_async(input_path)
-    return await read_video_metadata_by_bytes(raw)
+
+    def _get() -> dict[str, object]:
+        clip = VideoFileClip(str(input_path))
+        try:
+            width, height = clip.size
+            return {"duration": clip.duration, "width": width, "height": height}
+        finally:
+            clip.close()
+
+    return await asyncify(_get)()
 
 
 class LiteralDumper(yaml.SafeDumper):

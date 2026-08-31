@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ...utils.helper import (
     compress_image,
-    compress_video_to_mp4,
+    compress_video,
     ensure_path_async,
     read_bytes_async,
     read_video_metadata,
@@ -163,14 +163,12 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
 
         try:
             with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
-                output_path = await compress_video_to_mp4(
+                raw, output_mime = await compress_video(
                     input_path=file_path,
                     output_path=Path(temp_dir) / f"{file_path.stem}_compressed.mp4",
                     start_time=start_time,
                     end_time=end_time,
                 )
-                raw = await read_bytes_async(output_path)
-                output_mime = get_mime_type(output_path)
         except Exception as e:
             raise RuntimeError(f"Cannot read video file {path}: {e}") from e
 
