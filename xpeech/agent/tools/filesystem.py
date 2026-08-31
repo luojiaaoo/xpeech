@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import difflib
 import mimetypes
@@ -5,6 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from markitdown import MarkItDown
 from pydantic import BaseModel, Field
 
 from ...utils.helper import (
@@ -56,6 +58,10 @@ class ReadFileArgs(BaseModel):
         ge=1,
         le=10_000,
     )
+
+
+class OfficeReadArgs(BaseModel):
+    path: str = Field(description="Path to the office document (docx, xlsx, pdf, pptx, etc.)")
 
 
 class WriteFileArgs(BaseModel):
@@ -241,6 +247,38 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
             )
         return result
 
+    async def office_read(args: OfficeReadArgs) -> str:
+        """
+        Read content from office documents (docx, xlsx, pdf, pptx, etc.) and extract as markdown.
+        Supports Word documents, Excel spreadsheets, PDF files, PowerPoint presentations, and more.
+        Returns the extracted text content with document title if available.
+        """
+        path = args.path
+        file_path = safe_resolve(path, protect_read_only_file=False)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        if not file_path.is_file():
+            raise ValueError(f"Not a file: {path}")
+
+        supported_extensions = {".docx", ".xlsx", ".pdf", ".pptx", ".doc", ".xls", ".ppt"}
+        if file_path.suffix.lower() not in supported_extensions:
+            raise ValueError(
+                f"Unsupported file format: {file_path.suffix}. "
+                f"Supported formats: {', '.join(sorted(supported_extensions))}"
+            )
+
+        try:
+            md = MarkItDown()
+            result = await asyncio.to_thread(md.convert, str(file_path))
+            title = getattr(result, "title", None)
+            title_info = f"[TITLE: {title}]\n\n" if title else ""
+            content = getattr(result, "text_content", str(result))
+            if not content or not content.strip():
+                return f"(Empty document: {path})"
+            return f"{title_info}{content}"
+        except Exception as e:
+            raise RuntimeError(f"Failed to read document {path}: {e}") from e
+
     async def write_file(args: WriteFileArgs) -> str:
         """Write content to a file at the given path. Creates parent directories if needed."""
         path = args.path
@@ -341,4 +379,4 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         await write_text_async(file_path, new_content, encoding=encoding)
         return f"Successfully edited {path}"
 
-    return read_image, read_video, read_file, write_file, edit_file
+    return read_image, read_video, read_file, write_file, edit_file, office_read

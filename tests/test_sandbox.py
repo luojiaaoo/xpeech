@@ -129,7 +129,7 @@ async def test_file_tools_can_read_but_not_write_mapped_home_configs(
     config_file = config_home / ".npmrc"
     config_file.write_text("registry=https://example.invalid\n", encoding="utf-8")
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
-    _, _, read_file, write_file, _ = build_file_tools(workspace)
+    _, _, read_file, write_file, _, _ = build_file_tools(workspace)
 
     result = await read_file(ReadFileArgs(path="~/.npmrc"))
 

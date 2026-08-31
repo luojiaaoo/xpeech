@@ -6,7 +6,6 @@ from .browser_preview import build_browser_preview_tool
 from .file_message import build_file_message_tools
 from .filesystem import build_file_tools
 from .mcp_client import get_persistent_mcp_registration_from_config
-from .office import office_read
 from .question import ask_user_question
 from .shell import build_shell_tools
 from .web import web_fetch, web_search
@@ -19,7 +18,7 @@ async def register_default_tools(
     config: ToolConfig,
 ) -> None:
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
-    read_image, read_video, read_file, write_file, edit_file = build_file_tools(
+    read_image, read_video, read_file, write_file, edit_file, office_read = build_file_tools(
         workspace=workspace,
         max_result_chars=config.max_result_chars,
     )
