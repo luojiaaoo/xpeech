@@ -1,4 +1,3 @@
-from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -26,7 +25,6 @@ def _load_bootstrap_files(workspace) -> str:
 def _get_identity(workspace: Path) -> str:
     """生成可配置的核心身份提示词。"""
 
-    now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%A)")
     custom_system_prompt = settings.llm.custom_system_prompt.strip()
     system_identity_prompt = settings.llm.system_identity_prompt.strip()
     if system_identity_prompt:
@@ -66,9 +64,6 @@ def _get_identity(workspace: Path) -> str:
                 - Execute shell commands
                 - Send messages to users
 
-                ## Current Time
-                {now}
-
                 ## Platform Policy
                 - Prefer UTF-8.
                 - Use file tools when they are simpler or more reliable than shell commands.
@@ -79,6 +74,7 @@ def _get_identity(workspace: Path) -> str:
                 - Long-term memory: {workspace}/memory/MEMORY.md (write important facts here)
                 - History log: {workspace}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
                 - Skills: {workspace}/skills/{{skill-name}}/SKILL.md
+                - Tool notes: {workspace}/TOOLS.md. Private configurations for tools
 
                 ## Tools / Skills Guidelines
                 - All skill path references must use paths relative to the skill’s root directory (e.g., references/xxx.md, assets/xxx.js, scripts/xxx.py). Agents or users should resolve these paths based on their own installation location; do not rely on any absolute paths.
@@ -95,7 +91,6 @@ def _get_identity(workspace: Path) -> str:
         .lstrip()
         .format(
             system_identity_prompt=system_identity_prompt,
-            now=now,
             workspace=workspace.as_posix(),
         )
     )
@@ -132,7 +127,7 @@ async def build_system_prompt(workspace: Path) -> dict[str, Any]:
     # Ethical guidelines
     parts.append(_get_ethical_guidelines())
 
-    # AGENT.md/ SOUL.md/ USER.md/ TOOLS.md
+    # AGENTS.md / SOUL.md / USER.md / TOOLS.md
     parts.append(_load_bootstrap_files(workspace))
 
     # Memory

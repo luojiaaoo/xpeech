@@ -53,6 +53,30 @@ async def create_workspace_templates(workspace: Path):
                 - Language: (your preferred language)
             """
         ).lstrip(),
+        "TOOLS.md": dedent(
+            """
+                # TOOLS
+
+                Local Tools Configuration Notes.
+                Skills define how tools are used. This file records your specific configuration, belonging to your environment and your settings.
+
+                ## What to Record
+
+                Specific parameters and preferences needed when the skill runs. For example:
+
+                - Preferred style for image generation
+                - Default voice for speech generation
+                - Any unique configuration related to your environment
+
+                ## Why It's Separated
+
+                Skills are shared, while configurations are personal. Keeping them separate ensures that updating the skill won't lose your notes, and sharing the skill won't expose your environment.
+
+                ---
+
+                Record anything that helps you work. This is your memo.
+            """
+        ).lstrip(),
     }
 
     for filename, content in templates.items():

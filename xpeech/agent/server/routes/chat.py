@@ -46,9 +46,7 @@ async def chat(
 ):
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
     workspace = (settings.path.workspace_base_path / session_id).resolve()
-
-    if not workspace.exists():
-        await create_workspace_templates(await ensure_path_async(workspace))
+    await create_workspace_templates(await ensure_path_async(workspace))
 
     saved_files = []
     for file in files:
