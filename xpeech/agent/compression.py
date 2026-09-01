@@ -66,21 +66,20 @@ class ConversationCompressor:
         return prepend_system_messages([{"role": "assistant", "content": summary or "(nothing)"}], system_messages)
 
     @staticmethod
-    def _keep_messages_for_days(days: int, messages: list[Message]) -> list[Message]:
-        """保留最近指定天数内的历史消息及全部系统消息。"""
-        system_messages, history_messages = split_system_messages(messages)
+    def _keep_messages_for_days(days: int, messages: list[Message]) -> tuple[list[Message], list[Message]]:
+        """按指定天数切分历史消息，返回窗口前和窗口内的两段消息。"""
         last_timestamp = None
         split_index = 0
-        for index in range(len(history_messages) - 1, -1, -1):
-            if not is_timestamped_user_message(history_messages[index]):
+        for index in range(len(messages) - 1, -1, -1):
+            if not is_timestamped_user_message(messages[index]):
                 continue
             if last_timestamp is None:
-                last_timestamp = history_messages[index]["timestamp"]
-            timestamp = history_messages[index]["timestamp"]
+                last_timestamp = messages[index]["timestamp"]
+            timestamp = messages[index]["timestamp"]
             if last_timestamp - timestamp > timedelta(days=days).total_seconds():
                 break
             split_index = index
-        return prepend_system_messages(history_messages[split_index:], system_messages)
+        return messages[:split_index], messages[split_index:]
 
     @staticmethod
     def _turn_start_indexes(messages: list[Message]) -> list[int]:
@@ -94,21 +93,39 @@ class ConversationCompressor:
     async def compress(self, messages: list[Message]) -> list[Message]:
         """压缩到目标大小，同时保留最长的、结构完整的最近对话后缀。"""
         logger.info("Compressing messages messages={}", len(messages))
+        system_messages, history_messages = split_system_messages(messages)
 
-        # 一级：按时间窗口丢弃过旧上下文。每次都基于原始消息计算，避免
-        # 在一级失败后提前丢掉内容，导致后续摘要无法覆盖它们。
+        # 一级：摘要时间窗口前的历史，同时保留最近几天的原始消息。
         for days in range(7, 1, -1):
-            recent_days_messages = self._keep_messages_for_days(days, messages)
-            if await self._is_within_target(recent_days_messages):
-                logger.info("Compression finished by days={} messages={}", days, len(recent_days_messages))
+            historical_messages, recent_history_messages = self._keep_messages_for_days(days, history_messages)
+            recent_days_messages = prepend_system_messages(recent_history_messages, system_messages)
+            if not await self._is_within_target(recent_days_messages):
+                continue
+
+            if not historical_messages:
+                logger.info(
+                    "Compression finished by days={} without historical summary messages={}",
+                    days,
+                    len(recent_days_messages),
+                )
                 return recent_days_messages
 
-        system_messages, history_messages = split_system_messages(messages)
-        turn_start_indexes = self._turn_start_indexes(history_messages)
+            summarized_messages = await self._summarize_messages(
+                prepend_system_messages(historical_messages, system_messages)
+            )
+            compressed_messages = summarized_messages + recent_history_messages
+            logger.info(
+                "Compression finished by days with summary days={} messages={}",
+                days,
+                len(compressed_messages),
+            )
+            return compressed_messages
 
         # 二级：从最多保留的最近回合数开始，按完整用户回合逐步缩小。
-        # 第一个能放入的后缀就是此策略下保留消息最多的候选。
-        for split_index in turn_start_indexes[-self._recent_turns_to_keep :]:
+        turn_start_indexes = self._turn_start_indexes(history_messages)
+        candidate_indexes = turn_start_indexes[-self._recent_turns_to_keep :]
+        for candidate_index, split_index in enumerate(candidate_indexes):
+            keep_turns = len(candidate_indexes) - candidate_index
             recent_messages = history_messages[split_index:]
             retained_messages = prepend_system_messages(recent_messages, system_messages)
             if not await self._is_within_target(retained_messages):
@@ -120,13 +137,18 @@ class ConversationCompressor:
                     prepend_system_messages(history_messages[:split_index], system_messages)
                 )
                 compressed_messages = summarized_messages + recent_messages
-                if await self._is_within_target(compressed_messages):
-                    logger.info("Compression finished by turns with summary messages={}", len(compressed_messages))
-                    return compressed_messages
-                logger.warning("Summary exceeds target; retaining the complete recent suffix without it")
-
-            logger.info("Compression finished by turns without summary messages={}", len(retained_messages))
-            return retained_messages
+                logger.info(
+                    "Compression finished by turns with summary keep_turns={} messages={}",
+                    keep_turns,
+                    len(compressed_messages),
+                )
+                return compressed_messages
+            else:
+                logger.info(
+                    "Compression finished by turns without summary messages={}",
+                    len(retained_messages),
+                )
+                return retained_messages
 
         # 三级：直接将整个会话压缩为摘要；摘要长度由 summary_tokens 控制。
         compressed_messages = await self._summarize_messages(messages)

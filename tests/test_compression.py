@@ -27,6 +27,19 @@ class TestMessageUtils:
         assert is_timestamped_user_message(messages[1])
         assert not is_timestamped_user_message(messages[2])
 
+    def test_keep_messages_for_days_returns_historical_and_recent_segments(self):
+        messages = [
+            {"role": "user", "timestamp": 1.0, "content": "old"},
+            {"role": "assistant", "content": "old reply"},
+            {"role": "user", "timestamp": 10 * 24 * 60 * 60, "content": "recent"},
+            {"role": "assistant", "content": "recent reply"},
+        ]
+
+        historical_messages, recent_messages = ConversationCompressor._keep_messages_for_days(7, messages)
+
+        assert historical_messages == messages[:2]
+        assert recent_messages == messages[2:]
+
 
 class TestConversationCompressor:
     @pytest.mark.asyncio
@@ -88,22 +101,24 @@ class TestConversationCompressor:
         assert summary_max_tokens == 100
 
     @pytest.mark.asyncio
-    async def test_level_one_keeps_the_latest_days_without_summarizing(self):
+    async def test_level_one_summarizes_history_and_keeps_the_latest_days(self):
         async def count_tokens(*, messages):
             return sum(len(message.get("content", "")) for message in messages)
 
         summarize_calls = 0
+        summarized_messages = None
 
-        async def summarize(**_kwargs):
-            nonlocal summarize_calls
+        async def summarize(**kwargs):
+            nonlocal summarize_calls, summarized_messages
             summarize_calls += 1
-            return make_response("summary")
+            summarized_messages = kwargs["messages"]
+            return make_response("x")
 
         compressor = ConversationCompressor(
             chat=summarize,
             summary_tokens=100,
             max_accept_tokens=10,
-            target_tokens=6,
+            target_tokens=7,
             token_counter=count_tokens,
         )
         now = 1_000_000.0
@@ -119,10 +134,14 @@ class TestConversationCompressor:
 
         assert compressed == [
             {"role": "system", "content": "s"},
+            {"role": "assistant", "content": "x"},
             {"role": "user", "timestamp": now, "content": "new"},
             {"role": "assistant", "content": "a"},
         ]
-        assert summarize_calls == 0
+        assert summarize_calls == 1
+        assert summarized_messages is not None
+        assert any(message["content"] == "old" for message in summarized_messages)
+        assert all(message["content"] != "new" for message in summarized_messages)
 
     @pytest.mark.asyncio
     async def test_summary_that_exceeds_target_falls_back_to_complete_recent_suffix(self):
