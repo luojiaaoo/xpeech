@@ -113,7 +113,7 @@ class ConversationCompressor:
                 logger.info("Compression finished level=2 messages={}", len(compressed_messages))
                 return compressed_messages
 
-        for keep_count in range(len(messages) - 1, -1, -1):
+        for keep_count in range(len(messages)):
             recent_messages = messages[keep_count:]
             if await self._is_within_target(recent_messages):
                 logger.info("Compression level=3 dropping oldest messages")
