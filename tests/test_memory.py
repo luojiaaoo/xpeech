@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -5,7 +6,30 @@ from pydantic import BaseModel
 
 from xpeech.agent.memory import ConsolidationResult, MemoryConsolidator, MemoryStore
 from xpeech.agent.tool_executor import ToolExecutionResult
-from xpeech.provider.schema import LLMResponse, ToolCallRequest
+from xpeech.provider.schema import LLMResponse, ToolCallChunk, ToolCallRequest
+
+
+def make_response(
+    content: str | None = None,
+    tool_calls: list[ToolCallRequest] | None = None,
+    mapping_tool_call_funcs=None,
+) -> LLMResponse:
+    async def chunks():
+        if content is not None:
+            yield "content", content
+        for index, tool_call in enumerate(tool_calls or []):
+            yield "tool_calls", ToolCallChunk(
+                index=index,
+                id=tool_call.id,
+                name=tool_call.name,
+                arguments=json.dumps(tool_call.arguments, ensure_ascii=False),
+            )
+
+    response = LLMResponse(
+        iter_mix_chunks=chunks(),
+        mapping_tool_call_funcs=mapping_tool_call_funcs,
+    )
+    return response
 
 
 class TestMemoryConsolidator:
@@ -40,8 +64,7 @@ class TestMemoryConsolidator:
             return "saved"
 
         async def chat(**_kwargs):
-            return LLMResponse(
-                content=None,
+            return make_response(
                 tool_calls=[tool_call],
                 mapping_tool_call_funcs={"save_memory": save_memory},
             )
@@ -73,7 +96,7 @@ class TestMemoryConsolidator:
     @pytest.mark.asyncio
     async def test_response_without_tool_call_is_skipped(self, tmp_path: Path):
         async def chat(**_kwargs):
-            return LLMResponse(content="nothing to save")
+            return make_response(content="nothing to save")
 
         async def execute_tools(*_args, **_kwargs):
             pytest.fail("tools should not be executed without tool calls")

@@ -1,9 +1,11 @@
 from ..agent.tools.helper import get_custom_tool_func
+from collections.abc import AsyncIterator, Callable
+
 import litellm
-from typing import Any, Callable, Literal, Type
+from typing import Any, Literal
 import functools
 from pydantic import BaseModel
-from .schema import LLMResponse, ReasoningEffort, ToolCallRequest
+from .schema import LLMResponse, ReasoningEffort, StreamChunk, ToolCallChunk
 from .helper import LiteLLMRetryClient
 from ..agent.tools.helper import as_tool
 from ..agent.tools.mcp_client import MCPServerRegistration, collect_mcp_tool
@@ -39,7 +41,7 @@ class LiteLLMProvider:
         self.default_top_p = default_top_p
         self.default_reasoning_effort = default_reasoning_effort
         self.default_tool_jsons: list[dict[str, Any]] = []
-        self.default_mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str | list]] = {}
+        self.default_mapping_tool_call_funcs: dict[str, Callable[[type[BaseModel] | None], str | list]] = {}
         self._support_image = support_image
         self._support_video = support_video
         self._support_json_output = support_json_output
@@ -72,7 +74,7 @@ class LiteLLMProvider:
 
     def decorator_tool_func(
         self,
-        func_: Callable[[Type[BaseModel] | None], str | list],
+        func_: Callable[[type[BaseModel] | None], str | list],
         register_default: bool = False,
     ):
         def format_result(rt) -> str:
@@ -112,8 +114,8 @@ class LiteLLMProvider:
         raise ValueError(f"Unsupported tool type: {tool_type}")
 
     async def _parse_tools(
-        self, funcs: list[Callable[[Type[BaseModel] | None], str | list]]
-    ) -> tuple[list[dict[str, Any]], dict[str, Callable[[Type[BaseModel] | None], str | list]]]:
+        self, funcs: list[Callable[[type[BaseModel] | None], str | list]]
+    ) -> tuple[list[dict[str, Any]], dict[str, Callable[[type[BaseModel] | None], str | list]]]:
         """解析普通函数工具。"""
 
         tool_jsons = []
@@ -127,7 +129,7 @@ class LiteLLMProvider:
     async def chat(
         self,
         messages: list[dict[str, Any]],
-        tools: list[str | Callable[[Type[BaseModel] | None], str | list]] | None = None,
+        tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
@@ -176,6 +178,8 @@ class LiteLLMProvider:
             "response_format": {"type": "json_object"} if json_output else None,
             "extra_headers": self.extra_headers,
             "reasoning_effort": reasoning_effort,
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
 
         # 注入工具
@@ -184,67 +188,62 @@ class LiteLLMProvider:
             completion_kwargs["tool_choice"] = "auto"
         response = await self._retry_client.acompletion(**completion_kwargs)
 
-        # 解析响应
-        try:
-            return self._parse_response(
-                response,
-                mapping_tool_call_funcs,
-            )
-
-        except Exception as e:
-            return LLMResponse(
-                content=f"Error parsing LLM response: {str(e)}",
-                finish_reason="error",
-            )
+        return self._parse_response(response, mapping_tool_call_funcs)
 
     def _parse_response(
-        self, response: Any, mapping_tool_call_funcs: dict[str, Callable[[Type[BaseModel] | None], str | list]]
+        self,
+        response: AsyncIterator[Any],
+        mapping_tool_call_funcs: dict[str, Callable[[type[BaseModel] | None], str | list]],
     ) -> LLMResponse:
-        """将 LiteLLM 的响应解析为 LLMResponse 标准格式。"""
-        choice = response.choices[0]
-        message = choice.message
+        """将 LiteLLM 的流式响应解析为统一的混合内容流。"""
+        response_holder: dict[str, LLMResponse] = {}
 
-        # 提取思考内容
-        reasoning_content = None
-        if hasattr(message, "reasoning_content"):
-            reasoning_content = message.reasoning_content
-
-        # 提取工具调用信息
-        tool_calls = []
-        if hasattr(message, "tool_calls") and message.tool_calls:
-            for tc in message.tool_calls:
-                # 从 JSON 字符串解析参数如果需要
-                args = tc.function.arguments
-                if isinstance(args, str):
-                    import json
-
-                    try:
-                        args = json.loads(args)
-                    except json.JSONDecodeError:
-                        args = {"raw": args}
-
-                tool_calls.append(
-                    ToolCallRequest(
-                        id=tc.id,
-                        name=tc.function.name,
-                        arguments=args,
+        async def iter_mix_chunks() -> AsyncIterator[StreamChunk]:
+            async for chunk in response:
+                parsed_response = response_holder["response"]
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    parsed_response.set_usage(
+                        {
+                            "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                            "completion_tokens": getattr(usage, "completion_tokens", None),
+                            "total_tokens": getattr(usage, "total_tokens", None),
+                        }
                     )
-                )
 
-        # 提取使用情况信息
-        usage = {}
-        if hasattr(response, "usage") and response.usage:
-            usage = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
+                choices = getattr(chunk, "choices", None) or []
+                if not choices:
+                    continue
 
-        return LLMResponse(
-            content=message.content,
-            reasoning_content=reasoning_content,
-            tool_calls=tool_calls,
+                choice = choices[0]
+                if choice.finish_reason is not None:
+                    parsed_response.set_finish_reason(choice.finish_reason)
+
+                delta = choice.delta
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    yield "reasoning_content", reasoning
+
+                content = getattr(delta, "content", None)
+                if content:
+                    yield "content", content
+
+                for tool_call in getattr(delta, "tool_calls", None) or []:
+                    index = getattr(tool_call, "index", 0) or 0
+                    function = getattr(tool_call, "function", None)
+                    yield (
+                        "tool_calls",
+                        ToolCallChunk(
+                            index=index,
+                            id=getattr(tool_call, "id", None),
+                            name=getattr(function, "name", None),
+                            arguments=getattr(function, "arguments", None),
+                        ),
+                    )
+
+        parsed_response = LLMResponse(
+            iter_mix_chunks=iter_mix_chunks(),
             mapping_tool_call_funcs=mapping_tool_call_funcs,
-            finish_reason=choice.finish_reason or "stop",
-            usage=usage,
         )
+        response_holder["response"] = parsed_response
+        return parsed_response

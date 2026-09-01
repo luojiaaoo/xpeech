@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+from collections.abc import AsyncIterator
 from datetime import datetime
 from itertools import chain
 from pathlib import Path
@@ -15,7 +16,6 @@ from lark_channel import (
     DedupConfig,
     Events,
     FeishuChannel,
-    FeishuChannelErrorCode,
     FileContent,
     ImageContent,
     InboundMessage,
@@ -260,7 +260,14 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
 
 
 # 图标： https://open.feishu.cn/document/feishu-cards/enumerations-for-icons
+# None 字符串；...流式； str 直接输出；_format_chat_event_content 也要联动修改
 OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
+    ChatEventType.THINKING: {
+        "content": ...,
+        "text_size": "notation",
+        "text_align": "left",
+        "icon": {"tag": "standard_icon", "token": "tab-more_outlined", "color": "green"},
+    },
     ChatEventType.ASSISTANT: {
         "content": ...,
         "text_size": "normal",
@@ -268,16 +275,10 @@ OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
         "icon": {"tag": "standard_icon", "token": "robot_filled", "color": "red"},
     },
     ChatEventType.COMMAND: {
-        "content": ...,
+        "content": None,
         "text_size": "notation",
         "text_align": "center",
         "icon": {"tag": "standard_icon", "token": "command_outlined", "color": "turquoise"},
-    },
-    ChatEventType.THINKING: {
-        "content": "我正在思考，稍等一下。",
-        "text_size": "notation",
-        "text_align": "center",
-        "icon": {"tag": "standard_icon", "token": "tab-more_outlined", "color": "green"},
     },
     ChatEventType.TOOL_CALL: {
         "content": "我需要调用工具处理一下。",
@@ -292,7 +293,7 @@ OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
         "icon": {"tag": "standard_icon", "token": "bitableform_outlined", "color": "yellow"},
     },
     ChatEventType.TOKEN_USAGE: {
-        "content": ...,
+        "content": None,
         "text_size": "notation",
         "text_align": "left",
         "icon": None,
@@ -309,6 +310,7 @@ GoGoGo ThanksFace SaluteFace HappyDragon
 
 FEISHU_CACHE_DIR = ensure_path(settings.path.cache_path.resolve())
 FEISHU_USER_CACHE_TTL_SECONDS = 3600
+FEISHU_STREAM_UPDATE_INTERVAL_SECONDS = 0.1
 
 
 class FeishuBridge:
@@ -389,64 +391,79 @@ class FeishuBridge:
             raise RuntimeError(f"Feishu {operation} succeeded without a message_id")
         return result
 
-    @staticmethod
-    def _card_markdown_content(message: dict[str, Any]) -> str | None:
-        card = message.get("card")
-        if not isinstance(card, dict):
-            return None
-        body = card.get("body")
-        if not isinstance(body, dict):
-            return None
-        elements = body.get("elements")
-        if not isinstance(elements, list):
-            return None
+    async def send(
+        self,
+        to: str,
+        message: dict | AsyncIterator[str],
+        iter_content: AsyncIterator[str] | None,
+        opts: dict | None = None,
+    ) -> SendResult:
+        if iter_content:
+            card_id = await self.channel.create_card_instance(message["card"])
+            send_result = await self.channel.send_card_by_reference(to, card_id, **(opts or {}))
+            if not send_result.success:
+                raise RuntimeError(send_result.error)
 
-        contents = [
-            element["content"]
-            for element in elements
-            if isinstance(element, dict)
-            and element.get("tag") == "markdown"
-            and isinstance(element.get("content"), str)
-            and element["content"]
-        ]
-        return "\n\n".join(contents) or None
+            seq = 0
+            accumulated = ""
+            last_sent = ""
+            loop = asyncio.get_running_loop()
+            next_update_at = loop.time() + FEISHU_STREAM_UPDATE_INTERVAL_SECONDS
+
+            async for token in iter_content:
+                accumulated += token
+                if loop.time() < next_update_at:
+                    continue
+                seq += 1
+                await self.channel.update_card_element_content(
+                    card_id,
+                    "main",
+                    accumulated,
+                    sequence=seq,
+                )
+                last_sent = accumulated
+                next_update_at = loop.time() + FEISHU_STREAM_UPDATE_INTERVAL_SECONDS
+
+            if accumulated != last_sent:
+                await asyncio.sleep(max(0, next_update_at - loop.time()))
+                seq += 1
+                await self.channel.update_card_element_content(
+                    card_id,
+                    "main",
+                    accumulated,
+                    sequence=seq,
+                )
+
+            seq += 1
+            await self.channel.finish_streaming_card(card_id, sequence=seq)
+            return send_result
+        else:
+            return await self.channel.send(to=to, message=message, opts=opts)
 
     async def channel_send(
-        self, to: str, message: dict, opts: dict | None, session_id: str, message_type: ChatEventType
+        self,
+        to: str,
+        message: dict | AsyncIterator[str],
+        opts: dict | None,
+        session_id: str,
+        message_type: ChatEventType,
+        iter_content: AsyncIterator[str] | None,
     ):
         persistence_types = (
+            ChatEventType.THINKING,
             ChatEventType.ASSISTANT,
             ChatEventType.COMMAND,
             ChatEventType.TOKEN_USAGE,
             ChatEventType.QUESTION,
         )
         if message_type in persistence_types:
-            result = await self.channel.send(to=to, message=message, opts=opts)
-
-            # 降级为markdown发送，避免卡片格式被拒绝
-            fallback_content = self._card_markdown_content(message)
-            if (
-                not result.success
-                and result.error is not None
-                and result.error.code == FeishuChannelErrorCode.FORMAT_ERROR
-                and fallback_content is not None
-            ):
-                logger.warning(
-                    "Feishu card format rejected; retrying as markdown raw_code={} hint={}",
-                    result.error.raw_code,
-                    result.error.hint,
-                )
-                result = await self.channel.send(
-                    to=to,
-                    message={"markdown": fallback_content},
-                    opts=opts,
-                )
-
+            result = await self.send(to=to, message=message, iter_content=iter_content, opts=opts)
             self._ensure_send_success(result, operation="send message")
             self.session_update_message_id.pop(session_id, None)
         else:
-            if (_message_id := self.session_update_message_id.get(session_id)) is None:
-                send_result: SendResult = await self.channel.send(to=to, message=message, opts=opts)
+            _message_id = self.session_update_message_id.get(session_id)
+            if _message_id is None:
+                send_result = await self.send(to=to, message=message, iter_content=iter_content, opts=opts)
                 self._ensure_send_success(
                     send_result,
                     operation="send progress card",
@@ -454,6 +471,8 @@ class FeishuBridge:
                 )
                 self.session_update_message_id[session_id] = send_result.message_id
             else:
+                if isinstance(message, AsyncIterator):
+                    raise RuntimeError("Cannot update progress card with streaming message")
                 await asyncio.sleep(0.25)
                 result = await self.channel.update_card(_message_id, message["card"])
                 self._ensure_send_success(result, operation="update progress card")
@@ -498,13 +517,12 @@ class FeishuBridge:
                     result = await self.channel.send(chat_id, {"card": build_feishu_question_card(event.context)})
                     self._ensure_send_success(result, operation="send question card")
                     continue
-
                 # 返回给用户消息
-                card = self._format_chat_event(event)
-                if card:
+                message, iter_content = self._format_chat_event(event)
+                if message:
                     await self.channel_send(
                         to=chat_id,
-                        message=card,
+                        message=message,
                         opts=(
                             {"reply_to": reply_to}
                             if event.event == ChatEventType.ASSISTANT and reply_to is not None
@@ -512,6 +530,7 @@ class FeishuBridge:
                         ),
                         session_id=session_id,
                         message_type=event.event,
+                        iter_content=iter_content,
                     )
         except httpx.HTTPStatusError as exc:
             logger.warning(
@@ -545,18 +564,32 @@ class FeishuBridge:
         except Exception:
             logger.exception("Failed to consume Feishu messages session_id={}", session_id)
 
-    def _format_chat_event(self, event: ChatEvent) -> dict[str, Any] | None:
+    def _format_chat_event_content(self, event: ChatEvent) -> str:
+        content = event.context
+        if event.event == ChatEventType.ASSISTANT:
+            return "输出中..."
+        elif event.event == ChatEventType.COMMAND:
+            return f"**[命令]** {content}"
+        elif event.event == ChatEventType.THINKING:
+            return "思考中..."
+        elif event.event == ChatEventType.TOOL_CALL:
+            return f"**[调用工具]** {self._format_tool_call_event(content)}"
+        elif event.event == ChatEventType.TOOL_CALL_RESULT:
+            return f"**[工具调用结果]** {self._format_json_context(content)}"
+        elif event.event == ChatEventType.TOKEN_USAGE:
+            return f"**[词元]** {self._format_token_usage(content)}"
+        return f"[{event.event}]\n{content}"
+
+    def _format_chat_event(self, event: ChatEvent) -> tuple[bool, dict[str, Any], AsyncIterator[str] | None]:
         if event.event not in OUTPUT_EVENT_TYPES:
             return None
 
         output = OUTPUT_EVENT_TYPES[event.event]
         content = output["content"]
-        if content is None:
-            return None
-
-        text = self._format_chat_event_content(event) if content is ... else content
-        if not text:
-            return None
+        if isinstance(content, str):
+            text = content
+        else:
+            text = self._format_chat_event_content(event)
 
         element = {
             "tag": "markdown",
@@ -568,35 +601,50 @@ class FeishuBridge:
         if output.get("icon") is not None:
             element["icon"] = output["icon"]
 
-        return {
-            "card": {
-                "schema": "2.0",
-                "body": {
-                    "elements": [element],
+        card_element = element
+        if event.event == ChatEventType.THINKING:
+            card_element = {
+                "tag": "collapsible_panel",
+                "expanded": False,
+                "header": {
+                    "title": _plain_text("查看思考过程"),
+                    "expanded_title": _plain_text("收起思考过程"),
                 },
+                "elements": [element],
             }
-        }
 
-    def _format_chat_event_content(self, event: ChatEvent) -> str:
-        if event.event == ChatEventType.ASSISTANT:
-            return event.context
-        elif event.event == ChatEventType.COMMAND:
-            return f"**[命令]** {event.context}"
-        elif event.event == ChatEventType.THINKING:
-            return f"**[思考中]** {event.context}"
-        elif event.event == ChatEventType.TOOL_CALL:
-            return f"**[调用工具]** {self._format_tool_call_event(event)}"
-        elif event.event == ChatEventType.TOOL_CALL_RESULT:
-            return f"**[工具调用结果]** {self._format_json_context(event.context)}"
-        elif event.event == ChatEventType.TOKEN_USAGE:
-            return f"**[词元]** {self._format_token_usage(event.context)}"
-        return f"[{event.event}]\n{event.context}"
+        if content is ...:
+            element["element_id"] = "main"
+            return (
+                {
+                    "card": {
+                        "schema": "2.0",
+                        "config": {"streaming_mode": True, "summary": {"content": ""}},
+                        "body": {
+                            "elements": [card_element],
+                        },
+                    }
+                },
+                event.context,
+            )
+        else:
+            return (
+                {
+                    "card": {
+                        "schema": "2.0",
+                        "body": {
+                            "elements": [card_element],
+                        },
+                    }
+                },
+                None,
+            )
 
-    def _format_tool_call_event(self, event: ChatEvent) -> str:
+    def _format_tool_call_event(self, content: str) -> str:
         try:
-            tool_calls = json.loads(event.context)
+            tool_calls = json.loads(content)
         except json.JSONDecodeError:
-            return event.context
+            return content
 
         if not isinstance(tool_calls, list):
             return self._format_json_value(tool_calls)

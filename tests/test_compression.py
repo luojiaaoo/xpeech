@@ -5,6 +5,13 @@ from xpeech.agent.helper import is_timestamped_user_message, strip_internal_mess
 from xpeech.provider.schema import LLMResponse
 
 
+def make_response(content: str) -> LLMResponse:
+    async def chunks():
+        yield "content", content
+
+    return LLMResponse(iter_mix_chunks=chunks())
+
+
 class TestMessageUtils:
     def test_strip_internal_metadata_does_not_mutate_history(self):
         messages = [
@@ -28,7 +35,7 @@ class TestConversationCompressor:
             return len(messages)
 
         async def summarize(**_kwargs):
-            return LLMResponse(content="summary")
+            return make_response("summary")
 
         compressor = ConversationCompressor(
             chat=summarize,
@@ -51,7 +58,7 @@ class TestConversationCompressor:
         async def summarize(**_kwargs):
             nonlocal summarize_calls
             summarize_calls += 1
-            return LLMResponse(content="summary")
+            return make_response("summary")
 
         compressor = ConversationCompressor(
             chat=summarize,
@@ -96,7 +103,7 @@ class TestConversationCompressor:
         async def summarize(**kwargs):
             nonlocal summarized_messages
             summarized_messages = kwargs["messages"]
-            return LLMResponse(content="history summary")
+            return make_response("history summary")
 
         compressor = ConversationCompressor(
             chat=summarize,

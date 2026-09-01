@@ -89,10 +89,6 @@ class AgentLoop:
             len(response.tool_calls),
         )
 
-        # 输出工具调用内容
-        if response.content and response.content.strip():
-            yield {"event": "assistant", "context": response.content}
-
         # 输出工具调用消息
         yield {
             "event": "tool_call",
@@ -176,9 +172,7 @@ class AgentLoop:
                 append_tool_result_messages_yaml(tool_call, self.SESSION_QUESTION_EVENT[session_id].answer)
             else:
                 append_tool_result_messages_yaml(tool_call, result)
-                tool_call_result.append(
-                    (tool_call.id, tool_call.name, result, duration_seconds)
-                )
+                tool_call_result.append((tool_call.id, tool_call.name, result, duration_seconds))
 
         # 如果包含_meta属性，则把这类消息转成user消息
         if with_metas:
@@ -191,20 +185,6 @@ class AgentLoop:
 
         # 输出工具调用结果消息
         yield {"event": "tool_call_result", "context": json.dumps(tool_call_result)}
-
-        # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
-        if self.max_iterations is not None and loop_count == self.max_iterations - 2:
-            logger.warning(
-                "Approaching max iterations loop_count={} max_iterations={}",
-                loop_count,
-                self.max_iterations,
-            )
-            messages_yaml.append(
-                {
-                    "role": "user",
-                    "content": self.ITERATION_STOP_PROMPT,
-                }
-            )
 
     # ----------------- agent loop run -----------------
 
@@ -249,12 +229,14 @@ class AgentLoop:
             return
 
         final_content = None
-        loop_count = -1
+        final_content_error = False
         for loop_count in count():
+            # 达到最大迭代次数，强制停止循环
             if self.max_iterations is not None and loop_count >= self.max_iterations:
                 final_content = (
                     f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
                 )
+                final_content_error = True
                 logger.warning(
                     "Agent loop reached max iterations loop_count={} max_iterations={}",
                     loop_count,
@@ -281,35 +263,59 @@ class AgentLoop:
                     loop_count,
                 )
                 raise
+
+            async for kind, chunk in response.iter_mix_chunks:
+                if kind == "reasoning_content" and isinstance(chunk, str):
+                    yield {"event": "thinking", "context": chunk}
+                elif kind == "reasoning_content_end":
+                    yield {"event": "thinking_end", "context": ""}
+                elif kind == "content" and isinstance(chunk, str):
+                    yield {"event": "assistant", "context": chunk}
+                elif kind == "content_end":
+                    yield {"event": "assistant_end", "context": ""}
+                elif (kind == "tool_calls" and isinstance(chunk, ToolCallRequest)) or (kind == "tool_calls_end"):
+                    pass  # 工具调用事件在后续处理
+
             logger.info(
                 "Provider chat completed loop_count={} has_tool_calls={}",
                 loop_count,
                 response.has_tool_calls,
             )
 
-            # 输出思考内容
-            if response.reasoning_content and response.reasoning_content.strip():
-                yield {"event": "thinking", "context": response.reasoning_content}
-
             # 如果有工具调用
             if response.has_tool_calls:
                 async for i in self.tool_call(response, messages_yaml, loop_count, message.session_id):
                     yield i
-
             else:
                 # 没有工具，结束循环
                 final_content = response.content
                 break
 
+            # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
+            if self.max_iterations is not None and loop_count == self.max_iterations - 2:
+                logger.warning(
+                    "Approaching max iterations loop_count={} max_iterations={}",
+                    loop_count,
+                    self.max_iterations,
+                )
+                messages_yaml.append(
+                    {
+                        "role": "user",
+                        "content": self.ITERATION_STOP_PROMPT,
+                    }
+                )
+
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
+            final_content_error = True
             logger.warning("Agent loop finished without final content")
+
+        # 发送异常兜底内容
+        if final_content_error:
+            yield {"event": "assistant", "context": final_content}
 
         # 拼接助手消息
         messages_yaml.append({"role": "assistant", "content": final_content})
-
-        # 输出助手消息
-        yield {"event": "assistant", "context": final_content}
 
         # 保存历史记录
         await self.history.save(message.session_id, messages_yaml)
@@ -354,6 +360,10 @@ class AgentLoop:
         """移除内部元数据后调用模型提供方。"""
         response = await self.provider.chat(messages=strip_internal_message_metadata(messages), **kwargs)
         self._model_call_count += 1
+        response.add_completion_callback(self._record_usage)
+        return response
+
+    def _record_usage(self, response: LLMResponse) -> None:
         prompt_tokens = response.usage.get("prompt_tokens")
         completion_tokens = response.usage.get("completion_tokens")
         if prompt_tokens is None:
@@ -362,4 +372,3 @@ class AgentLoop:
             logger.warning("Provider response missing completion_tokens")
         self._input_tokens += prompt_tokens or 0
         self._output_tokens += completion_tokens or 0
-        return response

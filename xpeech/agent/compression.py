@@ -95,14 +95,14 @@ class ConversationCompressor:
             {"role": "user", "content": "Please summarize the history messages."},
         ]
         try:
-            summary = (
-                await self._chat(
-                    messages=messages_for_summary,
-                    max_tokens=self._summary_tokens,
-                    top_p=0.1,
-                    remove_all_tools=True,
-                )
-            ).content
+            response = await self._chat(
+                messages=messages_for_summary,
+                max_tokens=self._summary_tokens,
+                top_p=0.1,
+                remove_all_tools=True,
+            )
+            await response.flush()
+            summary = response.content
         except Exception:
             logger.exception("Failed to summarize history")
             raise

@@ -124,6 +124,7 @@ class MemoryConsolidator:
             tools=[self._store.save_memory],
             remove_default_tools=True,
         )
+        await response.flush()
         if not response.has_tool_calls:
             logger.info("No worth consolidating memory")
             return ConsolidationResult(status="skipped", message="未发现需要记忆的内容")

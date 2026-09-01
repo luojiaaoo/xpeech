@@ -4,11 +4,14 @@ import { Attachments, Bubble, Prompts, Sender, Welcome } from '@ant-design/x';
 import type { AttachmentsProps } from '@ant-design/x';
 import { Avatar, Button, Flex, Tag, Tooltip, Typography, message } from 'antd';
 import {
+  BulbOutlined,
   CloudUploadOutlined,
   CopyOutlined,
   DashboardOutlined,
   DownloadOutlined,
+  LoadingOutlined,
   PaperClipOutlined,
+  RightOutlined,
   RobotOutlined,
   ToolOutlined,
   UserOutlined,
@@ -35,6 +38,7 @@ const roles: ComponentProps<typeof Bubble.List>['role'] = {
     avatar: <Avatar icon={<RobotOutlined />} className="chat-avatar assistant-avatar" />,
     styles: { content: { background: '#fff', borderColor: '#e1e5eb' } },
   },
+  thinking: { placement: 'start', variant: 'borderless', rootClassName: 'chat-thinking' },
   status: { placement: 'start', variant: 'borderless' },
   file: { placement: 'start' },
   question: { placement: 'start' },
@@ -111,20 +115,102 @@ function renderTokenUsage(tokenUsage: string) {
   );
 }
 
+type StreamEventType = 'assistant' | 'thinking';
+
+function renderStreamContent(type: StreamEventType, content: string, streaming: boolean) {
+  const markdown = (
+    <MarkdownContent
+      content={content}
+      streaming={{ hasNextChunk: streaming, enableAnimation: true, tail: true }}
+    />
+  );
+
+  if (type === 'thinking') {
+    return (
+      <details className="thinking-panel">
+        <summary>
+          {streaming ? <LoadingOutlined spin /> : <BulbOutlined />}
+          <span>{streaming ? '正在思考' : '思考过程'}</span>
+          <RightOutlined className="thinking-chevron" />
+        </summary>
+        <div className="thinking-content">{markdown}</div>
+      </details>
+    );
+  }
+  return markdown;
+}
+
+function appendStreamChunk(
+  current: ChatMessage[],
+  type: StreamEventType,
+  chunk: string,
+): ChatMessage[] {
+  const next = [...current];
+  const activeIndex = next.findLastIndex(
+    (item) => item.streamType === type && item.streaming,
+  );
+  if (activeIndex >= 0) {
+    const active = next[activeIndex];
+    const rawText = `${active.rawText || ''}${chunk}`;
+    next[activeIndex] = {
+      ...active,
+      rawText,
+      content: renderStreamContent(type, rawText, true),
+    };
+    return next;
+  }
+
+  const lastUserIndex = next.findLastIndex((item) => item.role === 'user');
+  const previousIndex = next.findLastIndex(
+    (item, index) => index > lastUserIndex && item.streamType === type,
+  );
+  if (previousIndex >= 0) {
+    const [previous] = next.splice(previousIndex, 1);
+    const rawText = `${previous.rawText || ''}${previous.rawText ? '\n\n' : ''}${chunk}`;
+    return [
+      ...next.filter((item) => !item.transient),
+      {
+        ...previous,
+        rawText,
+        content: renderStreamContent(type, rawText, true),
+        streaming: true,
+      },
+    ];
+  }
+
+  const rawText = chunk;
+  return [
+    ...next.filter((item) => !item.transient),
+    {
+      key: `${type}_${Date.now()}_${Math.random()}`,
+      role: type,
+      content: renderStreamContent(type, rawText, true),
+      rawText,
+      streamType: type,
+      streaming: true,
+    },
+  ];
+}
+
+function finishStream(current: ChatMessage[], type: StreamEventType): ChatMessage[] {
+  const next = [...current];
+  const activeIndex = next.findLastIndex(
+    (item) => item.streamType === type && item.streaming,
+  );
+  if (activeIndex < 0) return current;
+
+  const active = next[activeIndex];
+  const rawText = active.rawText || '';
+  next[activeIndex] = {
+    ...active,
+    content: renderStreamContent(type, rawText, false),
+    streaming: false,
+  };
+  return next;
+}
+
 function eventMessage(event: ChatEvent): ChatMessage | null {
   const key = `${event.event}_${Date.now()}_${Math.random()}`;
-  if (event.event === 'assistant') {
-    return {
-      key,
-      role: 'assistant',
-      content: (
-        <MarkdownContent
-          content={event.context}
-        />
-      ),
-      rawText: event.context,
-    };
-  }
   if (event.event === 'question') return { key, role: 'question', content: <QuestionForm context={event.context} /> };
   if (event.event === 'send_file') {
     const name = event.context.split(/[\\/]/).pop() || '文件';
@@ -156,13 +242,18 @@ export default function ChatPage({ systemName }: { systemName: string }) {
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      bubbleListRef.current?.scrollTo({ top: 'bottom', behavior: 'smooth' });
+      bubbleListRef.current?.scrollTo({ top: 'bottom', behavior: loading ? 'auto' : 'smooth' });
     });
     return () => cancelAnimationFrame(frame);
-  }, [messages]);
+  }, [loading, messages]);
 
   function appendEvent(event: ChatEvent) {
     setMessages((current) => {
+      if (event.event === 'assistant' || event.event === 'thinking') {
+        return appendStreamChunk(current, event.event, event.context);
+      }
+      if (event.event === 'assistant_end') return finishStream(current, 'assistant');
+      if (event.event === 'thinking_end') return finishStream(current, 'thinking');
       if (event.event === 'token_usage') {
         const next = [...current.filter((item) => !item.transient)];
         const index = next.findLastIndex((item) => item.role === 'assistant');
@@ -198,7 +289,10 @@ export default function ChatPage({ systemName }: { systemName: string }) {
     } catch (error) {
       message.error(String(error));
     } finally {
-      setMessages((current) => current.filter((item) => !item.transient));
+      setMessages((current) => {
+        const persistent = current.filter((item) => !item.transient);
+        return finishStream(finishStream(persistent, 'thinking'), 'assistant');
+      });
       setLoading(false);
     }
   }
@@ -208,7 +302,7 @@ export default function ChatPage({ systemName }: { systemName: string }) {
     role: item.role,
     content: item.content,
     loading: item.loading,
-    footer: item.role === 'assistant' && item.rawText ? (
+    footer: item.role === 'assistant' && item.rawText && !item.streaming ? (
       <div className="bubble-footer">
         {item.tokenUsage ? renderTokenUsage(item.tokenUsage) : null}
         <Tooltip title="复制">

@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from yarl import URL
 
 from ..utils.jwt_auth import create_access_token
-from .schema import ChatEvent, FileData, Message, TextData
+from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
 @dataclass(frozen=True)
@@ -135,13 +135,36 @@ async def iter_chat_events(
                 await stream.response.aread()
             stream.response.raise_for_status()
             event_source = EventSource(stream.response)
-            async for event in event_source.aiter_sse():
-                try:
-                    yield ChatEvent.model_validate_json(event.data)
-                except ValidationError:
-                    logger.exception("Skipping invalid SSE event payload: {}", event.data[:200])
+            sse_events = event_source.aiter_sse()
+            async for sse_event in sse_events:
+                payload = json.loads(sse_event.data)
+                event_type = payload["event"]
+                if event_type in {ChatEventType.ASSISTANT, ChatEventType.THINKING}:
+                    yield ChatEvent(
+                        event=event_type,
+                        context=_iter_text_chunks(payload["context"], f"{event_type}_end", sse_events),
+                    )
+                else:
+                    yield ChatEvent.model_validate(payload)
         finally:
             await stream.aclose()
+
+
+async def _iter_text_chunks(
+    first_chunk: str,
+    end_event: str,
+    sse_events: AsyncIterator[Any],
+) -> AsyncIterator[str]:
+    """Yield text chunks until the matching stream-end event is received."""
+
+    yield first_chunk
+
+    async for sse_event in sse_events:
+        payload = json.loads(sse_event.data)
+        if payload["event"] == end_event:
+            return
+        event = ChatEvent.model_validate(payload)
+        yield event.context
 
 
 async def submit_question(session_id: str, result: Any, chat_url: str) -> httpx.Response:

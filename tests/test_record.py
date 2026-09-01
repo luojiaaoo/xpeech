@@ -18,7 +18,32 @@ from xpeech.agent.record import (
     create_db_and_tables,
 )
 from xpeech.agent.server.schema import InboundMessage, InputText
-from xpeech.provider.schema import LLMResponse, ToolCallRequest
+from xpeech.provider.schema import LLMResponse, ToolCallChunk, ToolCallRequest
+
+
+def make_response(
+    content: str | None = None,
+    tool_calls: list[ToolCallRequest] | None = None,
+    mapping_tool_call_funcs=None,
+    usage=None,
+) -> LLMResponse:
+    async def chunks():
+        if content is not None:
+            yield "content", content
+        for index, tool_call in enumerate(tool_calls or []):
+            yield "tool_calls", ToolCallChunk(
+                index=index,
+                id=tool_call.id,
+                name=tool_call.name,
+                arguments=json.dumps(tool_call.arguments, ensure_ascii=False),
+            )
+
+    response = LLMResponse(
+        iter_mix_chunks=chunks(),
+        mapping_tool_call_funcs=mapping_tool_call_funcs,
+    )
+    response.usage.update(usage or {})
+    return response
 
 
 class TestSqliteConversationRecordRepository:
@@ -107,7 +132,7 @@ class TestSqliteConversationRecordRepository:
 async def test_chat_warns_when_provider_does_not_return_token_usage(monkeypatch):
     class Provider:
         async def chat(self, **_kwargs):
-            return LLMResponse(
+            return make_response(
                 content="answer",
                 usage={"prompt_tokens": 0, "completion_tokens": None, "total_tokens": None},
             )
@@ -121,7 +146,8 @@ async def test_chat_warns_when_provider_does_not_return_token_usage(monkeypatch)
     agent_loop._input_tokens = 0
     agent_loop._output_tokens = 0
 
-    await agent_loop.chat([{"role": "user", "content": "question"}])
+    response = await agent_loop.chat([{"role": "user", "content": "question"}])
+    await response.flush()
 
     assert warnings == [("Provider response missing completion_tokens", ())]
     assert agent_loop._input_tokens == 0
@@ -136,13 +162,13 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     tool_call = ToolCallRequest(id="call-1", name="fake_tool", arguments={})
     responses = iter(
         [
-            LLMResponse(
+            make_response(
                 content="working",
                 tool_calls=[tool_call],
                 mapping_tool_call_funcs={"fake_tool": fake_tool},
                 usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
             ),
-            LLMResponse(
+            make_response(
                 content="final answer",
                 usage={"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25},
             ),
@@ -194,7 +220,8 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     [[tool_call_id, tool_name, tool_value, duration_seconds]] = json.loads(tool_result_event["context"])
     assert (tool_call_id, tool_name, tool_value) == ("call-1", "fake_tool", "tool result")
     assert duration_seconds >= 0
-    assert events[-2] == {"event": "assistant", "context": "final answer"}
+    assert {"event": "assistant", "context": "final answer"} in events
+    assert {"event": "assistant_end", "context": ""} in events
     assert '"大模型请求次数": "2"' in events[-1]["context"]
     try:
         async with AsyncSession(engine) as session:

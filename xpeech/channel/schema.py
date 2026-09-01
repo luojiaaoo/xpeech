@@ -1,6 +1,8 @@
+from collections.abc import AsyncIterator
 from enum import StrEnum
-from pydantic import BaseModel
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 
 class ChatEventType(StrEnum):
@@ -37,5 +39,7 @@ class Message(BaseModel):
 class ChatEvent(BaseModel):
     """Event payload yielded by AgentLoop SSE responses."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     event: ChatEventType
-    context: str
+    context: str | AsyncIterator[str]

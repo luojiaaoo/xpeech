@@ -136,7 +136,9 @@ export interface StatisticsRecords extends StatisticsLatestRecords {
 
 export type ChatEventType =
   | 'assistant'
+  | 'assistant_end'
   | 'thinking'
+  | 'thinking_end'
   | 'tool_call'
   | 'tool_call_result'
   | 'command'
@@ -151,10 +153,12 @@ export interface ChatEvent {
 
 export interface ChatMessage {
   key: string;
-  role: 'user' | 'assistant' | 'status' | 'file' | 'question';
+  role: 'user' | 'assistant' | 'thinking' | 'status' | 'file' | 'question';
   content: ReactNode;
   rawText?: string;
   loading?: boolean;
+  streamType?: 'assistant' | 'thinking';
+  streaming?: boolean;
   transient?: boolean;
   tokenUsage?: string;
 }

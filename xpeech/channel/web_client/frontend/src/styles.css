@@ -23,7 +23,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .welcome-area { height: 100%; text-align: center; padding: 24px; }
 .welcome-icon { width: 54px; height: 54px; display: grid; place-items: center; font-size: 26px; border-radius: 18px; color: #3370ff; background: #e8f0ff; }
 .bubble-list { height: 100%; padding: 32px clamp(24px, 3vw, 56px) 24px; }
-.bubble-list .ant-bubble { width: 100%; }
+.bubble-list .ant-bubble { width: 100%; padding-block: 10px; }
 .chat-avatar { box-shadow: 0 1px 4px #1f23291a; }
 .user-avatar { color: #fff; background: #1677ff; }
 .assistant-avatar { color: #245bdb; background: #eef3ff; }
@@ -48,6 +48,40 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   box-shadow: 0 2px 10px #1f23290a;
 }
 .markdown-content { width: auto; min-width: 0; max-width: 100%; line-height: 1.75; }
+.chat-thinking { padding-block: 3px !important; }
+.chat-thinking .ant-bubble-body { flex: 0 1 920px; max-width: min(920px, calc(100% - 40px)); }
+.chat-thinking .ant-bubble-content { width: 100%; max-width: 100%; padding: 0; }
+.thinking-panel { width: 100%; color: #646b78; font-size: 13px; }
+.thinking-panel:not([open]) { width: fit-content; }
+.thinking-panel summary {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid #e5e8ef;
+  border-radius: 9px;
+  color: #737a87;
+  background: #f7f8fa;
+  cursor: pointer;
+  list-style: none;
+  line-height: 20px;
+  user-select: none;
+  white-space: nowrap;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.thinking-panel summary::-webkit-details-marker { display: none; }
+.thinking-panel summary:hover { color: #245bdb; border-color: #cbd8f6; background: #f3f6fd; }
+.thinking-chevron { margin-inline-start: 2px; font-size: 10px; transition: transform .2s; }
+.thinking-panel[open] .thinking-chevron { transform: rotate(90deg); }
+.thinking-content {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid #e8eaf0;
+  border-radius: 10px;
+  color: #646b78;
+  background: #f8f9fb;
+}
 .chat-assistant .ant-bubble-footer { width: 100%; }
 .bubble-footer { display: flex; width: 100%; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px; }
 .bubble-copy-button { margin-inline-start: auto; flex: 0 0 auto; }

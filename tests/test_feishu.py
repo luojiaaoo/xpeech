@@ -10,21 +10,19 @@ from lark_channel import (
     CardActionPayload,
     Conversation,
     EventOperator,
-    FeishuChannelErrorCode,
     FileContent,
     Identity,
     ImageContent,
     InboundMessage,
     MediaContent,
     PostContent,
-    SendError,
     SendResult,
     TextContent,
 )
 
 from xpeech.channel import feishu
 from xpeech.channel.feishu import FINISH_CARD_CONTENT, FeishuBridge
-from xpeech.channel.schema import ChatEventType, FileData, Message, TextData
+from xpeech.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
 def _inbound_message(content, *, message_id: str = "om_message") -> InboundMessage:
@@ -285,7 +283,8 @@ async def test_failed_progress_send_does_not_cache_invalid_message_id(result: Se
             message={"card": {}},
             opts=None,
             session_id="feishu_oc_chat",
-            message_type=ChatEventType.THINKING,
+            message_type=ChatEventType.TOOL_CALL,
+            iter_content=None,
         )
 
     assert "feishu_oc_chat" not in bridge.session_update_message_id
@@ -301,61 +300,147 @@ async def test_successful_progress_send_caches_message_id():
         message={"card": {}},
         opts=None,
         session_id="feishu_oc_chat",
-        message_type=ChatEventType.THINKING,
+        message_type=ChatEventType.TOOL_CALL,
+        iter_content=None,
     )
 
     assert bridge.session_update_message_id == {"feishu_oc_chat": "om_progress"}
 
 
-@pytest.mark.asyncio
-async def test_persistent_card_format_error_falls_back_to_markdown():
-    format_error = SendResult(
-        success=False,
-        error=SendError(
-            code=FeishuChannelErrorCode.FORMAT_ERROR,
-            retryable=False,
-            hint="card table number over limit",
-            raw_code=230099,
-        ),
+def test_thinking_card_wraps_content_in_collapsible_panel():
+    async def chunks():
+        yield "thinking"
+
+    content = chunks()
+    bridge = object.__new__(FeishuBridge)
+
+    message, iter_content = bridge._format_chat_event(
+        ChatEvent(event=ChatEventType.THINKING, context=content)
     )
-    send = AsyncMock(
-        side_effect=[
-            format_error,
-            SendResult(success=True, message_id="om_fallback"),
-        ]
-    )
-    bridge = _bridge_with_channel(SimpleNamespace(send=send))
-    bridge.session_update_message_id["feishu_oc_chat"] = "om_progress"
-    message = {
-        "card": {
-            "body": {
-                "elements": [
-                    {"tag": "markdown", "content": "| A | B |\n|---|---|\n| 1 | 2 |"},
-                ]
+
+    assert iter_content is content
+    panel = message["card"]["body"]["elements"][0]
+    assert panel == {
+        "tag": "collapsible_panel",
+        "expanded": False,
+        "header": {
+            "title": {"tag": "plain_text", "content": "查看思考过程"},
+            "expanded_title": {"tag": "plain_text", "content": "收起思考过程"},
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "margin": "0px 0px 0px 0px",
+                "content": "思考中...",
+                "text_size": "notation",
+                "text_align": "left",
+                "icon": {"tag": "standard_icon", "token": "tab-more_outlined", "color": "green"},
+                "element_id": "main",
             }
-        }
+        ],
     }
 
+
+@pytest.mark.asyncio
+async def test_streaming_thinking_uses_custom_card(monkeypatch: pytest.MonkeyPatch):
+    async def chunks():
+        yield "thinking"
+
+    monkeypatch.setattr(feishu, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    card = {"schema": "2.0", "body": {"elements": [{"tag": "markdown", "element_id": "main"}]}}
+    create_card_instance = AsyncMock(return_value="card_thinking")
+    send_card_by_reference = AsyncMock(return_value=SendResult(success=True, message_id="om_stream"))
+    update_card_element_content = AsyncMock()
+    finish_streaming_card = AsyncMock()
+    update_card = AsyncMock()
+    bridge = _bridge_with_channel(
+        SimpleNamespace(
+            create_card_instance=create_card_instance,
+            send_card_by_reference=send_card_by_reference,
+            update_card_element_content=update_card_element_content,
+            finish_streaming_card=finish_streaming_card,
+            update_card=update_card,
+        )
+    )
     await bridge.channel_send(
         to="oc_chat",
-        message=message,
-        opts={"reply_to": "om_original"},
+        message={"card": card},
+        opts=None,
         session_id="feishu_oc_chat",
-        message_type=ChatEventType.ASSISTANT,
+        message_type=ChatEventType.THINKING,
+        iter_content=chunks(),
     )
 
-    assert send.await_count == 2
-    assert send.await_args_list[0].kwargs == {
-        "to": "oc_chat",
-        "message": message,
-        "opts": {"reply_to": "om_original"},
-    }
-    assert send.await_args_list[1].kwargs == {
-        "to": "oc_chat",
-        "message": {"markdown": "| A | B |\n|---|---|\n| 1 | 2 |"},
-        "opts": {"reply_to": "om_original"},
-    }
+    create_card_instance.assert_awaited_once_with(card)
+    send_card_by_reference.assert_awaited_once_with("oc_chat", "card_thinking")
+    update_card_element_content.assert_awaited_once_with(
+        "card_thinking",
+        "main",
+        "thinking",
+        sequence=1,
+    )
+    finish_streaming_card.assert_awaited_once_with("card_thinking", sequence=2)
+    update_card.assert_not_awaited()
     assert "feishu_oc_chat" not in bridge.session_update_message_id
+
+
+@pytest.mark.asyncio
+async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.MonkeyPatch):
+    async def chunks():
+        for chunk in ["hello", " ", "world"]:
+            yield chunk
+
+    async def streaming_chat_events(*_args):
+        yield ChatEvent(event=ChatEventType.ASSISTANT, context=chunks())
+
+    monkeypatch.setattr(feishu, "iter_chat_events", streaming_chat_events)
+    monkeypatch.setattr(feishu, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    create_card_instance = AsyncMock(return_value="card_assistant")
+    send_card_by_reference = AsyncMock(return_value=SendResult(success=True, message_id="om_stream"))
+    update_card_element_content = AsyncMock()
+    finish_streaming_card = AsyncMock()
+    channel = SimpleNamespace(
+        add_reaction=AsyncMock(),
+        create_card_instance=create_card_instance,
+        send_card_by_reference=send_card_by_reference,
+        update_card_element_content=update_card_element_content,
+        finish_streaming_card=finish_streaming_card,
+    )
+    bridge = _bridge_with_channel(channel)
+    bridge.receive_queues = {"E1001": asyncio.Queue()}
+    bridge.receive_queues["E1001"].put_nowait(
+        Message(
+            message_id="om_message",
+            chat_id="oc_chat",
+            session_id="E1001",
+            sender_name="Alice",
+            content=[TextData(text="hello")],
+            timestamp=0,
+            session_metadata={},
+        )
+    )
+    bridge.session_update_message_id["E1001"] = "om_progress"
+
+    await bridge.consume("E1001", idle_timeout=0)
+
+    created_card = create_card_instance.await_args.args[0]
+    assert created_card["body"]["elements"][0]["icon"] == {
+        "tag": "standard_icon",
+        "token": "robot_filled",
+        "color": "red",
+    }
+    send_card_by_reference.assert_awaited_once_with(
+        "oc_chat",
+        "card_assistant",
+        reply_to="om_message",
+    )
+    assert [await_call.args[2] for await_call in update_card_element_content.await_args_list] == [
+        "hello",
+        "hello ",
+        "hello world",
+    ]
+    finish_streaming_card.assert_awaited_once_with("card_assistant", sequence=4)
+    assert "E1001" not in bridge.session_update_message_id
 
 
 @pytest.mark.asyncio
@@ -398,5 +483,6 @@ async def test_consume_returns_backend_http_error_to_user(
     await bridge.consume("E1001", idle_timeout=0)
 
     send.assert_awaited_once()
-    sent_card = send.await_args.args[1]
-    assert sent_card["card"]["body"]["elements"][0]["content"] == f"{status_code}: {detail}"
+    sent_card, streamed_content = send.await_args.args[1]
+    assert sent_card["card"]["body"]["elements"][0]["content"] == "输出中..."
+    assert streamed_content == f"{status_code}: {detail}"
