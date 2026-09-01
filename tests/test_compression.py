@@ -49,52 +49,10 @@ class TestConversationCompressor:
         assert await compressor.should_compress([{}, {}, {}])
 
     @pytest.mark.asyncio
-    async def test_level_one_truncates_only_old_tool_results(self):
-        summarize_calls = 0
-
+    async def test_level_two_summarizes_old_messages_and_keeps_recent_turn(self):
         async def count_tokens(*, messages):
-            return sum(len(message.get("content", "")) for message in messages if message.get("role") == "tool")
-
-        async def summarize(**_kwargs):
-            nonlocal summarize_calls
-            summarize_calls += 1
-            return make_response("summary")
-
-        compressor = ConversationCompressor(
-            chat=summarize,
-            summary_tokens=100,
-            max_accept_tokens=10_000,
-            target_tokens=3_000,
-            token_counter=count_tokens,
-            tool_result_max_chars=1_000,
-        )
-        old_result = "a" * 1_500
-        recent_result = "b" * 1_500
-        messages = [
-            {"role": "system", "content": "system"},
-            {"role": "user", "timestamp": 1.0, "content": "one"},
-            {"role": "tool", "content": old_result},
-            {"role": "user", "timestamp": 2.0, "content": "two"},
-            {"role": "assistant", "content": "ok"},
-            {"role": "user", "timestamp": 3.0, "content": "three"},
-            {"role": "assistant", "content": "ok"},
-            {"role": "user", "timestamp": 4.0, "content": "four"},
-            {"role": "assistant", "content": "ok"},
-            {"role": "user", "timestamp": 5.0, "content": "five"},
-            {"role": "tool", "content": recent_result},
-        ]
-
-        compressed = await compressor.compress(messages)
-
-        assert compressed[2]["content"] == old_result[:1_000]
-        assert compressed[-1]["content"] == recent_result
-        assert messages[2]["content"] == old_result
-        assert summarize_calls == 0
-
-    @pytest.mark.asyncio
-    async def test_level_three_summarizes_old_messages_and_keeps_recent_turn(self):
-        async def count_tokens(*, messages):
-            if len(messages) == 1 and messages[0].get("role") == "user":
+            user_messages = [message for message in messages if is_timestamped_user_message(message)]
+            if len(user_messages) == 4 and messages[0].get("role") != "system":
                 return 0
             return 10_000
 
@@ -113,12 +71,16 @@ class TestConversationCompressor:
             max_accept_tokens=5_000,
             target_tokens=1_000,
             token_counter=count_tokens,
+            recent_turns_to_keep=4,
         )
         messages = [
             {"role": "system", "content": "system"},
             {"role": "user", "timestamp": 1.0, "content": "old"},
             {"role": "assistant", "content": "old answer"},
-            {"role": "user", "timestamp": 10 * 24 * 60 * 60, "content": "recent"},
+            {"role": "user", "timestamp": 2.0, "content": "two"},
+            {"role": "user", "timestamp": 3.0, "content": "three"},
+            {"role": "user", "timestamp": 4.0, "content": "four"},
+            {"role": "user", "timestamp": 5.0, "content": "recent"},
         ]
 
         compressed = await compressor.compress(messages)
@@ -129,3 +91,37 @@ class TestConversationCompressor:
         assert summarized_messages is not None
         assert summarized_messages[-1]["content"] == "Please summarize the history messages."
         assert summary_max_tokens == 100
+
+    @pytest.mark.asyncio
+    async def test_level_three_drops_oldest_messages_without_considering_roles(self):
+        summarize_calls = 0
+
+        async def count_tokens(*, messages):
+            return sum(len(message.get("content", "")) for message in messages if message.get("role") != "system")
+
+        async def summarize(**_kwargs):
+            nonlocal summarize_calls
+            summarize_calls += 1
+            return make_response("summary")
+
+        compressor = ConversationCompressor(
+            chat=summarize,
+            summary_tokens=100,
+            max_accept_tokens=10,
+            target_tokens=5,
+            token_counter=count_tokens,
+        )
+        messages = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "timestamp": 1.0, "content": "12345678"},
+            {"role": "assistant", "content": "abcdefgh"},
+            {"role": "tool", "content": "ijkl"},
+        ]
+
+        compressed = await compressor.compress(messages)
+
+        assert compressed == [
+            {"role": "system", "content": "system"},
+            {"role": "tool", "content": "ijkl"},
+        ]
+        assert summarize_calls == 0
