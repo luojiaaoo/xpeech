@@ -51,10 +51,7 @@ class TestConversationCompressor:
     @pytest.mark.asyncio
     async def test_level_two_summarizes_old_messages_and_keeps_recent_turn(self):
         async def count_tokens(*, messages):
-            user_messages = [message for message in messages if is_timestamped_user_message(message)]
-            if len(user_messages) == 4 and messages[0].get("role") != "system":
-                return 0
-            return 10_000
+            return sum(len(message.get("content", "")) for message in messages)
 
         summarized_messages = None
         summary_max_tokens = None
@@ -63,37 +60,72 @@ class TestConversationCompressor:
             nonlocal summarized_messages, summary_max_tokens
             summarized_messages = kwargs["messages"]
             summary_max_tokens = kwargs["parameters"].max_tokens
-            return make_response("history summary")
+            return make_response("x")
 
         compressor = ConversationCompressor(
             chat=summarize,
             summary_tokens=100,
             max_accept_tokens=5_000,
-            target_tokens=1_000,
+            target_tokens=12,
             token_counter=count_tokens,
-            recent_turns_to_keep=4,
         )
         messages = [
-            {"role": "system", "content": "system"},
-            {"role": "user", "timestamp": 1.0, "content": "old"},
-            {"role": "assistant", "content": "old answer"},
-            {"role": "user", "timestamp": 2.0, "content": "two"},
-            {"role": "user", "timestamp": 3.0, "content": "three"},
-            {"role": "user", "timestamp": 4.0, "content": "four"},
-            {"role": "user", "timestamp": 5.0, "content": "recent"},
+            {"role": "system", "content": "s"},
+            {"role": "user", "timestamp": 1.0, "content": "old1"},
+            {"role": "assistant", "content": "old2"},
+            {"role": "user", "timestamp": 2.0, "content": "new1"},
+            {"role": "assistant", "content": "new2"},
         ]
 
         compressed = await compressor.compress(messages)
 
-        assert compressed[0] == {"role": "system", "content": "system"}
-        assert compressed[1] == {"role": "assistant", "content": "history summary"}
+        assert compressed[0] == {"role": "system", "content": "s"}
+        assert compressed[1] == {"role": "assistant", "content": "x"}
         assert compressed[-1] == messages[-1]
+        assert await compressor._is_within_target(compressed)
         assert summarized_messages is not None
         assert summarized_messages[-1]["content"] == "Please summarize the history messages."
         assert summary_max_tokens == 100
 
     @pytest.mark.asyncio
-    async def test_level_three_drops_oldest_messages_without_considering_roles(self):
+    async def test_level_one_keeps_the_latest_days_without_summarizing(self):
+        async def count_tokens(*, messages):
+            return sum(len(message.get("content", "")) for message in messages)
+
+        summarize_calls = 0
+
+        async def summarize(**_kwargs):
+            nonlocal summarize_calls
+            summarize_calls += 1
+            return make_response("summary")
+
+        compressor = ConversationCompressor(
+            chat=summarize,
+            summary_tokens=100,
+            max_accept_tokens=10,
+            target_tokens=6,
+            token_counter=count_tokens,
+        )
+        now = 1_000_000.0
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "timestamp": now - 8 * 24 * 60 * 60, "content": "old"},
+            {"role": "assistant", "content": "old"},
+            {"role": "user", "timestamp": now, "content": "new"},
+            {"role": "assistant", "content": "a"},
+        ]
+
+        compressed = await compressor.compress(messages)
+
+        assert compressed == [
+            {"role": "system", "content": "s"},
+            {"role": "user", "timestamp": now, "content": "new"},
+            {"role": "assistant", "content": "a"},
+        ]
+        assert summarize_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_summary_that_exceeds_target_falls_back_to_complete_recent_suffix(self):
         summarize_calls = 0
 
         async def count_tokens(*, messages):
@@ -108,20 +140,83 @@ class TestConversationCompressor:
             chat=summarize,
             summary_tokens=100,
             max_accept_tokens=10,
-            target_tokens=5,
+            target_tokens=10,
             token_counter=count_tokens,
         )
         messages = [
-            {"role": "system", "content": "system"},
-            {"role": "user", "timestamp": 1.0, "content": "12345678"},
-            {"role": "assistant", "content": "abcdefgh"},
-            {"role": "tool", "content": "ijkl"},
+            {"role": "system", "content": "s"},
+            {"role": "user", "timestamp": 1.0, "content": "old1"},
+            {"role": "assistant", "content": "old2"},
+            {"role": "user", "timestamp": 2.0, "content": "new1"},
+            {"role": "assistant", "content": "new2"},
         ]
 
         compressed = await compressor.compress(messages)
 
         assert compressed == [
-            {"role": "system", "content": "system"},
-            {"role": "tool", "content": "ijkl"},
+            {"role": "system", "content": "s"},
+            {"role": "user", "timestamp": 2.0, "content": "new1"},
+            {"role": "assistant", "content": "new2"},
         ]
-        assert summarize_calls == 0
+        assert summarize_calls == 1
+        assert await compressor._is_within_target(compressed)
+
+    @pytest.mark.asyncio
+    async def test_compression_never_keeps_an_orphan_tool_message(self):
+        async def count_tokens(*, messages):
+            return sum(len(message.get("content", "")) for message in messages)
+
+        async def summarize(**_kwargs):
+            return make_response("summary")
+
+        compressor = ConversationCompressor(
+            chat=summarize,
+            summary_tokens=100,
+            max_accept_tokens=10,
+            target_tokens=7,
+            token_counter=count_tokens,
+        )
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "timestamp": 1.0, "content": "old"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "call-1"}]},
+            {"role": "tool", "tool_call_id": "call-1", "content": "tool"},
+            {"role": "user", "timestamp": 2.0, "content": "new"},
+            {"role": "assistant", "content": "ok"},
+        ]
+
+        compressed = await compressor.compress(messages)
+
+        assert compressed == [
+            {"role": "system", "content": "s"},
+            {"role": "user", "timestamp": 2.0, "content": "new"},
+            {"role": "assistant", "content": "ok"},
+        ]
+        assert await compressor._is_within_target(compressed)
+
+    @pytest.mark.asyncio
+    async def test_fallback_summarizes_an_oversized_latest_turn(self):
+        async def count_tokens(*, messages):
+            return sum(len(message.get("content", "")) for message in messages)
+
+        async def summarize(**_kwargs):
+            return make_response("summary")
+
+        compressor = ConversationCompressor(
+            chat=summarize,
+            summary_tokens=100,
+            max_accept_tokens=10,
+            target_tokens=10,
+            token_counter=count_tokens,
+        )
+
+        compressed = await compressor.compress(
+            [
+                {"role": "system", "content": "s"},
+                {"role": "user", "timestamp": 1.0, "content": "too-large"},
+            ]
+        )
+
+        assert compressed[0] == {"role": "system", "content": "s"}
+        assert compressed[1] == {"role": "assistant", "content": "summary"}
+        assert await compressor._is_within_target(compressed)
