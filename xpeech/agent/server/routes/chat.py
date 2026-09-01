@@ -6,7 +6,6 @@ from fastapi.sse import EventSourceResponse
 
 from ....config.settings import settings
 from ....provider.litellm_provider import LiteLLMProvider
-from ....provider.schema import ProviderChatKwargs
 from ....utils.helper import ensure_path_async, save_to_workspace
 from ....utils.session import create_workspace_templates
 from ...loop import AgentLoop, QuestionEvent
@@ -65,9 +64,7 @@ async def chat(
         api_key=settings.llm.api_key,
         api_base=settings.llm.api_base,
         default_model=settings.llm.default_model,
-        default_context_token=settings.llm.default_context_token,
-        default_top_p=settings.llm.default_top_p,
-        default_reasoning_effort=settings.llm.default_reasoning_effort,
+        parameters=settings.llm.parameters,
         support_image=settings.llm.support_image,
         support_video=settings.llm.support_video,
         support_json_output=settings.llm.support_json_output,
@@ -77,8 +74,8 @@ async def chat(
         provider=provider,
         workspace=workspace,
         tools=settings.llm.default_tools,
+        summary_tokens=settings.llm.summary_tokens,
         max_iterations=settings.llm.max_iterations,
-        provider_chat_kwargs=ProviderChatKwargs(reasoning_effort=None),
     )
     await register_default_tools(
         provider=provider,

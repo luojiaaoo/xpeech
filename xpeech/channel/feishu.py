@@ -367,9 +367,16 @@ class FeishuBridge:
 
     async def _on_message(self, inbound_message: InboundMessage) -> None:
         msg = await self._parse_msg(inbound_message)
-        if msg.session_id not in self.receive_queues:
-            self.receive_queues[msg.session_id] = asyncio.Queue()
-        self.receive_queues[msg.session_id].put_nowait(msg)
+        queue = self.receive_queues.setdefault(msg.session_id, asyncio.Queue())
+        queue.put_nowait(msg)
+        logger.info(
+            "Feishu message added session_id={} chat_id={} message_id={} sender_name={} queue_size={}",
+            msg.session_id,
+            msg.chat_id,
+            msg.message_id,
+            msg.sender_name,
+            queue.qsize(),
+        )
 
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
         session_id, _ = await self.get_user_identity(card_action_event.operator.open_id)
@@ -446,6 +453,7 @@ class FeishuBridge:
         message: dict | AsyncIterator[str],
         opts: dict | None,
         session_id: str,
+        sender_name: str,
         message_type: ChatEventType,
         iter_content: AsyncIterator[str] | None,
     ):
@@ -455,6 +463,12 @@ class FeishuBridge:
             ChatEventType.COMMAND,
             ChatEventType.TOKEN_USAGE,
             ChatEventType.QUESTION,
+        )
+        logger.info(
+            "Feishu message sending session_id={} sender_name={} message_type={}",
+            session_id,
+            sender_name,
+            message_type,
         )
         if message_type in persistence_types:
             result = await self.send(to=to, message=message, iter_content=iter_content, opts=opts)
@@ -495,6 +509,7 @@ class FeishuBridge:
         messages = [queue.get_nowait() for _ in range(qsize)]
         chat_id = messages[-1].chat_id
         reply_to = messages[-1].message_id
+        sender_name = messages[-1].sender_name
         # 添加已读反应
         for i in messages:
             try:
@@ -529,6 +544,7 @@ class FeishuBridge:
                             else None
                         ),
                         session_id=session_id,
+                        sender_name=sender_name,
                         message_type=event.event,
                         iter_content=iter_content,
                     )

@@ -11,7 +11,7 @@ from loguru import logger
 from ..agent.server.schema import InputText
 from ..config.settings import settings
 from ..provider.litellm_provider import LiteLLMProvider
-from ..provider.schema import LLMResponse, ProviderChatKwargs, ToolCallRequest
+from ..provider.schema import LLMResponse, ToolCallRequest
 from ..utils.helper import token_counter
 from .compression import ConversationCompressor
 from .helper import strip_internal_message_metadata
@@ -47,16 +47,14 @@ class AgentLoop:
         provider: LiteLLMProvider,
         workspace: Path,
         tools: list[str],
-        summary_tokens: int = 8192,
-        max_iterations: int = 40,
-        provider_chat_kwargs: ProviderChatKwargs | None = None,
+        summary_tokens: int,
+        max_iterations: int,
     ):
         """初始化模型提供方、会话组件和循环配置。"""
         self.provider = provider
         self.workspace = workspace
         self.tools = tools
         self.summary_tokens = summary_tokens
-        self.provider_chat_kwargs = {} if provider_chat_kwargs is None else provider_chat_kwargs.to_dict()
         self.max_iterations = max_iterations
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
         self.history = YamlHistoryRepository(settings.path.session_history_path)
@@ -255,7 +253,6 @@ class AgentLoop:
                 response = await self.chat(
                     messages=messages_yaml,
                     tools=self.tools,
-                    **self.provider_chat_kwargs,
                 )
             except Exception:
                 logger.exception(

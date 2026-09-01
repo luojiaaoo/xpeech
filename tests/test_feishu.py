@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -163,6 +163,68 @@ async def test_parse_text_message_allows_missing_email():
     assert message.session_metadata == {}
 
 
+@pytest.mark.asyncio
+async def test_on_message_logs_when_message_is_added(monkeypatch: pytest.MonkeyPatch):
+    message = Message(
+        message_id="om_message",
+        chat_id="oc_chat",
+        session_id="E1001",
+        sender_name="Alice",
+        content=[TextData(text="hello")],
+        timestamp=123,
+        session_metadata={},
+    )
+    bridge = object.__new__(FeishuBridge)
+    bridge.receive_queues = {}
+    bridge._parse_msg = AsyncMock(return_value=message)
+    info = MagicMock()
+    monkeypatch.setattr(feishu, "logger", SimpleNamespace(info=info))
+
+    await bridge._on_message(_inbound_message(TextContent(text="hello")))
+
+    assert bridge.receive_queues["E1001"].get_nowait() == message
+    info.assert_called_once_with(
+        "Feishu message added session_id={} chat_id={} message_id={} sender_name={} queue_size={}",
+        "E1001",
+        "oc_chat",
+        "om_message",
+        "Alice",
+        1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_channel_send_logs_message_type(monkeypatch: pytest.MonkeyPatch):
+    send_result = SendResult(success=True, message_id="om_sent")
+    bridge = _bridge_with_channel(SimpleNamespace())
+    bridge.send = AsyncMock(return_value=send_result)
+    info = MagicMock()
+    monkeypatch.setattr(feishu, "logger", SimpleNamespace(info=info))
+
+    await bridge.channel_send(
+        to="oc_chat",
+        message={"text": "hello"},
+        opts={"reply_to": "om_parent"},
+        session_id="E1001",
+        sender_name="Alice",
+        message_type=ChatEventType.ASSISTANT,
+        iter_content=None,
+    )
+
+    bridge.send.assert_awaited_once_with(
+        to="oc_chat",
+        message={"text": "hello"},
+        iter_content=None,
+        opts={"reply_to": "om_parent"},
+    )
+    info.assert_called_once_with(
+        "Feishu message sending session_id={} sender_name={} message_type={}",
+        "E1001",
+        "Alice",
+        ChatEventType.ASSISTANT,
+    )
+
+
 @pytest.mark.parametrize(
     ("content", "resource_type", "file_name", "downloaded_name"),
     [
@@ -283,6 +345,7 @@ async def test_failed_progress_send_does_not_cache_invalid_message_id(result: Se
             message={"card": {}},
             opts=None,
             session_id="feishu_oc_chat",
+            sender_name="Alice",
             message_type=ChatEventType.TOOL_CALL,
             iter_content=None,
         )
@@ -300,6 +363,7 @@ async def test_successful_progress_send_caches_message_id():
         message={"card": {}},
         opts=None,
         session_id="feishu_oc_chat",
+        sender_name="Alice",
         message_type=ChatEventType.TOOL_CALL,
         iter_content=None,
     )
@@ -367,6 +431,7 @@ async def test_streaming_thinking_uses_custom_card(monkeypatch: pytest.MonkeyPat
         message={"card": card},
         opts=None,
         session_id="feishu_oc_chat",
+        sender_name="Alice",
         message_type=ChatEventType.THINKING,
         iter_content=chunks(),
     )

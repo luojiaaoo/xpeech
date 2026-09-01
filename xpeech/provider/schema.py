@@ -4,10 +4,32 @@ from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 import json
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "default"]
+
+
+class LLMParameters(BaseModel):
+    """Default generation and context parameters for the LLM."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_tokens: int = Field(default=32768, gt=0)
+    max_context_tokens: int = Field(default=200000, gt=0)
+    temperature: float | None = Field(default=None, ge=0.0)
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    top_k: int | None = Field(default=None, ge=0)
+    min_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    presence_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
+    repetition_penalty: float | None = Field(default=None, gt=0.0)
+    reasoning_effort: ReasoningEffort | None = None
+
+    def copy_with(self, overrides: "LLMParameters") -> "LLMParameters":
+        """Return a copy with only explicitly set override fields applied."""
+
+        updates = overrides.model_dump(include=overrides.model_fields_set)
+        return self.model_copy(update=updates)
 
 
 class Usage(TypedDict):
@@ -174,16 +196,3 @@ class LLMResponse:
             pass
         await self._stream_done.wait()
         return self
-
-
-class ProviderChatKwargs(BaseModel):
-    """Keyword arguments for provider chat method."""
-
-    model: str | None = None
-    max_tokens: int | None = None
-    top_p: float | None = None
-    reasoning_effort: ReasoningEffort | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary with None values removed."""
-        return {k: v for k, v in self.model_dump().items() if v is not None}

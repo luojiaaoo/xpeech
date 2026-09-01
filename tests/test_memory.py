@@ -63,7 +63,11 @@ class TestMemoryConsolidator:
         def save_memory(_args: type[BaseModel] | None) -> str:
             return "saved"
 
-        async def chat(**_kwargs):
+        chat_kwargs = None
+
+        async def chat(**kwargs):
+            nonlocal chat_kwargs
+            chat_kwargs = kwargs
             return make_response(
                 tool_calls=[tool_call],
                 mapping_tool_call_funcs={"save_memory": save_memory},
@@ -92,6 +96,8 @@ class TestMemoryConsolidator:
         result = await consolidator.consolidate([{"role": "user", "content": "remember this"}])
 
         assert result == ConsolidationResult(status="saved", message="已记忆本次会话关键内容")
+        assert chat_kwargs is not None
+        assert chat_kwargs["parameters"].max_tokens == 100
 
     @pytest.mark.asyncio
     async def test_response_without_tool_call_is_skipped(self, tmp_path: Path):

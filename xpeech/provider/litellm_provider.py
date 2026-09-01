@@ -5,7 +5,7 @@ import litellm
 from typing import Any, Literal
 import functools
 from pydantic import BaseModel
-from .schema import LLMResponse, ReasoningEffort, StreamChunk, ToolCallChunk
+from .schema import LLMParameters, LLMResponse, StreamChunk, ToolCallChunk
 from .helper import LiteLLMRetryClient
 from ..agent.tools.helper import as_tool
 from ..agent.tools.mcp_client import MCPServerRegistration, collect_mcp_tool
@@ -24,10 +24,7 @@ class LiteLLMProvider:
         api_key: str,
         api_base: str,
         default_model: str,
-        default_max_tokens: int = 32768,
-        default_context_token: int = 200000,
-        default_top_p: float = 0.5,
-        default_reasoning_effort: ReasoningEffort | None = None,
+        parameters: LLMParameters,
         support_image: bool = False,
         support_video: bool = False,
         support_json_output: bool = False,
@@ -36,10 +33,7 @@ class LiteLLMProvider:
         self.api_key = api_key
         self.api_base = api_base
         self.default_model = default_model
-        self.default_max_tokens = default_max_tokens
-        self._default_context_token = default_context_token
-        self.default_top_p = default_top_p
-        self.default_reasoning_effort = default_reasoning_effort
+        self.parameters = parameters
         self.default_tool_jsons: list[dict[str, Any]] = []
         self.default_mapping_tool_call_funcs: dict[str, Callable[[type[BaseModel] | None], str | list]] = {}
         self._support_image = support_image
@@ -52,7 +46,7 @@ class LiteLLMProvider:
     def default_context_token(self) -> int:
         """默认的上下文令牌数。"""
 
-        return self._default_context_token
+        return self.parameters.max_context_tokens
 
     @property
     def support_image(self) -> bool:
@@ -130,19 +124,12 @@ class LiteLLMProvider:
         self,
         messages: list[dict[str, Any]],
         tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
-        model: str | None = None,
-        max_tokens: int | None = None,
-        top_p: float | None = None,
-        reasoning_effort: ReasoningEffort | None = None,
+        parameters: LLMParameters | None = None,
         remove_all_tools: bool = False,
         remove_default_tools: bool = False,
         json_output: bool = False,
     ) -> LLMResponse:
-        # 使用提供的参数或默认参数
-        model = model or self.default_model
-        max_tokens = max_tokens or self.default_max_tokens
-        top_p = top_p or self.default_top_p
-        reasoning_effort = reasoning_effort or self.default_reasoning_effort
+        parameters = self.parameters if parameters is None else self.parameters.copy_with(parameters)
         if json_output:
             if self.support_json_output:
                 json_output = True
@@ -168,19 +155,33 @@ class LiteLLMProvider:
                 tool_jsons = self.default_tool_jsons + parsed_tool_jsons
                 mapping_tool_call_funcs = self.default_mapping_tool_call_funcs | parsed_mapping_tool_call_funcs
 
+        # 参数构建
+        extra_body = {
+            key: value
+            for key, value in {
+                "top_k": parameters.top_k,
+                "min_p": parameters.min_p,
+                "repetition_penalty": parameters.repetition_penalty,
+            }.items()
+            if value is not None
+        }
         completion_kwargs = {
-            "model": model,
+            "model": self.default_model,
             "api_base": self.api_base,
             "api_key": self.api_key,
             "messages": messages,
-            "max_tokens": max_tokens,
-            "top_p": top_p,
+            "max_tokens": parameters.max_tokens,
+            "temperature": parameters.temperature,
+            "top_p": parameters.top_p,
+            "presence_penalty": parameters.presence_penalty,
+            "extra_body": extra_body or None,
             "response_format": {"type": "json_object"} if json_output else None,
             "extra_headers": self.extra_headers,
-            "reasoning_effort": reasoning_effort,
+            "reasoning_effort": parameters.reasoning_effort,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        completion_kwargs = {key: value for key, value in completion_kwargs.items() if value is not None}
 
         # 注入工具
         if tool_jsons:

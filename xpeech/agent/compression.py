@@ -4,7 +4,7 @@ from typing import Any
 
 from loguru import logger
 
-from ..provider.schema import LLMResponse
+from ..provider.schema import LLMParameters, LLMResponse
 from ..utils.helper import token_counter
 from .helper import is_timestamped_user_message
 from .prompt.compress import SUMMARY_PROMPT
@@ -97,8 +97,7 @@ class ConversationCompressor:
         try:
             response = await self._chat(
                 messages=messages_for_summary,
-                max_tokens=self._summary_tokens,
-                top_p=0.1,
+                parameters=LLMParameters(max_tokens=self._summary_tokens),
                 remove_all_tools=True,
             )
             await response.flush()

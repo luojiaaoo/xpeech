@@ -99,10 +99,12 @@ class TestConversationCompressor:
             return 10_000
 
         summarized_messages = None
+        summary_max_tokens = None
 
         async def summarize(**kwargs):
-            nonlocal summarized_messages
+            nonlocal summarized_messages, summary_max_tokens
             summarized_messages = kwargs["messages"]
+            summary_max_tokens = kwargs["parameters"].max_tokens
             return make_response("history summary")
 
         compressor = ConversationCompressor(
@@ -126,3 +128,4 @@ class TestConversationCompressor:
         assert compressed[-1] == messages[-1]
         assert summarized_messages is not None
         assert summarized_messages[-1]["content"] == "Please summarize the history messages."
+        assert summary_max_tokens == 100

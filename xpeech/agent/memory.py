@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from ..provider.schema import LLMResponse, ToolCallRequest
+from ..provider.schema import LLMParameters, LLMResponse, ToolCallRequest
 from ..utils.helper import append_text_async, ensure_path, read_text_async, write_text_async
 from .prompt.helper import remove_system_messages
 from .tool_executor import ToolExecutionResult
@@ -119,8 +119,7 @@ class MemoryConsolidator:
         logger.info("Consolidating memory")
         response = await self._chat(
             messages=messages_for_consolidation,
-            max_tokens=self._summary_tokens,
-            top_p=0.7,
+            parameters=LLMParameters(max_tokens=self._summary_tokens),
             tools=[self._store.save_memory],
             remove_default_tools=True,
         )

@@ -46,19 +46,28 @@ token_auth_method = "client_secret_post"
 api_key = "xxxxxxxx"
 api_base = "http://llm-proxy.1393074507312057.cn-wulanchabu.pai-eas.aliyuncs.com/v1"
 default_model = "openai/Kimi-K2.6"
-default_context_token = 262144
-default_top_p = 0.7
 tools_python_package = "custom_tools"
 default_tools = ["echo", "hello"]
 system_name = "xpeech"
 system_identity_prompt = ""
 custom_system_prompt = ""
-# default_reasoning_effort = "normal"
 support_image = true
 support_video = true
 support_json_output = true
 parallel = 4
+summary_tokens = 32768
 max_iterations = 40
+
+[llm.parameters]
+max_tokens = 32768
+max_context_tokens = 262144
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+repetition_penalty = 1.0
+# reasoning_effort = "medium"
 
 [tool]
 max_result_chars = 10000
