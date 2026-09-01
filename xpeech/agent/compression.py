@@ -128,8 +128,7 @@ class ConversationCompressor:
             logger.info("Compression finished by turns without summary messages={}", len(retained_messages))
             return retained_messages
 
-        # 三级：单个最新回合也超标时，不能再按消息硬切，否则可能留下孤立
-        # tool 消息。直接将整个会话压缩为摘要；摘要长度由 summary_tokens 控制。
+        # 三级：直接将整个会话压缩为摘要；摘要长度由 summary_tokens 控制。
         compressed_messages = await self._summarize_messages(messages)
         logger.info("Compression finished by fallback summary messages={}", len(compressed_messages))
         return compressed_messages
