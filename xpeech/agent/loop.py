@@ -70,7 +70,7 @@ class AgentLoop:
             chat=self.chat,
             summary_tokens=self.summary_tokens,
             max_accept_tokens=self.max_accept_token,
-            target_tokens=int(self.provider.default_context_token * 0.15),
+            target_tokens=int(self.provider.default_context_token * 0.25),
         )
         self.memory_consolidator = MemoryConsolidator(
             store=MemoryStore(workspace=self.workspace),
