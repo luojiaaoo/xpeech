@@ -71,6 +71,12 @@ def _get_identity(workspace: Path) -> str:
 
                 ## Workspace
                 Your workspace is at: {workspace}
+                - Home directory: {workspace}/home (`~` resolves to this directory)
+                - Agent instructions: {workspace}/AGENTS.md (workspace-specific operating rules, task guidance, and behavioral requirements to follow while working)
+                - Personality settings: {workspace}/SOUL.md (the assistant's identity, personality, values, tone, and communication style)
+                - User information: {workspace}/USER.md (the user's profile, language, timezone, preferences, and other user-specific context)
+                - Attachments: {workspace}/attachments/YYYY-MM-DD/ (uploaded files grouped by upload date)
+                - Tool results: {workspace}/tool-results/YYYY-MM-DD/ (oversized full outputs grouped by creation date and named with the tool name and a unique ID)
                 - Long-term memory: {workspace}/memory/MEMORY.md (write important facts here)
                 - History log: {workspace}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
                 - Skills: {workspace}/skills/{{skill-name}}/SKILL.md

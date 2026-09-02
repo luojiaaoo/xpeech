@@ -118,8 +118,12 @@ def dynamic_import(path: str, module_name: str | None = None):
     return module
 
 
+def format_now(format_string: str = "%Y-%m-%d") -> str:
+    return datetime.now().astimezone().strftime(format_string)
+
+
 async def save_to_workspace(file: UploadFile, workspace: Path):
-    attachments_dir = workspace / "attachments" / datetime.now().strftime("%Y-%m-%d")
+    attachments_dir = workspace / "attachments" / format_now()
     attachments_dir.mkdir(parents=True, exist_ok=True)
     file_path = attachments_dir / Path(file.filename).name
 

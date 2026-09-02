@@ -9,7 +9,7 @@ from loguru import logger
 
 from ..exceptions import PathProtectionError
 from ..provider.schema import ToolCallRequest
-from ..utils.helper import ensure_path_async, format_exception2llm, write_text_async
+from ..utils.helper import ensure_path_async, format_exception2llm, write_text_async, format_now
 from .tools.helper import get_tool_model_cls
 
 TOOL_RESULT_DIRECTORY = "tool-results"
@@ -43,7 +43,7 @@ class ToolExecutor:
     async def _limit_text(self, tool_call: ToolCallRequest, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
             return text
-        result_directory = self._workspace / TOOL_RESULT_DIRECTORY
+        result_directory = self._workspace / TOOL_RESULT_DIRECTORY / format_now()
         await ensure_path_async(result_directory)
         result_path = result_directory / f"{tool_call.name}-{uuid4().hex[:12]}.txt"
         await write_text_async(result_path, text)

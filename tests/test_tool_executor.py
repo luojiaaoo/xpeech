@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
@@ -82,7 +83,8 @@ class TestToolExecutor:
         assert result.value.startswith(full_result[:12])
         result_path = self._saved_result_path(tmp_path, result.value)
         assert result_path.read_text(encoding="utf-8") == full_result
-        assert result_path.parent.name == "tool-results"
+        assert result_path.parent.parent == tmp_path / "tool-results"
+        assert result_path.parent.name == date.today().isoformat()
         assert result_path.name.startswith("large_tool-")
 
     @pytest.mark.asyncio
