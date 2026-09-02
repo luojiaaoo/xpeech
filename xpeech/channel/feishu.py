@@ -310,7 +310,7 @@ GoGoGo ThanksFace SaluteFace HappyDragon
 
 FEISHU_CACHE_DIR = ensure_path(settings.path.cache_path.resolve())
 FEISHU_USER_CACHE_TTL_SECONDS = 3600
-FEISHU_STREAM_UPDATE_INTERVAL_SECONDS = 0.1
+FEISHU_STREAM_UPDATE_INTERVAL_SECONDS = 0.5
 
 
 class FeishuBridge:
