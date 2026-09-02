@@ -487,8 +487,19 @@ npm run build
 
 Web 客户端支持通用 OAuth2 Authorization Code 登录。启用后，登录页会显示“账号密码”和
 “`provider_name` 登录”两个标签页。`display_type = "qrcode"` 会显示一次性二维码；
-`display_type = "link"` 会显示授权按钮，并在新标签页打开 OAuth2 授权页。两种方式授权
+`display_type = "link"` 会显示授权按钮，并在当前页面打开 OAuth2 授权页。两种方式授权
 成功后都会自动登录原页面。授权请求默认使用 PKCE 和 `state`，授权链接有效期为 5 分钟。
+
+当 `display_type = "link"` 时，未登录用户可以通过 `/?from=<provider_name>` 直接进入授权
+流程，跳过登录界面。`from` 参数会忽略首尾空格和大小写，但必须与配置的 `provider_name`
+匹配；参数缺失或不匹配时仍显示普通登录页。例如 `provider_name = "飞书"` 时，可以使用：
+
+```text
+https://assistant.example.com/?from=飞书
+```
+
+页面会先创建一次性 OAuth2 授权链接，再将当前页面重定向到服务商授权页；创建失败时会显示
+错误信息和重试按钮。
 
 ```toml
 [web_client.oauth2]

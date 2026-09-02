@@ -601,6 +601,14 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   font-size: 28px;
 }
 .login-card .oauth2-link-button.ant-btn { width: min(260px, 100%); margin-top: 12px; }
+.oauth2-auto-redirect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+.oauth2-auto-redirect .login-card { display: grid; gap: 16px; width: min(360px, calc(100% - 40px)); }
+.oauth2-auto-redirect-placeholder { width: 240px; height: 120px; }
 .oauth2-qr-loading {
   min-height: 270px;
   display: flex;

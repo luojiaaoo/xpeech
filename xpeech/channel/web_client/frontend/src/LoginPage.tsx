@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ExportOutlined,
   LockOutlined,
@@ -6,7 +6,7 @@ import {
   SafetyCertificateOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { Alert, Button, Form, Input, QRCode, Skeleton, Tabs, Typography, message } from 'antd';
+import { Alert, Button, Form, Input, QRCode, Skeleton, Spin, Tabs, Typography, message } from 'antd';
 import { authApi } from './api';
 import type { AppConfig, OAuth2QrLogin, User } from './types';
 
@@ -25,6 +25,22 @@ export default function LoginPage({
   const [qrError, setQrError] = useState<string>();
   const [qrRefreshKey, setQrRefreshKey] = useState(0);
 
+  // 带 from=<provider_name> 参数访问时（如飞书卡片入口），跳过登录界面直接跳转授权链接。
+  const fromProvider = oauth2.enabled && oauth2.display_type === 'link' && (() => {
+    const from = new URLSearchParams(window.location.search).get('from')?.trim().toLowerCase();
+    return Boolean(from) && from === oauth2.provider_name.trim().toLowerCase();
+  })();
+
+  const redirectToProvider = useCallback(async () => {
+    setQrError(undefined);
+    try {
+      const qr = await authApi.createOAuth2Qr();
+      window.location.replace(qr.authorization_url);
+    } catch (error) {
+      setQrError(String(error));
+    }
+  }, []);
+
   async function submit(values: { session_id: string; password: string }) {
     setSubmitting(true);
     try {
@@ -37,7 +53,7 @@ export default function LoginPage({
   }
 
   useEffect(() => {
-    if (!oauth2.enabled || loginMethod !== 'oauth2') return;
+    if (fromProvider || !oauth2.enabled || loginMethod !== 'oauth2') return;
 
     let cancelled = false;
     let pollTimer: number | undefined;
@@ -75,7 +91,34 @@ export default function LoginPage({
       cancelled = true;
       if (pollTimer !== undefined) window.clearTimeout(pollTimer);
     };
-  }, [loginMethod, oauth2.enabled, onLogin, qrRefreshKey]);
+  }, [fromProvider, loginMethod, oauth2.enabled, onLogin, qrRefreshKey]);
+
+  useEffect(() => {
+    if (!fromProvider) return;
+
+    void redirectToProvider();
+  }, [fromProvider, redirectToProvider]);
+
+  if (fromProvider) {
+    return (
+      <main className="login-page oauth2-auto-redirect">
+        {qrError ? (
+          <section className="login-panel">
+            <div className="login-card">
+              <Alert type="error" showIcon message="跳转授权失败" description={qrError} />
+              <Button block onClick={() => void redirectToProvider()}>
+                重试
+              </Button>
+            </div>
+          </section>
+        ) : (
+          <Spin size="large" tip={`正在前往 ${oauth2.provider_name} 授权…`}>
+            <div className="oauth2-auto-redirect-placeholder" />
+          </Spin>
+        )}
+      </main>
+    );
+  }
 
   const passwordLogin = (
     <Form layout="vertical" size="large" onFinish={submit}>
