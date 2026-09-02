@@ -226,7 +226,7 @@ docker compose up -d --build --force-recreate backend
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
   -H "x-session-id: demo-session" \
-  -H "sender-name: demo-user" \
+  -H "x-sender-name: demo-user" \
   -F 'session_metadata={"channel":"curl"}' \
   -F 'content=[{"text":"你好，介绍一下你自己"}]'
 ```
@@ -237,7 +237,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
   -H "x-session-id: demo-session" \
-  -H "sender-name: demo-user" \
+  -H "x-sender-name: demo-user" \
   -F 'session_metadata={"channel":"curl"}' \
   -F 'content=[{"text":"帮我看看这个文件"}]' \
   -F "files=@example.txt"

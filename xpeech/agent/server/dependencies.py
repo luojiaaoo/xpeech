@@ -16,7 +16,7 @@ def sender_name_header(
         str,
         Header(
             description="发送者用户名；非 ASCII 字符可使用 UTF-8 URL 编码",
-            alias="sender-name",
+            alias="x-sender-name",
             min_length=1,
         ),
     ],
@@ -27,12 +27,12 @@ def sender_name_header(
     except UnicodeDecodeError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid UTF-8 encoding in sender-name header",
+            detail="Invalid UTF-8 encoding in x-sender-name header",
         )
     if not decoded_sender_name:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="sender-name header must not be blank",
+            detail="x-sender-name header must not be blank",
         )
     return decoded_sender_name
 

@@ -13,7 +13,7 @@ def test_content_dependency_returns_parsed_list():
 
 def test_sender_name_header_is_required():
     parameters = app.openapi()["paths"]["/chat"]["post"]["parameters"]
-    sender_name = next(parameter for parameter in parameters if parameter["name"] == "sender-name")
+    sender_name = next(parameter for parameter in parameters if parameter["name"] == "x-sender-name")
 
     assert sender_name["in"] == "header"
     assert sender_name["required"] is True

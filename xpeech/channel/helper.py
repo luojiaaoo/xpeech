@@ -41,7 +41,7 @@ def _backend_headers(session_id: str, sender_name: str | None = None) -> dict[st
         "x-session-id": session_id,
     }
     if sender_name is not None:
-        headers["sender-name"] = quote(sender_name, safe="")
+        headers["x-sender-name"] = quote(sender_name, safe="")
     return headers
 
 
