@@ -244,6 +244,7 @@ class AgentLoop:
 
             # 判断是否需要压缩
             if await self.compressor.should_compress(messages_yaml):
+                yield {"event": "command", "context": "♻️ 压缩上下文中，请稍等..."}
                 await self.memory_consolidator.consolidate(messages_yaml)
                 messages_yaml = await self.compressor.compress(messages_yaml)
 
@@ -338,7 +339,7 @@ class AgentLoop:
         # 输出token使用百分比
         token_count = await token_counter(messages_yaml)
         token_percent = min(1, token_count / self.max_accept_token) * 100
-        token_notify = "♻️ 即将达到最大令牌数，强制压缩" if token_percent > 90 else ""
+        token_notify = "♻️ 即将达到最大令牌数" if token_percent > 90 else ""
         yield {
             "event": "token_usage",
             "context": json.dumps(
