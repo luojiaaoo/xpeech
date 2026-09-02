@@ -90,7 +90,7 @@ class LLMResponse:
             previous_kind: str | None = None
             async for item in source:
                 # 没有内容的跳过去
-                if isinstance(item[1], str) and not item[1].strip():
+                if isinstance(item[1], str) and not item[1]:
                     continue
                 # 将相同类型的连续块归在一起，并在切换类型时发出对应的结束标记。
                 if previous_kind is not None and previous_kind != item[0]:
