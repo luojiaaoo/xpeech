@@ -10,12 +10,16 @@ import {
   TeamOutlined,
 } from '@ant-design/icons';
 import { appApi, authApi } from './api';
-import ChatPage from './ChatPage';
-import LoginPage from './LoginPage';
-import UserManagement from './UserManagement';
 import type { AppConfig, User } from './types';
 
+const ChatPage = lazy(() => import('./ChatPage'));
+const LoginPage = lazy(() => import('./LoginPage'));
 const StatisticsDashboard = lazy(() => import('./StatisticsDashboard'));
+const UserManagement = lazy(() => import('./UserManagement'));
+
+function PageFallback() {
+  return <div className="loading-page"><Skeleton active /></div>;
+}
 
 export default function App() {
   const [appConfig, setAppConfig] = useState<AppConfig>();
@@ -33,9 +37,15 @@ export default function App() {
     authApi.me().then(setUser).catch(() => setUser(null));
   }, []);
 
-  if (user === undefined || appConfig === undefined) return <div className="loading-page"><Skeleton active /></div>;
+  if (user === undefined || appConfig === undefined) return <PageFallback />;
   const systemName = appConfig.system_name;
-  if (user === null) return <LoginPage systemName={systemName} oauth2={appConfig.oauth2} onLogin={setUser} />;
+  if (user === null) {
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <LoginPage systemName={systemName} oauth2={appConfig.oauth2} onLogin={setUser} />
+      </Suspense>
+    );
+  }
 
   async function logout() {
     setUserManagementOpen(false);
@@ -133,7 +143,9 @@ export default function App() {
           </Space>
         </Layout.Header>
         <Layout.Content className="app-main">
-          <ChatPage systemName={systemName} />
+          <Suspense fallback={<PageFallback />}>
+            <ChatPage systemName={systemName} />
+          </Suspense>
         </Layout.Content>
         {user.is_admin ? (
           <Modal
@@ -145,7 +157,11 @@ export default function App() {
             className="user-management-modal"
             destroyOnHidden={false}
           >
-            <UserManagement currentUser={user} systemName={systemName} />
+            {userManagementOpen ? (
+              <Suspense fallback={<Skeleton active paragraph={{ rows: 8 }} />}>
+                <UserManagement currentUser={user} systemName={systemName} />
+              </Suspense>
+            ) : null}
           </Modal>
         ) : null}
         <Modal

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import { Attachments, Bubble, Prompts, Sender, Welcome } from '@ant-design/x';
 import type { AttachmentsProps } from '@ant-design/x';
@@ -17,9 +17,10 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { streamChat } from './api';
-import MarkdownContent from './MarkdownContent';
-import QuestionForm from './QuestionForm';
 import type { ChatEvent, ChatMessage } from './types';
+
+const MarkdownContent = lazy(() => import('./MarkdownContent'));
+const QuestionForm = lazy(() => import('./QuestionForm'));
 
 const roles: ComponentProps<typeof Bubble.List>['role'] = {
   user: {
@@ -119,10 +120,12 @@ type StreamEventType = 'assistant' | 'thinking';
 
 function renderStreamContent(type: StreamEventType, content: string, streaming: boolean) {
   const markdown = (
-    <MarkdownContent
-      content={content}
-      streaming={{ hasNextChunk: streaming, enableAnimation: true, tail: true }}
-    />
+    <Suspense fallback={<div className="markdown-content">{content}</div>}>
+      <MarkdownContent
+        content={content}
+        streaming={{ hasNextChunk: streaming, enableAnimation: true, tail: true }}
+      />
+    </Suspense>
   );
 
   if (type === 'thinking') {
@@ -211,7 +214,17 @@ function finishStream(current: ChatMessage[], type: StreamEventType): ChatMessag
 
 function eventMessage(event: ChatEvent): ChatMessage | null {
   const key = `${event.event}_${Date.now()}_${Math.random()}`;
-  if (event.event === 'question') return { key, role: 'question', content: <QuestionForm context={event.context} /> };
+  if (event.event === 'question') {
+    return {
+      key,
+      role: 'question',
+      content: (
+        <Suspense fallback={<div>正在加载表单…</div>}>
+          <QuestionForm context={event.context} />
+        </Suspense>
+      ),
+    };
+  }
   if (event.event === 'send_file') {
     const name = event.context.split(/[\\/]/).pop() || '文件';
     return {
