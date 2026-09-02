@@ -548,6 +548,15 @@ async def test_consume_returns_backend_http_error_to_user(
     await bridge.consume("E1001", idle_timeout=0)
 
     send.assert_awaited_once()
-    sent_card, streamed_content = send.await_args.args[1]
-    assert sent_card["card"]["body"]["elements"][0]["content"] == "输出中..."
-    assert streamed_content == f"{status_code}: {detail}"
+    assert send.await_args.kwargs["to"] == "oc_chat"
+    assert send.await_args.kwargs["opts"] == {"reply_to": "om_message"}
+    sent_message = send.await_args.kwargs["message"]
+    assert isinstance(sent_message, dict)
+    error_element = sent_message["card"]["body"]["elements"][0]
+    assert error_element["content"] == f"**[错误]** {status_code}: {detail}"
+    assert error_element["icon"] == {
+        "tag": "standard_icon",
+        "token": "warning_outlined",
+        "color": "red",
+    }
+    assert "streaming_mode" not in sent_message["card"].get("config", {})

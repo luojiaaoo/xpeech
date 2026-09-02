@@ -274,6 +274,12 @@ OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
         "text_align": "left",
         "icon": {"tag": "standard_icon", "token": "robot_filled", "color": "red"},
     },
+    ChatEventType.ERROR: {
+        "content": None,
+        "text_size": "normal",
+        "text_align": "left",
+        "icon": {"tag": "standard_icon", "token": "warning_outlined", "color": "red"},
+    },
     ChatEventType.COMMAND: {
         "content": None,
         "text_size": "notation",
@@ -460,6 +466,7 @@ class FeishuBridge:
         persistence_types = (
             ChatEventType.THINKING,
             ChatEventType.ASSISTANT,
+            ChatEventType.ERROR,
             ChatEventType.COMMAND,
             ChatEventType.TOKEN_USAGE,
             ChatEventType.QUESTION,
@@ -564,19 +571,21 @@ class FeishuBridge:
                 )
                 if not isinstance(response_content, str):
                     response_content = json.dumps(response_content, ensure_ascii=False)
-            card = self._format_chat_event(
+            message, iter_content = self._format_chat_event(
                 ChatEvent(
-                    event=ChatEventType.ASSISTANT,
+                    event=ChatEventType.ERROR,
                     context=f"{exc.response.status_code}: {response_content}",
                 )
             )
-            if card:
-                result = await self.channel.send(
-                    chat_id,
-                    card,
-                    *([{"reply_to": reply_to}] if reply_to is not None else []),
-                )
-                self._ensure_send_success(result, operation="send error message")
+            await self.channel_send(
+                to=chat_id,
+                message=message,
+                opts={"reply_to": reply_to} if reply_to is not None else None,
+                session_id=session_id,
+                sender_name=sender_name,
+                message_type=ChatEventType.ERROR,
+                iter_content=iter_content,
+            )
         except Exception:
             logger.exception("Failed to consume Feishu messages session_id={}", session_id)
 
@@ -588,6 +597,8 @@ class FeishuBridge:
             return f"**[命令]** {content}"
         elif event.event == ChatEventType.THINKING:
             return "思考中..."
+        elif event.event == ChatEventType.ERROR:
+            return f"**[错误]** {content}"
         elif event.event == ChatEventType.TOOL_CALL:
             return f"**[调用工具]** {self._format_tool_call_event(content)}"
         elif event.event == ChatEventType.TOOL_CALL_RESULT:
@@ -596,7 +607,9 @@ class FeishuBridge:
             return f"**[词元]** {self._format_token_usage(content)}"
         return f"[{event.event}]\n{content}"
 
-    def _format_chat_event(self, event: ChatEvent) -> tuple[bool, dict[str, Any], AsyncIterator[str] | None]:
+    def _format_chat_event(
+        self, event: ChatEvent
+    ) -> tuple[dict[str, Any], AsyncIterator[str] | None] | None:
         if event.event not in OUTPUT_EVENT_TYPES:
             return None
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 class ChatEventType(StrEnum):
     ASSISTANT = "assistant"
     THINKING = "thinking"
+    ERROR = "error"
     TOOL_CALL = "tool_call"
     TOOL_CALL_RESULT = "tool_call_result"
     COMMAND = "command"
