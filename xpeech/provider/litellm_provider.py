@@ -44,7 +44,7 @@ class LiteLLMProvider:
 
     @property
     def default_context_token(self) -> int:
-        """默认的上下文令牌数。"""
+        """默认的上下文大小。"""
 
         return self.parameters.max_context_tokens
 

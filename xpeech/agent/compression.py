@@ -35,12 +35,12 @@ class ConversationCompressor:
         self._recent_turns_to_keep = recent_turns_to_keep
 
     async def should_compress(self, messages: list[Message]) -> bool:
-        """判断当前消息的令牌数是否达到压缩阈值。"""
+        """判断当前消息的上下文是否达到压缩阈值。"""
         total_tokens = await self._token_counter(messages=messages)
         return total_tokens >= self._max_accept_tokens
 
     async def _is_within_target(self, messages: list[Message]) -> bool:
-        """判断当前消息的令牌数是否已低于目标阈值。"""
+        """判断当前消息的上下文是否已低于目标阈值。"""
         total_tokens = await self._token_counter(messages=messages)
         return total_tokens < self._target_tokens
 

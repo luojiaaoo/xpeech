@@ -339,7 +339,7 @@ class AgentLoop:
         # 输出token使用百分比
         token_count = await token_counter(messages_yaml)
         token_percent = min(1, token_count / self.max_accept_token) * 100
-        token_notify = "♻️ 即将达到最大令牌数" if token_percent > 90 else ""
+        token_notify = "♻️ 即将达到最大上下文" if token_percent > 90 else ""
         yield {
             "event": "token_usage",
             "context": json.dumps(
