@@ -32,6 +32,38 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+const injectPromptRequests = new Map<string, Promise<{ user_prefix: string }>>();
+const oauth2CreateRequests = new Map<string, Promise<OAuth2QrLogin>>();
+
+function injectPrompt(state: string) {
+  const existing = injectPromptRequests.get(state);
+  if (existing) return existing;
+
+  const pending = request<{ user_prefix: string }>(
+    `/api/auth/inject-prompt?${new URLSearchParams({ state }).toString()}`,
+  ).finally(() => {
+    if (injectPromptRequests.get(state) === pending) injectPromptRequests.delete(state);
+  });
+  injectPromptRequests.set(state, pending);
+  return pending;
+}
+
+function createOAuth2Qr(state?: string) {
+  const create = () => request<OAuth2QrLogin>('/api/auth/oauth2/qr', {
+    method: 'POST',
+    ...(state ? { body: JSON.stringify({ state }) } : {}),
+  });
+  if (!state) return create();
+
+  const existing = oauth2CreateRequests.get(state);
+  if (existing) return existing;
+  const pending = create().finally(() => {
+    if (oauth2CreateRequests.get(state) === pending) oauth2CreateRequests.delete(state);
+  });
+  oauth2CreateRequests.set(state, pending);
+  return pending;
+}
+
 export const authApi = {
   me: () => request<User>('/api/auth/me'),
   login: (sessionId: string, password: string) =>
@@ -41,7 +73,8 @@ export const authApi = {
     method: 'PATCH',
     body: JSON.stringify({ new_password: newPassword }),
   }),
-  createOAuth2Qr: () => request<OAuth2QrLogin>('/api/auth/oauth2/qr', { method: 'POST' }),
+  injectPrompt,
+  createOAuth2Qr,
   pollOAuth2: (loginId: string, pollToken: string) => request<OAuth2PollResult>('/api/auth/oauth2/poll', {
     method: 'POST',
     body: JSON.stringify({ login_id: loginId, poll_token: pollToken }),

@@ -21,6 +21,11 @@ access_token_expire_seconds = 60
 database_path = "data/web_client/users.db"
 cookie_name = "xpeech_session"
 
+[web_client.inject_prompt]
+enabled = false
+# ${state} 或 $state 会替换为入口随机码；命令的 stdout 将作为下一条用户消息的前缀。
+command_prefix = "curl --fail --silent 'http://prompt-service.example/prompt?state=${state}'"
+
 [web_client.oauth2]
 enabled = false
 provider_name = "XX"

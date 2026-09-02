@@ -4,8 +4,40 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 web_client_app = import_module("xpeech.channel.web_client.app")
+InjectPromptWebConfig = web_client_app.InjectPromptWebConfig
 WebConfig = web_client_app.WebConfig
 create_app = web_client_app.create_app
+
+
+def test_password_login_can_resolve_injected_prompt(tmp_path: Path):
+    app = create_app(
+        WebConfig(
+            backend_url="http://backend.test",
+            database_path=tmp_path / "inject-prompt-users.db",
+            static_dir=tmp_path / "missing-static",
+            system_name="Test Assistant",
+            inject_prompt=InjectPromptWebConfig(
+                enabled=True,
+                command_prefix="printf account-prefix-${state}",
+            ),
+        )
+    )
+    state = "state-token-1234567890"
+
+    with TestClient(app) as client:
+        assert client.get(
+            "/api/auth/inject-prompt",
+            params={"state": state},
+        ).status_code == 401
+        assert client.post(
+            "/api/auth/login",
+            json={"session_id": "admin", "password": "admin123456"},
+        ).status_code == 200
+
+        injected = client.get("/api/auth/inject-prompt", params={"state": state})
+
+        assert injected.status_code == 200
+        assert injected.json() == {"user_prefix": f"account-prefix-{state}"}
 
 
 def test_admin_can_delete_a_user_but_not_themselves(tmp_path: Path):

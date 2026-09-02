@@ -17,6 +17,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { streamChat } from './api';
+import { takePendingUserPrefix } from './pendingUserPrefix';
 import type { ChatEvent, ChatMessage } from './types';
 
 const MarkdownContent = lazy(() => import('./MarkdownContent'));
@@ -298,7 +299,9 @@ export default function ChatPage({ systemName }: { systemName: string }) {
     setAttachmentsOpen(false);
     setLoading(true);
     try {
-      await streamChat(text, sentFiles, appendEvent);
+      const pendingUserPrefix = takePendingUserPrefix();
+      const requestText = pendingUserPrefix ? `${pendingUserPrefix}\n\n===\n\n${text}` : text;
+      await streamChat(requestText, sentFiles, appendEvent);
     } catch (error) {
       message.error(String(error));
     } finally {

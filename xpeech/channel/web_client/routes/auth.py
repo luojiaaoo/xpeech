@@ -1,29 +1,35 @@
+import asyncio
 import base64
 import hashlib
 import hmac
 import html
 import re
 import secrets
+import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from yarl import URL
 
 from ..dao import DuplicateSessionIdError, User, WebClientDAO
 from ..models import (
+    INJECT_PROMPT_STATE_MAX_LENGTH,
+    INJECT_PROMPT_STATE_MIN_LENGTH,
+    INJECT_PROMPT_STATE_PATTERN,
     SESSION_ID_PATTERN,
+    InjectPromptWebConfig,
     LoginBody,
+    OAuth2CreateBody,
     OAuth2PollBody,
     PasswordChangeBody,
     WebConfig,
     public_user,
 )
-
 
 SESSION_DAYS = 7
 OAUTH2_LOGIN_MINUTES = 5
@@ -38,9 +44,12 @@ CurrentUserDependency = Callable[..., Awaitable[User]]
 class OAuth2LoginAttempt:
     state: str
     poll_token_hash: str
+    # state 为 oauth2_state_index 索引，固定 state 重试时必须复用原 PKCE 授权请求，避免旧链接回调匹配到新的 code_verifier。
+    authorization_url: str
     redirect_uri: str
     code_verifier: str | None
     expires_at: datetime
+    inject_prompt_state: str | None = None
     user_session_id: str | None = None
     error: str | None = None
 
@@ -55,6 +64,78 @@ def oauth2_claim(payload: dict[str, object], path: str) -> object | None:
         if value is None:
             return None
     return value
+
+
+async def resolve_injected_prompt(
+    config: InjectPromptWebConfig,
+    state: str,
+) -> str:
+    try:
+        command = shlex.split(config.command_prefix)
+    except ValueError as error:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "inject_prompt.command_prefix 格式无效",
+        ) from error
+    if not command:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "inject_prompt.command_prefix 不能为空",
+        )
+
+    has_state_placeholder = any(
+        "${state}" in argument or "$state" in argument for argument in command
+    )
+    if not has_state_placeholder:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "inject_prompt.command_prefix 缺少 ${state} 或 $state",
+        )
+    # Replace placeholders after splitting arguments and never invoke a shell, so
+    # state cannot add options, pipelines, redirects, or another command.
+    command = [
+        argument.replace("${state}", state).replace("$state", state)
+        for argument in command
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as error:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "提示词命令无法启动",
+        ) from error
+
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+    except TimeoutError as error:
+        process.kill()
+        await process.wait()
+        raise HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            "提示词命令执行超时",
+        ) from error
+    if process.returncode != 0:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "提示词命令执行失败",
+        )
+    try:
+        prompt = stdout.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "提示词命令必须输出 UTF-8 文本",
+        ) from error
+    if not prompt:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "未找到对应的提示词",
+        )
+    return prompt
 
 
 def _oauth2_result_page(success: bool, detail: str) -> HTMLResponse:
@@ -150,8 +231,36 @@ def create_auth_router(
         await create_login_session(user, response)
         return public_user(user)
 
+    @router.get("/inject-prompt")
+    async def inject_prompt(
+        state_value: Annotated[
+            str,
+            Query(
+                alias="state",
+                min_length=INJECT_PROMPT_STATE_MIN_LENGTH,
+                max_length=INJECT_PROMPT_STATE_MAX_LENGTH,
+                pattern=INJECT_PROMPT_STATE_PATTERN,
+            ),
+        ],
+        response: Response,
+        user: CurrentUser,
+    ):
+        del user
+        if not config.inject_prompt.enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "提示词注入未启用")
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "user_prefix": await resolve_injected_prompt(
+                config.inject_prompt,
+                state_value,
+            )
+        }
+
     @router.post("/oauth2/qr")
-    async def create_oauth2_qr(request: Request):
+    async def create_oauth2_qr(
+        request: Request,
+        body: OAuth2CreateBody | None = None,
+    ):
         oauth2 = config.oauth2
         if oauth2 is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "OAuth2 登录未启用")
@@ -163,20 +272,37 @@ def create_auth_router(
                 key=lambda current_id: oauth2_attempts[current_id].expires_at,
             )
             discard_oauth2_attempt(oldest_login_id)
+        inject_prompt_state = body.state if body is not None else None
+        if inject_prompt_state is not None and not config.inject_prompt.enabled:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "提示词注入未启用")
+        state_value = inject_prompt_state or secrets.token_urlsafe(32)
+        existing_login_id = oauth2_state_index.get(state_value)
+        existing_attempt = oauth2_attempts.get(existing_login_id or "")
+        if existing_attempt is not None and existing_attempt.error is None:
+            # React Strict Mode、网络重试或二维码刷新可能使用同一个外部 state 再次创建请求。
+            # 返回原 authorization_url，只轮换浏览器的 poll_token，确保 OAuth2 state、PKCE
+            # code_verifier 和用户已经打开的授权链接仍属于同一次登录尝试。
+            poll_token = secrets.token_urlsafe(32)
+            existing_attempt.poll_token_hash = hashlib.sha256(
+                poll_token.encode()
+            ).hexdigest()
+            expires_in = max(
+                1,
+                int((existing_attempt.expires_at - datetime.now(UTC)).total_seconds()),
+            )
+            return {
+                "authorization_url": existing_attempt.authorization_url,
+                "login_id": existing_login_id,
+                "poll_token": poll_token,
+                "expires_in": expires_in,
+            }
+        if existing_login_id is not None:
+            discard_oauth2_attempt(existing_login_id)
+
         login_id = secrets.token_urlsafe(24)
         poll_token = secrets.token_urlsafe(32)
-        state_value = secrets.token_urlsafe(32)
         code_verifier = secrets.token_urlsafe(64) if oauth2.use_pkce else None
         redirect_uri = oauth2.redirect_uri or str(request.url_for("oauth2_callback"))
-        oauth2_attempts[login_id] = OAuth2LoginAttempt(
-            state=state_value,
-            poll_token_hash=hashlib.sha256(poll_token.encode()).hexdigest(),
-            redirect_uri=redirect_uri,
-            code_verifier=code_verifier,
-            expires_at=datetime.now(UTC) + timedelta(minutes=OAUTH2_LOGIN_MINUTES),
-        )
-        oauth2_state_index[state_value] = login_id
-
         params = {
             **oauth2.extra_authorization_params,
             "response_type": "code",
@@ -193,10 +319,20 @@ def create_auth_router(
             )
             params["code_challenge_method"] = "S256"
 
+        authorization_url = str(URL(oauth2.authorization_url).update_query(params))
+        oauth2_attempts[login_id] = OAuth2LoginAttempt(
+            state=state_value,
+            poll_token_hash=hashlib.sha256(poll_token.encode()).hexdigest(),
+            authorization_url=authorization_url,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+            expires_at=datetime.now(UTC) + timedelta(minutes=OAUTH2_LOGIN_MINUTES),
+            inject_prompt_state=inject_prompt_state,
+        )
+        oauth2_state_index[state_value] = login_id
+
         return {
-            "authorization_url": str(
-                URL(oauth2.authorization_url).update_query(params)
-            ),
+            "authorization_url": authorization_url,
             "login_id": login_id,
             "poll_token": poll_token,
             "expires_in": OAUTH2_LOGIN_MINUTES * 60,
@@ -309,8 +445,13 @@ def create_auth_router(
             return _oauth2_result_page(False, attempt.error)
 
         if oauth2.display_type == "link":
+            target_url = (
+                str(URL("/").update_query(state=attempt.inject_prompt_state))
+                if attempt.inject_prompt_state
+                else "/"
+            )
             callback_response = RedirectResponse(
-                url="/",
+                url=target_url,
                 status_code=status.HTTP_303_SEE_OTHER,
             )
             await create_login_session(user, callback_response)
@@ -346,7 +487,10 @@ def create_auth_router(
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "账号不存在或已停用")
         await create_login_session(user, response)
         discard_oauth2_attempt(body.login_id)
-        return {"status": "approved", "user": public_user(user)}
+        return {
+            "status": "approved",
+            "user": public_user(user),
+        }
 
     @router.post("/logout", status_code=204)
     async def logout(

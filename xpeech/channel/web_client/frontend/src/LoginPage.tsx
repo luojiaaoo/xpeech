@@ -13,10 +13,12 @@ import type { AppConfig, OAuth2QrLogin, User } from './types';
 export default function LoginPage({
   systemName,
   oauth2,
+  injectPromptEnabled,
   onLogin,
 }: {
   systemName: string;
   oauth2: AppConfig['oauth2'];
+  injectPromptEnabled: boolean;
   onLogin: (user: User) => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
@@ -25,21 +27,26 @@ export default function LoginPage({
   const [qrError, setQrError] = useState<string>();
   const [qrRefreshKey, setQrRefreshKey] = useState(0);
 
-  // 带 from=<provider_name> 参数访问时（如飞书卡片入口），跳过登录界面直接跳转授权链接。
-  const fromProvider = oauth2.enabled && oauth2.display_type === 'link' && (() => {
-    const from = new URLSearchParams(window.location.search).get('from')?.trim().toLowerCase();
-    return Boolean(from) && from === oauth2.provider_name.trim().toLowerCase();
+  const searchParams = new URLSearchParams(window.location.search);
+  const requestedOAuth2Provider = searchParams.get('oauth2provider')?.trim().toLowerCase();
+  const stateParam = searchParams.get('state');
+  const injectPromptState = injectPromptEnabled && stateParam?.trim() ? stateParam : undefined;
+
+  // 带 oauth2provider=<provider_name> 参数访问时，跳过登录界面直接跳转授权链接。
+  const oauth2Provider = oauth2.enabled && oauth2.display_type === 'link' && (() => {
+    return Boolean(requestedOAuth2Provider)
+      && requestedOAuth2Provider === oauth2.provider_name.trim().toLowerCase();
   })();
 
   const redirectToProvider = useCallback(async () => {
     setQrError(undefined);
     try {
-      const qr = await authApi.createOAuth2Qr();
+      const qr = await authApi.createOAuth2Qr(injectPromptState);
       window.location.replace(qr.authorization_url);
     } catch (error) {
       setQrError(String(error));
     }
-  }, []);
+  }, [injectPromptState]);
 
   async function submit(values: { session_id: string; password: string }) {
     setSubmitting(true);
@@ -53,7 +60,7 @@ export default function LoginPage({
   }
 
   useEffect(() => {
-    if (fromProvider || !oauth2.enabled || loginMethod !== 'oauth2') return;
+    if (oauth2Provider || !oauth2.enabled || loginMethod !== 'oauth2') return;
 
     let cancelled = false;
     let pollTimer: number | undefined;
@@ -62,7 +69,7 @@ export default function LoginPage({
       setQrLogin(undefined);
       setQrError(undefined);
       try {
-        const qr = await authApi.createOAuth2Qr();
+        const qr = await authApi.createOAuth2Qr(injectPromptState);
         if (cancelled) return;
         setQrLogin(qr);
 
@@ -91,15 +98,15 @@ export default function LoginPage({
       cancelled = true;
       if (pollTimer !== undefined) window.clearTimeout(pollTimer);
     };
-  }, [fromProvider, loginMethod, oauth2.enabled, onLogin, qrRefreshKey]);
+  }, [injectPromptState, loginMethod, oauth2.enabled, oauth2Provider, onLogin, qrRefreshKey]);
 
   useEffect(() => {
-    if (!fromProvider) return;
+    if (!oauth2Provider) return;
 
     void redirectToProvider();
-  }, [fromProvider, redirectToProvider]);
+  }, [oauth2Provider, redirectToProvider]);
 
-  if (fromProvider) {
+  if (oauth2Provider) {
     return (
       <main className="login-page oauth2-auto-redirect">
         {qrError ? (

@@ -13,13 +13,13 @@ from fastapi.staticfiles import StaticFiles
 
 from .dao import User, WebClientDAO
 from .models import (
+    InjectPromptWebConfig,
     OAuth2WebConfig,
     WebConfig,
 )
 from .routes.admin import create_admin_router
 from .routes.auth import create_auth_router
 from .routes.proxy import create_proxy_router
-
 
 PBKDF2_ITERATIONS = 600_000
 XPEECH_FAVICON = Path(__file__).resolve().parents[3] / "assets" / "favicon.ico"
@@ -80,6 +80,7 @@ def create_app(config: WebConfig) -> FastAPI:
     async def public_config():
         return {
             "system_name": config.system_name,
+            "inject_prompt": {"enabled": config.inject_prompt.enabled},
             "oauth2": (
                 {
                     "enabled": True,
@@ -201,6 +202,10 @@ def run(
         system_name=_configured_system_name(),
         cookie_name=settings.web_client.cookie_name,
         oauth2=oauth2_config,
+        inject_prompt=InjectPromptWebConfig(
+            enabled=settings.web_client.inject_prompt.enabled,
+            command_prefix=settings.web_client.inject_prompt.command_prefix,
+        ),
     )
     uvicorn.run(create_app(config), host=host, port=port)
 

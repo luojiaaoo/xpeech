@@ -1,12 +1,14 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from .dao import User
 
-
 SESSION_ID_PATTERN = r"^[\w@+-][\w.@+-]*$"
+INJECT_PROMPT_STATE_MAX_LENGTH = 128
+INJECT_PROMPT_STATE_MIN_LENGTH = 16
+INJECT_PROMPT_STATE_PATTERN = r"^[A-Za-z0-9_-]+$"
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,12 @@ class OAuth2WebConfig:
 
 
 @dataclass(frozen=True)
+class InjectPromptWebConfig:
+    enabled: bool = False
+    command_prefix: str = ""
+
+
+@dataclass(frozen=True)
 class WebConfig:
     backend_url: str
     database_path: Path
@@ -36,6 +44,7 @@ class WebConfig:
     system_name: str
     cookie_name: str = "xpeech_session"
     oauth2: OAuth2WebConfig | None = None
+    inject_prompt: InjectPromptWebConfig = field(default_factory=InjectPromptWebConfig)
 
 
 class LoginBody(BaseModel):
@@ -45,6 +54,15 @@ class LoginBody(BaseModel):
 
 class PasswordChangeBody(BaseModel):
     new_password: str = Field(min_length=8, max_length=256)
+
+
+class OAuth2CreateBody(BaseModel):
+    state: str | None = Field(
+        default=None,
+        min_length=INJECT_PROMPT_STATE_MIN_LENGTH,
+        max_length=INJECT_PROMPT_STATE_MAX_LENGTH,
+        pattern=INJECT_PROMPT_STATE_PATTERN,
+    )
 
 
 class OAuth2PollBody(BaseModel):

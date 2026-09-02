@@ -11,6 +11,9 @@ export interface User {
 
 export interface AppConfig {
   system_name: string;
+  inject_prompt: {
+    enabled: boolean;
+  };
   oauth2: {
     enabled: boolean;
     provider_name: string;

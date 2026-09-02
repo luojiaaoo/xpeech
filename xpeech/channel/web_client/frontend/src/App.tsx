@@ -10,6 +10,7 @@ import {
   TeamOutlined,
 } from '@ant-design/icons';
 import { appApi, authApi } from './api';
+import { savePendingUserPrefix } from './pendingUserPrefix';
 import type { AppConfig, User } from './types';
 
 const ChatPage = lazy(() => import('./ChatPage'));
@@ -37,12 +38,44 @@ export default function App() {
     authApi.me().then(setUser).catch(() => setUser(null));
   }, []);
 
+  useEffect(() => {
+    if (!user || !appConfig?.inject_prompt.enabled) return;
+
+    const url = new URL(window.location.href);
+    const state = url.searchParams.get('state');
+    if (!state?.trim()) return;
+
+    let cancelled = false;
+    authApi.injectPrompt(state)
+      .then(({ user_prefix: userPrefix }) => {
+        if (cancelled) return;
+        savePendingUserPrefix(userPrefix);
+        url.searchParams.delete('state');
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${url.pathname}${url.search}${url.hash}`,
+        );
+      })
+      .catch((error) => {
+        if (!cancelled) message.error(`获取提示词失败：${String(error)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appConfig?.inject_prompt.enabled, user]);
+
   if (user === undefined || appConfig === undefined) return <PageFallback />;
   const systemName = appConfig.system_name;
   if (user === null) {
     return (
       <Suspense fallback={<PageFallback />}>
-        <LoginPage systemName={systemName} oauth2={appConfig.oauth2} onLogin={setUser} />
+        <LoginPage
+          systemName={systemName}
+          oauth2={appConfig.oauth2}
+          injectPromptEnabled={appConfig.inject_prompt.enabled}
+          onLogin={setUser}
+        />
       </Suspense>
     );
   }

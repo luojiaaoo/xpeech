@@ -490,16 +490,72 @@ Web 客户端支持通用 OAuth2 Authorization Code 登录。启用后，登录�
 `display_type = "link"` 会显示授权按钮，并在当前页面打开 OAuth2 授权页。两种方式授权
 成功后都会自动登录原页面。授权请求默认使用 PKCE 和 `state`，授权链接有效期为 5 分钟。
 
-当 `display_type = "link"` 时，未登录用户可以通过 `/?from=<provider_name>` 直接进入授权
-流程，跳过登录界面。`from` 参数会忽略首尾空格和大小写，但必须与配置的 `provider_name`
-匹配；参数缺失或不匹配时仍显示普通登录页。例如 `provider_name = "飞书"` 时，可以使用：
+当 `display_type = "link"` 时，未登录用户可以通过
+`/?oauth2provider=<provider_name>` 直接进入授权流程，跳过登录界面。`oauth2provider` 参数会
+忽略首尾空格和大小写，但必须与配置的 `provider_name` 匹配；参数缺失或不匹配时仍显示普通
+登录页。例如 `provider_name = "飞书"` 时，可以使用：
 
 ```text
-https://assistant.example.com/?from=飞书
+https://assistant.example.com/?oauth2provider=飞书
 ```
 
 页面会先创建一次性 OAuth2 授权链接，再将当前页面重定向到服务商授权页；创建失败时会显示
 错误信息和重试按钮。
+
+### 登录提示词注入
+
+`web_client.inject_prompt` 可以根据入口地址中的随机 `state`，调用任意命令取得下一条用户
+消息的前缀，因此不依赖特定的 Redis、数据库或 HTTP 服务。账号密码、二维码和 OAuth2 链接
+三种登录方式均支持：
+
+```toml
+[web_client.inject_prompt]
+enabled = true
+command_prefix = "curl --fail --silent 'https://prompt.example.com/get?state=${state}'"
+```
+
+`command_prefix` 必须包含 `${state}` 或 `$state`，占位符可以出现在任意参数中，也可以重复
+使用。服务端会将其替换为入口随机码，但不会启动 shell，而是把替换后的内容作为可执行文件
+及参数运行。例如 `state = "fR7p2mN9kL4qT8vX"` 时，上述配置实际执行：
+
+```text
+curl --fail --silent https://prompt.example.com/get?state=fR7p2mN9kL4qT8vX
+```
+
+命令须在 10 秒内成功退出，并通过 stdout 输出 UTF-8 提示词；输出内容不限制长度。服务端不
+解释输出格式，只去除首尾空白后将文本返回给 Web 客户端。`state` 长度为 16～128 个字符，
+只允许 ASCII 字母、数字、`_` 和 `-`；调用方应生成不可预测且只可消费一次的随机值。
+
+使用账号密码登录或在登录页手动选择登录方式时，可以直接访问：
+
+```text
+https://assistant.example.com/?state=fR7p2mN9kL4qT8vX
+```
+
+需要直接进入指定 OAuth2 服务商时，同时传入 `oauth2provider`：
+
+```text
+https://assistant.example.com/?oauth2provider=飞书&state=fR7p2mN9kL4qT8vX
+```
+
+账号密码登录成功后，Web 客户端会直接使用当前地址中的 `state` 请求提示词。OAuth2 登录会
+复用该随机值作为授权请求的 `state`，但不会将提示词注入 `redirect_uri`；链接授权成功后只
+把 `state` 带回 Web 首页，二维码授权成功后则继续使用原页面地址中的 `state`。
+
+三种方式都会在登录成功后通过受认证的 Web 接口执行命令，并将命令输出保存在当前标签页的
+`sessionStorage` 中，同时从地址栏移除 `state`。用户下一次发送消息时，实际请求内容会按
+以下格式拼接；聊天界面仍只显示用户输入的原始消息。发送后该前缀立即从 `sessionStorage`
+清除，仅生效一次。
+
+```text
+<命令输出的提示词>
+
+===
+
+<用户消息>
+```
+
+### OAuth2 配置
 
 ```toml
 [web_client.oauth2]

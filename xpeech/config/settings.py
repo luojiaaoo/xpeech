@@ -222,6 +222,22 @@ class OAuth2Config(BaseModel):
         return self
 
 
+class InjectPromptConfig(BaseModel):
+    """Resolve a one-shot user-message prefix by invoking a configured command."""
+
+    enabled: bool = False
+    command_prefix: str = ""
+
+    @model_validator(mode="after")
+    def validate_enabled_settings(self) -> "InjectPromptConfig":
+        self.command_prefix = self.command_prefix.strip()
+        if self.enabled and not self.command_prefix:
+            raise ValueError("enabled inject_prompt requires command_prefix")
+        if self.enabled and "${state}" not in self.command_prefix and "$state" not in self.command_prefix:
+            raise ValueError("inject_prompt.command_prefix requires ${state} or $state")
+        return self
+
+
 class WebClientConfig(BaseModel):
     """Web client storage settings."""
 
@@ -232,6 +248,7 @@ class WebClientConfig(BaseModel):
         pattern=r"^[A-Za-z0-9_-]+$",
     )
     oauth2: OAuth2Config = Field(default_factory=OAuth2Config)
+    inject_prompt: InjectPromptConfig = Field(default_factory=InjectPromptConfig)
 
 
 class Settings(BaseSettings):
