@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import { Attachments, Bubble, Prompts, Sender, Welcome } from '@ant-design/x';
 import type { AttachmentsProps } from '@ant-design/x';
-import { Avatar, Button, Flex, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Avatar, Button, Flex, Tag, Tooltip, Typography, message } from 'antd';
 import {
   BulbOutlined,
   CloudUploadOutlined,
@@ -17,7 +17,11 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { streamChat } from './api';
-import { takePendingUserPrefix } from './pendingUserPrefix';
+import {
+  readPendingUserPrefix,
+  subscribePendingUserPrefix,
+  takePendingUserPrefix,
+} from './pendingUserPrefix';
 import type { ChatEvent, ChatMessage } from './types';
 
 const MarkdownContent = lazy(() => import('./MarkdownContent'));
@@ -251,8 +255,15 @@ export default function ChatPage({ systemName }: { systemName: string }) {
   const [files, setFiles] = useState<File[]>([]);
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [pendingUserPrefix, setPendingUserPrefix] = useState(readPendingUserPrefix);
+  const [userPrefixExpanded, setUserPrefixExpanded] = useState(false);
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
   const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
+
+  useEffect(() => subscribePendingUserPrefix((userPrefix) => {
+    setPendingUserPrefix(userPrefix);
+    setUserPrefixExpanded(false);
+  }), []);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -356,6 +367,12 @@ export default function ChatPage({ systemName }: { systemName: string }) {
     </Sender.Header>
   );
 
+  const userPrefixCharacters = pendingUserPrefix ? Array.from(pendingUserPrefix) : [];
+  const userPrefixTruncated = userPrefixCharacters.length > 100;
+  const displayedUserPrefix = pendingUserPrefix && userPrefixTruncated && !userPrefixExpanded
+    ? `${userPrefixCharacters.slice(0, 100).join('')}…`
+    : pendingUserPrefix;
+
   return (
     <main className="chat-page">
       <div className="chat-content">
@@ -374,6 +391,31 @@ export default function ChatPage({ systemName }: { systemName: string }) {
         ) : <Bubble.List ref={bubbleListRef} className="bubble-list" role={roles} items={items} />}
       </div>
       <div className="sender-wrap">
+        {pendingUserPrefix ? (
+          <Alert
+            className="pending-user-prefix"
+            type="info"
+            showIcon
+            message="对这段文字有疑问？直接问就好 ✨"
+            description={(
+              <div>
+                <div className={`pending-user-prefix-content${userPrefixExpanded ? ' expanded' : ''}`}>
+                  {displayedUserPrefix}
+                </div>
+                {userPrefixTruncated ? (
+                  <Button
+                    className="pending-user-prefix-toggle"
+                    type="link"
+                    size="small"
+                    onClick={() => setUserPrefixExpanded((expanded) => !expanded)}
+                  >
+                    {userPrefixExpanded ? '收起' : '查看完整提示词'}
+                  </Button>
+                ) : null}
+              </div>
+            )}
+          />
+        ) : null}
         <Sender
           ref={senderRef}
           value={value}

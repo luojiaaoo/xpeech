@@ -543,9 +543,10 @@ https://assistant.example.com/?oauth2provider=飞书&state=fR7p2mN9kL4qT8vX
 原始入口 `state`。
 
 三种方式都会在登录成功后通过受认证的 Web 接口执行命令，并将命令输出保存在当前标签页的
-`sessionStorage` 中，同时从地址栏移除 `state`。用户下一次发送消息时，实际请求内容会按
-以下格式拼接；聊天界面仍只显示用户输入的原始消息。发送后该前缀立即从 `sessionStorage`
-清除，仅生效一次。
+`sessionStorage` 中，同时从地址栏移除 `state`。发送前，输入框上方会显示提示词的前 100
+个字符，并可展开查看全文。用户下一次发送消息时，实际请求内容会按以下格式拼接；消息气泡
+仍只显示用户输入的原始消息。发送后该前缀立即从 `sessionStorage` 清除，提示栏随之消失，
+且仅生效一次。
 
 ```text
 <命令输出的提示词>

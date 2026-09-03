@@ -103,6 +103,15 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .token-usage-label { color: #8a919f; }
 .token-usage-value { color: #4b5260; font-weight: 500; }
 .sender-wrap { width: min(1328px, calc(100% - 48px)); margin: 0 auto 18px; text-align: center; }
+.pending-user-prefix { margin-bottom: 10px; text-align: left; }
+.pending-user-prefix-content {
+  overflow-wrap: anywhere;
+  color: #4b5260;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.pending-user-prefix-content.expanded { max-height: min(40vh, 320px); overflow: auto; }
+.pending-user-prefix-toggle { height: auto; margin-top: 4px; padding: 0; }
 .sender-wrap .ant-sender { text-align: left; box-shadow: 0 8px 32px #1f23291a; border-color: #d9dce3; }
 .sender-tip { display: inline-block; margin-top: 8px; font-size: 11px; }
 .question-form { width: min(500px, 70vw); padding: 16px; background: #f7f9fc; border-radius: 12px; }
