@@ -26,6 +26,7 @@ from ..models import (
     LoginBody,
     OAuth2CreateBody,
     OAuth2PollBody,
+    OAuth2WebConfig,
     PasswordChangeBody,
     WebConfig,
     public_user,
@@ -42,6 +43,7 @@ CurrentUserDependency = Callable[..., Awaitable[User]]
 
 @dataclass
 class OAuth2LoginAttempt:
+    oauth2: OAuth2WebConfig
     state: str
     poll_token_hash: str
     redirect_uri: str
@@ -193,6 +195,18 @@ def create_auth_router(
             if attempt.expires_at <= now:
                 discard_oauth2_attempt(login_id)
 
+    def resolve_oauth2_provider(provider_name: str) -> OAuth2WebConfig:
+        if not config.oauth2:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "OAuth2 登录未启用")
+        normalized_name = provider_name.strip().casefold()
+        for oauth2 in config.oauth2:
+            if oauth2.provider_name.casefold() == normalized_name:
+                return oauth2
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "OAuth2 登录服务商不存在",
+        )
+
     async def create_login_session(user: User, response: Response) -> None:
         if user.id is None:
             raise RuntimeError("数据库用户缺少主键")
@@ -248,11 +262,9 @@ def create_auth_router(
     @router.post("/oauth2/qr")
     async def create_oauth2_qr(
         request: Request,
-        body: OAuth2CreateBody | None = None,
+        body: OAuth2CreateBody,
     ):
-        oauth2 = config.oauth2
-        if oauth2 is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "OAuth2 登录未启用")
+        oauth2 = resolve_oauth2_provider(body.provider_name)
 
         prune_oauth2_attempts()
         if len(oauth2_attempts) >= OAUTH2_MAX_ATTEMPTS:
@@ -261,7 +273,7 @@ def create_auth_router(
                 key=lambda current_id: oauth2_attempts[current_id].expires_at,
             )
             discard_oauth2_attempt(oldest_login_id)
-        inject_prompt_state = body.state if body is not None else None
+        inject_prompt_state = body.state
         if inject_prompt_state is not None and not config.inject_prompt.enabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "提示词注入未启用")
         # 入口 state 只用于查询提示词；随机 token 后缀保证每次 OAuth2 授权都有唯一的回调 state。
@@ -291,6 +303,7 @@ def create_auth_router(
 
         authorization_url = str(URL(oauth2.authorization_url).update_query(params))
         oauth2_attempts[login_id] = OAuth2LoginAttempt(
+            oauth2=oauth2,
             state=state_value,
             poll_token_hash=hashlib.sha256(poll_token.encode()).hexdigest(),
             redirect_uri=redirect_uri,
@@ -314,8 +327,7 @@ def create_auth_router(
         error: str | None = None,
         error_description: str | None = None,
     ):
-        oauth2 = config.oauth2
-        if oauth2 is None:
+        if not config.oauth2:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "OAuth2 登录未启用")
 
         prune_oauth2_attempts()
@@ -323,6 +335,7 @@ def create_auth_router(
         attempt = oauth2_attempts.get(login_id or "")
         if attempt is None:
             return _oauth2_result_page(False, "登录请求已失效，请返回登录页重试。")
+        oauth2 = attempt.oauth2
         if attempt.user_session_id is not None:
             return _oauth2_result_page(True, "授权已完成，请返回原设备。")
         if attempt.error is not None:
@@ -427,7 +440,7 @@ def create_auth_router(
 
     @router.post("/oauth2/poll")
     async def poll_oauth2_login(body: OAuth2PollBody, response: Response):
-        if config.oauth2 is None:
+        if not config.oauth2:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "OAuth2 登录未启用")
 
         prune_oauth2_attempts()

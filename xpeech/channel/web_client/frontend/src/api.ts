@@ -48,19 +48,19 @@ function injectPrompt(state: string) {
   return pending;
 }
 
-function createOAuth2Qr(state?: string) {
+function createOAuth2Qr(providerName: string, state?: string) {
   const create = () => request<OAuth2QrLogin>('/api/auth/oauth2/qr', {
     method: 'POST',
-    ...(state ? { body: JSON.stringify({ state }) } : {}),
+    body: JSON.stringify({ provider_name: providerName, ...(state ? { state } : {}) }),
   });
-  if (!state) return create();
+  const requestKey = JSON.stringify([providerName, state ?? null]);
 
-  const existing = oauth2CreateRequests.get(state);
+  const existing = oauth2CreateRequests.get(requestKey);
   if (existing) return existing;
   const pending = create().finally(() => {
-    if (oauth2CreateRequests.get(state) === pending) oauth2CreateRequests.delete(state);
+    if (oauth2CreateRequests.get(requestKey) === pending) oauth2CreateRequests.delete(requestKey);
   });
-  oauth2CreateRequests.set(state, pending);
+  oauth2CreateRequests.set(requestKey, pending);
   return pending;
 }
 

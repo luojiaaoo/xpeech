@@ -8,9 +8,12 @@ from fastapi.testclient import TestClient
 
 web_client_app = import_module("xpeech.channel.web_client.app")
 oauth_routes = import_module("xpeech.channel.web_client.routes.auth")
+settings_module = import_module("xpeech.config.settings")
 OAuth2WebConfig = web_client_app.OAuth2WebConfig
 InjectPromptWebConfig = web_client_app.InjectPromptWebConfig
 WebConfig = web_client_app.WebConfig
+OAuth2SettingsConfig = settings_module.OAuth2Config
+WebClientSettingsConfig = settings_module.WebClientConfig
 create_app = web_client_app.create_app
 oauth2_claim = oauth_routes.oauth2_claim
 resolve_injected_prompt = oauth_routes.resolve_injected_prompt
@@ -38,6 +41,22 @@ def test_oauth2_claim_resolves_nested_feishu_userinfo():
     assert oauth2_claim(userinfo, "data.name") == "OAuth User"
     assert oauth2_claim(userinfo, "data.missing") is None
     assert oauth2_claim(userinfo, "data.employee_no.value") is None
+
+
+def test_web_client_oauth2_settings_are_a_list_with_unique_provider_names(
+    tmp_path: Path,
+):
+    config = WebClientSettingsConfig(database_path=tmp_path / "users.db")
+    assert config.oauth2 == []
+
+    with pytest.raises(ValueError, match="provider_name must be unique"):
+        WebClientSettingsConfig(
+            database_path=tmp_path / "users.db",
+            oauth2=[
+                OAuth2SettingsConfig(provider_name="Provider"),
+                OAuth2SettingsConfig(provider_name=" provider "),
+            ],
+        )
 
 
 @pytest.mark.asyncio
@@ -104,32 +123,36 @@ def test_oauth2_login_maps_to_an_existing_web_user(
                 enabled=True,
                 command_template="printf unused-$state",
             ),
-            oauth2=OAuth2WebConfig(
-                provider_name="XX",
-                display_type=display_type,
-                client_id="oauth-client",
-                client_secret="oauth-secret",
-                authorization_url="https://login.example.test/authorize",
-                token_url="https://login.example.test/token",
-                userinfo_url="https://login.example.test/userinfo",
-                redirect_uri="https://assistant.example.test/api/auth/oauth2/callback",
-                scopes=("openid", "profile"),
-                session_id_claim="data.employee_no",
-                username_claim="data.name",
-                use_pkce=True,
-                token_auth_method="client_secret_post",
-                extra_authorization_params={"prompt": "login"},
+            oauth2=(
+                OAuth2WebConfig(
+                    provider_name="XX",
+                    display_type=display_type,
+                    client_id="oauth-client",
+                    client_secret="oauth-secret",
+                    authorization_url="https://login.example.test/authorize",
+                    token_url="https://login.example.test/token",
+                    userinfo_url="https://login.example.test/userinfo",
+                    redirect_uri="https://assistant.example.test/api/auth/oauth2/callback",
+                    scopes=("openid", "profile"),
+                    session_id_claim="data.employee_no",
+                    username_claim="data.name",
+                    use_pkce=True,
+                    token_auth_method="client_secret_post",
+                    extra_authorization_params={"prompt": "login"},
+                ),
             ),
         )
     )
 
     with TestClient(app) as client:
         public_config = client.get("/api/config").json()
-        assert public_config["oauth2"] == {
-            "enabled": True,
-            "provider_name": "XX",
-            "display_type": display_type,
-        }
+        assert public_config["oauth2"] == [
+            {
+                "enabled": True,
+                "provider_name": "XX",
+                "display_type": display_type,
+            }
+        ]
         assert public_config["inject_prompt"] == {"enabled": True}
 
         assert client.post(
@@ -150,13 +173,13 @@ def test_oauth2_login_maps_to_an_existing_web_user(
         entry_state = "state.token_~1234-567890"
         qr_response = client.post(
             "/api/auth/oauth2/qr",
-            json={"state": entry_state},
+            json={"provider_name": "XX", "state": entry_state},
         )
         assert qr_response.status_code == 200
         qr_login = qr_response.json()
         repeated_qr_login = client.post(
             "/api/auth/oauth2/qr",
-            json={"state": entry_state},
+            json={"provider_name": "XX", "state": entry_state},
         ).json()
         assert repeated_qr_login["login_id"] != qr_login["login_id"]
         assert repeated_qr_login["authorization_url"] != qr_login["authorization_url"]
@@ -241,11 +264,11 @@ def test_oauth2_login_maps_to_an_existing_web_user(
 
         assert client.post(
             "/api/auth/oauth2/qr",
-            json={"state": "x" * 129},
+            json={"provider_name": "XX", "state": "x" * 129},
         ).status_code == 422
         assert client.post(
             "/api/auth/oauth2/qr",
-            json={"state": "state+token-1234567890"},
+            json={"provider_name": "XX", "state": "state+token-1234567890"},
         ).status_code == 422
 
     token_request = oauth_requests[0]
@@ -267,6 +290,103 @@ def test_oauth2_login_maps_to_an_existing_web_user(
     )
 
 
+def test_oauth2_login_uses_the_selected_provider(tmp_path: Path, monkeypatch):
+    oauth_requests: list[tuple[str, str, dict[str, object]]] = []
+
+    class FakeOAuthClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url: str, **kwargs):
+            oauth_requests.append(("POST", url, kwargs))
+            return FakeOAuthResponse({"access_token": "second-access-token"})
+
+        async def get(self, url: str, **kwargs):
+            oauth_requests.append(("GET", url, kwargs))
+            return FakeOAuthResponse({"sub": "multi-provider-user", "name": "User"})
+
+    def provider(name: str, client_id: str, base_url: str) -> OAuth2WebConfig:
+        return OAuth2WebConfig(
+            provider_name=name,
+            display_type="qrcode",
+            client_id=client_id,
+            client_secret=f"{client_id}-secret",
+            authorization_url=f"{base_url}/authorize",
+            token_url=f"{base_url}/token",
+            userinfo_url=f"{base_url}/userinfo",
+            redirect_uri=None,
+            scopes=("openid",),
+            session_id_claim="sub",
+            username_claim="name",
+            use_pkce=True,
+            token_auth_method="client_secret_post",
+            extra_authorization_params={},
+            auto_create_users=True,
+        )
+
+    monkeypatch.setattr(web_client_app, "PBKDF2_ITERATIONS", 1)
+    monkeypatch.setattr(oauth_routes.httpx, "AsyncClient", FakeOAuthClient)
+    app = create_app(
+        WebConfig(
+            backend_url="http://backend.test",
+            database_path=tmp_path / "multi-provider-users.db",
+            static_dir=tmp_path / "missing-static",
+            system_name="Test Assistant",
+            oauth2=(
+                provider("First", "first-client", "https://first.example.test"),
+                provider("Second", "second-client", "https://second.example.test"),
+            ),
+        )
+    )
+
+    with TestClient(app) as client:
+        assert client.get("/api/config").json()["oauth2"] == [
+            {"enabled": True, "provider_name": "First", "display_type": "qrcode"},
+            {"enabled": True, "provider_name": "Second", "display_type": "qrcode"},
+        ]
+        assert client.post("/api/auth/oauth2/qr", json={}).status_code == 422
+        assert client.post(
+            "/api/auth/oauth2/qr",
+            json={"provider_name": "missing"},
+        ).status_code == 404
+
+        create_response = client.post(
+            "/api/auth/oauth2/qr",
+            json={"provider_name": " second "},
+        )
+        assert create_response.status_code == 200
+        oauth2_login = create_response.json()
+        authorization_url = urlsplit(oauth2_login["authorization_url"])
+        assert authorization_url.netloc == "second.example.test"
+        assert parse_qs(authorization_url.query)["client_id"] == ["second-client"]
+
+        callback = client.get(
+            "/api/auth/oauth2/callback",
+            params={
+                "state": parse_qs(authorization_url.query)["state"][0],
+                "code": "oauth-code",
+            },
+        )
+        assert callback.status_code == 200
+
+    assert oauth_requests[0][0:2] == (
+        "POST",
+        "https://second.example.test/token",
+    )
+    assert oauth_requests[0][2]["data"]["client_id"] == "second-client"
+    assert oauth_requests[0][2]["data"]["client_secret"] == "second-client-secret"
+    assert oauth_requests[1][0:2] == (
+        "GET",
+        "https://second.example.test/userinfo",
+    )
+
+
 def test_oauth2_endpoints_are_hidden_when_disabled(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(web_client_app, "PBKDF2_ITERATIONS", 1)
     app = create_app(
@@ -279,13 +399,11 @@ def test_oauth2_endpoints_are_hidden_when_disabled(tmp_path: Path, monkeypatch):
     )
 
     with TestClient(app) as client:
-        public_oauth2 = client.get("/api/config").json()["oauth2"]
-        assert public_oauth2 == {
-            "enabled": False,
-            "provider_name": "OAuth2",
-            "display_type": "qrcode",
-        }
-        assert client.post("/api/auth/oauth2/qr").status_code == 404
+        assert client.get("/api/config").json()["oauth2"] == []
+        assert client.post(
+            "/api/auth/oauth2/qr",
+            json={"provider_name": "XX"},
+        ).status_code == 404
         assert client.post(
             "/api/auth/login",
             json={"session_id": "admin", "password": "admin123456"},

@@ -189,6 +189,14 @@ class OAuth2Config(BaseModel):
     )
     extra_authorization_params: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("provider_name")
+    @classmethod
+    def validate_provider_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("OAuth2 provider_name cannot be empty")
+        return value
+
     @field_validator(
         "authorization_url",
         "token_url",
@@ -253,8 +261,20 @@ class WebClientConfig(BaseModel):
         min_length=1,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
-    oauth2: OAuth2Config = Field(default_factory=OAuth2Config)
+    oauth2: list[OAuth2Config] = Field(default_factory=list)
     inject_prompt: InjectPromptConfig = Field(default_factory=InjectPromptConfig)
+
+    @model_validator(mode="after")
+    def validate_oauth2_provider_names(self) -> "WebClientConfig":
+        provider_names: set[str] = set()
+        for oauth2 in self.oauth2:
+            normalized_name = oauth2.provider_name.casefold()
+            if normalized_name in provider_names:
+                raise ValueError(
+                    f"OAuth2 provider_name must be unique: {oauth2.provider_name}"
+                )
+            provider_names.add(normalized_name)
+        return self
 
 
 class Settings(BaseSettings):

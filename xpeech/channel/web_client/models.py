@@ -43,7 +43,7 @@ class WebConfig:
     static_dir: Path
     system_name: str
     cookie_name: str = "xpeech_session"
-    oauth2: OAuth2WebConfig | None = None
+    oauth2: tuple[OAuth2WebConfig, ...] = field(default_factory=tuple)
     inject_prompt: InjectPromptWebConfig = field(default_factory=InjectPromptWebConfig)
 
 
@@ -57,6 +57,7 @@ class PasswordChangeBody(BaseModel):
 
 
 class OAuth2CreateBody(BaseModel):
+    provider_name: str = Field(min_length=1, max_length=32)
     state: str | None = Field(
         default=None,
         min_length=INJECT_PROMPT_STATE_MIN_LENGTH,

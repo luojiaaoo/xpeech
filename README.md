@@ -485,12 +485,12 @@ npm run build
 
 ### OAuth2 登录
 
-Web 客户端支持通用 OAuth2 Authorization Code 登录。启用后，登录页会显示“账号密码”和
-“`provider_name` 登录”两个标签页。`display_type = "qrcode"` 会显示一次性二维码；
+Web 客户端支持同时配置多个通用 OAuth2 Authorization Code 登录服务商。启用后，登录页会显示
+“账号密码”以及每个“`provider_name` 登录”标签页。`display_type = "qrcode"` 会显示一次性二维码；
 `display_type = "link"` 会显示授权按钮，并在当前页面打开 OAuth2 授权页。两种方式授权
 成功后都会自动登录原页面。授权请求默认使用 PKCE 和 `state`，授权链接有效期为 5 分钟。
 
-当 `display_type = "link"` 时，未登录用户可以通过
+当某个服务商的 `display_type = "link"` 时，未登录用户可以通过
 `/?oauth2provider=<provider_name>` 直接进入授权流程，跳过登录界面。`oauth2provider` 参数会
 忽略首尾空格和大小写，但必须与配置的 `provider_name` 匹配；参数缺失或不匹配时仍显示普通
 登录页。例如 `provider_name = "飞书"` 时，可以使用：
@@ -559,7 +559,7 @@ https://assistant.example.com/?oauth2provider=飞书&state=fR7p2mN9kL4qT8vX
 ### OAuth2 配置
 
 ```toml
-[web_client.oauth2]
+[[web_client.oauth2]]
 enabled = true
 provider_name = "XX"
 display_type = "qrcode" # qrcode 或 link
@@ -576,6 +576,9 @@ auto_create_users = false
 use_pkce = true
 token_auth_method = "client_secret_post"
 ```
+
+需要配置多个服务商时，重复整个 `[[web_client.oauth2]]` 数组表。各服务商的
+`provider_name` 必须唯一（忽略首尾空格和大小写），前端和创建授权请求时用它选择对应配置。
 
 需要在 OAuth2 服务商后台将 `redirect_uri` 注册为回调地址。服务端会用
 `session_id_claim` 指定的用户信息字段查找本地用户的 `session_id`。默认

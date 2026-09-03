@@ -26,7 +26,8 @@ enabled = false
 # ${state} 或 $state 会替换为入口随机码；命令的 stdout 将作为下一条用户消息的前缀。
 command_template = "curl --fail --silent 'http://prompt-service.example/prompt?state=${state}'"
 
-[web_client.oauth2]
+# Repeat this array table to configure more OAuth2 providers. provider_name must be unique.
+[[web_client.oauth2]]
 enabled = false
 provider_name = "XX"
 # qrcode: display a QR code; link: display a button that opens a new tab.

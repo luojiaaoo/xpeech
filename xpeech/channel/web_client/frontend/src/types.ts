@@ -9,16 +9,18 @@ export interface User {
   created_at: string;
 }
 
+export interface OAuth2Provider {
+  enabled: boolean;
+  provider_name: string;
+  display_type: 'qrcode' | 'link';
+}
+
 export interface AppConfig {
   system_name: string;
   inject_prompt: {
     enabled: boolean;
   };
-  oauth2: {
-    enabled: boolean;
-    provider_name: string;
-    display_type: 'qrcode' | 'link';
-  };
+  oauth2: OAuth2Provider[];
 }
 
 export interface OAuth2QrLogin {

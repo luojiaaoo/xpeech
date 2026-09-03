@@ -8,7 +8,11 @@ import {
 } from '@ant-design/icons';
 import { Alert, Button, Form, Input, QRCode, Skeleton, Spin, Tabs, Typography, message } from 'antd';
 import { authApi } from './api';
-import type { AppConfig, OAuth2QrLogin, User } from './types';
+import type { AppConfig, OAuth2Provider, OAuth2QrLogin, User } from './types';
+
+function oauth2LoginKey(providerName: string) {
+  return `oauth2:${providerName}`;
+}
 
 export default function LoginPage({
   systemName,
@@ -31,22 +35,28 @@ export default function LoginPage({
   const requestedOAuth2Provider = searchParams.get('oauth2provider')?.trim().toLowerCase();
   const stateParam = searchParams.get('state');
   const injectPromptState = injectPromptEnabled && stateParam?.trim() ? stateParam : undefined;
+  const oauth2Providers = oauth2.filter((provider) => provider.enabled);
 
   // 带 oauth2provider=<provider_name> 参数访问时，跳过登录界面直接跳转授权链接。
-  const oauth2Provider = oauth2.enabled && oauth2.display_type === 'link' && (() => {
-    return Boolean(requestedOAuth2Provider)
-      && requestedOAuth2Provider === oauth2.provider_name.trim().toLowerCase();
-  })();
+  const autoRedirectProvider = oauth2Providers.find((provider) => (
+    provider.display_type === 'link'
+      && Boolean(requestedOAuth2Provider)
+      && requestedOAuth2Provider === provider.provider_name.trim().toLowerCase()
+  ));
+  const selectedOAuth2Provider = oauth2Providers.find(
+    (provider) => oauth2LoginKey(provider.provider_name) === loginMethod,
+  );
 
   const redirectToProvider = useCallback(async () => {
+    if (!autoRedirectProvider) return;
     setQrError(undefined);
     try {
-      const qr = await authApi.createOAuth2Qr(injectPromptState);
+      const qr = await authApi.createOAuth2Qr(autoRedirectProvider.provider_name, injectPromptState);
       window.location.replace(qr.authorization_url);
     } catch (error) {
       setQrError(String(error));
     }
-  }, [injectPromptState]);
+  }, [autoRedirectProvider, injectPromptState]);
 
   async function submit(values: { session_id: string; password: string }) {
     setSubmitting(true);
@@ -60,7 +70,8 @@ export default function LoginPage({
   }
 
   useEffect(() => {
-    if (oauth2Provider || !oauth2.enabled || loginMethod !== 'oauth2') return;
+    if (autoRedirectProvider || !selectedOAuth2Provider) return;
+    const selectedProviderName = selectedOAuth2Provider.provider_name;
 
     let cancelled = false;
     let pollTimer: number | undefined;
@@ -69,7 +80,10 @@ export default function LoginPage({
       setQrLogin(undefined);
       setQrError(undefined);
       try {
-        const qr = await authApi.createOAuth2Qr(injectPromptState);
+        const qr = await authApi.createOAuth2Qr(
+          selectedProviderName,
+          injectPromptState,
+        );
         if (cancelled) return;
         setQrLogin(qr);
 
@@ -98,15 +112,15 @@ export default function LoginPage({
       cancelled = true;
       if (pollTimer !== undefined) window.clearTimeout(pollTimer);
     };
-  }, [injectPromptState, loginMethod, oauth2.enabled, oauth2Provider, onLogin, qrRefreshKey]);
+  }, [autoRedirectProvider, injectPromptState, onLogin, qrRefreshKey, selectedOAuth2Provider]);
 
   useEffect(() => {
-    if (!oauth2Provider) return;
+    if (!autoRedirectProvider) return;
 
     void redirectToProvider();
-  }, [oauth2Provider, redirectToProvider]);
+  }, [autoRedirectProvider, redirectToProvider]);
 
-  if (oauth2Provider) {
+  if (autoRedirectProvider) {
     return (
       <main className="login-page oauth2-auto-redirect">
         {qrError ? (
@@ -119,7 +133,7 @@ export default function LoginPage({
             </div>
           </section>
         ) : (
-          <Spin size="large" tip={`正在前往 ${oauth2.provider_name} 授权…`}>
+          <Spin size="large" tip={`正在前往 ${autoRedirectProvider.provider_name} 授权…`}>
             <div className="oauth2-auto-redirect-placeholder" />
           </Spin>
         )}
@@ -141,23 +155,23 @@ export default function LoginPage({
     </Form>
   );
 
-  const oauth2Login = (
+  const oauth2Login = (provider: OAuth2Provider) => (
     <div className="oauth2-login">
       {qrError ? (
         <Alert
           type="error"
           showIcon
-          message={oauth2.display_type === 'qrcode' ? '二维码登录失败' : '授权登录失败'}
+          message={provider.display_type === 'qrcode' ? '二维码登录失败' : '授权登录失败'}
           description={qrError}
         />
       ) : qrLogin ? (
-        oauth2.display_type === 'qrcode' ? (
+        provider.display_type === 'qrcode' ? (
           <>
             <div className="oauth2-qr-frame">
               <QRCode value={qrLogin.authorization_url} size={204} bordered={false} />
               <span className="oauth2-qr-badge"><ScanOutlined /></span>
             </div>
-            <Typography.Text strong>请使用 {oauth2.provider_name} 扫码登录</Typography.Text>
+            <Typography.Text strong>请使用 {provider.provider_name} 扫码登录</Typography.Text>
             <Typography.Text type="secondary" className="oauth2-login-hint">
               二维码 {Math.floor(qrLogin.expires_in / 60)} 分钟内有效，授权后本页面会自动登录
             </Typography.Text>
@@ -165,7 +179,7 @@ export default function LoginPage({
         ) : (
           <div className="oauth2-link-login">
             <div className="oauth2-link-icon"><ExportOutlined /></div>
-            <Typography.Text strong>使用 {oauth2.provider_name} 授权登录</Typography.Text>
+            <Typography.Text strong>使用 {provider.provider_name} 授权登录</Typography.Text>
             <Typography.Text type="secondary" className="oauth2-login-hint">
               点击下方按钮前往授权页
             </Typography.Text>
@@ -175,25 +189,25 @@ export default function LoginPage({
               href={qrLogin.authorization_url}
               className="oauth2-link-button"
             >
-              {oauth2.provider_name}登录
+              {provider.provider_name}登录
             </Button>
           </div>
         )
       ) : (
         <div className="oauth2-qr-loading">
-          {oauth2.display_type === 'qrcode' ? (
+          {provider.display_type === 'qrcode' ? (
             <Skeleton.Avatar active shape="square" size={204} />
           ) : (
             <Skeleton.Button active size="large" block />
           )}
           <Typography.Text type="secondary">
-            {oauth2.display_type === 'qrcode' ? '正在生成登录二维码…' : '正在生成授权链接…'}
+            {provider.display_type === 'qrcode' ? '正在生成登录二维码…' : '正在生成授权链接…'}
           </Typography.Text>
         </div>
       )}
       {qrError ? (
         <Button className="oauth2-refresh" onClick={() => setQrRefreshKey((value) => value + 1)}>
-          {oauth2.display_type === 'qrcode' ? '刷新二维码' : '重新生成链接'}
+          {provider.display_type === 'qrcode' ? '刷新二维码' : '重新生成链接'}
         </Button>
       ) : null}
     </div>
@@ -274,14 +288,22 @@ export default function LoginPage({
           <Typography.Paragraph type="secondary" className="login-subtitle">
             登录你的账号，开始与 {systemName} 对话
           </Typography.Paragraph>
-          {oauth2.enabled ? (
+          {oauth2Providers.length > 0 ? (
             <Tabs
               activeKey={loginMethod}
-              onChange={setLoginMethod}
+              onChange={(key) => {
+                setLoginMethod(key);
+                setQrLogin(undefined);
+                setQrError(undefined);
+              }}
               centered
               items={[
                 { key: 'password', label: '账号密码', children: passwordLogin },
-                { key: 'oauth2', label: `${oauth2.provider_name}登录`, children: oauth2Login },
+                ...oauth2Providers.map((provider) => ({
+                  key: oauth2LoginKey(provider.provider_name),
+                  label: `${provider.provider_name}登录`,
+                  children: oauth2Login(provider),
+                })),
               ]}
             />
           ) : passwordLogin}

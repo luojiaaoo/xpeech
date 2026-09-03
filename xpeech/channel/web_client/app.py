@@ -81,19 +81,14 @@ def create_app(config: WebConfig) -> FastAPI:
         return {
             "system_name": config.system_name,
             "inject_prompt": {"enabled": config.inject_prompt.enabled},
-            "oauth2": (
+            "oauth2": [
                 {
                     "enabled": True,
-                    "provider_name": config.oauth2.provider_name,
-                    "display_type": config.oauth2.display_type,
+                    "provider_name": oauth2.provider_name,
+                    "display_type": oauth2.display_type,
                 }
-                if config.oauth2 is not None
-                else {
-                    "enabled": False,
-                    "provider_name": "OAuth2",
-                    "display_type": "qrcode",
-                }
-            ),
+                for oauth2 in config.oauth2
+            ],
         }
 
     async def current_user(
@@ -171,8 +166,7 @@ def run(
 
     frontend = Path(__file__).parent / "frontend"
     static_dir = frontend / ("dist" if not dev_frontend else "dist")
-    oauth2_settings = settings.web_client.oauth2
-    oauth2_config = (
+    oauth2_config = tuple(
         OAuth2WebConfig(
             provider_name=oauth2_settings.provider_name,
             display_type=oauth2_settings.display_type,
@@ -192,8 +186,8 @@ def run(
                 oauth2_settings.extra_authorization_params
             ),
         )
+        for oauth2_settings in settings.web_client.oauth2
         if oauth2_settings.enabled
-        else None
     )
     config = WebConfig(
         backend_url=backend_url.rstrip("/"),
