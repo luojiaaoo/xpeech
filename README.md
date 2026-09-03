@@ -538,11 +538,9 @@ https://assistant.example.com/?state=fR7p2mN9kL4qT8vX
 https://assistant.example.com/?oauth2provider=飞书&state=fR7p2mN9kL4qT8vX
 ```
 
-账号密码登录成功后，Web 客户端会直接使用当前地址中的 `state` 请求提示词。OAuth2 登录不
-会将提示词注入 `redirect_uri`，其真实授权状态为 `<入口 state>_-_<uuid4>`，确保同一个入口
-随机码发起的每次授权仍有唯一 `state`。回调定位登录记录后，链接登录只把原始入口 `state`
+账号密码登录成功后，Web 客户端会直接使用当前地址中的 `state` 请求提示词。回调定位登录记录后，链接登录只把原始入口 `state`
 带回 Web 首页；二维码登录则继续使用原页面地址中的原始 `state`。命令占位符注入的也始终是
-原始入口 `state`，不包含 UUID 后缀。
+原始入口 `state`。
 
 三种方式都会在登录成功后通过受认证的 Web 接口执行命令，并将命令输出保存在当前标签页的
 `sessionStorage` 中，同时从地址栏移除 `state`。用户下一次发送消息时，实际请求内容会按
