@@ -10,7 +10,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
-from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
@@ -82,9 +81,7 @@ async def resolve_injected_prompt(
             "inject_prompt.command_template 不能为空",
         )
 
-    has_state_placeholder = any(
-        "${state}" in argument or "$state" in argument for argument in command
-    )
+    has_state_placeholder = any("${state}" in argument or "$state" in argument for argument in command)
     if not has_state_placeholder:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
@@ -92,10 +89,7 @@ async def resolve_injected_prompt(
         )
     # Replace placeholders after splitting arguments and never invoke a shell, so
     # state cannot add options, pipelines, redirects, or another command.
-    command = [
-        argument.replace("${state}", state).replace("$state", state)
-        for argument in command
-    ]
+    command = [argument.replace("${state}", state).replace("$state", state) for argument in command]
     try:
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -221,11 +215,7 @@ def create_auth_router(
     @router.post("/login")
     async def login(body: LoginBody, response: Response):
         user = await dao.get_user_by_session_id(body.session_id)
-        if (
-            user is None
-            or not user.is_active
-            or not password_matches(body.password, user.password_hash)
-        ):
+        if user is None or not user.is_active or not password_matches(body.password, user.password_hash):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "会话 ID 或密码错误")
         await create_login_session(user, response)
         return public_user(user)
@@ -274,9 +264,9 @@ def create_auth_router(
         inject_prompt_state = body.state if body is not None else None
         if inject_prompt_state is not None and not config.inject_prompt.enabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "提示词注入未启用")
-        # 入口 state 只用于查询提示词；UUID 后缀保证每次 OAuth2 授权都有唯一的回调 state。
+        # 入口 state 只用于查询提示词；随机 token 后缀保证每次 OAuth2 授权都有唯一的回调 state。
         state_value = (
-            f"{inject_prompt_state}_-_{uuid4()}"
+            f"{inject_prompt_state}_-_{secrets.token_urlsafe(32)}"
             if inject_prompt_state is not None
             else secrets.token_urlsafe(32)
         )
@@ -296,9 +286,7 @@ def create_auth_router(
             params["scope"] = " ".join(oauth2.scopes)
         if code_verifier is not None:
             challenge = hashlib.sha256(code_verifier.encode()).digest()
-            params["code_challenge"] = (
-                base64.urlsafe_b64encode(challenge).rstrip(b"=").decode()
-            )
+            params["code_challenge"] = base64.urlsafe_b64encode(challenge).rstrip(b"=").decode()
             params["code_challenge_method"] = "S256"
 
         authorization_url = str(URL(oauth2.authorization_url).update_query(params))
@@ -369,7 +357,7 @@ def create_auth_router(
                     raise ValueError("OAuth2 token endpoint rejected the request")
                 token_payload = token_response.json()
                 if not isinstance(token_payload, dict):
-                    raise ValueError("OAuth2 token response must be an object")
+                    raise TypeError("OAuth2 token response must be an object")
                 access_token = token_payload.get("access_token")
                 if not isinstance(access_token, str) or not access_token:
                     raise ValueError("OAuth2 token response is missing access_token")
@@ -384,31 +372,28 @@ def create_auth_router(
                     raise ValueError("OAuth2 userinfo endpoint rejected the request")
                 userinfo = userinfo_response.json()
                 if not isinstance(userinfo, dict):
-                    raise ValueError("OAuth2 userinfo response must be an object")
+                    raise TypeError("OAuth2 userinfo response must be an object")
         except (httpx.HTTPError, TypeError, ValueError):
             attempt.error = "OAuth2 服务请求失败，请返回登录页重试。"
             return _oauth2_result_page(False, attempt.error)
 
         claim = oauth2_claim(userinfo, oauth2.session_id_claim)
         session_id = str(claim).strip() if claim is not None else ""
-        if (
-            not session_id
-            or len(session_id) > 128
-            or re.fullmatch(SESSION_ID_PATTERN, session_id) is None
-        ):
-            attempt.error = (
-                f"OAuth2 用户信息缺少有效的 {oauth2.session_id_claim}"
-            )
+        if not session_id or re.fullmatch(SESSION_ID_PATTERN, session_id) is None:
+            attempt.error = f"OAuth2 用户信息缺少有效的 {oauth2.session_id_claim}"
             return _oauth2_result_page(False, attempt.error)
 
         user = await dao.get_user_by_session_id(session_id)
         if user is None and oauth2.auto_create_users:
             username_claim = oauth2_claim(userinfo, oauth2.username_claim)
-            username = re.sub(
-                r"[^\w.@+-]+",
-                "_",
-                str(username_claim or session_id).strip(),
-            ).strip("_")[:64] or session_id
+            username = (
+                re.sub(
+                    r"[^\w.@+-]+",
+                    "_",
+                    str(username_claim or session_id).strip(),
+                ).strip("_")[:64]
+                or session_id
+            )
             try:
                 user = await dao.create_user(
                     username=username,
@@ -427,9 +412,7 @@ def create_auth_router(
 
         if oauth2.display_type == "link":
             target_url = (
-                str(URL("/").update_query(state=attempt.inject_prompt_state))
-                if attempt.inject_prompt_state
-                else "/"
+                str(URL("/").update_query(state=attempt.inject_prompt_state)) if attempt.inject_prompt_state else "/"
             )
             callback_response = RedirectResponse(
                 url=target_url,

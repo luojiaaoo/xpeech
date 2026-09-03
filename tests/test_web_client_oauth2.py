@@ -1,7 +1,7 @@
+import re
 from importlib import import_module
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
-from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -169,9 +169,9 @@ def test_oauth2_login_maps_to_an_existing_web_user(
         expected_redirect_uri = "https://assistant.example.test/api/auth/oauth2/callback"
         assert authorization_query["redirect_uri"] == [expected_redirect_uri]
         oauth2_state = authorization_query["state"][0]
-        state_prefix, state_uuid = oauth2_state.rsplit("_-_", 1)
+        state_prefix, state_token = oauth2_state.rsplit("_-_", 1)
         assert state_prefix == entry_state
-        assert UUID(state_uuid).version == 4
+        assert re.fullmatch(r"[A-Za-z0-9_-]{43}", state_token)
         assert authorization_query["scope"] == ["openid profile"]
         assert authorization_query["prompt"] == ["login"]
         assert authorization_query["code_challenge_method"] == ["S256"]
