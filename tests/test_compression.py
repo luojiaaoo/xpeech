@@ -144,7 +144,7 @@ class TestConversationCompressor:
         assert all(message["content"] != "new" for message in summarized_messages)
 
     @pytest.mark.asyncio
-    async def test_summary_that_exceeds_target_falls_back_to_complete_recent_suffix(self):
+    async def test_summary_that_exceeds_target_is_kept_with_complete_recent_suffix(self):
         summarize_calls = 0
 
         async def count_tokens(*, messages):
@@ -174,11 +174,12 @@ class TestConversationCompressor:
 
         assert compressed == [
             {"role": "system", "content": "s"},
+            {"role": "assistant", "content": "summary"},
             {"role": "user", "timestamp": 2.0, "content": "new1"},
             {"role": "assistant", "content": "new2"},
         ]
         assert summarize_calls == 1
-        assert await compressor._is_within_target(compressed)
+        assert not await compressor._is_within_target(compressed)
 
     @pytest.mark.asyncio
     async def test_compression_never_keeps_an_orphan_tool_message(self):
@@ -208,10 +209,11 @@ class TestConversationCompressor:
 
         assert compressed == [
             {"role": "system", "content": "s"},
+            {"role": "assistant", "content": "summary"},
             {"role": "user", "timestamp": 2.0, "content": "new"},
             {"role": "assistant", "content": "ok"},
         ]
-        assert await compressor._is_within_target(compressed)
+        assert not any(message["role"] == "tool" for message in compressed)
 
     @pytest.mark.asyncio
     async def test_fallback_summarizes_an_oversized_latest_turn(self):
