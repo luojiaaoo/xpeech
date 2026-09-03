@@ -179,6 +179,7 @@ def run(
             scopes=tuple(oauth2_settings.scopes),
             session_id_claim=oauth2_settings.session_id_claim,
             username_claim=oauth2_settings.username_claim,
+            userinfo_filter=oauth2_settings.userinfo_filter,
             auto_create_users=oauth2_settings.auto_create_users,
             use_pkce=oauth2_settings.use_pkce,
             token_auth_method=oauth2_settings.token_auth_method,

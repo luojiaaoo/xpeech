@@ -3,6 +3,7 @@ from threading import Lock
 from typing import Literal
 from urllib.parse import urlsplit
 
+import jq
 from dotenv import load_dotenv
 from pydantic import (
     BaseModel,
@@ -180,7 +181,6 @@ class OAuth2Config(BaseModel):
     userinfo_url: str = ""
     redirect_uri: str | None = None
     scopes: list[str] = Field(default_factory=lambda: ["openid", "profile"])
-    # jq queries against the userinfo JSON, e.g. ".data.employee_no".
     session_id_claim: str = Field(default=".sub", min_length=1)
     username_claim: str = Field(default=".name", min_length=1)
     auto_create_users: bool = False
@@ -189,6 +189,18 @@ class OAuth2Config(BaseModel):
         "client_secret_post"
     )
     extra_authorization_params: dict[str, str] = Field(default_factory=dict)
+    userinfo_filter: str | None = Field(default=None, min_length=1)
+
+    @field_validator("session_id_claim", "username_claim", "userinfo_filter")
+    @classmethod
+    def validate_jq_expressions(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            jq.compile(value)
+        except ValueError as error:
+            raise ValueError(f"不是有效的 jq 表达式 {value!r}: {error}") from error
+        return value
 
     @field_validator("provider_name")
     @classmethod

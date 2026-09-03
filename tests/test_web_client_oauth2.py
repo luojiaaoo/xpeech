@@ -16,6 +16,7 @@ OAuth2SettingsConfig = settings_module.OAuth2Config
 WebClientSettingsConfig = settings_module.WebClientConfig
 create_app = web_client_app.create_app
 oauth2_claim = oauth_routes.oauth2_claim
+oauth2_filter = oauth_routes.oauth2_filter
 resolve_injected_prompt = oauth_routes.resolve_injected_prompt
 
 
@@ -50,6 +51,54 @@ def test_oauth2_claim_resolves_nested_feishu_userinfo():
         oauth2_claim(userinfo, ".data.missing")
     with pytest.raises(oauth_routes.OAuth2ClaimError):
         oauth2_claim({"sub": 42}, ".sub")  # non-string claim value
+    with pytest.raises(oauth_routes.OAuth2ClaimError):
+        oauth2_claim({"tags": ["a", "b"]}, ".tags[]")  # must yield exactly one value
+
+
+def test_oauth2_filter_allows_when_any_output_is_produced():
+    userinfo = {"data": {"department": "R&D", "active": True, "roles": ["user"]}}
+
+    # any output allows login, even false or null
+    assert oauth2_filter(userinfo, '.data.department == "R&D"') is True
+    assert oauth2_filter(userinfo, '.data.department != "R&D"') is True  # [false]
+    assert oauth2_filter(userinfo, ".data.missing") is True  # [null]
+    assert oauth2_filter(userinfo, ".data.active") is True
+    # denial requires the expression to produce no output, e.g. via select()
+    assert oauth2_filter(userinfo, 'select(.data.department == "R&D")') is True
+    assert oauth2_filter(
+        {"data": {"department": "HR", "roles": []}},
+        'select(.data.department == "R&D")',
+    ) is False
+    # iterating an empty array produces no output and denies login
+    assert oauth2_filter({"data": {"roles": []}}, '.data.roles[] | select(. == "admin")') is False
+    # iterating null is a jq runtime error and must raise
+    with pytest.raises(oauth_routes.OAuth2ClaimError):
+        oauth2_filter(userinfo, '.data.missing[] | . == "x"')
+    with pytest.raises(oauth_routes.OAuth2ClaimError):
+        oauth2_filter(userinfo, "department == 1")  # bare identifier is not valid jq
+
+
+def test_oauth2_jq_expression_settings_are_validated_at_startup(tmp_path: Path):
+    WebClientSettingsConfig(database_path=tmp_path / "users.db")
+
+    with pytest.raises(ValueError, match="jq 表达式"):
+        OAuth2SettingsConfig(provider_name="XX", userinfo_filter="department == 1")
+    with pytest.raises(ValueError, match="jq 表达式"):
+        OAuth2SettingsConfig(provider_name="XX", session_id_claim="sub")
+    with pytest.raises(ValueError, match="jq 表达式"):
+        OAuth2SettingsConfig(provider_name="XX", username_claim="data.name")
+    assert (
+        OAuth2SettingsConfig(
+            provider_name="XX",
+            session_id_claim=".data.employee_no",
+            username_claim=".data.name",
+            userinfo_filter='.data.department == "R&D"',
+        ).userinfo_filter
+        == '.data.department == "R&D"'
+    )
+    assert (
+        OAuth2SettingsConfig(provider_name="XX").userinfo_filter is None
+    )
 
 
 def test_web_client_oauth2_settings_are_a_list_with_unique_provider_names(

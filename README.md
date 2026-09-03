@@ -581,6 +581,19 @@ token_auth_method = "client_secret_post"
 [jq](https://jqlang.github.io/jq/manual/) 查询，例如 `".data.employee_no"` 或
 `".data.items[0].id"`。
 
+可选的 `userinfo_filter` 提供二次访问校验：登录前对 userinfo JSON 求值该 jq
+表达式，**有输出即放行，无输出则拒绝**，可作为认证之外的补充限制，例如只允许
+某个部门的人登录：
+
+```toml
+userinfo_filter = 'select(.data.department == "R&D")'
+```
+
+注意应使用 `select()` 这类"条件不满足时无输出"的写法来表达拒绝条件；单纯的
+布尔比较（如 `.data.department == "R&D"`）无论是否命中都会产生输出，起不到
+限制作用。表达式在启动时校验合法性，配置无效会直接启动失败；求值过程中出现
+运行时错误（如对 null 迭代）也会拒绝登录。
+
 需要配置多个服务商时，重复整个 `[[web_client.oauth2]]` 数组表。各服务商的
 `provider_name` 必须唯一（忽略首尾空格和大小写），前端和创建授权请求时用它选择对应配置。
 

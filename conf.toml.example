@@ -43,6 +43,10 @@ scopes = ["openid", "profile"]
 # Claim paths are jq queries against the userinfo JSON, e.g. ".data.items[0].id".
 session_id_claim = ".sub"
 username_claim = ".name"
+# Optional jq filter for extra access control: login is allowed only when the
+# expression yields at least one output, and denied when it yields none.
+# Use select() to reject users, e.g. only one department may log in:
+# userinfo_filter = 'select(.data.department == "R&D")'
 # Keep false to require administrators to pre-create matching local accounts.
 auto_create_users = false
 use_pkce = true
