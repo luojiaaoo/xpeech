@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import httpx
+import jq
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from yarl import URL
@@ -54,16 +55,19 @@ class OAuth2LoginAttempt:
     error: str | None = None
 
 
-def oauth2_claim(payload: dict[str, object], path: str) -> object | None:
-    """Resolve a dotted OAuth2 claim path such as ``data.employee_no``."""
-    value: object = payload
-    for part in path.split("."):
-        if not part or not isinstance(value, dict):
-            return None
-        value = value.get(part)
-        if value is None:
-            return None
-    return value
+class OAuth2ClaimError(Exception):
+    """Raised when an OAuth2 claim jq query is invalid or does not resolve to a string."""
+
+
+def oauth2_claim(payload: dict[str, object], path: str) -> str:
+    """Resolve an OAuth2 claim with a jq query such as ``.data.employee_no``."""
+    try:
+        claim = jq.compile(path).input_value(payload).first()
+    except ValueError as error:
+        raise OAuth2ClaimError(f"OAuth2 claim jq 表达式无效: {path}") from error
+    if not isinstance(claim, str):
+        raise OAuth2ClaimError(f"OAuth2 claim jq 表达式未解析到字符串: {path}")
+    return claim.strip()
 
 
 async def resolve_injected_prompt(
@@ -390,23 +394,14 @@ def create_auth_router(
             attempt.error = "OAuth2 服务请求失败，请返回登录页重试。"
             return _oauth2_result_page(False, attempt.error)
 
-        claim = oauth2_claim(userinfo, oauth2.session_id_claim)
-        session_id = str(claim).strip() if claim is not None else ""
-        if not session_id or re.fullmatch(SESSION_ID_PATTERN, session_id) is None:
+        session_id = oauth2_claim(userinfo, oauth2.session_id_claim)
+        if re.fullmatch(SESSION_ID_PATTERN, session_id) is None:
             attempt.error = f"OAuth2 用户信息缺少有效的 {oauth2.session_id_claim}"
             return _oauth2_result_page(False, attempt.error)
 
         user = await dao.get_user_by_session_id(session_id)
         if user is None and oauth2.auto_create_users:
-            username_claim = oauth2_claim(userinfo, oauth2.username_claim)
-            username = (
-                re.sub(
-                    r"[^\w.@+-]+",
-                    "_",
-                    str(username_claim or session_id).strip(),
-                ).strip("_")[:64]
-                or session_id
-            )
+            username = oauth2_claim(userinfo, oauth2.username_claim)[:64]
             try:
                 user = await dao.create_user(
                     username=username,

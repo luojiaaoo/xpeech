@@ -180,8 +180,9 @@ class OAuth2Config(BaseModel):
     userinfo_url: str = ""
     redirect_uri: str | None = None
     scopes: list[str] = Field(default_factory=lambda: ["openid", "profile"])
-    session_id_claim: str = Field(default="sub", min_length=1)
-    username_claim: str = Field(default="name", min_length=1)
+    # jq queries against the userinfo JSON, e.g. ".data.employee_no".
+    session_id_claim: str = Field(default=".sub", min_length=1)
+    username_claim: str = Field(default=".name", min_length=1)
     auto_create_users: bool = False
     use_pkce: bool = True
     token_auth_method: Literal["client_secret_post", "client_secret_basic"] = (

@@ -37,10 +37,19 @@ def test_oauth2_claim_resolves_nested_feishu_userinfo():
         },
     }
 
-    assert oauth2_claim(userinfo, "data.employee_no") == "oauth-user-42"
-    assert oauth2_claim(userinfo, "data.name") == "OAuth User"
-    assert oauth2_claim(userinfo, "data.missing") is None
-    assert oauth2_claim(userinfo, "data.employee_no.value") is None
+    assert oauth2_claim(userinfo, ".data.employee_no") == "oauth-user-42"
+    assert oauth2_claim(userinfo, ".data.name") == "OAuth User"
+    assert oauth2_claim(
+        {"data": {"items": [{"id": "oauth-user-42"}]}}, ".data.items[0].id"
+    ) == "oauth-user-42"
+    with pytest.raises(oauth_routes.OAuth2ClaimError):
+        oauth2_claim(userinfo, "data.employee_no")  # bare dotted path is not valid jq
+    with pytest.raises(oauth_routes.OAuth2ClaimError):
+        oauth2_claim(userinfo, ".data.employee_no.value")  # cannot index a string
+    with pytest.raises(oauth_routes.OAuth2ClaimError):
+        oauth2_claim(userinfo, ".data.missing")
+    with pytest.raises(oauth_routes.OAuth2ClaimError):
+        oauth2_claim({"sub": 42}, ".sub")  # non-string claim value
 
 
 def test_web_client_oauth2_settings_are_a_list_with_unique_provider_names(
@@ -134,8 +143,8 @@ def test_oauth2_login_maps_to_an_existing_web_user(
                     userinfo_url="https://login.example.test/userinfo",
                     redirect_uri="https://assistant.example.test/api/auth/oauth2/callback",
                     scopes=("openid", "profile"),
-                    session_id_claim="data.employee_no",
-                    username_claim="data.name",
+                    session_id_claim=".data.employee_no",
+                    username_claim=".data.name",
                     use_pkce=True,
                     token_auth_method="client_secret_post",
                     extra_authorization_params={"prompt": "login"},
@@ -322,8 +331,8 @@ def test_oauth2_login_uses_the_selected_provider(tmp_path: Path, monkeypatch):
             userinfo_url=f"{base_url}/userinfo",
             redirect_uri=None,
             scopes=("openid",),
-            session_id_claim="sub",
-            username_claim="name",
+            session_id_claim=".sub",
+            username_claim=".name",
             use_pkce=True,
             token_auth_method="client_secret_post",
             extra_authorization_params={},

@@ -570,12 +570,16 @@ token_url = "https://login.example.com/oauth2/token"
 userinfo_url = "https://login.example.com/oauth2/userinfo"
 redirect_uri = "https://assistant.example.com/api/auth/oauth2/callback"
 scopes = ["openid", "profile"]
-session_id_claim = "sub"
-username_claim = "name"
+session_id_claim = ".sub"
+username_claim = ".name"
 auto_create_users = false
 use_pkce = true
 token_auth_method = "client_secret_post"
 ```
+
+`session_id_claim` / `username_claim` 是对 userinfo JSON求值的
+[jq](https://jqlang.github.io/jq/manual/) 查询，例如 `".data.employee_no"` 或
+`".data.items[0].id"`。
 
 需要配置多个服务商时，重复整个 `[[web_client.oauth2]]` 数组表。各服务商的
 `provider_name` 必须唯一（忽略首尾空格和大小写），前端和创建授权请求时用它选择对应配置。
