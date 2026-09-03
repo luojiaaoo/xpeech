@@ -204,7 +204,7 @@ def run(
         oauth2=oauth2_config,
         inject_prompt=InjectPromptWebConfig(
             enabled=settings.web_client.inject_prompt.enabled,
-            command_prefix=settings.web_client.inject_prompt.command_prefix,
+            command_template=settings.web_client.inject_prompt.command_template,
         ),
     )
     uvicorn.run(create_app(config), host=host, port=port)

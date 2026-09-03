@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
@@ -44,8 +45,6 @@ CurrentUserDependency = Callable[..., Awaitable[User]]
 class OAuth2LoginAttempt:
     state: str
     poll_token_hash: str
-    # state 为 oauth2_state_index 索引，固定 state 重试时必须复用原 PKCE 授权请求，避免旧链接回调匹配到新的 code_verifier。
-    authorization_url: str
     redirect_uri: str
     code_verifier: str | None
     expires_at: datetime
@@ -71,16 +70,16 @@ async def resolve_injected_prompt(
     state: str,
 ) -> str:
     try:
-        command = shlex.split(config.command_prefix)
+        command = shlex.split(config.command_template)
     except ValueError as error:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            "inject_prompt.command_prefix 格式无效",
+            "inject_prompt.command_template 格式无效",
         ) from error
     if not command:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            "inject_prompt.command_prefix 不能为空",
+            "inject_prompt.command_template 不能为空",
         )
 
     has_state_placeholder = any(
@@ -89,7 +88,7 @@ async def resolve_injected_prompt(
     if not has_state_placeholder:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            "inject_prompt.command_prefix 缺少 ${state} 或 $state",
+            "inject_prompt.command_template 缺少 ${state} 或 $state",
         )
     # Replace placeholders after splitting arguments and never invoke a shell, so
     # state cannot add options, pipelines, redirects, or another command.
@@ -275,29 +274,12 @@ def create_auth_router(
         inject_prompt_state = body.state if body is not None else None
         if inject_prompt_state is not None and not config.inject_prompt.enabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "提示词注入未启用")
-        state_value = inject_prompt_state or secrets.token_urlsafe(32)
-        existing_login_id = oauth2_state_index.get(state_value)
-        existing_attempt = oauth2_attempts.get(existing_login_id or "")
-        if existing_attempt is not None and existing_attempt.error is None:
-            # React Strict Mode、网络重试或二维码刷新可能使用同一个外部 state 再次创建请求。
-            # 返回原 authorization_url，只轮换浏览器的 poll_token，确保 OAuth2 state、PKCE
-            # code_verifier 和用户已经打开的授权链接仍属于同一次登录尝试。
-            poll_token = secrets.token_urlsafe(32)
-            existing_attempt.poll_token_hash = hashlib.sha256(
-                poll_token.encode()
-            ).hexdigest()
-            expires_in = max(
-                1,
-                int((existing_attempt.expires_at - datetime.now(UTC)).total_seconds()),
-            )
-            return {
-                "authorization_url": existing_attempt.authorization_url,
-                "login_id": existing_login_id,
-                "poll_token": poll_token,
-                "expires_in": expires_in,
-            }
-        if existing_login_id is not None:
-            discard_oauth2_attempt(existing_login_id)
+        # 入口 state 只用于查询提示词；UUID 后缀保证每次 OAuth2 授权都有唯一的回调 state。
+        state_value = (
+            f"{inject_prompt_state}_-_{uuid4()}"
+            if inject_prompt_state is not None
+            else secrets.token_urlsafe(32)
+        )
 
         login_id = secrets.token_urlsafe(24)
         poll_token = secrets.token_urlsafe(32)
@@ -323,7 +305,6 @@ def create_auth_router(
         oauth2_attempts[login_id] = OAuth2LoginAttempt(
             state=state_value,
             poll_token_hash=hashlib.sha256(poll_token.encode()).hexdigest(),
-            authorization_url=authorization_url,
             redirect_uri=redirect_uri,
             code_verifier=code_verifier,
             expires_at=datetime.now(UTC) + timedelta(minutes=OAUTH2_LOGIN_MINUTES),

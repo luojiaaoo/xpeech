@@ -66,7 +66,7 @@ def test_example_uses_nested_llm_parameters():
         "repetition_penalty": 1.0,
         "reasoning_effort": None,
     }
-    assert config.summary_tokens == 8192
+    assert config.summary_tokens == 32768
     assert config.max_iterations == 40
 
 

@@ -1,6 +1,7 @@
 from importlib import import_module
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -47,7 +48,7 @@ async def test_injected_prompt_command_replaces_state_without_length_limit():
     prompt = await resolve_injected_prompt(
         InjectPromptWebConfig(
             enabled=True,
-            command_prefix=f"printf {prompt_prefix}${{state}}",
+            command_template=f"printf {prompt_prefix}${{state}}",
         ),
         state,
     )
@@ -101,7 +102,7 @@ def test_oauth2_login_maps_to_an_existing_web_user(
             cookie_name="xpeech_session_oauth",
             inject_prompt=InjectPromptWebConfig(
                 enabled=True,
-                command_prefix="printf unused-$state",
+                command_template="printf unused-$state",
             ),
             oauth2=OAuth2WebConfig(
                 provider_name="XX",
@@ -146,7 +147,7 @@ def test_oauth2_login_maps_to_an_existing_web_user(
         ).status_code == 201
         client.post("/api/auth/logout")
 
-        entry_state = "state-token-1234567890"
+        entry_state = "state.token_~1234-567890"
         qr_response = client.post(
             "/api/auth/oauth2/qr",
             json={"state": entry_state},
@@ -157,8 +158,8 @@ def test_oauth2_login_maps_to_an_existing_web_user(
             "/api/auth/oauth2/qr",
             json={"state": entry_state},
         ).json()
-        assert repeated_qr_login["login_id"] == qr_login["login_id"]
-        assert repeated_qr_login["authorization_url"] == qr_login["authorization_url"]
+        assert repeated_qr_login["login_id"] != qr_login["login_id"]
+        assert repeated_qr_login["authorization_url"] != qr_login["authorization_url"]
         assert repeated_qr_login["poll_token"] != qr_login["poll_token"]
         qr_login = repeated_qr_login
         authorization_query = parse_qs(
@@ -167,7 +168,10 @@ def test_oauth2_login_maps_to_an_existing_web_user(
         assert authorization_query["client_id"] == ["oauth-client"]
         expected_redirect_uri = "https://assistant.example.test/api/auth/oauth2/callback"
         assert authorization_query["redirect_uri"] == [expected_redirect_uri]
-        assert authorization_query["state"] == [entry_state]
+        oauth2_state = authorization_query["state"][0]
+        state_prefix, state_uuid = oauth2_state.rsplit("_-_", 1)
+        assert state_prefix == entry_state
+        assert UUID(state_uuid).version == 4
         assert authorization_query["scope"] == ["openid profile"]
         assert authorization_query["prompt"] == ["login"]
         assert authorization_query["code_challenge_method"] == ["S256"]
@@ -237,6 +241,10 @@ def test_oauth2_login_maps_to_an_existing_web_user(
         assert client.post(
             "/api/auth/oauth2/qr",
             json={"state": "x" * 129},
+        ).status_code == 422
+        assert client.post(
+            "/api/auth/oauth2/qr",
+            json={"state": "state+token-1234567890"},
         ).status_code == 422
 
     token_request = oauth_requests[0]

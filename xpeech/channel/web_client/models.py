@@ -8,7 +8,7 @@ from .dao import User
 SESSION_ID_PATTERN = r"^[\w@+-][\w.@+-]*$"
 INJECT_PROMPT_STATE_MAX_LENGTH = 128
 INJECT_PROMPT_STATE_MIN_LENGTH = 16
-INJECT_PROMPT_STATE_PATTERN = r"^[A-Za-z0-9_-]+$"
+INJECT_PROMPT_STATE_PATTERN = r"^[A-Za-z0-9._~-]+$"
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class OAuth2WebConfig:
 @dataclass(frozen=True)
 class InjectPromptWebConfig:
     enabled: bool = False
-    command_prefix: str = ""
+    command_template: str = ""
 
 
 @dataclass(frozen=True)

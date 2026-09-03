@@ -18,7 +18,7 @@ def test_password_login_can_resolve_injected_prompt(tmp_path: Path):
             system_name="Test Assistant",
             inject_prompt=InjectPromptWebConfig(
                 enabled=True,
-                command_prefix="printf account-prefix-${state}",
+                command_template="printf account-prefix-${state}",
             ),
         )
     )

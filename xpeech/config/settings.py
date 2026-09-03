@@ -226,15 +226,21 @@ class InjectPromptConfig(BaseModel):
     """Resolve a one-shot user-message prefix by invoking a configured command."""
 
     enabled: bool = False
-    command_prefix: str = ""
+    command_template: str = ""
 
     @model_validator(mode="after")
     def validate_enabled_settings(self) -> "InjectPromptConfig":
-        self.command_prefix = self.command_prefix.strip()
-        if self.enabled and not self.command_prefix:
-            raise ValueError("enabled inject_prompt requires command_prefix")
-        if self.enabled and "${state}" not in self.command_prefix and "$state" not in self.command_prefix:
-            raise ValueError("inject_prompt.command_prefix requires ${state} or $state")
+        self.command_template = self.command_template.strip()
+        if self.enabled and not self.command_template:
+            raise ValueError("enabled inject_prompt requires command_template")
+        if (
+            self.enabled
+            and "${state}" not in self.command_template
+            and "$state" not in self.command_template
+        ):
+            raise ValueError(
+                "inject_prompt.command_template requires ${state} or $state"
+            )
         return self
 
 

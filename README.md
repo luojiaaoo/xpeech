@@ -511,10 +511,10 @@ https://assistant.example.com/?oauth2provider=飞书
 ```toml
 [web_client.inject_prompt]
 enabled = true
-command_prefix = "curl --fail --silent 'https://prompt.example.com/get?state=${state}'"
+command_template = "curl --fail --silent 'https://prompt.example.com/get?state=${state}'"
 ```
 
-`command_prefix` 必须包含 `${state}` 或 `$state`，占位符可以出现在任意参数中，也可以重复
+`command_template` 必须包含 `${state}` 或 `$state`，占位符可以出现在任意参数中，也可以重复
 使用。服务端会将其替换为入口随机码，但不会启动 shell，而是把替换后的内容作为可执行文件
 及参数运行。例如 `state = "fR7p2mN9kL4qT8vX"` 时，上述配置实际执行：
 
@@ -524,7 +524,7 @@ curl --fail --silent https://prompt.example.com/get?state=fR7p2mN9kL4qT8vX
 
 命令须在 10 秒内成功退出，并通过 stdout 输出 UTF-8 提示词；输出内容不限制长度。服务端不
 解释输出格式，只去除首尾空白后将文本返回给 Web 客户端。`state` 长度为 16～128 个字符，
-只允许 ASCII 字母、数字、`_` 和 `-`；调用方应生成不可预测且只可消费一次的随机值。
+并须匹配 `^[A-Za-z0-9._~-]+$`；调用方应生成不可预测且只可消费一次的随机值。
 
 使用账号密码登录或在登录页手动选择登录方式时，可以直接访问：
 
@@ -538,9 +538,11 @@ https://assistant.example.com/?state=fR7p2mN9kL4qT8vX
 https://assistant.example.com/?oauth2provider=飞书&state=fR7p2mN9kL4qT8vX
 ```
 
-账号密码登录成功后，Web 客户端会直接使用当前地址中的 `state` 请求提示词。OAuth2 登录会
-复用该随机值作为授权请求的 `state`，但不会将提示词注入 `redirect_uri`；链接授权成功后只
-把 `state` 带回 Web 首页，二维码授权成功后则继续使用原页面地址中的 `state`。
+账号密码登录成功后，Web 客户端会直接使用当前地址中的 `state` 请求提示词。OAuth2 登录不
+会将提示词注入 `redirect_uri`，其真实授权状态为 `<入口 state>_-_<uuid4>`，确保同一个入口
+随机码发起的每次授权仍有唯一 `state`。回调定位登录记录后，链接登录只把原始入口 `state`
+带回 Web 首页；二维码登录则继续使用原页面地址中的原始 `state`。命令占位符注入的也始终是
+原始入口 `state`，不包含 UUID 后缀。
 
 三种方式都会在登录成功后通过受认证的 Web 接口执行命令，并将命令输出保存在当前标签页的
 `sessionStorage` 中，同时从地址栏移除 `state`。用户下一次发送消息时，实际请求内容会按
