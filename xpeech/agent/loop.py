@@ -190,11 +190,50 @@ class AgentLoop:
         """运行一次Agent循环，处理一次用户消息。"""
         start_time = time.perf_counter()
         logger.info("Agent run started workspace={}", self.workspace)
+
+        # 用户命令拦截器
+        if (
+            len(message.content) == 1
+            and isinstance(message.content[0], InputText)
+            and (command := message.content[0].text.strip()).startswith("/")
+        ):
+            command_parts = command.split(maxsplit=1)
+            command_name = command_parts[0]
+            continuation = command_parts[1].strip() if len(command_parts) == 2 else ""
+            if command_name == "/help":
+                yield {"event": "command", "context": "/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）"}
+                return
+            elif command_name == "/new":
+                history = await self.history.load(message.session_id) if use_history else []
+                result = await self.memory_consolidator.consolidate(history)
+                await self.history.delete(message.session_id)
+                yield {"event": "command", "context": f"新会话, {result.message}"}
+                if not continuation:
+                    return
+            elif command_name == "/clear":
+                await self.history.delete(message.session_id)
+                yield {"event": "command", "context": "上下文已清空"}
+                if not continuation:
+                    return
+            else:
+                yield {
+                    "event": "command",
+                    "context": f"Oops! I don't recognize {command}. Try entering /help for a list of commands.",
+                }
+                return
+
+            # 将命令后的内容作为清空上下文后的第一条用户消息。
+            message.content[0].text = continuation
+
         messages_yaml: list[dict] = (
             await self.history.load(message.session_id) if use_history else []
         )
+
         # 拼接系统提示词
-        messages_yaml = set_system_prompt(messages_yaml, await build_system_prompt(workspace=self.workspace))
+        messages_yaml = set_system_prompt(
+            messages_yaml,
+            await build_system_prompt(workspace=self.workspace),
+        )
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(
             await build_user_prompt(
@@ -202,31 +241,6 @@ class AgentLoop:
                 workspace=self.workspace,
             ),
         )
-
-        # 用户命令拦截器
-        if (
-            len(message.content) == 1
-            and isinstance(message.content[0], InputText)
-            and (command := message.content[0].text).startswith("/")
-        ):
-            command = command.strip()
-            if command == "/help":
-                yield {"event": "command", "context": "/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）"}
-                return
-            elif command == "/new":
-                result = await self.memory_consolidator.consolidate(messages_yaml[:-1])
-                await self.history.delete(message.session_id)
-                yield {"event": "command", "context": f"新会话, {result.message}"}
-                return
-            elif command == "/clear":
-                await self.history.delete(message.session_id)
-                yield {"event": "command", "context": "上下文已清空"}
-                return
-            yield {
-                "event": "command",
-                "context": f"Oops! I don't recognize {command}. Try entering /help for a list of commands.",
-            }
-            return
 
         final_content = None
         final_content_error = False
