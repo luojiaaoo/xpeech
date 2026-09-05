@@ -61,7 +61,12 @@ class AgentRunner:
         )
         self._agent_loop = agent_loop
 
-    async def run(self, message: InboundMessage) -> AsyncIterator[dict[str, Any]]:
+    async def run(
+        self,
+        message: InboundMessage,
+        *,
+        use_history: bool = True,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Run one inbound message and yield the agent's events."""
         if message.session_id != self.session_id:
             raise ValueError("Inbound message session_id does not match the runner session")
@@ -69,5 +74,8 @@ class AgentRunner:
         if self._agent_loop is None:
             raise RuntimeError("AgentRunner must be created with AgentRunner.create()")
 
-        async for event in self._agent_loop.run(message=message):
+        async for event in self._agent_loop.run(
+            message=message,
+            use_history=use_history,
+        ):
             yield event

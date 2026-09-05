@@ -20,10 +20,12 @@ class FakeAgentLoop:
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
         self.messages: list[InboundMessage] = []
+        self.use_history_values: list[bool] = []
         self.instances.append(self)
 
-    async def run(self, message: InboundMessage):
+    async def run(self, message: InboundMessage, *, use_history: bool = True):
         self.messages.append(message)
+        self.use_history_values.append(use_history)
         yield {"event": "assistant", "context": "hello"}
 
 
@@ -86,6 +88,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     register_tools.assert_awaited_once()
     assert len(FakeAgentLoop.instances) == 1
     assert FakeAgentLoop.instances[0].messages == [message]
+    assert FakeAgentLoop.instances[0].use_history_values == [True]
 
     provider = FakeAgentLoop.instances[0].kwargs["provider"]
     assert provider.kwargs["api_key"] == "test-key"
@@ -122,3 +125,20 @@ async def test_runner_requires_async_factory(tmp_path: Path):
 
     with pytest.raises(RuntimeError, match=r"AgentRunner\.create\(\)"):
         _ = [event async for event in runner.run(message)]
+
+
+@pytest.mark.asyncio
+async def test_runner_can_disable_yaml_history(tmp_path: Path, runner_dependencies):
+    runner = await AgentRunner.create("session-1", config=make_config(tmp_path))
+    message = InboundMessage(
+        session_id="session-1",
+        sender_name="Scheduler",
+        session_metadata={"source": "scheduled_task"},
+        content=[InputText(text="Run scheduled prompt")],
+        timestamp="2026-09-06T10:00:00",
+        files=[],
+    )
+
+    _ = [event async for event in runner.run(message, use_history=False)]
+
+    assert FakeAgentLoop.instances[0].use_history_values == [False]

@@ -186,11 +186,13 @@ class AgentLoop:
 
     # ----------------- agent loop run -----------------
 
-    async def run(self, message: InboundMessage):
+    async def run(self, message: InboundMessage, *, use_history: bool = True):
         """运行一次Agent循环，处理一次用户消息。"""
         start_time = time.perf_counter()
         logger.info("Agent run started workspace={}", self.workspace)
-        messages_yaml: list[dict] = await self.history.load(message.session_id)
+        messages_yaml: list[dict] = (
+            await self.history.load(message.session_id) if use_history else []
+        )
         # 拼接系统提示词
         messages_yaml = set_system_prompt(messages_yaml, await build_system_prompt(workspace=self.workspace))
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
@@ -316,7 +318,8 @@ class AgentLoop:
         messages_yaml.append({"role": "assistant", "content": final_content})
 
         # 保存历史记录
-        await self.history.save(message.session_id, messages_yaml)
+        if use_history:
+            await self.history.save(message.session_id, messages_yaml)
 
         # 追加本轮对话记录
         user_question = "\n".join(
