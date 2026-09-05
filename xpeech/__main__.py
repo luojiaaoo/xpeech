@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import os
 import platform
-import argparse
 
 # 取消 litellm 的本地模型成本映射
 os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
@@ -42,7 +42,7 @@ def main() -> None:
         return
 
     if service == "feishu":
-        from .channel.feishu import run
+        from .channel.feishu.bridge import run
 
         run(chat_url=args.chat_url)
         return

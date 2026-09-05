@@ -1,0 +1,51 @@
+from ...config.settings import settings
+from ...utils.helper import ensure_path
+
+FEISHU_CACHE_DIR = ensure_path(settings.path.cache_path.resolve())
+FEISHU_USER_CACHE_TTL_SECONDS = 3600
+FEISHU_STREAM_UPDATE_INTERVAL_SECONDS = 0.5
+
+EMOJI_TYPES = [
+    "OK",
+    "THUMBSUP",
+    "THANKS",
+    "MUSCLE",
+    "FINGERHEART",
+    "APPLAUSE",
+    "FISTBUMP",
+    "JIAYI",
+    "DONE",
+    "LOVE",
+    "PROUD",
+    "COMFORT",
+    "CLAP",
+    "PRAISE",
+    "STRIVE",
+    "HUG",
+    "LGTM",
+    "OnIt",
+    "YouAreTheBest",
+    "SALUTE",
+    "SHAKE",
+    "HIGHFIVE",
+    "ROSE",
+    "HEART",
+    "PARTY",
+    "GIFT",
+    "Yes",
+    "CheckMark",
+    "Hundred",
+    "AWESOMEN",
+    "Trophy",
+    "Fire",
+    "FIREWORKS",
+    "REDPACKET",
+    "FORTUNE",
+    "LUCK",
+    "BeamingFace",
+    "Delighted",
+    "GoGoGo",
+    "ThanksFace",
+    "SaluteFace",
+    "HappyDragon",
+]

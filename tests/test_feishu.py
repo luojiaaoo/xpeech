@@ -20,16 +20,24 @@ from lark_channel import (
     TextContent,
 )
 
-from xpeech.channel import feishu
-from xpeech.channel.feishu import FINISH_CARD_CONTENT, FeishuBridge
+import xpeech.channel.feishu.bridge as feishu_bridge
+import xpeech.channel.feishu.delivery as feishu_delivery
+import xpeech.channel.feishu.inbound as feishu_inbound
+from xpeech.channel.feishu.bridge import FeishuBridge
+from xpeech.channel.feishu.cards import FINISH_CARD_CONTENT
 from xpeech.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
-def _inbound_message(content, *, message_id: str = "om_message") -> InboundMessage:
+def _inbound_message(
+    content,
+    *,
+    message_id: str = "om_message",
+    chat_type: str = "p2p",
+) -> InboundMessage:
     return InboundMessage(
         id=message_id,
         create_time=123_000,
-        conversation=Conversation(chat_id="oc_chat", chat_type="p2p"),
+        conversation=Conversation(chat_id="oc_chat", chat_type=chat_type),
         sender=Identity(open_id="ou_sender", display_name="Alice"),
         content=content,
     )
@@ -178,7 +186,7 @@ async def test_on_message_logs_when_message_is_added(monkeypatch: pytest.MonkeyP
     bridge.receive_queues = {}
     bridge._parse_msg = AsyncMock(return_value=message)
     info = MagicMock()
-    monkeypatch.setattr(feishu, "logger", SimpleNamespace(info=info))
+    monkeypatch.setattr(feishu_bridge, "logger", SimpleNamespace(info=info))
 
     await bridge._on_message(_inbound_message(TextContent(text="hello")))
 
@@ -194,12 +202,28 @@ async def test_on_message_logs_when_message_is_added(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
+async def test_on_message_ignores_unsupported_message(monkeypatch: pytest.MonkeyPatch):
+    bridge = _bridge_with_channel(SimpleNamespace())
+    bridge.receive_queues = {}
+    warning = MagicMock()
+    monkeypatch.setattr(feishu_bridge, "logger", SimpleNamespace(warning=warning))
+    inbound_message = _inbound_message(TextContent(text="hello"), chat_type="group")
+
+    await bridge._on_message(inbound_message)
+
+    assert bridge.receive_queues == {}
+    warning.assert_called_once_with(
+        "Unsupported Feishu message: chat_type=group, content_type=TextContent, message_id=om_message",
+    )
+
+
+@pytest.mark.asyncio
 async def test_channel_send_logs_message_type(monkeypatch: pytest.MonkeyPatch):
     send_result = SendResult(success=True, message_id="om_sent")
     bridge = _bridge_with_channel(SimpleNamespace())
     bridge.send = AsyncMock(return_value=send_result)
     info = MagicMock()
-    monkeypatch.setattr(feishu, "logger", SimpleNamespace(info=info))
+    monkeypatch.setattr(feishu_delivery, "logger", SimpleNamespace(info=info))
 
     await bridge.channel_send(
         to="oc_chat",
@@ -242,7 +266,7 @@ async def test_parse_resource_message_uses_channel_download_helper(
     file_name: str | None,
     downloaded_name: str,
 ):
-    monkeypatch.setattr(feishu, "FEISHU_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(feishu_inbound, "FEISHU_CACHE_DIR", tmp_path)
     downloaded_path = tmp_path / "E1001" / downloaded_name
     download_resource = AsyncMock(return_value=downloaded_path)
     bridge = _bridge_with_channel(SimpleNamespace(download_resource_to_file=download_resource))
@@ -266,7 +290,7 @@ async def test_parse_post_reads_locale_document_and_preserves_attachment_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(feishu, "FEISHU_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(feishu_inbound, "FEISHU_CACHE_DIR", tmp_path)
     downloaded_path = tmp_path / "E1001" / "img_post.png"
     download_resource = AsyncMock(return_value=downloaded_path)
     bridge = _bridge_with_channel(SimpleNamespace(download_resource_to_file=download_resource))
@@ -305,7 +329,7 @@ async def test_parse_post_reads_locale_document_and_preserves_attachment_order(
 @pytest.mark.asyncio
 async def test_card_action_uses_typed_form_value(monkeypatch: pytest.MonkeyPatch):
     notify_question = AsyncMock()
-    monkeypatch.setattr(feishu, "notify_question", notify_question)
+    monkeypatch.setattr(feishu_bridge, "notify_question", notify_question)
     update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_message"))
     bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
     event = CardActionEvent(
@@ -378,9 +402,7 @@ def test_thinking_card_wraps_content_in_collapsible_panel():
     content = chunks()
     bridge = object.__new__(FeishuBridge)
 
-    message, iter_content = bridge._format_chat_event(
-        ChatEvent(event=ChatEventType.THINKING, context=content)
-    )
+    message, iter_content = bridge._format_chat_event(ChatEvent(event=ChatEventType.THINKING, context=content))
 
     assert iter_content is content
     panel = message["card"]["body"]["elements"][0]
@@ -410,7 +432,7 @@ async def test_streaming_thinking_uses_custom_card(monkeypatch: pytest.MonkeyPat
     async def chunks():
         yield "thinking"
 
-    monkeypatch.setattr(feishu, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(feishu_delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     card = {"schema": "2.0", "body": {"elements": [{"tag": "markdown", "element_id": "main"}]}}
     create_card_instance = AsyncMock(return_value="card_thinking")
     send_card_by_reference = AsyncMock(return_value=SendResult(success=True, message_id="om_stream"))
@@ -458,8 +480,8 @@ async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.Mon
     async def streaming_chat_events(*_args):
         yield ChatEvent(event=ChatEventType.ASSISTANT, context=chunks())
 
-    monkeypatch.setattr(feishu, "iter_chat_events", streaming_chat_events)
-    monkeypatch.setattr(feishu, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(feishu_bridge, "iter_chat_events", streaming_chat_events)
+    monkeypatch.setattr(feishu_delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     create_card_instance = AsyncMock(return_value="card_assistant")
     send_card_by_reference = AsyncMock(return_value=SendResult(success=True, message_id="om_stream"))
     update_card_element_content = AsyncMock()
@@ -528,7 +550,7 @@ async def test_consume_returns_backend_http_error_to_user(
         raise httpx.HTTPStatusError("Conflict", request=request, response=response)
         yield
 
-    monkeypatch.setattr(feishu, "iter_chat_events", busy_chat_events)
+    monkeypatch.setattr(feishu_bridge, "iter_chat_events", busy_chat_events)
     send = AsyncMock(return_value=SendResult(success=True, message_id="om_busy"))
     channel = SimpleNamespace(add_reaction=AsyncMock(), send=send)
     bridge = _bridge_with_channel(channel)
