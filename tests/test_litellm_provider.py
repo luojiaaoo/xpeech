@@ -93,7 +93,7 @@ async def test_parse_response_streams_text_and_assembles_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_chat_requests_litellm_streaming():
+async def test_chat_delegates_stream_defaults_to_retry_client():
     captured_kwargs = None
 
     async def upstream():
@@ -103,7 +103,7 @@ async def test_chat_requests_litellm_streaming():
         )
 
     class RetryClient:
-        async def acompletion(self, **kwargs):
+        def acompletion(self, **kwargs):
             nonlocal captured_kwargs
             captured_kwargs = kwargs
             return upstream()
@@ -134,8 +134,8 @@ async def test_chat_requests_litellm_streaming():
     await response.flush()
 
     assert captured_kwargs is not None
-    assert captured_kwargs["stream"] is True
-    assert captured_kwargs["stream_options"] == {"include_usage": True}
+    assert "stream" not in captured_kwargs
+    assert "stream_options" not in captured_kwargs
     assert captured_kwargs["max_tokens"] == 1024
     assert captured_kwargs["temperature"] == 0.8
     assert captured_kwargs["top_p"] == 0.9
@@ -161,7 +161,7 @@ async def test_chat_omits_unset_optional_parameters():
         )
 
     class RetryClient:
-        async def acompletion(self, **kwargs):
+        def acompletion(self, **kwargs):
             nonlocal captured_kwargs
             captured_kwargs = kwargs
             return upstream()

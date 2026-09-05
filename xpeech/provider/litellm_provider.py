@@ -178,8 +178,6 @@ class LiteLLMProvider:
             "response_format": {"type": "json_object"} if json_output else None,
             "extra_headers": self.extra_headers,
             "reasoning_effort": parameters.reasoning_effort,
-            "stream": True,
-            "stream_options": {"include_usage": True},
         }
         completion_kwargs = {key: value for key, value in completion_kwargs.items() if value is not None}
 
@@ -187,7 +185,7 @@ class LiteLLMProvider:
         if tool_jsons:
             completion_kwargs["tools"] = tool_jsons
             completion_kwargs["tool_choice"] = "auto"
-        response = await self._retry_client.acompletion(**completion_kwargs)
+        response = self._retry_client.acompletion(**completion_kwargs)
 
         return self._parse_response(response, mapping_tool_call_funcs)
 
