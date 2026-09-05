@@ -147,7 +147,7 @@ async def test_get_user_identity_supports_enterprise_or_missing_email(email, ent
 
 
 @pytest.mark.asyncio
-async def test_parse_text_message_uses_employee_number_and_email_metadata():
+async def test_parse_text_message_uses_employee_number_and_feishu_user_metadata():
     bridge = _bridge_with_channel(SimpleNamespace())
 
     message = await bridge._parse_msg(_inbound_message(TextContent(text="hello")))
@@ -158,7 +158,10 @@ async def test_parse_text_message_uses_employee_number_and_email_metadata():
     assert message.sender_name == "Alice"
     assert message.timestamp == 123
     assert message.content == [TextData(text="hello")]
-    assert message.session_metadata == {"email": "alice@example.com"}
+    assert message.session_metadata == {
+        "open_id": "ou_sender",
+        "email": "alice@example.com",
+    }
 
 
 @pytest.mark.asyncio
@@ -168,7 +171,7 @@ async def test_parse_text_message_allows_missing_email():
     message = await bridge._parse_msg(_inbound_message(TextContent(text="hello")))
 
     assert message.session_id == "E1001"
-    assert message.session_metadata == {}
+    assert message.session_metadata == {"open_id": "ou_sender"}
 
 
 @pytest.mark.asyncio
