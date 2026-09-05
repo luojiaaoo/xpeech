@@ -6,6 +6,8 @@ from ..config.settings import settings
 from litellm import RateLimitError, acompletion
 from loguru import logger
 
+LLM_PARALLEL_SEMAPHORE = asyncio.Semaphore(settings.llm.parallel)
+
 
 class LiteLLMRetryClient:
     """Call LiteLLM with retries for rate-limit responses only.
@@ -24,7 +26,6 @@ class LiteLLMRetryClient:
         max_delay: float = 12.0,
         jitter: float = 0.5,
     ):
-        self.semaphore = asyncio.Semaphore(settings.llm.parallel)
         self.max_retries = max(0, max_retries)
         self.initial_delay = initial_delay
         self.max_delay = max_delay
@@ -36,7 +37,7 @@ class LiteLLMRetryClient:
 
         for attempt in range(self.max_retries + 1):
             try:
-                async with self.semaphore:
+                async with LLM_PARALLEL_SEMAPHORE:
                     result = await acompletion(**kwargs)
                 elapsed = time.time() - start_time
                 logger.info(
