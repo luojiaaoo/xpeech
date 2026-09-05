@@ -1,8 +1,9 @@
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from yarl import URL
 
@@ -31,6 +32,20 @@ def create_proxy_router(
         timestamp: Annotated[str | None, Form()] = None,
         files: Annotated[list[UploadFile] | None, File()] = None,
     ):
+        try:
+            metadata = json.loads(session_metadata)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Invalid JSON format",
+            )
+        if not isinstance(metadata, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="session_metadata must be a JSON object",
+            )
+        metadata["channel"] = "web_client"
+
         upload_data = []
         for file in files or ():
             upload_data.append(
@@ -47,7 +62,7 @@ def create_proxy_router(
             user.session_id,
             user.username,
             content,
-            session_metadata,
+            json.dumps(metadata, ensure_ascii=False),
             str(URL(backend_url) / "chat"),
             timestamp=timestamp,
             files=upload_data,

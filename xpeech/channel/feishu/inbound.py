@@ -73,7 +73,10 @@ class FeishuInboundMixin:
         if inbound_msg.chat_type == "p2p":
             session_id, email = await self.get_user_identity(inbound_msg.sender_id)
             resource_dest_dir = FEISHU_CACHE_DIR / session_id
-            session_metadata = {"open_id": inbound_msg.sender_id}
+            session_metadata = {
+                "channel": "feishu",
+                "open_id": inbound_msg.sender_id,
+            }
             if email:
                 session_metadata["email"] = email
             common_fields = {

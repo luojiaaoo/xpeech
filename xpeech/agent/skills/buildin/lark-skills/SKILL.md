@@ -1,6 +1,6 @@
 ---
 name: lark-skills
-version: v1.0.89
+version: v1.0.90
 description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审批、妙搭应用开发、考勤、多维表格 Base、日历、通讯录、云文档 Docx/Wiki、云盘 Drive、事件订阅、即时通讯 IM、邮箱、Markdown、视频会议与纪要/妙记、OKR、原生 OpenAPI、电子表格 Sheets、幻灯片 Slides、任务 Task、画板 Whiteboard、知识库 Wiki，以及会议纪要汇总、日程待办摘要两个工作流和 Skill 制作器。当用户有任一飞书/Lark 需求（发消息、查日程、读写文档/表格/幻灯片/Base、管理云盘、处理审批/任务/考勤、查会议记录、开发妙搭应用等）时使用本技能，按本文件目录读取对应子技能库的 SKILL.md 后执行。认证/登录/令牌/scope 等授权类需求走独立技能 lark-oauth，不在本技能内。"
 ---
 
@@ -16,6 +16,8 @@ description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审
 2. 用 Read 工具读取该子技能库的 `SKILL.md`，按其指引执行。
 3. 涉及认证、身份切换、权限不足（`missing_scopes`）、输出契约、高风险操作等通用规则时，先读取 `lark-shared/SKILL.md`。
 4. 涉及登录 / 授权 / 刷新令牌 / 追加 scope 的需求，改走 `lark-oauth`（独立技能，不在本技能内）。
+5. 飞书渠道发来的请求会在 metadata 中附带当前用户的 `open_id`。看到该字段时，主动将其记录到当前工作区的 `TOOLS.md`，作为用户持久化 bot 角色的飞书工具参数。
+6. 如果用户要求“给我”或“给自己”发飞书消息，先从当前请求 metadata、再从 `TOOLS.md` 获取用户的 `open_id`。获取到后，路由到 `lark-im/SKILL.md`，使用 bot 身份（`--as bot`）发送，并将该 `open_id` 作为收件人 `--user-id`。如果两处都没有 `open_id`，不要搜索或猜测用户 ID；告知用户需要先通过飞书给机器人发送一条消息，以便取得并记录其 `open_id`。
 
 ## 目录（子技能库一览）
 

@@ -159,6 +159,7 @@ async def test_parse_text_message_uses_employee_number_and_feishu_user_metadata(
     assert message.timestamp == 123
     assert message.content == [TextData(text="hello")]
     assert message.session_metadata == {
+        "channel": "feishu",
         "open_id": "ou_sender",
         "email": "alice@example.com",
     }
@@ -171,7 +172,10 @@ async def test_parse_text_message_allows_missing_email():
     message = await bridge._parse_msg(_inbound_message(TextContent(text="hello")))
 
     assert message.session_id == "E1001"
-    assert message.session_metadata == {"open_id": "ou_sender"}
+    assert message.session_metadata == {
+        "channel": "feishu",
+        "open_id": "ou_sender",
+    }
 
 
 @pytest.mark.asyncio
