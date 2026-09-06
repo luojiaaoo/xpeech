@@ -23,6 +23,7 @@ from xpeech.agent.background import (
 )
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.routes import chat
+from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.schedule import (
     FeishuScheduleArgs,
     FeishuScheduleCancelArgs,
@@ -66,6 +67,18 @@ def test_schedule_requires_exactly_one_time_field(values):
 def test_schedule_rejects_invalid_iso_time():
     with pytest.raises(ValidationError):
         FeishuScheduleArgs(prompt="task", run_at="tomorrow morning")
+
+
+def test_schedule_tool_explicitly_explains_nullable_time_fields():
+    function_schema = as_tool(feishu_schedule)["function"]
+    parameters = function_schema["parameters"]
+
+    assert set(parameters["required"]) == {"prompt", "run_at", "cron"}
+    assert "JSON null" in function_schema["description"]
+    assert '"run_at":null' in function_schema["description"]
+    assert '"cron":null' in function_schema["description"]
+    assert "JSON null" in parameters["properties"]["run_at"]["description"]
+    assert "JSON null" in parameters["properties"]["cron"]["description"]
 
 
 @pytest.mark.asyncio

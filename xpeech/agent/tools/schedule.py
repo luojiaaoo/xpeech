@@ -18,9 +18,16 @@ def _require_text(value: object, name: str) -> str:
 
 
 class FeishuScheduleArgs(BaseModel):
-    """飞书后台定时 Agent 任务参数。单次时间和 cron 表达式必须二选一。"""
+    """飞书后台定时 Agent 任务参数。
 
-    prompt: Annotated[str, Field(description="用户的完整定时任务提示词")]
+    run_at 和 cron 字段都必须传入：一个提供有效值，另一个传 JSON null。
+    不要使用字符串 "None"、"null" 或空字符串代替 JSON null。
+    """
+
+    prompt: Annotated[
+        str,
+        Field(description="定时执行时交给 Agent 的完整任务提示词，不能为空"),
+    ]
     run_at: Annotated[
         datetime | None,
         Field(description="单次任务的 ISO 8601 执行时间"),
@@ -45,7 +52,7 @@ class FeishuScheduleArgs(BaseModel):
     @model_validator(mode="after")
     def validate_trigger_choice(self):
         if (self.run_at is None) == (self.cron is None):
-            raise ValueError("exactly one of run_at and cron must be provided")
+            raise ValueError("exactly one of run_at and cron must have a value; set the unused field to JSON null")
         return self
 
 
@@ -64,7 +71,14 @@ async def feishu_schedule(
     sender_name: str | None,
     session_id: str | None,
 ) -> str:
-    """创建飞书后台定时 Agent 任务。单次时间和 cron 表达式必须二选一。"""
+    """创建飞书后台定时 Agent 任务。
+
+    必须同时传 prompt、run_at、cron。单次任务示例：
+    {"prompt":"任务内容","run_at":"2026-09-07T09:00:00+08:00","cron":null}。
+    周期任务示例：
+    {"prompt":"任务内容","run_at":null,"cron":"0 9 * * *"}。
+    未使用的时间字段必须传 JSON null，不能传字符串或空字符串。
+    """
     if not session_metadata or session_metadata.get("channel") != "feishu":
         raise ValueError("feishu_schedule is only available for Feishu sessions")
 
