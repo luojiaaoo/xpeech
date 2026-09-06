@@ -4,6 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from ...utils.helper import ensure_async
 from ..background import (
     cancel_scheduled_task,
     list_scheduled_tasks,
@@ -87,7 +88,7 @@ async def feishu_schedule(
     validated_session_id = _require_text(session_id, "session_id")
     validated_sender_name = _require_text(sender_name, "sender_name")
 
-    job = schedule_feishu_task(
+    job = await ensure_async(schedule_feishu_task)(
         prompt=args.prompt,
         run_at=args.run_at,
         cron=args.cron,
@@ -107,8 +108,9 @@ async def feishu_schedule(
 async def feishu_schedule_list(session_id: str | None) -> str:
     """列出当前会话所有渠道仍有效的后台定时任务。"""
     validated_session_id = _require_text(session_id, "session_id")
+    tasks = await ensure_async(list_scheduled_tasks)(validated_session_id)
     return json.dumps(
-        [task.model_dump() for task in list_scheduled_tasks(validated_session_id)],
+        [task.model_dump() for task in tasks],
         ensure_ascii=False,
     )
 
@@ -119,5 +121,8 @@ async def feishu_schedule_cancel(
 ) -> str:
     """取消当前会话拥有的后台定时任务。"""
     validated_session_id = _require_text(session_id, "session_id")
-    cancel_scheduled_task(session_id=validated_session_id, job_id=args.job_id)
+    await ensure_async(cancel_scheduled_task)(
+        session_id=validated_session_id,
+        job_id=args.job_id,
+    )
     return f"Scheduled task cancelled successfully: {args.job_id}"

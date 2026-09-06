@@ -2,6 +2,8 @@ import asyncio
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import get_ident
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,6 +11,7 @@ import pytest_asyncio
 from pydantic import ValidationError
 
 import xpeech.agent.background as background
+import xpeech.agent.tools.schedule as schedule_tools
 from xpeech.agent.background import (
     BACKGROUND_TASK_FAILURE_MESSAGE,
     BackgroundMessageChannel,
@@ -79,6 +82,42 @@ def test_schedule_tool_explicitly_explains_nullable_time_fields():
     assert '"cron":null' in function_schema["description"]
     assert "JSON null" in parameters["properties"]["run_at"]["description"]
     assert "JSON null" in parameters["properties"]["cron"]["description"]
+
+
+@pytest.mark.asyncio
+async def test_schedule_tools_offload_scheduler_database_calls(monkeypatch):
+    event_loop_thread = get_ident()
+    worker_threads = []
+
+    def create_task(**kwargs):
+        worker_threads.append(get_ident())
+        return SimpleNamespace(id="job-1", next_run_time=None)
+
+    def list_tasks(session_id):
+        worker_threads.append(get_ident())
+        return []
+
+    def cancel_task(**kwargs):
+        worker_threads.append(get_ident())
+
+    monkeypatch.setattr(schedule_tools, "schedule_feishu_task", create_task)
+    monkeypatch.setattr(schedule_tools, "list_scheduled_tasks", list_tasks)
+    monkeypatch.setattr(schedule_tools, "cancel_scheduled_task", cancel_task)
+
+    await schedule_tools.feishu_schedule(
+        FeishuScheduleArgs(prompt="task", run_at="2099-01-01T00:00:00+08:00"),
+        session_metadata={"channel": "feishu", "open_id": "ou_1"},
+        sender_name="Alice",
+        session_id="session-1",
+    )
+    await schedule_tools.feishu_schedule_list(session_id="session-1")
+    await schedule_tools.feishu_schedule_cancel(
+        FeishuScheduleCancelArgs(job_id="job-1"),
+        session_id="session-1",
+    )
+
+    assert len(worker_threads) == 3
+    assert all(thread_id != event_loop_thread for thread_id in worker_threads)
 
 
 @pytest.mark.asyncio
