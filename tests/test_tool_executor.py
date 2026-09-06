@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, ValidationError, create_model
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
-from xpeech.agent.tools.shell import _format_command_output
+from xpeech.agent.tools.shell import _format_command_output, _guard_command
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 from xpeech.provider.schema import ToolCallRequest
 
@@ -92,6 +92,11 @@ def test_tools_sharing_empty_model_keep_independent_names_and_descriptions():
 
 
 class TestToolExecutor:
+    def test_shell_guard_allows_format_url_query_parameter(self, tmp_path: Path):
+        command = 'curl -s "wttr.in/Wuhan?lang=zh&format=%l:+%c+%t+%h+%w"'
+
+        assert _guard_command(command, tmp_path) == command
+
     def test_result_limit_is_global_not_mcp_specific(self):
         assert ToolConfig().max_result_chars == 10_000
         with pytest.raises(ValidationError, match="max_result_chars"):
