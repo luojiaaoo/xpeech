@@ -20,19 +20,19 @@ class FakeProvider:
         self.support_image = False
         self.support_video = True
         self.registered: list[str] = []
+        self.blocking: dict[str, bool] = {}
         self.mcp_registrations: list[Any] = []
 
     def register_tool(self, tool_type: str = "function"):
         if tool_type == "mcp":
-            async def register_mcp(registration):
+            async def register_mcp(registration, *, is_blocking: bool = False):
                 self.mcp_registrations.append(registration)
-                return registration
 
             return register_mcp
 
-        def register_function(tool):
+        def register_function(tool, *, is_blocking: bool = False):
             self.registered.append(tool.__name__)
-            return tool
+            self.blocking[tool.__name__] = is_blocking
 
         return register_function
 
@@ -76,4 +76,8 @@ async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeyp
         "send_file",
         "ask_user_question",
     ]
+    assert provider.blocking == {
+        tool_name: tool_name == "ask_user_question"
+        for tool_name in provider.registered
+    }
     assert provider.mcp_registrations == [registration]

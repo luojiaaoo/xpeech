@@ -1,13 +1,26 @@
 import asyncio
+import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
-import json
+from typing import Any, Literal, TypeAlias, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "default"]
+ToolFunc: TypeAlias = Callable[..., Any]
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredTool:
+    """A callable tool and the metadata needed to expose and execute it."""
+
+    func: ToolFunc
+    tool_json: dict[str, Any]
+    is_blocking: bool
+
+
+ToolRegistry: TypeAlias = dict[str, RegisteredTool]
 
 
 class LLMParameters(BaseModel):

@@ -1,16 +1,23 @@
-from ..agent.tools.helper import get_custom_tool_func
+import functools
 from collections.abc import AsyncIterator, Callable
+from typing import Any, Literal
 
 import litellm
-from typing import Any, Literal
-import functools
-from pydantic import BaseModel
-from .schema import LLMParameters, LLMResponse, StreamChunk, ToolCallChunk
-from .helper import LiteLLMRetryClient
-from ..agent.tools.helper import as_tool
-from ..agent.tools.mcp_client import MCPServerRegistration, collect_mcp_tool
-import inspect
 from loguru import logger
+from pydantic import BaseModel
+
+from ..agent.tools.helper import as_tool, get_custom_tool_func
+from ..agent.tools.mcp_client import MCPServerRegistration, collect_mcp_tool
+from ..utils.helper import ensure_async
+from .helper import LiteLLMRetryClient
+from .schema import (
+    LLMParameters,
+    LLMResponse,
+    RegisteredTool,
+    StreamChunk,
+    ToolCallChunk,
+    ToolRegistry,
+)
 
 # 禁用调试信息
 litellm.suppress_debug_info = True
@@ -34,8 +41,7 @@ class LiteLLMProvider:
         self.api_base = api_base
         self.default_model = default_model
         self.parameters = parameters
-        self.default_tool_jsons: list[dict[str, Any]] = []
-        self.default_mapping_tool_call_funcs: dict[str, Callable[[type[BaseModel] | None], str | list]] = {}
+        self.default_tools: ToolRegistry = {}
         self._support_image = support_image
         self._support_video = support_video
         self._support_json_output = support_json_output
@@ -66,59 +72,70 @@ class LiteLLMProvider:
 
         return self._support_json_output
 
-    def decorator_tool_func(
+    def _build_function_tool(
         self,
         func_: Callable[[type[BaseModel] | None], str | list],
-        register_default: bool = False,
-    ):
-        def format_result(rt) -> str:
+        is_blocking: bool,
+    ) -> RegisteredTool:
+        def format_result(rt) -> str | list:
             if isinstance(rt, str) or (isinstance(rt, list) and all("type" in item for item in rt)):  # 必须是合法的消息
                 return rt
             else:
                 raise TypeError(f"Invalid return type: {type(rt)}")
 
+        async_func = ensure_async(func_)
+
         @functools.wraps(func_)
-        async def wrapper(*args, **kwargs) -> str:
-            if inspect.iscoroutinefunction(func_):
-                rt = await func_(*args, **kwargs)
-            else:
-                rt = func_(*args, **kwargs)
+        async def wrapper(*args, **kwargs) -> str | list:
+            rt = await async_func(*args, **kwargs)
             return format_result(rt)
 
-        if register_default:
-            self.default_tool_jsons.append(as_tool(func_))
-            self.default_mapping_tool_call_funcs[func_.__name__] = wrapper
-            return wrapper
-        else:
-            return as_tool(func_), wrapper
+        return RegisteredTool(
+            func=wrapper,
+            tool_json=as_tool(func_),
+            is_blocking=is_blocking,
+        )
 
-    async def decorator_mcp_tool(self, registration: MCPServerRegistration) -> MCPServerRegistration:
+    def _register_function_tool(
+        self,
+        func_: Callable[[type[BaseModel] | None], str | list],
+        is_blocking: bool = False,
+    ) -> None:
+        registered_tool = self._build_function_tool(func_, is_blocking=is_blocking)
+        self.default_tools[func_.__name__] = registered_tool
+
+    async def _register_mcp_tools(
+        self,
+        registration: MCPServerRegistration,
+        is_blocking: bool = False,
+    ) -> None:
         async for tool_json, tool_func, tool_func_name in collect_mcp_tool(registration):
-            self.default_tool_jsons.append(tool_json)
-            self.default_mapping_tool_call_funcs[tool_func_name] = tool_func
-        return registration
+            self.default_tools[tool_func_name] = RegisteredTool(
+                func=tool_func,
+                tool_json=tool_json,
+                is_blocking=is_blocking,
+            )
 
-    def register_tool(self, tool_type: Literal["function", "mcp"] = "function"):
-        """注册工具，统一返回 async wrapper。"""
+    def register_tool(
+        self,
+        tool_type: Literal["function", "mcp"] = "function",
+    ):
+        """Return a function or MCP tool registrar."""
 
         if tool_type == "function":
-            return functools.partial(self.decorator_tool_func, register_default=True)
+            return self._register_function_tool
         if tool_type == "mcp":
-            return self.decorator_mcp_tool
+            return self._register_mcp_tools
         raise ValueError(f"Unsupported tool type: {tool_type}")
 
-    async def _parse_tools(
-        self, funcs: list[Callable[[type[BaseModel] | None], str | list]]
-    ) -> tuple[list[dict[str, Any]], dict[str, Callable[[type[BaseModel] | None], str | list]]]:
+    async def _parse_tools(self, funcs: list[Callable[[type[BaseModel] | None], str | list]]) -> ToolRegistry:
         """解析普通函数工具。"""
 
-        tool_jsons = []
-        mapping_tool_call_funcs = {}
+        tools: ToolRegistry = {}
         for func in funcs:
-            tool_json, tool_func = self.decorator_tool_func(func, register_default=False)
-            tool_jsons.append(tool_json)
-            mapping_tool_call_funcs[func.__name__] = tool_func
-        return tool_jsons, mapping_tool_call_funcs
+            # 解析工具函数
+            tools[func.__name__] = self._build_function_tool(func, is_blocking=False)
+        return tools
 
     async def chat(
         self,
@@ -127,6 +144,7 @@ class LiteLLMProvider:
         parameters: LLMParameters | None = None,
         remove_all_tools: bool = False,
         remove_default_tools: bool = False,
+        remove_blocking_tool: bool = False,
         json_output: bool = False,
     ) -> LLMResponse:
         parameters = self.parameters if parameters is None else self.parameters.copy_with(parameters)
@@ -141,19 +159,26 @@ class LiteLLMProvider:
 
         # 根据工具名称获取自定义工具，或使用工具函数
         tools = [get_custom_tool_func(tool) if isinstance(tool, str) else tool for tool in tools] if tools else []
-        parsed_tool_jsons, parsed_mapping_tool_call_funcs = await self._parse_tools(tools)
+        parsed_tools = await self._parse_tools(tools)
 
         # 确定工具列表
         if remove_all_tools:
-            tool_jsons = []
-            mapping_tool_call_funcs = {}
+            registered_tools: ToolRegistry = {}
         else:
             if remove_default_tools:
-                tool_jsons = parsed_tool_jsons
-                mapping_tool_call_funcs = parsed_mapping_tool_call_funcs
+                registered_tools = parsed_tools
             else:
-                tool_jsons = self.default_tool_jsons + parsed_tool_jsons
-                mapping_tool_call_funcs = self.default_mapping_tool_call_funcs | parsed_mapping_tool_call_funcs
+                registered_tools = self.default_tools | parsed_tools
+
+        if remove_blocking_tool:
+            registered_tools = {
+                tool_name: tool
+                for tool_name, tool in registered_tools.items()
+                if not tool.is_blocking
+            }
+
+        tool_jsons = [tool.tool_json for tool in registered_tools.values()]
+        mapping_tool_call_funcs = {tool_name: tool.func for tool_name, tool in registered_tools.items()}
 
         # 参数构建
         extra_body = {

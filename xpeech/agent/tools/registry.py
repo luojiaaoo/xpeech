@@ -43,7 +43,7 @@ async def register_default_tools(
     )
     provider.register_tool()(read_office_file)
     provider.register_tool()(build_file_message_tools(workspace=workspace))
-    provider.register_tool()(ask_user_question)
+    provider.register_tool()(ask_user_question, is_blocking=True)
 
     for server_name, server_config in config.mcp_servers.items():
         registration = await get_persistent_mcp_registration_from_config(
