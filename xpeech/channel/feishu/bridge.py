@@ -20,15 +20,23 @@ from lark_channel import (
 from loguru import logger
 from yarl import URL
 
+from ...agent.background import BackgroundMessageChannel, FeishuBackgroundMessage
 from ...config.settings import settings
+from ...utils.jwt_auth import create_access_token
 from ..helper import download_file as download_channel_file
 from ..helper import iter_chat_events, notify_question
 from ..schema import ChatEvent, ChatEventType, Message
-from .cards import FINISH_CARD_CONTENT, build_feishu_question_card
+from .cards import (
+    FINISH_CARD_CONTENT,
+    build_feishu_markdown_card,
+    build_feishu_question_card,
+)
 from .config import EMOJI_TYPES
 from .delivery import FeishuDeliveryMixin
 from .formatting import FeishuEventFormatter
 from .inbound import FeishuInboundMixin, UnsupportedFeishuMessageError
+
+BACKGROUND_MESSAGE_RETRY_SECONDS = 2.0
 
 
 class FeishuBridge(
@@ -262,17 +270,62 @@ class FeishuBridge(
                 print(f"poll_sessions error: {exc}")
                 await asyncio.sleep(interval)
 
+    async def poll_background_message_once(
+        self,
+        client: httpx.AsyncClient,
+    ) -> bool:
+        """Poll once and immediately deliver an available background message."""
+        response = await client.get(
+            str(URL(self.chat_url) / "background_message"),
+            headers={"authorization": f"Bearer {create_access_token()}"},
+            params={"channel": BackgroundMessageChannel.FEISHU.value},
+        )
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+
+        try:
+            background_message = FeishuBackgroundMessage.model_validate(response.json())
+        except ValueError as exc:
+            raise RuntimeError("Backend returned an invalid Feishu background message") from exc
+
+        result = await self.channel.send(
+            to=background_message.open_id,
+            message={"card": build_feishu_markdown_card(background_message.content)},
+        )
+        self._ensure_send_success(result, operation="send background message")
+        logger.info(
+            "Feishu background message sent open_id={}",
+            background_message.open_id,
+        )
+        return True
+
+    async def poll_background_messages(self) -> None:
+        """Continuously long-poll and deliver scheduled Agent results."""
+        async with httpx.AsyncClient(timeout=None) as client:
+            while True:
+                try:
+                    await self.poll_background_message_once(client)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Failed to poll or send Feishu background message")
+                    await asyncio.sleep(BACKGROUND_MESSAGE_RETRY_SECONDS)
+
     async def start(self) -> None:
         poll_task = asyncio.create_task(self.poll_sessions())
+        background_message_task = asyncio.create_task(self.poll_background_messages())
         try:
             await self.channel.connect()
         finally:
             await self.channel.disconnect()
             poll_task.cancel()
+            background_message_task.cancel()
             for task in self.session_tasks.values():
                 task.cancel()
             await asyncio.gather(
                 poll_task,
+                background_message_task,
                 *self.session_tasks.values(),
                 return_exceptions=True,
             )

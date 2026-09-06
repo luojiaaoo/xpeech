@@ -18,7 +18,7 @@ def make_response(content: str) -> LLMResponse:
 
 
 @pytest.mark.asyncio
-async def test_run_can_skip_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_background_run_skips_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     async def build_test_system_prompt(workspace: Path):
         assert workspace == tmp_path
         return {"role": "system", "content": "system"}
@@ -31,7 +31,9 @@ async def test_run_can_skip_yaml_history(tmp_path: Path, monkeypatch: pytest.Mon
     agent_loop.history = SimpleNamespace(
         load=AsyncMock(return_value=[{"role": "user", "content": "old context"}]),
         save=AsyncMock(),
+        delete=AsyncMock(),
     )
+    agent_loop.memory_consolidator = SimpleNamespace(consolidate=AsyncMock())
     agent_loop.compressor = SimpleNamespace(
         should_compress=AsyncMock(return_value=False),
     )
@@ -47,15 +49,23 @@ async def test_run_can_skip_yaml_history(tmp_path: Path, monkeypatch: pytest.Mon
         session_id="session-1",
         sender_name="Scheduler",
         session_metadata={"source": "scheduled_task"},
-        content=[InputText(text="Run scheduled prompt")],
+        content=[InputText(text="/new Run scheduled prompt")],
         timestamp="2026-09-06T10:00:00",
         files=[],
     )
 
-    events = [event async for event in agent_loop.run(message, use_history=False)]
+    events = [event async for event in agent_loop.run(message, background=True)]
 
     agent_loop.history.load.assert_not_awaited()
     agent_loop.history.save.assert_not_awaited()
+    agent_loop.history.delete.assert_not_awaited()
+    agent_loop.memory_consolidator.consolidate.assert_not_awaited()
     messages = agent_loop.chat.await_args.kwargs["messages"]
     assert all(item.get("content") != "old context" for item in messages)
+    assert "/new Run scheduled prompt" in [
+        part["text"]
+        for part in messages[1]["content"]
+        if part.get("type") == "text"
+    ]
     assert {"event": "assistant", "context": "scheduled result"} in events
+    assert agent_loop.chat.await_args.kwargs["remove_blocking_tool"] is True

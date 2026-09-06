@@ -65,7 +65,7 @@ class AgentRunner:
         self,
         message: InboundMessage,
         *,
-        use_history: bool = True,
+        background: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one inbound message and yield the agent's events."""
         if message.session_id != self.session_id:
@@ -76,6 +76,32 @@ class AgentRunner:
 
         async for event in self._agent_loop.run(
             message=message,
-            use_history=use_history,
+            background=background,
         ):
             yield event
+
+    async def run_once(
+        self,
+        message: InboundMessage,
+        *,
+        background: bool = False,
+    ) -> str:
+        """Consume an Agent run and return its last complete assistant segment."""
+        current_segment: list[str] | None = None
+        final_segment: str | None = None
+
+        async for event in self.run(message, background=background):
+            event_type = event.get("event")
+            if event_type == "assistant":
+                if current_segment is None:
+                    current_segment = []
+                context = event.get("context")
+                if isinstance(context, str):
+                    current_segment.append(context)
+            elif event_type == "assistant_end" and current_segment is not None:
+                final_segment = "".join(current_segment)
+                current_segment = None
+
+        if final_segment is None or not final_segment.strip():
+            raise RuntimeError("Agent run completed without model output")
+        return final_segment

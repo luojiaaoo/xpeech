@@ -1,16 +1,40 @@
+import asyncio
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.sse import EventSourceResponse
 
 from ....utils.helper import save_to_workspace
+from ...background import (
+    BACKGROUND_MESSAGE_QUEUES,
+    BackgroundMessageChannel,
+    FeishuBackgroundMessage,
+)
 from ...loop import AgentLoop, QuestionEvent
 from ...runner import AgentRunner
 from ..dependencies import acquire_chat_session, content, sender_name_header, session_metadata
 from ..schema import InboundMessage, InputContent
 
 router = APIRouter()
+BACKGROUND_MESSAGE_LONG_POLL_SECONDS = 20
+
+
+@router.get("/background_message", response_model=FeishuBackgroundMessage)
+async def poll_background_message(
+    channel: BackgroundMessageChannel,
+) -> FeishuBackgroundMessage:
+    """Long-poll for the next background message for a delivery channel."""
+    queue = BACKGROUND_MESSAGE_QUEUES.get(channel)
+    if queue is None:
+        raise HTTPException(status_code=400, detail="Unsupported background message channel")
+    try:
+        return await asyncio.wait_for(
+            queue.get(),
+            timeout=BACKGROUND_MESSAGE_LONG_POLL_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=404, detail="No background message available") from exc
 
 
 @router.post("/answer_question")

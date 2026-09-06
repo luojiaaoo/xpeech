@@ -59,6 +59,8 @@ class ToolExecutor:
         mapping_tool_call_funcs: dict[str, Any],
         loop_count: int | None = None,
         session_metadata: dict[str, str] | None = None,
+        session_id: str | None = None,
+        sender_name: str | None = None,
     ) -> list[ToolExecutionResult]:
         """并发执行全部工具调用，并按原始顺序返回结构化结果。"""
 
@@ -79,6 +81,10 @@ class ToolExecutor:
                 kwargs = {}
                 if model_info.has_session_metadata:
                     kwargs["session_metadata"] = session_metadata
+                if model_info.has_session_id:
+                    kwargs["session_id"] = session_id
+                if model_info.has_sender_name:
+                    kwargs["sender_name"] = sender_name
                 if not model_info.has_pydantic_param:
                     value = await tool_call_func(**kwargs)
                 else:

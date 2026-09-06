@@ -20,12 +20,12 @@ class FakeAgentLoop:
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
         self.messages: list[InboundMessage] = []
-        self.use_history_values: list[bool] = []
+        self.background_values: list[bool] = []
         self.instances.append(self)
 
-    async def run(self, message: InboundMessage, *, use_history: bool = True):
+    async def run(self, message: InboundMessage, *, background: bool = False):
         self.messages.append(message)
-        self.use_history_values.append(use_history)
+        self.background_values.append(background)
         yield {"event": "assistant", "context": "hello"}
 
 
@@ -88,7 +88,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     register_tools.assert_awaited_once()
     assert len(FakeAgentLoop.instances) == 1
     assert FakeAgentLoop.instances[0].messages == [message]
-    assert FakeAgentLoop.instances[0].use_history_values == [True]
+    assert FakeAgentLoop.instances[0].background_values == [False]
 
     provider = FakeAgentLoop.instances[0].kwargs["provider"]
     assert provider.kwargs["api_key"] == "test-key"
@@ -128,7 +128,7 @@ async def test_runner_requires_async_factory(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_runner_can_disable_yaml_history(tmp_path: Path, runner_dependencies):
+async def test_runner_can_run_in_background(tmp_path: Path, runner_dependencies):
     runner = await AgentRunner.create("session-1", config=make_config(tmp_path))
     message = InboundMessage(
         session_id="session-1",
@@ -139,6 +139,57 @@ async def test_runner_can_disable_yaml_history(tmp_path: Path, runner_dependenci
         files=[],
     )
 
-    _ = [event async for event in runner.run(message, use_history=False)]
+    _ = [event async for event in runner.run(message, background=True)]
 
-    assert FakeAgentLoop.instances[0].use_history_values == [False]
+    assert FakeAgentLoop.instances[0].background_values == [True]
+
+
+@pytest.mark.asyncio
+async def test_run_once_returns_only_last_complete_assistant_segment(tmp_path: Path):
+    runner = AgentRunner("session-1", config=make_config(tmp_path))
+
+    class EventLoop:
+        async def run(self, message, *, background=False):
+            assert background is True
+            yield {"event": "assistant", "context": "draft"}
+            yield {"event": "assistant_end", "context": ""}
+            yield {"event": "tool_call", "context": "ignored"}
+            yield {"event": "thinking", "context": "ignored"}
+            yield {"event": "assistant", "context": "final "}
+            yield {"event": "assistant", "context": "answer"}
+            yield {"event": "assistant_end", "context": ""}
+            yield {"event": "token_usage", "context": "ignored"}
+
+    runner._agent_loop = EventLoop()
+    message = InboundMessage(
+        session_id="session-1",
+        sender_name="Alice",
+        session_metadata={},
+        content=[InputText(text="Hi")],
+        timestamp="2026-09-05T10:00:00",
+        files=[],
+    )
+
+    assert await runner.run_once(message, background=True) == "final answer"
+
+
+@pytest.mark.asyncio
+async def test_run_once_rejects_missing_model_output(tmp_path: Path):
+    runner = AgentRunner("session-1", config=make_config(tmp_path))
+
+    class EventLoop:
+        async def run(self, message, *, background=False):
+            yield {"event": "thinking", "context": "only thinking"}
+
+    runner._agent_loop = EventLoop()
+    message = InboundMessage(
+        session_id="session-1",
+        sender_name="Alice",
+        session_metadata={},
+        content=[InputText(text="Hi")],
+        timestamp="2026-09-05T10:00:00",
+        files=[],
+    )
+
+    with pytest.raises(RuntimeError, match="without model output"):
+        await runner.run_once(message)

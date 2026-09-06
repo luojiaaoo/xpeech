@@ -7,6 +7,7 @@ from .file_message import build_file_message_tools
 from .filesystem import build_file_tools
 from .mcp_client import get_persistent_mcp_registration_from_config
 from .question import ask_user_question
+from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .shell import build_shell_tools
 from .web import web_fetch, web_search
 
@@ -44,6 +45,9 @@ async def register_default_tools(
     provider.register_tool()(read_office_file)
     provider.register_tool()(build_file_message_tools(workspace=workspace))
     provider.register_tool()(ask_user_question, is_blocking=True)
+    provider.register_tool()(feishu_schedule)
+    provider.register_tool()(feishu_schedule_list)
+    provider.register_tool()(feishu_schedule_cancel)
 
     for server_name, server_config in config.mcp_servers.items():
         registration = await get_persistent_mcp_registration_from_config(

@@ -1,0 +1,293 @@
+import asyncio
+import json
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+import pytest_asyncio
+from fastapi import HTTPException
+from pydantic import ValidationError
+
+import xpeech.agent.background as background
+from xpeech.agent.background import (
+    BACKGROUND_TASK_FAILURE_MESSAGE,
+    BackgroundMessageChannel,
+    FeishuBackgroundMessage,
+    FeishuBackgroundMessageQueue,
+    cancel_scheduled_task,
+    list_scheduled_tasks,
+    run_feishu_background_task,
+    schedule_feishu_task,
+    start_background_scheduler,
+    stop_background_scheduler,
+)
+from xpeech.agent.runner import AgentRunner
+from xpeech.agent.server.routes import chat
+from xpeech.agent.tools.schedule import (
+    FeishuScheduleArgs,
+    FeishuScheduleCancelArgs,
+    feishu_schedule,
+    feishu_schedule_cancel,
+    feishu_schedule_list,
+)
+
+
+def drain_queue(queue: FeishuBackgroundMessageQueue) -> None:
+    while not queue.empty():
+        queue.get_nowait()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clean_background_state():
+    stop_background_scheduler()
+    drain_queue(
+        background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
+    )
+    yield
+    stop_background_scheduler()
+    await asyncio.sleep(0)
+    drain_queue(
+        background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
+    )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {},
+        {"run_at": "2099-01-01T00:00:00", "cron": "0 9 * * *"},
+    ],
+)
+def test_schedule_requires_exactly_one_time_field(values):
+    with pytest.raises(ValidationError, match="exactly one"):
+        FeishuScheduleArgs(prompt="task", **values)
+
+
+def test_schedule_rejects_invalid_iso_time():
+    with pytest.raises(ValidationError):
+        FeishuScheduleArgs(prompt="task", run_at="tomorrow morning")
+
+
+@pytest.mark.asyncio
+async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(tmp_path: Path):
+    scheduler = start_background_scheduler(tmp_path / "schedule.db")
+    now = datetime.now(scheduler.timezone)
+
+    job = schedule_feishu_task(
+        prompt="task",
+        run_at=(now + timedelta(hours=1)).replace(tzinfo=None),
+        cron=None,
+        session_id="session-1",
+        sender_name="Alice",
+        session_metadata={"channel": "feishu", "open_id": "ou_1"},
+    )
+    assert job.next_run_time.tzinfo == scheduler.timezone
+
+    with pytest.raises(ValueError, match="future"):
+        schedule_feishu_task(
+            prompt="past",
+            run_at=now - timedelta(seconds=1),
+            cron=None,
+            session_id="session-1",
+            sender_name="Alice",
+            session_metadata={"channel": "feishu", "open_id": "ou_1"},
+        )
+    with pytest.raises(ValueError):
+        schedule_feishu_task(
+            prompt="bad cron",
+            run_at=None,
+            cron="not a cron",
+            session_id="session-1",
+            sender_name="Alice",
+            session_metadata={"channel": "feishu", "open_id": "ou_1"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
+    database = tmp_path / "schedule.db"
+    scheduler = start_background_scheduler(database)
+    base = datetime.now(scheduler.timezone)
+    date_job = schedule_feishu_task(
+        prompt="once",
+        run_at=base + timedelta(hours=1),
+        cron=None,
+        session_id="session-1",
+        sender_name="Alice",
+        session_metadata={"channel": "feishu", "open_id": "ou_1"},
+    )
+    cron_job = schedule_feishu_task(
+        prompt="repeat",
+        run_at=None,
+        cron="* * * * *",
+        session_id="session-1",
+        sender_name="Alice",
+        session_metadata={"channel": "feishu", "open_id": "ou_1"},
+    )
+    stop_background_scheduler()
+    await asyncio.sleep(0)
+
+    future_now = base + timedelta(hours=2)
+    restored = start_background_scheduler(database, now=future_now)
+    assert restored.get_job(date_job.id) is None
+    restored_cron = restored.get_job(cron_job.id)
+    assert restored_cron is not None
+    assert restored_cron.next_run_time > future_now
+
+
+@pytest.mark.asyncio
+async def test_tools_capture_context_list_across_channels_and_enforce_cancel_owner(tmp_path: Path):
+    scheduler = start_background_scheduler(tmp_path / "schedule.db")
+    args = FeishuScheduleArgs(
+        prompt="daily report",
+        run_at=datetime.now(scheduler.timezone) + timedelta(hours=1),
+    )
+    metadata = {"channel": "feishu", "open_id": "ou_1", "email": "a@example.test"}
+    result = json.loads(
+        await feishu_schedule(
+            args,
+            session_metadata=metadata,
+            sender_name="Alice",
+            session_id="session-1",
+        )
+    )
+    job = scheduler.get_job(result["job_id"])
+    assert job is not None
+    assert job.kwargs["session_metadata"] == metadata
+    assert job.kwargs["sender_name"] == "Alice"
+
+    tasks = json.loads(await feishu_schedule_list(session_id="session-1"))
+    assert tasks == [
+        {
+            "job_id": result["job_id"],
+            "channel": "feishu",
+            "prompt": "daily report",
+            "schedule_type": "run_at",
+            "schedule_value": result["next_run_time"],
+            "next_run_time": result["next_run_time"],
+        }
+    ]
+    assert await feishu_schedule_list(session_id="another-session") == "[]"
+
+    with pytest.raises(ValueError, match="not available"):
+        cancel_scheduled_task(session_id="another-session", job_id=result["job_id"])
+    with pytest.raises(ValueError, match="not available"):
+        cancel_scheduled_task(session_id="session-1", job_id="missing")
+    assert await feishu_schedule_cancel(
+        FeishuScheduleCancelArgs(job_id=result["job_id"]),
+        session_id="session-1",
+    )
+    assert list_scheduled_tasks("session-1") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "metadata, error",
+    [
+        ({"channel": "web", "open_id": "ou_1"}, "only available for Feishu"),
+        ({"channel": "feishu", "open_id": "  "}, "non-empty string"),
+        ({"channel": "feishu"}, "non-empty string"),
+    ],
+)
+async def test_feishu_schedule_validates_delivery_context(tmp_path: Path, metadata, error):
+    scheduler = start_background_scheduler(tmp_path / "schedule.db")
+    args = FeishuScheduleArgs(
+        prompt="task",
+        run_at=datetime.now(scheduler.timezone) + timedelta(hours=1),
+    )
+    with pytest.raises(ValueError, match=error):
+        await feishu_schedule(
+            args,
+            session_metadata=metadata,
+            sender_name="Alice",
+            session_id="session-1",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result, expected",
+    [
+        ("completed", "completed"),
+        (RuntimeError("model failed"), BACKGROUND_TASK_FAILURE_MESSAGE),
+        ("", BACKGROUND_TASK_FAILURE_MESSAGE),
+    ],
+)
+async def test_background_agent_queues_success_or_fixed_failure(
+    monkeypatch,
+    result,
+    expected,
+):
+    captured = {}
+
+    class FakeRunner:
+        async def run_once(self, message, *, background=False):
+            captured["message"] = message
+            captured["background"] = background
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+    async def create(cls, session_id, **kwargs):
+        captured["session_id"] = session_id
+        return FakeRunner()
+
+    monkeypatch.setattr(AgentRunner, "create", classmethod(create))
+    metadata = {"channel": "feishu", "open_id": "ou_1", "custom": "kept"}
+    await run_feishu_background_task(
+        job_id="job-1",
+        prompt="scheduled prompt",
+        session_id="session-1",
+        sender_name="Alice",
+        session_metadata=metadata,
+        schedule_type="cron",
+        schedule_value="0 9 * * *",
+    )
+
+    queued = background.BACKGROUND_MESSAGE_QUEUES[
+        BackgroundMessageChannel.FEISHU
+    ].get_nowait()
+    assert queued.open_id == "ou_1"
+    assert queued.content == expected
+    assert captured["session_id"] == "session-1"
+    assert captured["background"] is True
+    assert captured["message"].sender_name == "Alice"
+    assert captured["message"].content[0].text == "scheduled prompt"
+    assert captured["message"].session_metadata == {**metadata, "source": "scheduled_task"}
+    assert metadata == {"channel": "feishu", "open_id": "ou_1", "custom": "kept"}
+
+
+def test_background_message_and_queue_are_strictly_typed():
+    queue = FeishuBackgroundMessageQueue()
+    with pytest.raises(ValidationError):
+        FeishuBackgroundMessage(open_id=" ", content="result")
+    with pytest.raises(ValidationError):
+        FeishuBackgroundMessage(open_id="ou_1", content=" ")
+    with pytest.raises(TypeError):
+        queue.put_nowait({"open_id": "ou_1", "content": "result"})
+
+
+@pytest.mark.asyncio
+async def test_background_message_long_poll_returns_immediately(monkeypatch):
+    queue = FeishuBackgroundMessageQueue()
+    monkeypatch.setattr(
+        chat,
+        "BACKGROUND_MESSAGE_QUEUES",
+        {BackgroundMessageChannel.FEISHU: queue},
+    )
+    message = FeishuBackgroundMessage(open_id="ou_1", content="result")
+    queue.put_nowait(message)
+    assert await chat.poll_background_message(BackgroundMessageChannel.FEISHU) == message
+
+
+@pytest.mark.asyncio
+async def test_background_message_long_poll_times_out_with_404(monkeypatch):
+    monkeypatch.setattr(
+        chat,
+        "BACKGROUND_MESSAGE_QUEUES",
+        {BackgroundMessageChannel.FEISHU: FeishuBackgroundMessageQueue()},
+    )
+    monkeypatch.setattr(chat, "BACKGROUND_MESSAGE_LONG_POLL_SECONDS", 0.001)
+    with pytest.raises(HTTPException) as exc_info:
+        await chat.poll_background_message(BackgroundMessageChannel.FEISHU)
+    assert exc_info.value.status_code == 404

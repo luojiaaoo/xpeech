@@ -24,7 +24,7 @@ import xpeech.channel.feishu.bridge as feishu_bridge
 import xpeech.channel.feishu.delivery as feishu_delivery
 import xpeech.channel.feishu.inbound as feishu_inbound
 from xpeech.channel.feishu.bridge import FeishuBridge
-from xpeech.channel.feishu.cards import FINISH_CARD_CONTENT
+from xpeech.channel.feishu.cards import FINISH_CARD_CONTENT, build_feishu_markdown_card
 from xpeech.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
@@ -70,6 +70,124 @@ def test_channel_uses_expected_compatibility_configuration():
     assert bridge.channel.config.safety.dedup.ttl_seconds == 43_200
     assert bridge.channel.config.outbound.retry.max_attempts == 5
     assert bridge.channel.config.security.mode == "compat"
+
+
+def test_background_markdown_card_contains_result_content():
+    assert build_feishu_markdown_card("**scheduled result**") == {
+        "schema": "2.0",
+        "body": {
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": "**scheduled result**",
+                    "text_align": "left",
+                    "text_size": "normal",
+                    "margin": "0px 0px 0px 0px",
+                }
+            ]
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_background_poll_immediately_sends_markdown_card():
+    request = httpx.Request("GET", "http://backend.test/background_message")
+    response = httpx.Response(
+        200,
+        request=request,
+        json={
+            "channel": "feishu",
+            "open_id": "ou_receiver",
+            "content": "**scheduled result**",
+        },
+    )
+    client = SimpleNamespace(get=AsyncMock(return_value=response))
+    send = AsyncMock(return_value=SendResult(success=True, message_id="om_background"))
+    bridge = _bridge_with_channel(SimpleNamespace(send=send))
+
+    assert await bridge.poll_background_message_once(client) is True
+
+    client.get.assert_awaited_once()
+    assert client.get.await_args.args == ("http://backend.test/background_message",)
+    assert client.get.await_args.kwargs["params"] == {"channel": "feishu"}
+    assert client.get.await_args.kwargs["headers"]["authorization"].startswith("Bearer ")
+    send.assert_awaited_once_with(
+        to="ou_receiver",
+        message={"card": build_feishu_markdown_card("**scheduled result**")},
+    )
+
+
+@pytest.mark.asyncio
+async def test_background_poll_treats_long_poll_timeout_as_empty():
+    request = httpx.Request("GET", "http://backend.test/background_message")
+    client = SimpleNamespace(
+        get=AsyncMock(return_value=httpx.Response(404, request=request)),
+    )
+    send = AsyncMock()
+    bridge = _bridge_with_channel(SimpleNamespace(send=send))
+
+    assert await bridge.poll_background_message_once(client) is False
+    send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_background_poll_retries_failures_and_remains_cancellable(monkeypatch):
+    class ClientContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(
+        feishu_bridge.httpx,
+        "AsyncClient",
+        lambda **_kwargs: ClientContext(),
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr(feishu_bridge.asyncio, "sleep", sleep)
+    bridge = _bridge_with_channel(SimpleNamespace())
+    bridge.poll_background_message_once = AsyncMock(
+        side_effect=[RuntimeError("backend unavailable"), asyncio.CancelledError()],
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await bridge.poll_background_messages()
+
+    assert bridge.poll_background_message_once.await_count == 2
+    sleep.assert_awaited_once_with(feishu_bridge.BACKGROUND_MESSAGE_RETRY_SECONDS)
+
+
+@pytest.mark.asyncio
+async def test_bridge_lifecycle_runs_background_poll_task():
+    started = set()
+    cancelled = set()
+
+    async def wait_until_cancelled(name):
+        started.add(name)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.add(name)
+
+    async def connect():
+        await asyncio.sleep(0)
+
+    bridge = _bridge_with_channel(
+        SimpleNamespace(
+            connect=connect,
+            disconnect=AsyncMock(),
+        )
+    )
+    bridge.session_tasks = {}
+    bridge.poll_sessions = lambda: wait_until_cancelled("sessions")
+    bridge.poll_background_messages = lambda: wait_until_cancelled("background")
+
+    await bridge.start()
+
+    assert started == {"sessions", "background"}
+    assert cancelled == {"sessions", "background"}
+    bridge.channel.disconnect.assert_awaited_once()
 
 
 @pytest.mark.asyncio

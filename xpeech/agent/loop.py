@@ -81,6 +81,7 @@ class AgentLoop:
 
     async def tool_call(
         self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str,
+        sender_name: str,
         session_metadata: dict[str, str] | None = None,
     ):
         """执行模型发起的工具调用，并逐步产生工具相关事件。"""
@@ -120,6 +121,8 @@ class AgentLoop:
             response.mapping_tool_call_funcs,
             loop_count=loop_count,
             session_metadata=session_metadata,
+            session_id=session_id,
+            sender_name=sender_name,
         )
         for execution in execution_results:
             tool_call = execution.call
@@ -190,14 +193,15 @@ class AgentLoop:
 
     # ----------------- agent loop run -----------------
 
-    async def run(self, message: InboundMessage, *, use_history: bool = True):
+    async def run(self, message: InboundMessage, *, background: bool = False):
         """运行一次Agent循环，处理一次用户消息。"""
         start_time = time.perf_counter()
         logger.info("Agent run started workspace={}", self.workspace)
 
         # 用户命令拦截器
         if (
-            len(message.content) == 1
+            not background
+            and len(message.content) == 1
             and isinstance(message.content[0], InputText)
             and (command := message.content[0].text.strip()).startswith("/")
         ):
@@ -208,7 +212,7 @@ class AgentLoop:
                 yield {"event": "command", "context": "/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）"}
                 return
             elif command_name == "/new":
-                history = await self.history.load(message.session_id) if use_history else []
+                history = await self.history.load(message.session_id)
                 result = await self.memory_consolidator.consolidate(history)
                 await self.history.delete(message.session_id)
                 yield {"event": "command", "context": f"新会话, {result.message}"}
@@ -230,7 +234,7 @@ class AgentLoop:
             message.content[0].text = continuation
 
         messages_yaml: list[dict] = (
-            await self.history.load(message.session_id) if use_history else []
+            [] if background else await self.history.load(message.session_id)
         )
 
         # 拼接系统提示词
@@ -274,6 +278,7 @@ class AgentLoop:
                 response = await self.chat(
                     messages=messages_yaml,
                     tools=self.tools,
+                    remove_blocking_tool=background,
                 )
             except Exception:
                 logger.exception(
@@ -304,6 +309,7 @@ class AgentLoop:
             if response.has_tool_calls:
                 async for i in self.tool_call(
                     response, messages_yaml, loop_count, message.session_id,
+                    message.sender_name,
                     session_metadata=message.session_metadata,
                 ):
                     yield i
@@ -339,7 +345,7 @@ class AgentLoop:
         messages_yaml.append({"role": "assistant", "content": final_content})
 
         # 保存历史记录
-        if use_history:
+        if not background:
             await self.history.save(message.session_id, messages_yaml)
 
         # 追加本轮对话记录

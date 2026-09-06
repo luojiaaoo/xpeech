@@ -34,6 +34,24 @@ def plain_text(content: str) -> dict[str, str]:
     return {"tag": "plain_text", "content": content}
 
 
+def build_feishu_markdown_card(content: str) -> dict[str, Any]:
+    """Build a non-streaming Feishu card containing Markdown content."""
+    return {
+        "schema": "2.0",
+        "body": {
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": content,
+                    "text_align": "left",
+                    "text_size": "normal",
+                    "margin": "0px 0px 0px 0px",
+                }
+            ]
+        },
+    }
+
+
 def _feishu_label(content: str) -> dict[str, Any]:
     return {
         "tag": "div",

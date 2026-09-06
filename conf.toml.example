@@ -2,6 +2,7 @@
 session_path = "data/session"
 session_history_path = "data/session/history"
 session_record_path = "data/session/record.db"
+schedule_path = "data/session/schedule.db"
 workspace_base_path = "data/workspace_base"
 sandbox_home_path = "data/sandbox-home"
 cache_path = "data/cache"

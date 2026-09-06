@@ -75,6 +75,9 @@ async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeyp
         "read_office_file",
         "send_file",
         "ask_user_question",
+        "feishu_schedule",
+        "feishu_schedule_list",
+        "feishu_schedule_cancel",
     ]
     assert provider.blocking == {
         tool_name: tool_name == "ask_user_question"

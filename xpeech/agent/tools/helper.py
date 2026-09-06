@@ -112,6 +112,11 @@ class ToolModelInfo:
     model_cls: type[BaseModel]
     has_pydantic_param: bool
     has_session_metadata: bool
+    has_session_id: bool
+    has_sender_name: bool
+
+
+INJECTED_TOOL_PARAMETERS = frozenset({"session_metadata", "session_id", "sender_name"})
 
 
 def get_tool_model_cls(func: Callable) -> ToolModelInfo:
@@ -119,7 +124,13 @@ def get_tool_model_cls(func: Callable) -> ToolModelInfo:
     sig = inspect.signature(func)
     hints = get_type_hints(func)
     has_session_metadata = "session_metadata" in sig.parameters
-    params = [param for param in sig.parameters.values() if param.name != "session_metadata"]
+    has_session_id = "session_id" in sig.parameters
+    has_sender_name = "sender_name" in sig.parameters
+    params = [
+        param
+        for param in sig.parameters.values()
+        if param.name not in INJECTED_TOOL_PARAMETERS
+    ]
     if len(params) == 1:
         param = params[0]
         model_cls = hints.get(param.name)
@@ -132,13 +143,25 @@ def get_tool_model_cls(func: Callable) -> ToolModelInfo:
                 f"Parameter '{param.name}' in '{func.__name__}' must be annotated "
                 f"with a BaseModel subclass, got {model_cls!r}"
             )
-        return ToolModelInfo(model_cls, True, has_session_metadata)
+        return ToolModelInfo(
+            model_cls,
+            True,
+            has_session_metadata,
+            has_session_id,
+            has_sender_name,
+        )
     elif len(params) == 0:
-        return ToolModelInfo(EmptyToolArgs, False, has_session_metadata)
+        return ToolModelInfo(
+            EmptyToolArgs,
+            False,
+            has_session_metadata,
+            has_session_id,
+            has_sender_name,
+        )
     raise ValueError(
         f"Function '{func.__name__}' must accept either 0 parameters "
         f"or exactly 1 parameter annotated with a BaseModel subclass, "
-        f"optionally with session_metadata"
+        f"optionally with session_metadata, session_id, and sender_name"
     )
 
 
@@ -146,8 +169,9 @@ def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str
     """
     将函数转换为 OpenAI Tool Schema。
 
-    支持无参数函数或一个 BaseModel 参数，两者均可额外声明 session_metadata。
-    session_metadata 由运行时注入，不包含在工具 schema 中。
+    支持无参数函数或一个 BaseModel 参数，两者均可额外声明
+    session_metadata、session_id 和 sender_name。这些参数由运行时注入，
+    不包含在工具 schema 中。
     """
     # 名称：函数名 + 后缀
     tool_name = func.__name__ + name_suffix

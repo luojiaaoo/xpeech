@@ -43,6 +43,8 @@ def test_tool_model_info(has_model, has_metadata):
 
     assert info.has_pydantic_param is has_model
     assert info.has_session_metadata is has_metadata
+    assert info.has_session_id is False
+    assert info.has_sender_name is False
     if has_model:
         assert info.model_cls is EchoArgs
     else:
@@ -167,6 +169,28 @@ class TestToolExecutor:
         )
         assert all(result.succeeded for result in results)
         assert [result.value for result in results] == ["echo", "context", "plain"]
+
+    @pytest.mark.asyncio
+    async def test_hides_and_injects_all_runtime_context(self, tmp_path: Path):
+        async def context(
+            args: EchoArgs,
+            session_metadata,
+            session_id,
+            sender_name,
+        ) -> str:
+            """Return all runtime context."""
+            return f"{args.text}:{session_id}:{sender_name}:{session_metadata['channel']}"
+
+        schema = as_tool(context)["function"]["parameters"]
+        assert set(schema["properties"]) == {"text"}
+        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+            [ToolCallRequest(id="1", name="context", arguments={"text": "ok"})],
+            {"context": context},
+            session_metadata={"channel": "feishu"},
+            session_id="session-1",
+            sender_name="Alice",
+        )
+        assert result.value == "ok:session-1:Alice:feishu"
 
     @pytest.mark.asyncio
     async def test_returns_failure_for_unregistered_tool(self, tmp_path: Path):
