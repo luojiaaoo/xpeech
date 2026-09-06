@@ -24,7 +24,10 @@ import xpeech.channel.feishu.bridge as feishu_bridge
 import xpeech.channel.feishu.delivery as feishu_delivery
 import xpeech.channel.feishu.inbound as feishu_inbound
 from xpeech.channel.feishu.bridge import FeishuBridge
-from xpeech.channel.feishu.cards import FINISH_CARD_CONTENT, build_feishu_markdown_card
+from xpeech.channel.feishu.cards import (
+    FINISH_CARD_CONTENT,
+    build_feishu_background_task_card,
+)
 from xpeech.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
@@ -72,9 +75,14 @@ def test_channel_uses_expected_compatibility_configuration():
     assert bridge.channel.config.security.mode == "compat"
 
 
-def test_background_markdown_card_contains_result_content():
-    assert build_feishu_markdown_card("**scheduled result**") == {
+def test_background_task_card_contains_result_content():
+    assert build_feishu_background_task_card("**scheduled result**") == {
         "schema": "2.0",
+        "header": {
+            "title": {"tag": "plain_text", "content": "定时任务执行结果"},
+            "template": "blue",
+            "padding": "12px 12px 12px 12px",
+        },
         "body": {
             "elements": [
                 {
@@ -113,7 +121,7 @@ async def test_background_poll_immediately_sends_markdown_card():
     assert client.get.await_args.kwargs["headers"]["authorization"].startswith("Bearer ")
     send.assert_awaited_once_with(
         to="ou_receiver",
-        message={"card": build_feishu_markdown_card("**scheduled result**")},
+        message={"card": build_feishu_background_task_card("**scheduled result**")},
     )
 
 

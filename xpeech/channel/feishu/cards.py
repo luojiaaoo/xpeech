@@ -34,10 +34,15 @@ def plain_text(content: str) -> dict[str, str]:
     return {"tag": "plain_text", "content": content}
 
 
-def build_feishu_markdown_card(content: str) -> dict[str, Any]:
-    """Build a non-streaming Feishu card containing Markdown content."""
+def build_feishu_background_task_card(content: str) -> dict[str, Any]:
+    """Build a Feishu card for a background Agent task result."""
     return {
         "schema": "2.0",
+        "header": {
+            "title": plain_text("定时任务执行结果"),
+            "template": "blue",
+            "padding": "12px 12px 12px 12px",
+        },
         "body": {
             "elements": [
                 {

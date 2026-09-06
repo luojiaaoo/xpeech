@@ -28,7 +28,7 @@ from ..helper import iter_chat_events, notify_question
 from ..schema import ChatEvent, ChatEventType, Message
 from .cards import (
     FINISH_CARD_CONTENT,
-    build_feishu_markdown_card,
+    build_feishu_background_task_card,
     build_feishu_question_card,
 )
 from .config import EMOJI_TYPES
@@ -291,7 +291,7 @@ class FeishuBridge(
 
         result = await self.channel.send(
             to=background_message.open_id,
-            message={"card": build_feishu_markdown_card(background_message.content)},
+            message={"card": build_feishu_background_task_card(background_message.content)},
         )
         self._ensure_send_success(result, operation="send background message")
         logger.info(
