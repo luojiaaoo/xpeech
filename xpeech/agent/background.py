@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import random
+from threading import Lock
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -19,6 +21,8 @@ from ..config.settings import settings
 from .server.schema import InboundMessage, InputText
 
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
+MAX_BACKGROUND_TASK_DELAY_SECONDS = 3 * 60
+MAX_SCHEDULED_TASKS_PER_SESSION = 8
 
 
 class BackgroundMessageChannel(StrEnum):
@@ -78,6 +82,7 @@ BACKGROUND_MESSAGE_QUEUES: dict[
     BackgroundMessageChannel.FEISHU: FeishuBackgroundMessageQueue(),
 }
 _scheduler: AsyncIOScheduler | None = None
+_schedule_lock = Lock()
 
 
 def _scheduler_database_path(database_path: str | Path | None = None) -> Path:
@@ -211,26 +216,38 @@ def schedule_feishu_task(
         schedule_type = "cron"
         schedule_value = cron
 
-    job_id = uuid4().hex
-    return scheduler.add_job(
-        run_feishu_background_task,
-        trigger=trigger,
-        id=job_id,
-        name="Feishu scheduled Agent task",
-        kwargs={
-            "job_id": job_id,
-            "prompt": prompt,
-            "session_id": session_id,
-            "sender_name": sender_name,
-            "session_metadata": dict(session_metadata),
-            "schedule_type": schedule_type,
-            "schedule_value": schedule_value,
-        },
-        coalesce=False,
-        max_instances=1,
-        misfire_grace_time=1,
-        replace_existing=False,
-    )
+    # Keep the count-and-add operation atomic inside the supported single process.
+    with _schedule_lock:
+        session_job_count = sum(
+            job.kwargs.get("session_id") == session_id
+            for job in scheduler.get_jobs()
+        )
+        if session_job_count >= MAX_SCHEDULED_TASKS_PER_SESSION:
+            raise ValueError(
+                "Scheduled task limit reached for this session "
+                f"(maximum {MAX_SCHEDULED_TASKS_PER_SESSION})"
+            )
+
+        job_id = uuid4().hex
+        return scheduler.add_job(
+            run_feishu_background_task,
+            trigger=trigger,
+            id=job_id,
+            name="Feishu scheduled Agent task",
+            kwargs={
+                "job_id": job_id,
+                "prompt": prompt,
+                "session_id": session_id,
+                "sender_name": sender_name,
+                "session_metadata": dict(session_metadata),
+                "schedule_type": schedule_type,
+                "schedule_value": schedule_value,
+            },
+            coalesce=False,
+            max_instances=1,
+            misfire_grace_time=1,
+            replace_existing=False,
+        )
 
 
 def list_scheduled_tasks(session_id: str) -> list[ScheduledTask]:
@@ -281,6 +298,14 @@ async def run_feishu_background_task(
 ) -> None:
     """Run a scheduled Agent task and enqueue its user-facing Feishu result."""
     del schedule_type, schedule_value
+    delay_seconds = random.uniform(0, MAX_BACKGROUND_TASK_DELAY_SECONDS)
+    logger.info(
+        "Feishu scheduled Agent task waiting job_id={} delay_seconds={:.2f}",
+        job_id,
+        delay_seconds,
+    )
+    await asyncio.sleep(delay_seconds)
+
     open_id = session_metadata["open_id"]
     try:
         # Keep this import lazy so persisted jobs can import this module without a
