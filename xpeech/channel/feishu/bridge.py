@@ -280,7 +280,7 @@ class FeishuBridge(
             headers={"authorization": f"Bearer {create_access_token()}"},
             params={"channel": BackgroundMessageChannel.FEISHU.value},
         )
-        if response.status_code == 404:
+        if response.status_code == 204:
             return False
         response.raise_for_status()
 

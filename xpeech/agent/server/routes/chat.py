@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
 from ....utils.helper import save_to_workspace
@@ -17,13 +17,17 @@ from ..dependencies import acquire_chat_session, content, sender_name_header, se
 from ..schema import InboundMessage, InputContent
 
 router = APIRouter()
-BACKGROUND_MESSAGE_LONG_POLL_SECONDS = 20
+BACKGROUND_MESSAGE_LONG_POLL_SECONDS = 50
 
 
-@router.get("/background_message", response_model=FeishuBackgroundMessage)
+@router.get(
+    "/background_message",
+    response_model=FeishuBackgroundMessage,
+    responses={204: {"description": "No background message available"}},
+)
 async def poll_background_message(
     channel: BackgroundMessageChannel,
-) -> FeishuBackgroundMessage:
+) -> FeishuBackgroundMessage | Response:
     """Long-poll for the next background message for a delivery channel."""
     queue = BACKGROUND_MESSAGE_QUEUES.get(channel)
     if queue is None:
@@ -33,8 +37,8 @@ async def poll_background_message(
             queue.get(),
             timeout=BACKGROUND_MESSAGE_LONG_POLL_SECONDS,
         )
-    except TimeoutError as exc:
-        raise HTTPException(status_code=404, detail="No background message available") from exc
+    except TimeoutError:
+        return Response(status_code=204)
 
 
 @router.post("/answer_question")

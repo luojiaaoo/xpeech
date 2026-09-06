@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
-from fastapi import HTTPException
 from pydantic import ValidationError
 
 import xpeech.agent.background as background
@@ -339,13 +338,12 @@ async def test_background_message_long_poll_returns_immediately(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_background_message_long_poll_times_out_with_404(monkeypatch):
+async def test_background_message_long_poll_times_out_with_204(monkeypatch):
     monkeypatch.setattr(
         chat,
         "BACKGROUND_MESSAGE_QUEUES",
         {BackgroundMessageChannel.FEISHU: FeishuBackgroundMessageQueue()},
     )
     monkeypatch.setattr(chat, "BACKGROUND_MESSAGE_LONG_POLL_SECONDS", 0.001)
-    with pytest.raises(HTTPException) as exc_info:
-        await chat.poll_background_message(BackgroundMessageChannel.FEISHU)
-    assert exc_info.value.status_code == 404
+    response = await chat.poll_background_message(BackgroundMessageChannel.FEISHU)
+    assert response.status_code == 204

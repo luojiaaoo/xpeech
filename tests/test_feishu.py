@@ -118,10 +118,10 @@ async def test_background_poll_immediately_sends_markdown_card():
 
 
 @pytest.mark.asyncio
-async def test_background_poll_treats_long_poll_timeout_as_empty():
+async def test_background_poll_treats_no_content_as_empty():
     request = httpx.Request("GET", "http://backend.test/background_message")
     client = SimpleNamespace(
-        get=AsyncMock(return_value=httpx.Response(404, request=request)),
+        get=AsyncMock(return_value=httpx.Response(204, request=request)),
     )
     send = AsyncMock()
     bridge = _bridge_with_channel(SimpleNamespace(send=send))
