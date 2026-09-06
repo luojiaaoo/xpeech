@@ -188,6 +188,8 @@ class LLMResponse:
     @property
     def has_tool_calls(self) -> bool:
         """Check if response contains tool calls."""
+        if not self._stream_done.is_set():
+            raise ValueError("Tool calls are not available until the stream is done.")
         return len(self.tool_calls) > 0
 
     async def flush(self) -> "LLMResponse":

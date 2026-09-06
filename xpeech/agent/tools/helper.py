@@ -1,8 +1,9 @@
 import inspect
 import mimetypes
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, get_type_hints, Type
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel
 from ...utils.helper import dynamic_import, is_relative_path
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
@@ -102,13 +103,23 @@ def safe_resolve_workspace_path(
         return resolved_path
 
 
-def get_tool_model_cls(func: Callable[Type[BaseModel] | None, str | dict]) -> type[BaseModel]:
-    """
-    获取工具函数的参数类型注解。
-    """
+class EmptyToolArgs(BaseModel):
+    """无参数"""
+
+
+@dataclass(frozen=True)
+class ToolModelInfo:
+    model_cls: type[BaseModel]
+    has_pydantic_param: bool
+    has_session_metadata: bool
+
+
+def get_tool_model_cls(func: Callable) -> ToolModelInfo:
+    """返回工具参数模型及参数标记；无 Pydantic 参数时使用空模型。"""
     sig = inspect.signature(func)
     hints = get_type_hints(func)
-    params = list(sig.parameters.values())
+    has_session_metadata = "session_metadata" in sig.parameters
+    params = [param for param in sig.parameters.values() if param.name != "session_metadata"]
     if len(params) == 1:
         param = params[0]
         model_cls = hints.get(param.name)
@@ -121,23 +132,23 @@ def get_tool_model_cls(func: Callable[Type[BaseModel] | None, str | dict]) -> ty
                 f"Parameter '{param.name}' in '{func.__name__}' must be annotated "
                 f"with a BaseModel subclass, got {model_cls!r}"
             )
-        return model_cls
+        return ToolModelInfo(model_cls, True, has_session_metadata)
     elif len(params) == 0:
-        return None
+        return ToolModelInfo(EmptyToolArgs, False, has_session_metadata)
+    raise ValueError(
+        f"Function '{func.__name__}' must accept either 0 parameters "
+        f"or exactly 1 parameter annotated with a BaseModel subclass, "
+        f"optionally with session_metadata"
+    )
 
 
 def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str = "") -> dict:
     """
     将函数转换为 OpenAI Tool Schema。
 
-    支持两种函数签名：
-    1. 无参数函数
-    2. 有且仅有一个参数，且该参数类型为 BaseModel 的子类
+    支持无参数函数或一个 BaseModel 参数，两者均可额外声明 session_metadata。
+    session_metadata 由运行时注入，不包含在工具 schema 中。
     """
-    sig = inspect.signature(func)
-    hints = get_type_hints(func)
-    params = list(sig.parameters.values())
-
     # 名称：函数名 + 后缀
     tool_name = func.__name__ + name_suffix
 
@@ -146,32 +157,9 @@ def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str
     if not description:
         raise ValueError(f"Function '{func.__name__}' must have a docstring")
 
-    # 情况 1：无参数
-    if len(params) == 0:
-        model_cls = create_model(f"{tool_name}Args")
+    model_info = get_tool_model_cls(func)
 
-    # 情况 2：单个 BaseModel 参数
-    elif len(params) == 1:
-        param = params[0]
-        model_cls = hints.get(param.name)
-
-        if model_cls is None:
-            raise TypeError(f"Parameter '{param.name}' in '{func.__name__}' must have a type annotation")
-
-        if not inspect.isclass(model_cls) or not issubclass(model_cls, BaseModel):
-            raise TypeError(
-                f"Parameter '{param.name}' in '{func.__name__}' must be annotated "
-                f"with a BaseModel subclass, got {model_cls!r}"
-            )
-
-    # 其他情况：不支持
-    else:
-        raise ValueError(
-            f"Function '{func.__name__}' must accept either 0 parameters "
-            f"or exactly 1 parameter annotated with a BaseModel subclass"
-        )
-
-    return pydantic_function_tool(model_cls, name=tool_name, description=description)
+    return pydantic_function_tool(model_info.model_cls, name=tool_name, description=description)
 
 
 def is_direct_python_pip_exec(cmd: str) -> bool:

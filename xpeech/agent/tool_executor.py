@@ -58,6 +58,7 @@ class ToolExecutor:
         tool_calls: list[ToolCallRequest],
         mapping_tool_call_funcs: dict[str, Any],
         loop_count: int | None = None,
+        session_metadata: dict[str, str] | None = None,
     ) -> list[ToolExecutionResult]:
         """并发执行全部工具调用，并按原始顺序返回结构化结果。"""
 
@@ -74,11 +75,14 @@ class ToolExecutor:
             try:
                 if tool_call_func is None:
                     raise ValueError(f"Tool is not registered for this request: {tool_call.name}")
-                model_cls = get_tool_model_cls(tool_call_func)
-                if model_cls is None:
-                    value = await tool_call_func()
+                model_info = get_tool_model_cls(tool_call_func)
+                kwargs = {}
+                if model_info.has_session_metadata:
+                    kwargs["session_metadata"] = session_metadata
+                if not model_info.has_pydantic_param:
+                    value = await tool_call_func(**kwargs)
                 else:
-                    value = await tool_call_func(model_cls(**tool_call.arguments))
+                    value = await tool_call_func(model_info.model_cls(**tool_call.arguments), **kwargs)
                 if (
                     isinstance(value, str)
                     and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS

@@ -79,7 +79,10 @@ class AgentLoop:
             summary_tokens=self.summary_tokens,
         )
 
-    async def tool_call(self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str):
+    async def tool_call(
+        self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str,
+        session_metadata: dict[str, str] | None = None,
+    ):
         """执行模型发起的工具调用，并逐步产生工具相关事件。"""
         logger.info(
             "Processing tool calls loop_count={} count={}",
@@ -116,6 +119,7 @@ class AgentLoop:
             response.tool_calls,
             response.mapping_tool_call_funcs,
             loop_count=loop_count,
+            session_metadata=session_metadata,
         )
         for execution in execution_results:
             tool_call = execution.call
@@ -298,7 +302,10 @@ class AgentLoop:
 
             # 如果有工具调用
             if response.has_tool_calls:
-                async for i in self.tool_call(response, messages_yaml, loop_count, message.session_id):
+                async for i in self.tool_call(
+                    response, messages_yaml, loop_count, message.session_id,
+                    session_metadata=message.session_metadata,
+                ):
                     yield i
             else:
                 # 没有工具，结束循环

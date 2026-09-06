@@ -84,7 +84,7 @@ def validate_question_json(data: str | dict[str, Any]) -> dict[str, Any]:
 
 
 class QuestionArgs(StrictBaseModel):
-    question: str = Field(description="通用问题表单 JSON 对象")
+    question: str = Field(description="序列化为 JSON 字符串的通用问题表单对象")
     title: str | None = Field(default=None, description="表单标题。若 question.title 已提供，可省略。")
 
     def validate_and_format(self) -> str:
