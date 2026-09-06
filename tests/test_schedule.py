@@ -72,16 +72,13 @@ def test_schedule_rejects_invalid_iso_time():
         FeishuScheduleArgs(prompt="task", run_at="tomorrow morning")
 
 
-def test_schedule_tool_explicitly_explains_nullable_time_fields():
+def test_schedule_tool_explains_mutually_exclusive_time_fields():
     function_schema = as_tool(feishu_schedule)["function"]
-    parameters = function_schema["parameters"]
+    description = function_schema["description"]
 
-    assert set(parameters["required"]) == {"prompt", "run_at", "cron"}
-    assert "JSON null" in function_schema["description"]
-    assert '"run_at":null' in function_schema["description"]
-    assert '"cron":null' in function_schema["description"]
-    assert "JSON null" in parameters["properties"]["run_at"]["description"]
-    assert "JSON null" in parameters["properties"]["cron"]["description"]
+    assert "run_at 和 cron 二选一必传" in description
+    assert "另一个省略不传即可" in description
+    assert '不要传字符串 "None"' in description
 
 
 @pytest.mark.asyncio
@@ -332,7 +329,14 @@ async def test_background_agent_queues_success_or_fixed_failure(
     assert captured["session_id"] == "session-1"
     assert captured["background"] is True
     assert captured["message"].sender_name == "Alice"
-    assert captured["message"].content[0].text == "scheduled prompt"
+    scheduled_prompt = captured["message"].content[0].text
+    assert scheduled_prompt.startswith("## 定时任务运行说明")
+    assert "本次运行由后台定时任务触发" in scheduled_prompt
+    assert "追加到 `memory/HISTORY.md`" in scheduled_prompt
+    assert "不要覆盖已有内容" in scheduled_prompt
+    assert "调度类型：cron" in scheduled_prompt
+    assert "调度表达式：0 9 * * *" in scheduled_prompt
+    assert scheduled_prompt.endswith("scheduled prompt")
     assert captured["message"].session_metadata == {**metadata, "source": "scheduled_task"}
     assert metadata == {"channel": "feishu", "open_id": "ou_1", "custom": "kept"}
 

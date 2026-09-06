@@ -23,6 +23,13 @@ from .server.schema import InboundMessage, InputText
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
 MAX_BACKGROUND_TASK_DELAY_SECONDS = 3 * 60
 MAX_SCHEDULED_TASKS_PER_SESSION = 8
+SCHEDULED_TASK_PROMPT_PREFIX = (
+    "## 定时任务运行说明\n\n"
+    "本次运行由后台定时任务触发，不是用户实时发起的新对话。\n"
+    "完成任务后，请将本次定时任务的执行记录追加到 `memory/HISTORY.md`，"
+    "不要覆盖已有内容。记录必须以 `[YYYY-MM-DD HH:MM]` 开头，并包含任务内容和执行结果摘要。\n\n"
+    "## 原始定时任务提示词\n"
+)
 
 
 class BackgroundMessageChannel(StrEnum):
@@ -297,7 +304,7 @@ async def run_feishu_background_task(
     schedule_value: str,
 ) -> None:
     """Run a scheduled Agent task and enqueue its user-facing Feishu result."""
-    del schedule_type, schedule_value
+    
     delay_seconds = random.uniform(0, MAX_BACKGROUND_TASK_DELAY_SECONDS)
     logger.info(
         "Feishu scheduled Agent task waiting job_id={} delay_seconds={:.2f}",
@@ -318,7 +325,16 @@ async def run_feishu_background_task(
             session_id=session_id,
             sender_name=sender_name,
             session_metadata=metadata,
-            content=[InputText(text=prompt)],
+            content=[
+                InputText(
+                    text=(
+                        f"{SCHEDULED_TASK_PROMPT_PREFIX}"
+                        f"调度类型：{schedule_type}\n"
+                        f"调度表达式：{schedule_value}\n\n"
+                        f"{prompt}"
+                    )
+                )
+            ],
             timestamp=datetime.now().astimezone(),
             files=[],
         )
