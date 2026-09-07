@@ -19,6 +19,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 支持内置工具和自定义 Python 工具
 - 支持通过 MCP Server 扩展 Agent 工具
 - 支持飞书消息桥接
+- 支持飞书一次性和周期后台定时 Agent 任务
 - 使用 `conf.toml` 统一管理应用配置和密钥
 - YAML 格式存储会话历史，可读性更好
 - 自动历史消息压缩（三级压缩策略），避免超出上下文限制
@@ -253,6 +254,32 @@ curl -N -X POST "http://localhost:7878/chat" \
 `session_record_path` 默认是
 `data/session/record.db`，可在 `conf.toml` 的 `[path]` 中覆盖。
 
+## 飞书定时任务
+
+在飞书会话中可以直接用自然语言要求 Agent 创建、查看或取消定时任务，例如“明天上午 9 点提醒我
+提交周报”或“每天上午 9 点发送一份行业简报”。Agent 会分别调用 `feishu_schedule`、
+`feishu_schedule_list` 和 `feishu_schedule_cancel`。创建任务仅支持飞书会话；查看和取消操作只会
+作用于当前会话拥有的任务。每个会话最多同时保留 8 个定时任务。
+
+创建任务时，`run_at` 和 `cron` 只能有一个有效值：
+
+- `run_at`：单次任务的 ISO 8601 时间，例如 `2026-09-08T09:00:00+08:00`。时区可以省略；
+  省略时按服务端系统本地时区解释。建议显式携带时区偏移，避免部署环境变化产生歧义。
+- `cron`：周期任务的标准 5 段 cron 表达式，例如 `0 9 * * *` 表示每天 9:00。分钟字段不能
+  包含 `*`，因此 `* * * * *`、`*/5 * * * *` 等表达式会被拒绝。
+- 空字符串和纯空白字段按未提供处理；如果两个字段都有有效值，或两个字段都没有有效值，任务创建失败。
+
+后台调度器启动时会读取 `[path].session_schedule_path` 指定的 SQLite 数据库。配置模板使用：
+
+```toml
+[path]
+session_schedule_path = "data/session/schedule.db"
+```
+
+任务会跨服务重启持久化，但不会补跑停机期间错过的任务：过期的单次任务会被删除，周期任务会推进到
+下一次未来执行时间。任务触发后会随机等待 0～3 分钟以分散并发，然后在独立的后台 Agent 运行中执行；
+执行记录会追加到会话工作区的 `memory/HISTORY.md`，实际任务结果通过飞书卡片发送给用户。
+
 ## 统计接口
 
 统计接口使用与 `/chat` 相同的 Bearer JWT，统一位于 `/statistics`：
@@ -410,6 +437,9 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `read_office_file` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |
 | `ask_user_question` | 向用户发送表单提问 |
+| `feishu_schedule` | 为当前飞书会话创建单次或周期后台定时任务 |
+| `feishu_schedule_list` | 查看当前会话的定时任务 |
+| `feishu_schedule_cancel` | 取消当前会话拥有的定时任务 |
 
 工具文本结果超过 `[tool].max_result_chars`（默认 10,000）时不会丢弃尾部内容：完整结果会以
 文本文件保存到当前会话 workspace 的 `tool-results/`，工具消息返回原始内容前缀、总字符数和
