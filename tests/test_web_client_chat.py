@@ -51,6 +51,6 @@ def test_web_client_adds_channel_to_chat_metadata(tmp_path: Path, monkeypatch):
 
     assert proxied.status_code == 200
     assert json.loads(open_chat_stream.await_args.args[3]) == {
-        "channel": "web",
+        "channel": "web_client",
         "source": "browser",
     }

@@ -363,6 +363,9 @@ async def test_background_agent_queues_success_or_fixed_failure(
     assert "本次运行由后台定时任务触发" in scheduled_prompt
     assert "追加到 `memory/HISTORY.md`" in scheduled_prompt
     assert "不要覆盖已有内容" in scheduled_prompt
+    assert "最终回复会直接发送给用户" in scheduled_prompt
+    assert "必须呈现原始任务要求的实际结果" in scheduled_prompt
+    assert "不能仅回复“执行记录已追加”" in scheduled_prompt
     assert "调度类型：cron" in scheduled_prompt
     assert "调度表达式：0 9 * * *" in scheduled_prompt
     assert scheduled_prompt.endswith("scheduled prompt")
