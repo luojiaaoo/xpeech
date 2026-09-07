@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import html
+import json
 import re
 import secrets
 import shlex
@@ -15,6 +16,7 @@ import httpx
 import jq
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
+from loguru import logger
 from yarl import URL
 
 from ..dao import DuplicateSessionIdError, User, WebClientDAO
@@ -399,6 +401,11 @@ def create_auth_router(
                 userinfo = userinfo_response.json()
                 if not isinstance(userinfo, dict):
                     raise TypeError("OAuth2 userinfo response must be an object")
+                logger.info(
+                    "OAuth2 userinfo received provider={} userinfo={}",
+                    oauth2.provider_name,
+                    json.dumps(userinfo, ensure_ascii=False),
+                )
         except (httpx.HTTPError, TypeError, ValueError):
             attempt.error = "OAuth2 服务请求失败，请返回登录页重试。"
             return _oauth2_result_page(False, attempt.error)

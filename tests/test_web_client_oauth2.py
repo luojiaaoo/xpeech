@@ -1,6 +1,8 @@
+import json
 import re
 from importlib import import_module
 from pathlib import Path
+from unittest.mock import MagicMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -141,6 +143,14 @@ def test_oauth2_login_maps_to_an_existing_web_user(
     display_type: str,
 ):
     oauth_requests: list[tuple[str, str, dict[str, object]]] = []
+    userinfo_payload = {
+        "code": 0,
+        "data": {
+            "employee_no": "oauth-user-42",
+            "name": "OAuth User",
+        },
+    }
+    oauth_logger = MagicMock()
 
     class FakeOAuthClient:
         def __init__(self, **_kwargs):
@@ -158,18 +168,11 @@ def test_oauth2_login_maps_to_an_existing_web_user(
 
         async def get(self, url: str, **kwargs):
             oauth_requests.append(("GET", url, kwargs))
-            return FakeOAuthResponse(
-                {
-                    "code": 0,
-                    "data": {
-                        "employee_no": "oauth-user-42",
-                        "name": "OAuth User",
-                    },
-                }
-            )
+            return FakeOAuthResponse(userinfo_payload)
 
     monkeypatch.setattr(web_client_app, "PBKDF2_ITERATIONS", 1)
     monkeypatch.setattr(oauth_routes.httpx, "AsyncClient", FakeOAuthClient)
+    monkeypatch.setattr(oauth_routes, "logger", oauth_logger)
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
@@ -346,6 +349,13 @@ def test_oauth2_login_maps_to_an_existing_web_user(
             }
         },
     )
+    oauth_logger.info.assert_called_once()
+    log_args = oauth_logger.info.call_args.args
+    assert log_args[:2] == (
+        "OAuth2 userinfo received provider={} userinfo={}",
+        "XX",
+    )
+    assert json.loads(log_args[2]) == userinfo_payload
 
 
 def test_oauth2_login_uses_the_selected_provider(tmp_path: Path, monkeypatch):
