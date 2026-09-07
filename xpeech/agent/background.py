@@ -100,7 +100,7 @@ def _scheduler_database_path(database_path: str | Path | None = None) -> Path:
     path = (
         Path(database_path)
         if database_path is not None
-        else settings.path.schedule_path
+        else settings.path.session_schedule_path
     )
     path = path.expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
