@@ -72,13 +72,27 @@ def test_schedule_rejects_invalid_iso_time():
         FeishuScheduleArgs(prompt="task", run_at="tomorrow morning")
 
 
+def test_schedule_treats_blank_time_fields_as_missing():
+    cron_args = FeishuScheduleArgs(prompt="task", run_at="", cron="0 9 * * *")
+    assert cron_args.run_at is None
+    assert cron_args.cron == "0 9 * * *"
+
+    run_at_args = FeishuScheduleArgs(
+        prompt="task",
+        run_at="2099-01-01T00:00:00",
+        cron=" \t",
+    )
+    assert run_at_args.run_at == datetime(2099, 1, 1)
+    assert run_at_args.cron is None
+
+
 def test_schedule_tool_explains_mutually_exclusive_time_fields():
     function_schema = as_tool(feishu_schedule)["function"]
     description = function_schema["description"]
 
-    assert "run_at 和 cron 二选一必传" in description
-    assert "另一个省略不传即可" in description
-    assert '不要传字符串 "None"' in description
+    assert "run_at 和 cron 只能有一个有效值" in description
+    assert "另一个省略不传即可" not in description
+    assert '不要传字符串 "None"' not in description
 
 
 @pytest.mark.asyncio

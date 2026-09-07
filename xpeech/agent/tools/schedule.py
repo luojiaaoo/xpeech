@@ -21,7 +21,7 @@ def _require_text(value: object, name: str) -> str:
 class FeishuScheduleArgs(BaseModel):
     """飞书后台定时 Agent 任务参数。
 
-    run_at 和 cron 二选一必传，另一个省略不传即可。
+    run_at 和 cron 只能有一个有效值。
     """
 
     prompt: Annotated[
@@ -42,17 +42,17 @@ class FeishuScheduleArgs(BaseModel):
     def validate_prompt(cls, value: str) -> str:
         return _require_text(value, "prompt")
 
-    @field_validator("cron")
+    @field_validator("run_at", "cron", mode="before")
     @classmethod
-    def validate_cron(cls, value: str | None) -> str | None:
-        if value is not None:
-            return _require_text(value, "cron")
+    def normalize_blank_trigger(cls, value: object) -> object | None:
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
     @model_validator(mode="after")
     def validate_trigger_choice(self):
         if (self.run_at is None) == (self.cron is None):
-            raise ValueError("exactly one of run_at and cron must have a value; set the unused field to JSON null")
+            raise ValueError("exactly one of run_at and cron must have a value")
         return self
 
 
@@ -101,8 +101,7 @@ async def feishu_schedule(
             {"job_id": "def456", "next_run_time": "2026-09-08T09:00:00+08:00"}
 
     Note:
-        run_at 和 cron 二选一必传，另一个省略不传即可。
-        不要传字符串 "None" 或空字符串 "" 代替未使用的参数。
+        run_at 和 cron 只能有一个有效值。
     """
     if not session_metadata or session_metadata.get("channel") != "feishu":
         raise ValueError("feishu_schedule is only available for Feishu sessions")
