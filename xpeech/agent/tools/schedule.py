@@ -30,7 +30,12 @@ class FeishuScheduleArgs(BaseModel):
     ]
     run_at: Annotated[
         datetime | None,
-        Field(description="单次任务的 ISO 8601 执行时间"),
+        Field(
+            description=(
+                "单次任务的 ISO 8601 执行时间；可以不带时区，"
+                "不带时区时按服务端系统本地时区解释"
+            )
+        ),
     ] = None
     cron: Annotated[
         str | None,
@@ -76,7 +81,8 @@ async def feishu_schedule(
     Args:
         prompt: 定时执行时交给 Agent 的完整任务提示词，不能为空。
         run_at: 单次任务的 ISO 8601 执行时间，与 cron 二选一。
-            示例："2026-09-07T09:00:00+08:00"
+            可以不带时区，不带时区时按服务端系统本地时区解释。
+            示例："2026-09-07T09:00:00+08:00" 或 "2026-09-07T09:00:00"
         cron: 周期任务的标准 5 段 cron 表达式，与 run_at 二选一。
             示例："0 9 * * *"
 

@@ -89,8 +89,13 @@ def test_schedule_treats_blank_time_fields_as_missing():
 def test_schedule_tool_explains_mutually_exclusive_time_fields():
     function_schema = as_tool(feishu_schedule)["function"]
     description = function_schema["description"]
+    run_at_description = function_schema["parameters"]["properties"]["run_at"][
+        "description"
+    ]
 
     assert "run_at 和 cron 只能有一个有效值" in description
+    assert "可以不带时区" in description
+    assert "按服务端系统本地时区解释" in run_at_description
     assert "另一个省略不传即可" not in description
     assert '不要传字符串 "None"' not in description
 
