@@ -217,6 +217,9 @@ def schedule_feishu_task(
         schedule_value = normalized_run_at.isoformat()
     else:
         assert cron is not None
+        cron_fields = cron.split()
+        if cron_fields and "*" in cron_fields[0]:
+            raise ValueError("cron minute field must not contain '*'")
         trigger = CronTrigger.from_crontab(cron, timezone=timezone)
         if trigger.get_next_fire_time(None, datetime.now(timezone)) is None:
             raise ValueError("cron does not produce a future run time")

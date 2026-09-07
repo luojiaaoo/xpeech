@@ -150,6 +150,16 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
             sender_name="Alice",
             session_metadata={"channel": "feishu", "open_id": "ou_1"},
         )
+    for cron in ("* * * * *", "*/5 * * * *", "1,* * * * *"):
+        with pytest.raises(ValueError, match="minute field must not contain"):
+            schedule_feishu_task(
+                prompt="too frequent cron",
+                run_at=None,
+                cron=cron,
+                session_id="session-1",
+                sender_name="Alice",
+                session_metadata={"channel": "feishu", "open_id": "ou_1"},
+            )
 
 
 @pytest.mark.asyncio
@@ -168,7 +178,7 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
     cron_job = schedule_feishu_task(
         prompt="repeat",
         run_at=None,
-        cron="* * * * *",
+        cron="0 * * * *",
         session_id="session-1",
         sender_name="Alice",
         session_metadata={"channel": "feishu", "open_id": "ou_1"},
