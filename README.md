@@ -246,6 +246,25 @@ curl -N -X POST "http://localhost:7878/chat" \
 
 响应是 SSE 流，可以边生成边读取。
 
+### 内置命令
+
+普通实时消息如果只包含一个文本块，且去除首尾空白后以 `/` 开头，会先由后端按内置命令处理，
+不会把命令文本直接交给大模型。支持以下命令：
+
+- `/help`：显示可用命令列表并结束本次请求。
+- `/new`：先总结当前上下文并保存需要保留的记忆，再清空会话历史，开始新会话。
+- `/clear`：直接清空会话历史，不进行记忆总结。
+
+`/new` 和 `/clear` 后面可以继续填写消息正文；后端完成上下文处理后，会把命令后面的内容作为
+新上下文中的第一条用户消息继续交给 Agent。例如：
+
+```text
+/new 帮我规划下一季度的工作
+/clear 忽略之前的讨论，重新分析这个问题
+```
+
+未知命令会返回错误并提示使用 `/help`。后台定时任务不会触发这些命令。
+
 每次成功完成的普通对话都会通过 SQLModel 追加到统一的
 `session_record_path` 数据库文件。SQLite 表名为 `conversation_records`，
 包含 `session_id`、`sender_name`、`user_question`、`model_response`、`input_tokens`、
@@ -300,13 +319,6 @@ session_schedule_path = "data/session/schedule.db"
 curl "http://localhost:7878/statistics/records/latest?limit=20" \
   -H "Authorization: Bearer <JWT>"
 ```
-
-### 内置命令
-
-在聊天中输入以下命令可以使用快捷功能：
-
-- `/help` - 显示帮助信息
-- `/new` - 开始一个新会话，自动总结并保存当前会话记忆
 
 ## 自定义工具
 
