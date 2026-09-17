@@ -45,6 +45,7 @@ _MAX_TOOL_NAME_LENGTH = 64
 _HASH_LENGTH = 8
 MCPTransport = Literal["stdio", "sse", "streamable-http"]
 MCP_CONNECTION_TTL_SECONDS = 10 * 60
+MCP_CONNECT_TIMEOUT_SECONDS = 5.0
 MCP_CONNECTIONS: dict[str, dict[tuple[Any, ...], "MCPServerRegistration"]] = {}
 
 _SESSION_EXPIRY_HANDLES: dict[str, asyncio.TimerHandle] = {}
@@ -351,13 +352,22 @@ class MCPServerRegistration:
         async with self._lock:
             if self._bindings is not None:
                 return self._bindings
-            await self._connect()
-            self._bindings = await self._discover_tool_bindings()
+
+            try:
+                await self._connect()
+                self._bindings = await self._discover_tool_bindings()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # 失败结果和成功连接一样缓存到 session TTL 到期，
+                # 避免网络故障时每次对话都重复连接。
+                self._bindings = []
+                await self.aclose()
+                raise
+
             return self._bindings
 
     async def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> str | list[dict[str, Any]]:
-        if self.session_id is not None:
-            await _touch_session(self.session_id)
         for attempt in range(2):
             await self._ensure_session()
             try:
@@ -433,9 +443,10 @@ class MCPServerRegistration:
         self._owner_task = owner_task
         self._close_event = close_event
         try:
-            await ready
+            await asyncio.wait_for(ready, timeout=MCP_CONNECT_TIMEOUT_SECONDS)
         except BaseException:
             close_event.set()
+            owner_task.cancel()
             with suppress(BaseException):
                 await owner_task
             if self._owner_task is owner_task:
@@ -701,17 +712,15 @@ async def get_session_mcp_registration_from_config(
         session_connections = MCP_CONNECTIONS.setdefault(session_id, {})
         cached = session_connections.get(key)
         if cached is not None:
-            _touch_session_locked(session_id)
             return cached
         session_connections[key] = registration
-        _touch_session_locked(session_id)
+        _schedule_session_expiry_locked(session_id)
         return registration
 
 
-def _touch_session_locked(session_id: str) -> None:
-    previous = _SESSION_EXPIRY_HANDLES.get(session_id)
-    if previous is not None:
-        previous.cancel()
+def _schedule_session_expiry_locked(session_id: str) -> None:
+    if session_id in _SESSION_EXPIRY_HANDLES:
+        return
 
     handle: asyncio.TimerHandle
 
@@ -725,12 +734,6 @@ def _touch_session_locked(session_id: str) -> None:
     _SESSION_EXPIRY_HANDLES[session_id] = handle
 
 
-async def _touch_session(session_id: str) -> None:
-    async with _mcp_connections_lock():
-        if session_id in MCP_CONNECTIONS:
-            _touch_session_locked(session_id)
-
-
 async def _expire_session(session_id: str, handle: asyncio.TimerHandle) -> None:
     async with _mcp_connections_lock():
         if _SESSION_EXPIRY_HANDLES.get(session_id) is not handle:
@@ -739,7 +742,7 @@ async def _expire_session(session_id: str, handle: asyncio.TimerHandle) -> None:
         _SESSION_EXPIRY_HANDLES.pop(session_id, None)
 
     logger.info(
-        "MCP session '{}' expired after {}s of inactivity",
+        "MCP session '{}' expired after its {}s lifetime",
         session_id,
         MCP_CONNECTION_TTL_SECONDS,
     )

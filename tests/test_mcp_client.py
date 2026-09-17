@@ -84,8 +84,55 @@ async def test_connections_are_reused_per_session_and_expire(monkeypatch: pytest
     await asyncio.sleep(0.04)
     assert await binding.func(model(text="ok")) == "ok"
     await asyncio.sleep(0.04)
-    assert set(mcp_client.MCP_CONNECTIONS) == {"session-1"}
-
-    await asyncio.sleep(0.03)
     assert mcp_client.MCP_CONNECTIONS == {}
+    await mcp_client.close_all_mcp_connections()
+
+
+@pytest.mark.asyncio
+async def test_failed_connection_is_cached_until_session_expires(monkeypatch: pytest.MonkeyPatch):
+    await mcp_client.close_all_mcp_connections()
+    monkeypatch.setattr(mcp_client, "MCP_CONNECT_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(mcp_client, "MCP_CONNECTION_TTL_SECONDS", 0.06)
+    attempts = 0
+
+    async def run_slow_connection(_registration, _ready, _close_event):
+        nonlocal attempts
+        attempts += 1
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        mcp_client.MCPServerRegistration,
+        "_run_connection",
+        run_slow_connection,
+    )
+    config = {"url": "https://example.test/mcp"}
+    registration = await mcp_client.get_session_mcp_registration_from_config(
+        "session-1",
+        "unreachable",
+        config,
+    )
+
+    with pytest.raises(asyncio.TimeoutError):
+        await registration._get_tool_bindings()
+    assert attempts == 1
+
+    cached = await mcp_client.get_session_mcp_registration_from_config(
+        "session-1",
+        "unreachable",
+        config,
+    )
+    assert cached is registration
+    assert await cached._get_tool_bindings() == []
+    assert attempts == 1
+
+    await asyncio.sleep(0.07)
+    retried = await mcp_client.get_session_mcp_registration_from_config(
+        "session-1",
+        "unreachable",
+        config,
+    )
+    assert retried is not registration
+    with pytest.raises(asyncio.TimeoutError):
+        await retried._get_tool_bindings()
+    assert attempts == 2
     await mcp_client.close_all_mcp_connections()
