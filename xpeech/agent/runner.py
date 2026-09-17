@@ -55,6 +55,7 @@ class AgentRunner:
             max_iterations=llm_config.max_iterations,
         )
         await register_default_tools(
+            session_id=self.session_id,
             provider=provider,
             workspace=self.workspace,
             config=self.config.tool,

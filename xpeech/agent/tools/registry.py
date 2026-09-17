@@ -5,7 +5,7 @@ from ...config.settings import ToolConfig
 from .browser_preview import build_browser_preview_tool
 from .file_message import build_file_message_tools
 from .filesystem import build_file_tools
-from .mcp_client import get_persistent_mcp_registration_from_config
+from .mcp_client import get_session_mcp_registration_from_config
 from .question import ask_user_question
 from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .shell import build_shell_tools
@@ -14,6 +14,7 @@ from .web import web_fetch, web_search
 
 async def register_default_tools(
     *,
+    session_id: str,
     provider: Any,
     workspace: Path,
     config: ToolConfig,
@@ -50,7 +51,8 @@ async def register_default_tools(
     provider.register_tool()(feishu_schedule_cancel)
 
     for server_name, server_config in config.mcp_servers.items():
-        registration = await get_persistent_mcp_registration_from_config(
+        registration = await get_session_mcp_registration_from_config(
+            session_id,
             server_name,
             server_config,
             workspace=workspace,

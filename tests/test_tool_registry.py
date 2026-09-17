@@ -52,15 +52,22 @@ async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeyp
     monkeypatch.setattr(registry, "ask_user_question", named_tool("ask_user_question"))
 
     registration = object()
+    registration_calls = []
 
-    async def get_registration(*_args, **_kwargs):
+    async def get_registration(*args, **kwargs):
+        registration_calls.append((args, kwargs))
         return registration
 
-    monkeypatch.setattr(registry, "get_persistent_mcp_registration_from_config", get_registration)
+    monkeypatch.setattr(registry, "get_session_mcp_registration_from_config", get_registration)
     provider = FakeProvider()
     config = ToolConfig.model_validate({"mcpServers": {"demo": {"command": "demo"}}})
 
-    await registry.register_default_tools(provider=provider, workspace=tmp_path, config=config)
+    await registry.register_default_tools(
+        session_id="session-1",
+        provider=provider,
+        workspace=tmp_path,
+        config=config,
+    )
 
     assert "read_image" not in provider.registered
     assert provider.registered == [
@@ -84,3 +91,6 @@ async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeyp
         for tool_name in provider.registered
     }
     assert provider.mcp_registrations == [registration]
+    assert registration_calls == [
+        (("session-1", "demo", config.mcp_servers["demo"]), {"workspace": tmp_path})
+    ]

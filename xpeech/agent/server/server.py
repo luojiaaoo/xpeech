@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from ...utils.logging import configure_logging
 from ..background import start_background_scheduler, stop_background_scheduler
 from ..record import create_db_and_tables, record_engine
-from ..tools.mcp_client import close_persistent_mcp_registrations
+from ..tools.mcp_client import close_all_mcp_connections
 from .middleware import ContextASGIMiddleware
 
 configure_logging()
@@ -21,7 +21,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         stop_background_scheduler()
-        await close_persistent_mcp_registrations()
+        await close_all_mcp_connections()
         await record_engine.dispose()
 
 

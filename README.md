@@ -400,6 +400,7 @@ tool_timeout = 30
 ```toml
 [tool.mcpServers.my-api]
 url = "https://mcp.example.com/sse"
+transport = "sse"
 headers = { Authorization = "Bearer xxx" }
 enabled_tools = ["search", "read_record"]
 tool_timeout = 120
@@ -422,12 +423,15 @@ tool_timeout = 120
 
 - `command` / `args`：启动 stdio MCP Server 的命令和参数。
 - `url`：连接远程 MCP Server。`/sse` 结尾的地址使用 SSE transport，其他地址默认使用 streamable HTTP。
+- `transport`：可选，显式指定 `stdio`、`sse` 或 `streamable-http`。省略时按 `command` 或 URL 自动判断。
 - `env`：stdio Server 的环境变量。
 - `headers`：远程 MCP Server 的请求头。
 - `enabled_tools`：允许注册的 MCP 工具名，`["*"]` 表示全部注册。
 - `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
 
 `command` 和 `url` 只能二选一。MCP Server 配置会按原样传入，不会做运行时字符串替换。
+
+MCP 连接按 `session_id` 隔离。同一会话在最后一次会话请求或 MCP 工具调用后的 10 分钟内复用连接；空闲超时后自动关闭，不同会话不会共享连接。
 
 注册后的工具名会加上 `mcp_<server>_` 前缀，例如 `filesystem` Server 暴露的 `read_file` 会注册为 `mcp_filesystem_read_file`。`enabled_tools` 可以填写 MCP 原始工具名，也可以填写加前缀后的工具名。
 

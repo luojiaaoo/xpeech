@@ -94,8 +94,15 @@ browser_preview_path = "data/browser_preview"
 # enabled_tools = ["*"]
 # tool_timeout = 30
 
+[tool.mcpServers.xsct-bench]
+transport = "streamable-http"
+url = "https://xsct.ai/mcp"
+enabled_tools = ["*"]
+tool_timeout = 30
+
 # [tool.mcpServers.my-api]
 # url = "https://mcp.example.com/sse"
+# transport = "sse" # stdio / sse / streamable-http
 # headers = { Authorization = "Bearer xxx" }
 # enabled_tools = ["*"]
 # tool_timeout = 120

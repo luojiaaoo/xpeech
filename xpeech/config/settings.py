@@ -100,6 +100,7 @@ class MCPServerSettings(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] | None = None
     url: str | None = None
+    transport: Literal["stdio", "sse", "streamable-http"] | None = None
     headers: dict[str, str] | None = None
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")
     tool_timeout: float = Field(default=30.0, validation_alias="tool_timeout")

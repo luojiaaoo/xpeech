@@ -16,7 +16,6 @@ import json
 import os
 import re
 import shutil
-import urllib.parse
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field as dataclass_field
@@ -44,8 +43,12 @@ _WINDOWS_SHELL_LAUNCHERS: frozenset[str] = frozenset(("npx", "npm", "pnpm", "yar
 _SANITIZE_RE = re.compile(r"_+")
 _MAX_TOOL_NAME_LENGTH = 64
 _HASH_LENGTH = 8
-_PERSISTENT_REGISTRATION_CACHE: dict[tuple[Any, ...], "MCPServerRegistration"] = {}
-_PERSISTENT_REGISTRATION_LOCK: asyncio.Lock | None = None
+MCPTransport = Literal["stdio", "sse", "streamable-http"]
+MCP_CONNECTION_TTL_SECONDS = 10 * 60
+MCP_CONNECTIONS: dict[str, dict[tuple[Any, ...], "MCPServerRegistration"]] = {}
+
+_SESSION_EXPIRY_HANDLES: dict[str, asyncio.TimerHandle] = {}
+_MCP_CONNECTIONS_LOCK: asyncio.Lock | None = None
 
 
 def _sanitize_name(name: str) -> str:
@@ -82,25 +85,39 @@ def _is_session_terminated(exc: BaseException) -> bool:
     )
 
 
-async def _probe_http_url(url: str, timeout: float = 3.0) -> bool:
-    parsed = urllib.parse.urlparse(url)
-    host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    try:
-        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
-        writer.close()
-        with suppress(OSError, asyncio.TimeoutError):
-            await asyncio.wait_for(writer.wait_closed(), timeout=0.2)
-        return True
-    except (OSError, asyncio.TimeoutError):
-        return False
+def _mcp_connections_lock() -> asyncio.Lock:
+    global _MCP_CONNECTIONS_LOCK
+    if _MCP_CONNECTIONS_LOCK is None:
+        _MCP_CONNECTIONS_LOCK = asyncio.Lock()
+    return _MCP_CONNECTIONS_LOCK
 
 
-def _persistent_registration_lock() -> asyncio.Lock:
-    global _PERSISTENT_REGISTRATION_LOCK
-    if _PERSISTENT_REGISTRATION_LOCK is None:
-        _PERSISTENT_REGISTRATION_LOCK = asyncio.Lock()
-    return _PERSISTENT_REGISTRATION_LOCK
+def _normalize_transport(
+    command: str | None,
+    url: str | None,
+    transport: str | None,
+) -> MCPTransport:
+    if transport is None:
+        normalized: MCPTransport = (
+            "stdio"
+            if command
+            else "sse"
+            if url and url.rstrip("/").endswith("/sse")
+            else "streamable-http"
+        )
+    elif transport == "stdio":
+        normalized = "stdio"
+    elif transport == "sse":
+        normalized = "sse"
+    elif transport == "streamable-http":
+        normalized = "streamable-http"
+    else:
+        raise ValueError(f"Unsupported MCP transport: {transport}")
+    if command and normalized != "stdio":
+        raise ValueError("An MCP command requires the stdio transport")
+    if url and normalized == "stdio":
+        raise ValueError("An MCP URL requires the sse or streamable-http transport")
+    return normalized
 
 
 def _windows_command_basename(command: str) -> str:
@@ -302,7 +319,7 @@ class MCPServerConfig:
     args: tuple[str, ...] = ()
     env: Mapping[str, str] | None = None
     url: str | None = None
-    transport: Literal["stdio", "sse", "streamable_http", "http"] = "stdio"
+    transport: MCPTransport = "stdio"
     headers: Mapping[str, str] | None = None
     enabled_tools: tuple[str, ...] = ("*",)
     tool_timeout: float = 30.0
@@ -323,6 +340,7 @@ class MCPToolBinding:
 @dataclass
 class MCPServerRegistration:
     config: MCPServerConfig
+    session_id: str | None = None
     _session: Any | None = dataclass_field(default=None, init=False, repr=False)
     _bindings: list[MCPToolBinding] | None = dataclass_field(default=None, init=False, repr=False)
     _lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock, init=False, repr=False)
@@ -338,6 +356,8 @@ class MCPServerRegistration:
             return self._bindings
 
     async def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> str | list[dict[str, Any]]:
+        if self.session_id is not None:
+            await _touch_session(self.session_id)
         for attempt in range(2):
             await self._ensure_session()
             try:
@@ -447,13 +467,10 @@ class MCPServerRegistration:
                 )
                 read, write = await stack.enter_async_context(stdio_client(server_params))
             else:
-                if not await _probe_http_url(cfg.url):
-                    raise ConnectionError(f"MCP server '{cfg.server_name}' is unreachable")
                 headers = dict(cfg.headers or {})
-                transport = "streamable_http" if cfg.transport == "http" else cfg.transport
-                if transport == "sse":
+                if cfg.transport == "sse":
                     read, write = await stack.enter_async_context(sse_client(cfg.url, headers=headers or None))
-                elif transport == "streamable_http":
+                elif cfg.transport == "streamable-http":
                     http_client = await stack.enter_async_context(
                         httpx.AsyncClient(
                             headers=headers or None,
@@ -482,7 +499,7 @@ class MCPServerRegistration:
                     list_roots_callback=list_roots_callback if workspace is not None else None,
                 )
             )
-            await session.initialize()
+            await asyncio.wait_for(session.initialize(), timeout=cfg.tool_timeout)
             self._session = session
             logger.info("MCP server '{}' connected", cfg.server_name)
             ready.set_result(None)
@@ -509,7 +526,10 @@ class MCPServerRegistration:
                 self._close_event = None
 
     async def _discover_tool_bindings(self) -> list[MCPToolBinding]:
-        tools_result = await self._session.list_tools()
+        tools_result = await asyncio.wait_for(
+            self._session.list_tools(),
+            timeout=self.config.tool_timeout,
+        )
         tool_defs = _iter_tools(tools_result)
         enabled_tools = set(self.config.enabled_tools)
         allow_all = "*" in enabled_tools
@@ -590,6 +610,7 @@ def create_mcp_registration(
     args: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
     url: str | None = None,
+    transport: str | None = None,
     headers: Mapping[str, str] | None = None,
     enabled_tools: Sequence[str] | None = None,
     tool_timeout: float = 30.0,
@@ -599,9 +620,7 @@ def create_mcp_registration(
     sanitized_server_name = _sanitize_name(server_name)
     if not sanitized_server_name:
         raise ValueError("MCP server name cannot be empty")
-    transport: Literal["stdio", "sse", "streamable_http"] = (
-        "stdio" if command else "sse" if url and url.rstrip("/").endswith("/sse") else "streamable_http"
-    )
+    normalized_transport = _normalize_transport(command, url, transport)
     return MCPServerRegistration(
         MCPServerConfig(
             server_name=sanitized_server_name,
@@ -610,7 +629,7 @@ def create_mcp_registration(
             args=tuple(args or ()),
             env=dict(env) if env is not None else None,
             url=url,
-            transport=transport,
+            transport=normalized_transport,
             headers=dict(headers) if headers is not None else None,
             enabled_tools=("*",) if enabled_tools is None else tuple(enabled_tools),
             tool_timeout=tool_timeout,
@@ -638,6 +657,7 @@ def create_mcp_registration_from_config(
         args=_get_mcp_config_value(config, "args", []),
         env=dict(env) if env is not None else None,
         url=_get_mcp_config_value(config, "url"),
+        transport=_get_mcp_config_value(config, "transport"),
         headers=dict(headers) if headers is not None else None,
         enabled_tools=_get_mcp_config_value(config, "enabled_tools", ["*"], attr_name="enabled_tools"),
         tool_timeout=_get_mcp_config_value(config, "tool_timeout", 30.0, attr_name="tool_timeout"),
@@ -665,28 +685,98 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
     )
 
 
-async def get_persistent_mcp_registration_from_config(
+async def get_session_mcp_registration_from_config(
+    session_id: str,
     server_name: str,
     config: Any,
     workspace: str | Path | None = None,
 ) -> MCPServerRegistration:
+    """Return a reusable MCP connection owned by one conversation session."""
+    if not session_id:
+        raise ValueError("session_id cannot be empty")
     registration = create_mcp_registration_from_config(server_name, config, workspace=workspace)
+    registration.session_id = session_id
     key = _persistent_registration_key(registration.config)
-    async with _persistent_registration_lock():
-        cached = _PERSISTENT_REGISTRATION_CACHE.get(key)
+    async with _mcp_connections_lock():
+        session_connections = MCP_CONNECTIONS.setdefault(session_id, {})
+        cached = session_connections.get(key)
         if cached is not None:
+            _touch_session_locked(session_id)
             return cached
-        _PERSISTENT_REGISTRATION_CACHE[key] = registration
+        session_connections[key] = registration
+        _touch_session_locked(session_id)
         return registration
 
 
-async def close_persistent_mcp_registrations() -> None:
-    async with _persistent_registration_lock():
-        registrations = list(_PERSISTENT_REGISTRATION_CACHE.values())
-        _PERSISTENT_REGISTRATION_CACHE.clear()
+def _touch_session_locked(session_id: str) -> None:
+    previous = _SESSION_EXPIRY_HANDLES.get(session_id)
+    if previous is not None:
+        previous.cancel()
 
-    for registration in registrations:
-        await registration.aclose()
+    handle: asyncio.TimerHandle
+
+    def expire() -> None:
+        asyncio.create_task(
+            _expire_session(session_id, handle),
+            name=f"mcp-expiry-{session_id}",
+        )
+
+    handle = asyncio.get_running_loop().call_later(MCP_CONNECTION_TTL_SECONDS, expire)
+    _SESSION_EXPIRY_HANDLES[session_id] = handle
+
+
+async def _touch_session(session_id: str) -> None:
+    async with _mcp_connections_lock():
+        if session_id in MCP_CONNECTIONS:
+            _touch_session_locked(session_id)
+
+
+async def _expire_session(session_id: str, handle: asyncio.TimerHandle) -> None:
+    async with _mcp_connections_lock():
+        if _SESSION_EXPIRY_HANDLES.get(session_id) is not handle:
+            return
+        registrations = MCP_CONNECTIONS.pop(session_id, {})
+        _SESSION_EXPIRY_HANDLES.pop(session_id, None)
+
+    logger.info(
+        "MCP session '{}' expired after {}s of inactivity",
+        session_id,
+        MCP_CONNECTION_TTL_SECONDS,
+    )
+    await asyncio.gather(
+        *(registration.aclose() for registration in registrations.values()),
+        return_exceptions=True,
+    )
+
+
+async def close_session_mcp_connections(session_id: str) -> None:
+    async with _mcp_connections_lock():
+        registrations = MCP_CONNECTIONS.pop(session_id, {})
+        expiry_handle = _SESSION_EXPIRY_HANDLES.pop(session_id, None)
+        if expiry_handle is not None:
+            expiry_handle.cancel()
+    await asyncio.gather(
+        *(registration.aclose() for registration in registrations.values()),
+        return_exceptions=True,
+    )
+
+
+async def close_all_mcp_connections() -> None:
+    async with _mcp_connections_lock():
+        registrations = [
+            registration
+            for session_connections in MCP_CONNECTIONS.values()
+            for registration in session_connections.values()
+        ]
+        MCP_CONNECTIONS.clear()
+        for handle in _SESSION_EXPIRY_HANDLES.values():
+            handle.cancel()
+        _SESSION_EXPIRY_HANDLES.clear()
+
+    await asyncio.gather(
+        *(registration.aclose() for registration in registrations),
+        return_exceptions=True,
+    )
 
 
 async def collect_mcp_tool(
