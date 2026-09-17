@@ -101,18 +101,33 @@ class LLMResponse:
     def _record(self, source: AsyncIterator[StreamChunk]) -> AsyncIterator[ChunkMix]:
         async def _gen() -> AsyncIterator[ChunkMix]:
             previous_kind: str | None = None
+            pending_content: list[StreamChunk] = []
             async for item in source:
-                # 没有内容的跳过去
-                if isinstance(item[1], str) and not item[1]:
+                kind, chunk = item
+                if isinstance(chunk, str) and not chunk:
                     continue
+
+                # 空白 content 先缓存：后面有可见内容时按原顺序补发，
+                # 如果先切换到其他类型，则整段空白内容直接丢弃。
+                if kind == "content" and isinstance(chunk, str) and not chunk.strip():
+                    pending_content.append(item)
+                    continue
+
                 # 将相同类型的连续块归在一起，并在切换类型时发出对应的结束标记。
-                if previous_kind is not None and previous_kind != item[0]:
+                if previous_kind is not None and previous_kind != kind:
                     end_chunk = END_CHUNKS[previous_kind]
                     self._chunks.append(end_chunk)
                     yield end_chunk
+
+                if kind == "content":
+                    for pending_item in pending_content:
+                        self._chunks.append(pending_item)
+                        yield pending_item
+                pending_content.clear()
+
                 self._chunks.append(item)
                 yield item
-                previous_kind = item[0]
+                previous_kind = kind
             if previous_kind is not None:
                 end_chunk = END_CHUNKS[previous_kind]
                 self._chunks.append(end_chunk)

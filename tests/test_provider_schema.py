@@ -78,6 +78,56 @@ async def test_flush_drains_stream():
 
 
 @pytest.mark.asyncio
+async def test_content_whitespace_is_buffered_until_visible_content():
+    async def chunks():
+        yield "content", "\n"
+        yield "content", " "
+        yield "content", "hello"
+        yield "content", "\t"
+        yield "content", "world"
+
+    response = LLMResponse(iter_mix_chunks=chunks())
+
+    streamed = [chunk async for chunk in response.iter_mix_chunks]
+
+    assert streamed == [
+        ("content", "\n"),
+        ("content", " "),
+        ("content", "hello"),
+        ("content", "\t"),
+        ("content", "world"),
+        ("content_end", None),
+    ]
+    assert response.content == "\n hello\tworld"
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_content_is_discarded_when_kind_changes():
+    tool_call = ToolCallChunk(
+        index=0,
+        id="call-1",
+        name="search",
+        arguments='{"query": "xpeech"}',
+    )
+
+    async def chunks():
+        yield "content", "\n"
+        yield "content", " "
+        yield "tool_calls", tool_call
+        yield "content", "\t"
+
+    response = LLMResponse(iter_mix_chunks=chunks())
+
+    streamed = [chunk async for chunk in response.iter_mix_chunks]
+
+    assert streamed == [
+        ("tool_calls", tool_call),
+        ("tool_calls_end", None),
+    ]
+    assert response.content == ""
+
+
+@pytest.mark.asyncio
 async def test_stopping_consumption_early_does_not_mark_stream_done():
     async def chunks():
         yield "content", "one"
