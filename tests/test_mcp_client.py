@@ -1,9 +1,11 @@
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 
 from xpeech.agent.tools import mcp_client
+from xpeech.config.settings import ToolConfig
 
 
 def test_supports_the_three_mcp_transports():
@@ -28,6 +30,111 @@ def test_rejects_nonstandard_transport_names(transport: str):
             url="https://example.test/mcp",
             transport=transport,
         )
+
+
+def test_tls_verification_can_be_disabled_from_config():
+    settings = ToolConfig.model_validate(
+        {
+            "mcpServers": {
+                "test": {
+                    "url": "https://example.test/mcp",
+                    "verify_tls": False,
+                }
+            }
+        }
+    )
+    registration = mcp_client.create_mcp_registration_from_config(
+        "test",
+        settings.mcp_servers["test"],
+    )
+
+    assert registration.config.verify_tls is False
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_passes_tls_setting_to_httpx(monkeypatch: pytest.MonkeyPatch):
+    import mcp
+    from mcp.client import streamable_http
+
+    client_kwargs = {}
+
+    class FakeHttpClient:
+        def __init__(self, **kwargs):
+            client_kwargs.update(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    @asynccontextmanager
+    async def fake_transport(_url, *, http_client):
+        assert isinstance(http_client, FakeHttpClient)
+        yield object(), object(), None
+
+    class FakeSession:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def initialize(self):
+            return None
+
+    monkeypatch.setattr(mcp_client.httpx, "AsyncClient", FakeHttpClient)
+    monkeypatch.setattr(streamable_http, "streamable_http_client", fake_transport)
+    monkeypatch.setattr(mcp, "ClientSession", FakeSession)
+
+    registration = mcp_client.create_mcp_registration(
+        server_name="test",
+        url="https://example.test/mcp",
+        verify_tls=False,
+    )
+    ready = asyncio.get_running_loop().create_future()
+    close_event = asyncio.Event()
+    owner = asyncio.create_task(registration._run_connection(ready, close_event))
+
+    await ready
+    close_event.set()
+    await owner
+
+    assert client_kwargs["verify"] is False
+
+
+@pytest.mark.asyncio
+async def test_collect_mcp_tool_does_not_swallow_cancellation_groups(monkeypatch: pytest.MonkeyPatch):
+    registration = mcp_client.create_mcp_registration(
+        server_name="test",
+        command="fake-server",
+    )
+
+    async def cancelled():
+        raise BaseExceptionGroup("cancelled", [asyncio.CancelledError()])
+
+    monkeypatch.setattr(registration, "_get_tool_bindings", cancelled)
+
+    with pytest.raises(BaseExceptionGroup):
+        [item async for item in mcp_client.collect_mcp_tool(registration)]
+
+
+@pytest.mark.asyncio
+async def test_collect_mcp_tool_skips_unavailable_server(monkeypatch: pytest.MonkeyPatch):
+    registration = mcp_client.create_mcp_registration(
+        server_name="test",
+        command="fake-server",
+    )
+
+    async def unavailable():
+        raise ConnectionError("server unavailable")
+
+    monkeypatch.setattr(registration, "_get_tool_bindings", unavailable)
+
+    assert [item async for item in mcp_client.collect_mcp_tool(registration)] == []
 
 
 @pytest.mark.asyncio

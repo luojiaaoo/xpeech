@@ -19,6 +19,7 @@ import shutil
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field as dataclass_field
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -322,6 +323,7 @@ class MCPServerConfig:
     url: str | None = None
     transport: MCPTransport = "stdio"
     headers: Mapping[str, str] | None = None
+    verify_tls: bool = True
     enabled_tools: tuple[str, ...] = ("*",)
     tool_timeout: float = 30.0
 
@@ -358,7 +360,7 @@ class MCPServerRegistration:
                 self._bindings = await self._discover_tool_bindings()
             except asyncio.CancelledError:
                 raise
-            except (Exception, BaseExceptionGroup):
+            except Exception:
                 # 失败结果和成功连接一样缓存到 session TTL 到期，
                 # 避免网络故障时每次对话都重复连接。
                 self._bindings = []
@@ -489,12 +491,23 @@ class MCPServerRegistration:
             else:
                 headers = dict(cfg.headers or {})
                 if cfg.transport == "sse":
-                    read, write = await stack.enter_async_context(sse_client(cfg.url, headers=headers or None))
+                    read, write = await stack.enter_async_context(
+                        sse_client(
+                            cfg.url,
+                            headers=headers or None,
+                            httpx_client_factory=partial(
+                                httpx.AsyncClient,
+                                follow_redirects=True,
+                                verify=cfg.verify_tls,
+                            ),
+                        )
+                    )
                 elif cfg.transport == "streamable-http":
                     http_client = await stack.enter_async_context(
                         httpx.AsyncClient(
                             headers=headers or None,
                             follow_redirects=True,
+                            verify=cfg.verify_tls,
                             timeout=httpx.Timeout(30.0, connect=10.0, read=300.0),
                         )
                     )
@@ -632,6 +645,7 @@ def create_mcp_registration(
     url: str | None = None,
     transport: str | None = None,
     headers: Mapping[str, str] | None = None,
+    verify_tls: bool = True,
     enabled_tools: Sequence[str] | None = None,
     tool_timeout: float = 30.0,
 ) -> MCPServerRegistration:
@@ -651,6 +665,7 @@ def create_mcp_registration(
             url=url,
             transport=normalized_transport,
             headers=dict(headers) if headers is not None else None,
+            verify_tls=verify_tls,
             enabled_tools=("*",) if enabled_tools is None else tuple(enabled_tools),
             tool_timeout=tool_timeout,
         )
@@ -679,6 +694,7 @@ def create_mcp_registration_from_config(
         url=_get_mcp_config_value(config, "url"),
         transport=_get_mcp_config_value(config, "transport"),
         headers=dict(headers) if headers is not None else None,
+        verify_tls=_get_mcp_config_value(config, "verify_tls", True),
         enabled_tools=_get_mcp_config_value(config, "enabled_tools", ["*"], attr_name="enabled_tools"),
         tool_timeout=_get_mcp_config_value(config, "tool_timeout", 30.0, attr_name="tool_timeout"),
     )
@@ -700,6 +716,7 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         config.url,
         config.transport,
         _hashable_mapping(config.headers),
+        config.verify_tls,
         config.enabled_tools,
         float(config.tool_timeout),
     )
@@ -798,7 +815,7 @@ async def collect_mcp_tool(
         bindings = await registration._get_tool_bindings()
     except asyncio.CancelledError:
         raise
-    except (Exception, BaseExceptionGroup) as exc:
+    except Exception as exc:
         logger.exception(
             "MCP server '{}' failed to connect/discover tools: {}",
             registration.config.server_name,

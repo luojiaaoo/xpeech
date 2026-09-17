@@ -104,6 +104,7 @@ tool_timeout = 30
 # url = "https://mcp.example.com/sse"
 # transport = "sse" # stdio / sse / streamable-http
 # headers = { Authorization = "Bearer xxx" }
+# verify_tls = false # 仅用于自签名证书；生产环境优先安装并信任内部 CA
 # enabled_tools = ["*"]
 # tool_timeout = 120
 

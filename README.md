@@ -402,6 +402,7 @@ tool_timeout = 30
 url = "https://mcp.example.com/sse"
 transport = "sse"
 headers = { Authorization = "Bearer xxx" }
+verify_tls = true
 enabled_tools = ["search", "read_record"]
 tool_timeout = 120
 ```
@@ -426,6 +427,7 @@ tool_timeout = 120
 - `transport`：可选，显式指定 `stdio`、`sse` 或 `streamable-http`。省略时按 `command` 或 URL 自动判断。
 - `env`：stdio Server 的环境变量。
 - `headers`：远程 MCP Server 的请求头。
+- `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
 - `enabled_tools`：允许注册的 MCP 工具名，`["*"]` 表示全部注册。
 - `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
 
