@@ -107,6 +107,65 @@ async def test_streamable_http_passes_tls_setting_to_httpx(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
+async def test_connection_error_is_passed_through_exit_stack(monkeypatch: pytest.MonkeyPatch):
+    import mcp
+    from mcp.client import streamable_http
+
+    exit_errors = []
+
+    class FakeHttpClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    @asynccontextmanager
+    async def fake_transport(_url, *, http_client):
+        assert isinstance(http_client, FakeHttpClient)
+        try:
+            yield object(), object(), None
+        except BaseException as exc:
+            exit_errors.append(exc)
+            raise
+
+    class FailingSession:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def initialize(self):
+            raise ConnectionError("initialize failed")
+
+    monkeypatch.setattr(mcp_client.httpx, "AsyncClient", FakeHttpClient)
+    monkeypatch.setattr(streamable_http, "streamable_http_client", fake_transport)
+    monkeypatch.setattr(mcp, "ClientSession", FailingSession)
+
+    registration = mcp_client.create_mcp_registration(
+        server_name="test",
+        url="https://example.test/mcp",
+        verify_tls=False,
+    )
+    ready = asyncio.get_running_loop().create_future()
+    owner = asyncio.create_task(registration._run_connection(ready, asyncio.Event()))
+
+    await owner
+    with pytest.raises(ConnectionError, match="initialize failed"):
+        await ready
+
+    assert len(exit_errors) == 1
+    assert isinstance(exit_errors[0], ConnectionError)
+
+
+@pytest.mark.asyncio
 async def test_collect_mcp_tool_does_not_swallow_cancellation_groups(monkeypatch: pytest.MonkeyPatch):
     registration = mcp_client.create_mcp_registration(
         server_name="test",

@@ -472,71 +472,71 @@ class MCPServerRegistration:
     ) -> None:
         cfg = self.config
         workspace = Path(cfg.workspace).expanduser().resolve() if cfg.workspace else None
-        stack = AsyncExitStack()
         try:
-            from mcp import ClientSession, StdioServerParameters, types
-            from mcp.client.sse import sse_client
-            from mcp.client.stdio import stdio_client
-            from mcp.client.streamable_http import streamable_http_client
+            async with AsyncExitStack() as stack:
+                from mcp import ClientSession, StdioServerParameters, types
+                from mcp.client.sse import sse_client
+                from mcp.client.stdio import stdio_client
+                from mcp.client.streamable_http import streamable_http_client
 
-            if cfg.command:
-                command, args, env = _normalize_windows_stdio_command(cfg.command, cfg.args, cfg.env)
-                server_params = StdioServerParameters(
-                    command=command,
-                    args=args,
-                    env=env,
-                    cwd=workspace,
-                )
-                read, write = await stack.enter_async_context(stdio_client(server_params))
-            else:
-                headers = dict(cfg.headers or {})
-                if cfg.transport == "sse":
-                    read, write = await stack.enter_async_context(
-                        sse_client(
-                            cfg.url,
-                            headers=headers or None,
-                            httpx_client_factory=partial(
-                                httpx.AsyncClient,
+                if cfg.command:
+                    command, args, env = _normalize_windows_stdio_command(cfg.command, cfg.args, cfg.env)
+                    server_params = StdioServerParameters(
+                        command=command,
+                        args=args,
+                        env=env,
+                        cwd=workspace,
+                    )
+                    read, write = await stack.enter_async_context(stdio_client(server_params))
+                else:
+                    headers = dict(cfg.headers or {})
+                    if cfg.transport == "sse":
+                        read, write = await stack.enter_async_context(
+                            sse_client(
+                                cfg.url,
+                                headers=headers or None,
+                                httpx_client_factory=partial(
+                                    httpx.AsyncClient,
+                                    follow_redirects=True,
+                                    verify=cfg.verify_tls,
+                                ),
+                            )
+                        )
+                    elif cfg.transport == "streamable-http":
+                        http_client = await stack.enter_async_context(
+                            httpx.AsyncClient(
+                                headers=headers or None,
                                 follow_redirects=True,
                                 verify=cfg.verify_tls,
-                            ),
+                                timeout=httpx.Timeout(30.0, connect=10.0, read=300.0),
+                            )
                         )
-                    )
-                elif cfg.transport == "streamable-http":
-                    http_client = await stack.enter_async_context(
-                        httpx.AsyncClient(
-                            headers=headers or None,
-                            follow_redirects=True,
-                            verify=cfg.verify_tls,
-                            timeout=httpx.Timeout(30.0, connect=10.0, read=300.0),
+                        transport_result = await stack.enter_async_context(
+                            streamable_http_client(cfg.url, http_client=http_client)
                         )
-                    )
-                    transport_result = await stack.enter_async_context(
-                        streamable_http_client(cfg.url, http_client=http_client)
-                    )
-                    read, write = transport_result[:2]
-                else:
-                    raise ValueError(f"Unsupported MCP transport: {cfg.transport}")
+                        read, write = transport_result[:2]
+                    else:
+                        raise ValueError(f"Unsupported MCP transport: {cfg.transport}")
 
-            async def list_roots_callback(_context: Any) -> types.ListRootsResult:
-                if workspace is None:
-                    return types.ListRootsResult(roots=[])
-                return types.ListRootsResult(
-                    roots=[types.Root(uri=workspace.as_uri(), name=workspace.name)]
-                )
+                async def list_roots_callback(_context: Any) -> types.ListRootsResult:
+                    if workspace is None:
+                        return types.ListRootsResult(roots=[])
+                    return types.ListRootsResult(
+                        roots=[types.Root(uri=workspace.as_uri(), name=workspace.name)]
+                    )
 
-            session = await stack.enter_async_context(
-                ClientSession(
-                    read,
-                    write,
-                    list_roots_callback=list_roots_callback if workspace is not None else None,
+                session = await stack.enter_async_context(
+                    ClientSession(
+                        read,
+                        write,
+                        list_roots_callback=list_roots_callback if workspace is not None else None,
+                    )
                 )
-            )
-            await asyncio.wait_for(session.initialize(), timeout=cfg.tool_timeout)
-            self._session = session
-            logger.info("MCP server '{}' connected", cfg.server_name)
-            ready.set_result(None)
-            await close_event.wait()
+                await asyncio.wait_for(session.initialize(), timeout=cfg.tool_timeout)
+                self._session = session
+                logger.info("MCP server '{}' connected", cfg.server_name)
+                ready.set_result(None)
+                await close_event.wait()
         except BaseException as exc:
             if not ready.done():
                 ready.set_exception(exc)
@@ -544,16 +544,6 @@ class MCPServerRegistration:
                 logger.exception("MCP server '{}' connection owner failed", cfg.server_name)
         finally:
             self._session = None
-            try:
-                await stack.aclose()
-            except (RuntimeError, BaseExceptionGroup) as exc:
-                logger.debug(
-                    "MCP server '{}' cleanup error ignored: {}",
-                    cfg.server_name,
-                    exc,
-                )
-            except Exception:
-                logger.exception("MCP server '{}' cleanup failed", cfg.server_name)
             if self._owner_task is asyncio.current_task():
                 self._owner_task = None
                 self._close_event = None
