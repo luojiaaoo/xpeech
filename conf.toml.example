@@ -92,13 +92,15 @@ browser_preview_path = "data/browser_preview"
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 # enabled_tools = ["*"]
-# tool_timeout = 30
+# connect_timeout = 30
+# tool_timeout = 120
 
 [tool.mcpServers.xsct-bench]
 transport = "streamable-http"
 url = "https://xsct.ai/mcp"
 enabled_tools = ["*"]
-tool_timeout = 30
+connect_timeout = 30
+tool_timeout = 120
 
 # [tool.mcpServers.my-api]
 # url = "https://mcp.example.com/sse"
@@ -106,6 +108,7 @@ tool_timeout = 30
 # headers = { Authorization = "Bearer xxx" }
 # verify_tls = false # 仅用于自签名证书；生产环境优先安装并信任内部 CA
 # enabled_tools = ["*"]
+# connect_timeout = 30
 # tool_timeout = 120
 
 

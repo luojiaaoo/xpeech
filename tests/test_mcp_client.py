@@ -37,8 +37,9 @@ def test_tls_verification_can_be_disabled_from_config():
         {
             "mcpServers": {
                 "test": {
-                    "url": "https://example.test/mcp",
-                    "verify_tls": False,
+                "url": "https://example.test/mcp",
+                "verify_tls": False,
+                "connect_timeout": 45,
                 }
             }
         }
@@ -49,6 +50,7 @@ def test_tls_verification_can_be_disabled_from_config():
     )
 
     assert registration.config.verify_tls is False
+    assert registration.config.connect_timeout == 45
 
 
 @pytest.mark.asyncio
@@ -94,6 +96,7 @@ async def test_streamable_http_passes_tls_setting_to_httpx(monkeypatch: pytest.M
         server_name="test",
         url="https://example.test/mcp",
         verify_tls=False,
+        connect_timeout=45,
     )
     ready = asyncio.get_running_loop().create_future()
     close_event = asyncio.Event()
@@ -104,6 +107,7 @@ async def test_streamable_http_passes_tls_setting_to_httpx(monkeypatch: pytest.M
     await owner
 
     assert client_kwargs["verify"] is False
+    assert client_kwargs["timeout"].connect == 45
 
 
 @pytest.mark.asyncio
@@ -250,15 +254,18 @@ async def test_connections_are_reused_per_session_and_expire(monkeypatch: pytest
     await asyncio.sleep(0.04)
     assert await binding.func(model(text="ok")) == "ok"
     await asyncio.sleep(0.04)
+    assert set(mcp_client.MCP_CONNECTIONS) == {"session-1"}
+    await asyncio.sleep(0.03)
     assert mcp_client.MCP_CONNECTIONS == {}
     await mcp_client.close_all_mcp_connections()
 
 
 @pytest.mark.asyncio
-async def test_failed_connection_is_cached_until_session_expires(monkeypatch: pytest.MonkeyPatch):
+async def test_failed_connection_is_skipped_during_cooldown_then_retried(monkeypatch: pytest.MonkeyPatch):
     await mcp_client.close_all_mcp_connections()
     monkeypatch.setattr(mcp_client, "MCP_CONNECT_TIMEOUT_SECONDS", 0.02)
-    monkeypatch.setattr(mcp_client, "MCP_CONNECTION_TTL_SECONDS", 0.06)
+    monkeypatch.setattr(mcp_client, "MCP_CONNECTION_TTL_SECONDS", 0.2)
+    monkeypatch.setattr(mcp_client, "MCP_RECONNECT_DELAY_SECONDS", 0.06)
     attempts = 0
 
     async def run_slow_connection(_registration, _ready, _close_event):
@@ -297,8 +304,38 @@ async def test_failed_connection_is_cached_until_session_expires(monkeypatch: py
         "unreachable",
         config,
     )
-    assert retried is not registration
+    assert retried is registration
     with pytest.raises(asyncio.TimeoutError):
         await retried._get_tool_bindings()
     assert attempts == 2
     await mcp_client.close_all_mcp_connections()
+
+
+@pytest.mark.asyncio
+async def test_terminated_connection_does_not_reconnect_during_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class TerminatedSession:
+        async def call_tool(self, _name, arguments):
+            raise ConnectionError("connection closed")
+
+    registration = mcp_client.create_mcp_registration(
+        server_name="test",
+        command="fake-server",
+    )
+    registration._session = TerminatedSession()
+    reconnect_attempts = 0
+
+    async def fake_close():
+        registration._session = None
+
+    async def fake_connect():
+        nonlocal reconnect_attempts
+        reconnect_attempts += 1
+
+    monkeypatch.setattr(registration, "aclose", fake_close)
+    monkeypatch.setattr(registration, "_connect", fake_connect)
+
+    assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
+    assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
+    assert reconnect_attempts == 0

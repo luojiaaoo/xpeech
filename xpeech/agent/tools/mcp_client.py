@@ -45,12 +45,17 @@ _SANITIZE_RE = re.compile(r"_+")
 _MAX_TOOL_NAME_LENGTH = 64
 _HASH_LENGTH = 8
 MCPTransport = Literal["stdio", "sse", "streamable-http"]
-MCP_CONNECTION_TTL_SECONDS = 10 * 60
-MCP_CONNECT_TIMEOUT_SECONDS = 5.0
+MCP_CONNECTION_TTL_SECONDS = 20 * 60
+MCP_CONNECT_TIMEOUT_SECONDS = 30
+MCP_RECONNECT_DELAY_SECONDS = 2 *60
 MCP_CONNECTIONS: dict[str, dict[tuple[Any, ...], "MCPServerRegistration"]] = {}
 
 _SESSION_EXPIRY_HANDLES: dict[str, asyncio.TimerHandle] = {}
 _MCP_CONNECTIONS_LOCK: asyncio.Lock | None = None
+
+
+class _MCPReconnectCooldownError(RuntimeError):
+    pass
 
 
 def _sanitize_name(name: str) -> str:
@@ -326,6 +331,7 @@ class MCPServerConfig:
     verify_tls: bool = True
     enabled_tools: tuple[str, ...] = ("*",)
     tool_timeout: float = 30.0
+    connect_timeout: float = MCP_CONNECT_TIMEOUT_SECONDS
 
     def __post_init__(self) -> None:
         if not self.command and not self.url:
@@ -349,21 +355,40 @@ class MCPServerRegistration:
     _lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock, init=False, repr=False)
     _owner_task: asyncio.Task[None] | None = dataclass_field(default=None, init=False, repr=False)
     _close_event: asyncio.Event | None = dataclass_field(default=None, init=False, repr=False)
+    _retry_after: float | None = dataclass_field(default=None, init=False, repr=False)
+
+    def _retry_delay(self) -> float:
+        if self._retry_after is None:
+            return 0.0
+        return max(0.0, self._retry_after - asyncio.get_running_loop().time())
+
+    def _start_retry_cooldown(self) -> None:
+        self._retry_after = asyncio.get_running_loop().time() + MCP_RECONNECT_DELAY_SECONDS
+        self._bindings = []
 
     async def _get_tool_bindings(self) -> list[MCPToolBinding]:
         async with self._lock:
             if self._bindings is not None:
-                return self._bindings
+                if self._retry_delay() > 0:
+                    return self._bindings
+                if self._retry_after is None:
+                    return self._bindings
+
+                # The failed connection's cooldown has elapsed. The next
+                # conversation that asks for tools gets one reconnect attempt.
+                self._bindings = None
+                self._retry_after = None
 
             try:
                 await self._connect()
                 self._bindings = await self._discover_tool_bindings()
+                await _refresh_session_expiry(self.session_id)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # 失败结果和成功连接一样缓存到 session TTL 到期，
-                # 避免网络故障时每次对话都重复连接。
-                self._bindings = []
+                # Skip this MCP for conversations during the cooldown instead
+                # of making every conversation wait for the same failure.
+                self._start_retry_cooldown()
                 # anyio may report transport shutdown as a BaseExceptionGroup.
                 # Cleanup must not replace the original connection failure.
                 try:
@@ -379,51 +404,68 @@ class MCPServerRegistration:
             return self._bindings
 
     async def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> str | list[dict[str, Any]]:
-        for attempt in range(2):
+        try:
             await self._ensure_session()
-            try:
-                result = await asyncio.wait_for(
-                    self._session.call_tool(tool_name, arguments=dict(arguments)),
-                    timeout=self.config.tool_timeout,
-                )
-                return _render_mcp_result(result)
-            except asyncio.TimeoutError:
+        except _MCPReconnectCooldownError:
+            return "(MCP server is temporarily unavailable)"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._start_retry_cooldown()
+            with suppress(BaseException):
+                await self.aclose()
+            logger.exception(
+                "MCP server '{}' failed to reconnect; pausing reconnects for {}s: {}",
+                self.config.server_name,
+                MCP_RECONNECT_DELAY_SECONDS,
+                exc,
+            )
+            return "(MCP server is temporarily unavailable)"
+
+        try:
+            result = await asyncio.wait_for(
+                self._session.call_tool(tool_name, arguments=dict(arguments)),
+                timeout=self.config.tool_timeout,
+            )
+            await _refresh_session_expiry(self.session_id)
+            return _render_mcp_result(result)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "MCP tool '{}.{}' timed out after {}s",
+                self.config.server_name,
+                tool_name,
+                self.config.tool_timeout,
+            )
+            return f"(MCP tool call timed out after {self.config.tool_timeout}s)"
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling() > 0:
+                raise
+            logger.warning(
+                "MCP tool '{}.{}' was cancelled by the server or MCP SDK",
+                self.config.server_name,
+                tool_name,
+            )
+            return "(MCP tool call was cancelled)"
+        except Exception as exc:
+            if _is_session_terminated(exc):
                 logger.warning(
-                    "MCP tool '{}.{}' timed out after {}s",
+                    "MCP server '{}' session ended ({}); reconnecting is paused for {}s",
                     self.config.server_name,
-                    tool_name,
-                    self.config.tool_timeout,
-                )
-                return f"(MCP tool call timed out after {self.config.tool_timeout}s)"
-            except asyncio.CancelledError:
-                task = asyncio.current_task()
-                if task is not None and task.cancelling() > 0:
-                    raise
-                logger.warning(
-                    "MCP tool '{}.{}' was cancelled by the server or MCP SDK",
-                    self.config.server_name,
-                    tool_name,
-                )
-                return "(MCP tool call was cancelled)"
-            except Exception as exc:
-                if attempt == 0 and _is_session_terminated(exc):
-                    logger.warning(
-                        "MCP server '{}' session ended ({}), reconnecting once",
-                        self.config.server_name,
-                        type(exc).__name__,
-                    )
-                    await self.aclose()
-                    await asyncio.sleep(1)
-                    continue
-                logger.exception(
-                    "MCP tool '{}.{}' failed: {}: {}",
-                    self.config.server_name,
-                    tool_name,
                     type(exc).__name__,
-                    exc,
+                    MCP_RECONNECT_DELAY_SECONDS,
                 )
-                return f"(MCP tool call failed: {type(exc).__name__})"
-        return "(MCP tool call failed)"
+                await self.aclose()
+                self._start_retry_cooldown()
+                return "(MCP server is temporarily unavailable)"
+            logger.exception(
+                "MCP tool '{}.{}' failed: {}: {}",
+                self.config.server_name,
+                tool_name,
+                type(exc).__name__,
+                exc,
+            )
+            return f"(MCP tool call failed: {type(exc).__name__})"
 
     async def aclose(self) -> None:
         owner_task = self._owner_task
@@ -437,8 +479,18 @@ class MCPServerRegistration:
             await owner_task
 
     async def _ensure_session(self) -> None:
+        retry_delay = self._retry_delay()
+        if retry_delay > 0:
+            raise _MCPReconnectCooldownError(
+                f"MCP reconnect is paused for another {retry_delay:.1f}s"
+            )
         if self._session is None:
             async with self._lock:
+                retry_delay = self._retry_delay()
+                if retry_delay > 0:
+                    raise _MCPReconnectCooldownError(
+                        f"MCP reconnect is paused for another {retry_delay:.1f}s"
+                    )
                 if self._session is None:
                     await self._connect()
 
@@ -454,7 +506,9 @@ class MCPServerRegistration:
         self._owner_task = owner_task
         self._close_event = close_event
         try:
-            await asyncio.wait_for(ready, timeout=MCP_CONNECT_TIMEOUT_SECONDS)
+            await asyncio.wait_for(ready, timeout=self.config.connect_timeout)
+            self._retry_after = None
+            await _refresh_session_expiry(self.session_id)
         except BaseException:
             close_event.set()
             owner_task.cancel()
@@ -495,6 +549,7 @@ class MCPServerRegistration:
                             sse_client(
                                 cfg.url,
                                 headers=headers or None,
+                                timeout=cfg.connect_timeout,
                                 httpx_client_factory=partial(
                                     httpx.AsyncClient,
                                     follow_redirects=True,
@@ -508,7 +563,11 @@ class MCPServerRegistration:
                                 headers=headers or None,
                                 follow_redirects=True,
                                 verify=cfg.verify_tls,
-                                timeout=httpx.Timeout(30.0, connect=10.0, read=300.0),
+                                timeout=httpx.Timeout(
+                                    cfg.tool_timeout,
+                                    connect=cfg.connect_timeout,
+                                    read=300.0,
+                                ),
                             )
                         )
                         transport_result = await stack.enter_async_context(
@@ -541,6 +600,7 @@ class MCPServerRegistration:
             if not ready.done():
                 ready.set_exception(exc)
             elif not isinstance(exc, asyncio.CancelledError):
+                self._start_retry_cooldown()
                 logger.exception("MCP server '{}' connection owner failed", cfg.server_name)
         finally:
             self._session = None
@@ -638,6 +698,7 @@ def create_mcp_registration(
     verify_tls: bool = True,
     enabled_tools: Sequence[str] | None = None,
     tool_timeout: float = 30.0,
+    connect_timeout: float | None = None,
 ) -> MCPServerRegistration:
     """Create an MCP server registration from configuration."""
 
@@ -658,6 +719,9 @@ def create_mcp_registration(
             verify_tls=verify_tls,
             enabled_tools=("*",) if enabled_tools is None else tuple(enabled_tools),
             tool_timeout=tool_timeout,
+            connect_timeout=(
+                MCP_CONNECT_TIMEOUT_SECONDS if connect_timeout is None else connect_timeout
+            ),
         )
     )
 
@@ -687,6 +751,12 @@ def create_mcp_registration_from_config(
         verify_tls=_get_mcp_config_value(config, "verify_tls", True),
         enabled_tools=_get_mcp_config_value(config, "enabled_tools", ["*"], attr_name="enabled_tools"),
         tool_timeout=_get_mcp_config_value(config, "tool_timeout", 30.0, attr_name="tool_timeout"),
+        connect_timeout=_get_mcp_config_value(
+            config,
+            "connect_timeout",
+            None,
+            attr_name="connect_timeout",
+        ),
     )
 
 
@@ -709,6 +779,7 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         config.verify_tls,
         config.enabled_tools,
         float(config.tool_timeout),
+        float(config.connect_timeout),
     )
 
 
@@ -750,6 +821,19 @@ def _schedule_session_expiry_locked(session_id: str) -> None:
     _SESSION_EXPIRY_HANDLES[session_id] = handle
 
 
+async def _refresh_session_expiry(session_id: str | None) -> None:
+    """Extend a connected session's idle lifetime after successful MCP I/O."""
+    if session_id is None:
+        return
+    async with _mcp_connections_lock():
+        if session_id not in MCP_CONNECTIONS:
+            return
+        expiry_handle = _SESSION_EXPIRY_HANDLES.pop(session_id, None)
+        if expiry_handle is not None:
+            expiry_handle.cancel()
+        _schedule_session_expiry_locked(session_id)
+
+
 async def _expire_session(session_id: str, handle: asyncio.TimerHandle) -> None:
     async with _mcp_connections_lock():
         if _SESSION_EXPIRY_HANDLES.get(session_id) is not handle:
@@ -758,7 +842,7 @@ async def _expire_session(session_id: str, handle: asyncio.TimerHandle) -> None:
         _SESSION_EXPIRY_HANDLES.pop(session_id, None)
 
     logger.info(
-        "MCP session '{}' expired after its {}s lifetime",
+        "MCP session '{}' expired after {}s without successful MCP activity",
         session_id,
         MCP_CONNECTION_TTL_SECONDS,
     )
