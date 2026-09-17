@@ -358,11 +358,20 @@ class MCPServerRegistration:
                 self._bindings = await self._discover_tool_bindings()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except (Exception, BaseExceptionGroup):
                 # 失败结果和成功连接一样缓存到 session TTL 到期，
                 # 避免网络故障时每次对话都重复连接。
                 self._bindings = []
-                await self.aclose()
+                # anyio may report transport shutdown as a BaseExceptionGroup.
+                # Cleanup must not replace the original connection failure.
+                try:
+                    await self.aclose()
+                except BaseException as cleanup_exc:
+                    logger.debug(
+                        "MCP server '{}' cleanup after connection failure: {}",
+                        self.config.server_name,
+                        cleanup_exc,
+                    )
                 raise
 
             return self._bindings
@@ -787,7 +796,9 @@ async def collect_mcp_tool(
 ) -> AsyncIterator[tuple[dict[str, Any], Callable[[BaseModel], Any], str]]:
     try:
         bindings = await registration._get_tool_bindings()
-    except Exception as exc:
+    except asyncio.CancelledError:
+        raise
+    except (Exception, BaseExceptionGroup) as exc:
         logger.exception(
             "MCP server '{}' failed to connect/discover tools: {}",
             registration.config.server_name,
