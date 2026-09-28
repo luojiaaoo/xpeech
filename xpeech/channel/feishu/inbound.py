@@ -124,15 +124,8 @@ class FeishuInboundMixin:
                 parsed_content: list[TextData | FileData] = []
                 text_buffer: list[str] = []
                 post = inbound_msg.content.post
-                post_document = (
-                    post
-                    if "content" in post
-                    else next(
-                        (document for document in post.values() if isinstance(document, dict)),
-                        {},
-                    )
-                )
-                for item in chain.from_iterable(post_document.get("content") or []):
+                post_blocks = post.get("content_v2") or []
+                for item in chain.from_iterable(post_blocks):
                     tag = item["tag"]
                     if tag == "text":
                         text_buffer.append(item["text"])
@@ -162,6 +155,22 @@ class FeishuInboundMixin:
 
                 if text_buffer:
                     parsed_content.append(TextData(text="\n".join(text_buffer)))
+
+                post_files = post.get("files") or []
+                for file_item in post_files:
+                    if file_item.get("is_folder"):
+                        continue
+                    file_key = file_item.get("file_key")
+                    if not file_key:
+                        continue
+                    saved_file = await _save_resource(
+                        inbound_msg.message_id,
+                        file_key,
+                        "file",
+                        resource_dest_dir,
+                        file_item.get("file_name"),
+                    )
+                    parsed_content.append(FileData(file=saved_file))
                 return Message(**common_fields, content=parsed_content)
 
         raise UnsupportedFeishuMessageError(
