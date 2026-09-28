@@ -1344,7 +1344,7 @@ wheels = [
 
 [[package]]
 name = "lark-channel-sdk"
-version = "1.2.0"
+version = "1.4.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple/" }
 dependencies = [
     { name = "httpx" },
@@ -1353,9 +1353,9 @@ dependencies = [
     { name = "requests-toolbelt" },
     { name = "websockets" },
 ]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/2f/09/1f914c7d834953c8a41589b1850fce63a501c5ed9af97a48239109d654e2/lark_channel_sdk-1.2.0.tar.gz", hash = "sha256:5e9e8f275446be13cb1ab2cc5085fb34eb334cab53876acf5fc6207166ca1451", size = 384430, upload-time = "2026-07-14T09:07:22.941Z" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/79/d4/8a71bedd95cf852ae2e368851b11ebc7015810995e99907c3cc2e547979d/lark_channel_sdk-1.4.0.tar.gz", hash = "sha256:603f97ead821e22749e34fca1e52539cc86858bb9f2679c613923182a504958d", size = 454265, upload-time = "2026-08-31T12:44:48.728Z" }
 wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/dd/3a/7dc6f49866902b86232d2b8de0299d3c59a972abb9746ce30d23daf26317/lark_channel_sdk-1.2.0-py3-none-any.whl", hash = "sha256:c08690572a099377cdeddc3a2a1402d9645879ad137e780d80060053dc8c1570", size = 561156, upload-time = "2026-07-14T09:07:19.728Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/fe/28/954d53bf93913c25bd28b6755284df135e0704ee71a7ffae236e3ea3c279/lark_channel_sdk-1.4.0-py3-none-any.whl", hash = "sha256:5466fc5e92b6405795e3cd8ea7ed570a83cab2bc095ac446f786f2a34ee58eb5", size = 633320, upload-time = "2026-08-31T12:44:46.887Z" },
 ]
 
 [[package]]
@@ -4037,7 +4037,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-sse", specifier = ">=0.4.3" },
     { name = "jq", specifier = ">=1.8.0" },
-    { name = "lark-channel-sdk", specifier = ">=1.2.0" },
+    { name = "lark-channel-sdk", specifier = ">=1.4.0" },
     { name = "litellm", specifier = ">=1.83.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "markitdown", extras = ["pdf", "docx", "pptx", "xlsx", "xls"], specifier = ">=0.1.5" },
