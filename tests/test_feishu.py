@@ -419,7 +419,7 @@ async def test_parse_resource_message_uses_channel_download_helper(
 
 
 @pytest.mark.asyncio
-async def test_parse_post_reads_locale_document_and_preserves_attachment_order(
+async def test_parse_post_reads_content_v2_document_and_preserves_attachment_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -429,17 +429,14 @@ async def test_parse_post_reads_locale_document_and_preserves_attachment_order(
     bridge = _bridge_with_channel(SimpleNamespace(download_resource_to_file=download_resource))
     post = PostContent(
         post={
-            "zh_cn": {
-                "title": "",
-                "content": [
-                    [
-                        {"tag": "text", "text": "before"},
-                        {"tag": "a", "text": "link", "href": "https://example.com"},
-                    ],
-                    [{"tag": "img", "image_key": "img_post"}],
-                    [{"tag": "text", "text": "after"}],
+            "content_v2": [
+                [
+                    {"tag": "text", "text": "before"},
+                    {"tag": "a", "text": "link", "href": "https://example.com"},
                 ],
-            }
+                [{"tag": "img", "image_key": "img_post"}],
+                [{"tag": "text", "text": "after"}],
+            ],
         }
     )
 

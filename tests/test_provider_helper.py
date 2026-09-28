@@ -13,6 +13,19 @@ class FakeRateLimitError(Exception):
         self.response = SimpleNamespace(headers=headers)
 
 
+def test_format_error_exposes_only_status_and_message():
+    class InternalProviderFunctionName(Exception):
+        status_code = 400
+
+        def __str__(self):
+            return "The request payload is invalid"
+
+    detail = helper._format_error(InternalProviderFunctionName())
+
+    assert detail == "error_code=400, error_message=The request payload is invalid"
+    assert "InternalProviderFunctionName" not in detail
+
+
 @pytest.mark.asyncio
 async def test_acompletion_always_streams_with_usage(monkeypatch):
     captured_kwargs = None
@@ -67,6 +80,25 @@ async def test_stream_retries_rate_limit_raised_during_iteration(monkeypatch):
     assert [chunk async for chunk in response] == ["ok"]
     assert calls == 2
     assert sleeps == [0]
+
+
+@pytest.mark.asyncio
+async def test_stream_propagates_non_rate_limit_errors(monkeypatch):
+    async def fake_acompletion(**_kwargs):
+        async def stream():
+            raise ValueError("provider rejected the request")
+            yield
+
+        return stream()
+
+    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
+    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", asyncio.Semaphore(1))
+
+    client = LiteLLMRetryClient(max_retries=3)
+    with pytest.raises(ValueError, match="provider rejected the request") as exc_info:
+        await _collect(client.acompletion())
+
+    assert str(exc_info.value) == "provider rejected the request"
 
 
 @pytest.mark.asyncio

@@ -69,3 +69,64 @@ async def test_background_run_skips_yaml_history(tmp_path: Path, monkeypatch: py
     ]
     assert {"event": "assistant", "context": "scheduled result"} in events
     assert agent_loop.chat.await_args.kwargs["remove_blocking_tool"] is True
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_persists_messages_and_raises_http_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def build_test_system_prompt(workspace: Path):
+        assert workspace == tmp_path
+        return {"role": "system", "content": "system"}
+
+    monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
+
+    agent_loop = AgentLoop.__new__(AgentLoop)
+    agent_loop.workspace = tmp_path
+    agent_loop.history = SimpleNamespace(
+        load=AsyncMock(return_value=[]),
+        save=AsyncMock(),
+        delete=AsyncMock(),
+    )
+    agent_loop.memory_consolidator = SimpleNamespace(consolidate=AsyncMock())
+    agent_loop.compressor = SimpleNamespace(
+        should_compress=AsyncMock(return_value=False),
+    )
+    agent_loop.chat = AsyncMock(side_effect=RuntimeError("provider unavailable"))
+    agent_loop.records = SimpleNamespace(append=AsyncMock())
+    agent_loop.tools = []
+    agent_loop.max_iterations = 2
+    agent_loop.max_accept_token = 100_000
+    agent_loop._input_tokens = 0
+    agent_loop._output_tokens = 0
+    agent_loop._model_call_count = 0
+    message = InboundMessage(
+        session_id="session-1",
+        sender_name="Alice",
+        session_metadata={},
+        content=[InputText(text="hello")],
+        timestamp="2026-09-06T10:00:00",
+        files=[],
+    )
+
+    with pytest.raises(loop_module.HTTPException) as exc_info:
+        _ = [event async for event in agent_loop.run(message)]
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "provider unavailable"
+    agent_loop.history.save.assert_awaited_once()
+    saved_session_id, saved_messages = agent_loop.history.save.await_args.args
+    assert saved_session_id == "session-1"
+    assert saved_messages[-1] == {
+        "role": "user",
+        "content": (
+            "The previous model call failed with this error: provider unavailable. "
+            "Please retry the request and adjust your approach if needed."
+        ),
+    }
+    assert any(
+        part.get("text") == "hello"
+        for part in saved_messages[-2]["content"]
+        if isinstance(part, dict)
+    )

@@ -8,8 +8,13 @@ from litellm import RateLimitError, acompletion
 from loguru import logger
 
 from ..config.settings import settings
+from openai import APIStatusError
 
 LLM_PARALLEL_SEMAPHORE = asyncio.Semaphore(settings.llm.parallel)
+
+
+def _format_error(exc: APIStatusError) -> str:
+    return f"error_code={exc.status_code}, error_message={exc}"
 
 
 class LiteLLMRetryClient:
@@ -55,7 +60,7 @@ class LiteLLMRetryClient:
                 return
             except RateLimitError as exc:
                 if attempt >= self.max_retries:
-                    raise
+                    raise RuntimeError(_format_error(exc)) from exc
 
                 delay = self._retry_delay(exc, attempt)
                 logger.warning(
@@ -65,7 +70,12 @@ class LiteLLMRetryClient:
                     self.max_retries,
                 )
                 await asyncio.sleep(delay)
+            except APIStatusError as exc:
+                raise RuntimeError(_format_error(exc)) from exc
+            except Exception:
+                raise
 
+        # 理论上不可达
         raise RuntimeError("LiteLLM streaming retry loop exited unexpectedly.")
 
     def _retry_delay(self, exc: RateLimitError, attempt: int) -> float:

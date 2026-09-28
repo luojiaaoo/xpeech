@@ -6,6 +6,7 @@ from itertools import count
 from pathlib import Path
 from typing import Any, ClassVar
 
+from fastapi import HTTPException, status
 from loguru import logger
 
 from ..agent.server.schema import InputText
@@ -80,7 +81,11 @@ class AgentLoop:
         )
 
     async def tool_call(
-        self, response: LLMResponse, messages_yaml: list, loop_count: int, session_id: str,
+        self,
+        response: LLMResponse,
+        messages_yaml: list,
+        loop_count: int,
+        session_id: str,
         sender_name: str,
         session_metadata: dict[str, str] | None = None,
     ):
@@ -233,9 +238,7 @@ class AgentLoop:
             # 将命令后的内容作为清空上下文后的第一条用户消息。
             message.content[0].text = continuation
 
-        messages_yaml: list[dict] = (
-            [] if background else await self.history.load(message.session_id)
-        )
+        messages_yaml: list[dict] = [] if background else await self.history.load(message.session_id)
 
         # 拼接系统提示词
         messages_yaml = set_system_prompt(
@@ -280,24 +283,38 @@ class AgentLoop:
                     tools=self.tools,
                     remove_blocking_tool=background,
                 )
-            except Exception:
+
+                async for kind, chunk in response.iter_mix_chunks:
+                    if kind == "reasoning_content" and isinstance(chunk, str):
+                        yield {"event": "thinking", "context": chunk}
+                    elif kind == "reasoning_content_end":
+                        yield {"event": "thinking_end", "context": ""}
+                    elif kind == "content" and isinstance(chunk, str):
+                        yield {"event": "assistant", "context": chunk}
+                    elif kind == "content_end":
+                        yield {"event": "assistant_end", "context": ""}
+                    elif (kind == "tool_calls" and isinstance(chunk, ToolCallRequest)) or (kind == "tool_calls_end"):
+                        pass  # 工具调用事件在后续处理
+            except Exception as exc:
                 logger.exception(
                     "Provider chat failed loop_count={}",
                     loop_count,
                 )
-                raise
-
-            async for kind, chunk in response.iter_mix_chunks:
-                if kind == "reasoning_content" and isinstance(chunk, str):
-                    yield {"event": "thinking", "context": chunk}
-                elif kind == "reasoning_content_end":
-                    yield {"event": "thinking_end", "context": ""}
-                elif kind == "content" and isinstance(chunk, str):
-                    yield {"event": "assistant", "context": chunk}
-                elif kind == "content_end":
-                    yield {"event": "assistant_end", "context": ""}
-                elif (kind == "tool_calls" and isinstance(chunk, ToolCallRequest)) or (kind == "tool_calls_end"):
-                    pass  # 工具调用事件在后续处理
+                if not background:
+                    messages_yaml.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"The previous model call failed with this error: {exc}. "
+                                "Please retry the request and adjust your approach if needed."
+                            ),
+                        }
+                    )
+                    await self.history.save(message.session_id, messages_yaml)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=str(exc),
+                ) from exc
 
             logger.info(
                 "Provider chat completed loop_count={} has_tool_calls={}",
@@ -308,7 +325,10 @@ class AgentLoop:
             # 如果有工具调用
             if response.has_tool_calls:
                 async for i in self.tool_call(
-                    response, messages_yaml, loop_count, message.session_id,
+                    response,
+                    messages_yaml,
+                    loop_count,
+                    message.session_id,
                     message.sender_name,
                     session_metadata=message.session_metadata,
                 ):
