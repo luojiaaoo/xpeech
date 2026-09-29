@@ -24,6 +24,18 @@ x-xpeech-service: &xpeech-service
   restart: unless-stopped
 
 services:
+  token-manager:
+    <<: *xpeech-service
+    command: ["token_manager", "--host", "0.0.0.0", "--port", "7883"]
+    volumes:
+      - ./docker_data/lark-token-manager:/app/data/lark-token-manager
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:7883/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
   browserless:
     image: ghcr.io/browserless/chromium:v2.55.0
     init: true
@@ -35,6 +47,8 @@ services:
     depends_on:
       browserless:
         condition: service_started
+      token-manager:
+        condition: service_healthy
     ports:
       - "${BACKEND_PORT:-7878}:${BACKEND_PORT:-7878}"
     volumes:

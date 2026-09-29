@@ -77,7 +77,7 @@ lark-cli vc +search --query "周会" --page-token "<PAGE_TOKEN>"
 
 ### 3. 仅支持 user 身份
 
-该接口仅支持 `user` 身份，使用前需完成 `lark-cli auth login` 并具备 `vc:meeting.search:read` 权限。
+该接口仅支持 `user` 身份，使用前需完成 `lark-cli-auth login --scope "vc:meeting.search:read"` 授权。
 
 ### 4. 支持分页
 

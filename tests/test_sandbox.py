@@ -178,6 +178,7 @@ def test_wrap_command_uses_private_home_and_maps_mirror_configs(
     assert environment["HOME"] == str(home)
     assert environment["UV_CACHE_DIR"] == str(home / ".cache/uv")
     assert environment["NPM_CONFIG_PREFIX"] == str(home / ".npm-global")
+    assert environment["SHELL_SESSION_ID"] == session_id
     assert environment["PATH"].startswith(f"{home}/.local/bin:{home}/.npm-global/bin:")
     assert (str(agent_browser_cache), str(agent_browser_cache)) in writable_binds
     assert (str(cache), str(cache)) not in writable_binds

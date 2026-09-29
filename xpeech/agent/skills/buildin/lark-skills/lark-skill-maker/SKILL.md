@@ -80,6 +80,6 @@ lark-cli api POST /open-apis/xxx --data '{...}'
 ## 关键原则
 
 - **description 决定触发** — 包含功能关键词 + "当用户需要...时使用"
-- **认证** — 说明所需 scope，登录用 `lark-cli auth login --domain <name>`
+- **认证** — 说明所需权限，登录用 `lark-cli-auth login --domain <name>`；只需补单项权限时用 `--scope "<scope>"`
 - **安全** — 写入操作前确认用户意图，建议 `--dry-run` 预览
 - **编排** — 说明数据传递、失败回滚、可并行步骤

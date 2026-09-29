@@ -71,6 +71,7 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
         "UV_PROJECT_ENVIRONMENT": workspace_python_env,  # uv虚拟py环境路径
         "UV_CACHE_DIR": home / ".cache" / "uv",  # 包缓存目录
         "NPM_CONFIG_PREFIX": home / ".npm-global",  # npm 全局安装目录
+        "SHELL_SESSION_ID": session_id, # 注入 session_id，给插件使用
     }
     sandbox_env.update(env or {})
     for key, value in sandbox_env.items():

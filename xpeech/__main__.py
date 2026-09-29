@@ -30,6 +30,13 @@ def main() -> None:
     web_client_parser.add_argument("--backend-url", default="http://127.0.0.1:7878")
     web_client_parser.set_defaults(service="web_client")
 
+    token_manager_parser = subparsers.add_parser(
+        "token_manager", help="Run the Feishu OAuth and token manager."
+    )
+    token_manager_parser.add_argument("--host", default="0.0.0.0")
+    token_manager_parser.add_argument("--port", type=int, default=7883)
+    token_manager_parser.set_defaults(service="token_manager")
+
     args = parser.parse_args()
     service = args.service or "api"
 
@@ -55,6 +62,12 @@ def main() -> None:
             port=args.port,
             backend_url=args.backend_url,
         )
+        return
+
+    if service == "token_manager":
+        from .lark_token_manager import run
+
+        run(host=args.host, port=args.port)
         return
 
     parser.error(f"Unknown service: {service}")

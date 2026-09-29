@@ -120,32 +120,31 @@ Swagger UI 右上角点击 `Authorize`：`username` 可填写任意标识（例�
 - `feishu.app_secret`：飞书应用密钥
 
 Docker 镜像会从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签编译
-wrapper 和独立的 `/usr/local/bin/lark-oauth`。`lark-cli` 只消费缓存中的用户令牌；
-`lark-oauth` 复用该版本 lark-cli 内置的 Device Authorization Flow，并负责刷新令牌。
-`app_id`、`app_secret` 属于构建时配置，修改后必须重新构建镜像。首次执行需要用户身份的命令时，
-CLI 会调用 `lark-oauth`，输出设备授权 URL（以及可能出现的用户码）并退出；程序会把短期设备授权状态
-`lark-cli-oauth-pending.json` 和令牌 `lark-cli-user-token.json` 保存到当前用户私有的
-`workspace_base_path/<session-id>/home/.config/xpeech/` 中，不会写入公共 `sandbox_home_path`。
-用户完成授权后重新执行原命令，`lark-oauth` 会轮询完成令牌申请；不需要 backend 回调，也不需要在
-飞书应用中配置 CLI 回调地址。令牌后续到期时会使用飞书 OAuth v2 token 接口刷新。
-refresh token 按单次轮换处理：只有 access token 已过期、现有授权范围仍满足请求且 refresh token
-尚未过期时才会刷新；刷新成功必须取得并持久化新的 refresh token。明确失效、过期、撤销或已使用的
-refresh token 会被丢弃并重新进入设备授权，网络错误、限流和服务端临时错误则保留现有状态供下次重试。
-刷新前会验证私有缓存目录可写，刷新后的令牌使用原子替换、目录同步和有限次数重试落盘。运行时必须保证
-同一会话内只有一个 `lark-oauth` 或可能触发它的 `lark-cli` 命令正在执行。
+`lark-cli` 和非阻塞的 `/usr/local/bin/lark-cli-auth`。独立的 `token-manager` 服务负责设备授权、
+令牌加密存储和周期刷新；`lark-cli` 通过内部接口取得当前 Xpeech session 的短期令牌。
+`app_id`、`app_secret` 只由 token-manager 在运行时读取，修改后重启服务即可。
 
-首次授权默认申请 `offline_access`、`contact:user.base:readonly` 和
-`contact:user.employee:readonly`。需要增加权限时可单独执行 `lark-oauth`，`--scope` 可以重复，
-也可以用逗号或空格一次传入多个 scope；已有令牌的 scope 会被保留：
+首次执行需要用户身份的命令时，Credential Provider 会立即返回 `authorization_required` 和授权 URL，
+不会阻塞命令。也可以先执行 `lark-cli-auth login --scope "<本次任务所需 scope>"` 或
+`lark-cli-auth login --domain calendar,task` 获取链接；`login` 至少需要一个非空的
+`--scope` 或 `--domain`，两者可以组合。用户在浏览器完成设备授权后重跑原命令，
+token-manager 会按 session 绑定飞书用户。令牌数据库持久化在 `docker_data/lark-token-manager`，
+后台任务每分钟扫描并在过期前刷新，refresh token 按单次轮换原子保存。
+飞书授权使用设备码流程，无需配置 `redirect_uri` 或暴露 callback 端口。token-manager 使用飞书
+返回的 device code 有效期在后台轮询；token-manager 只在 Xpeech 内部网络提供 session 级接口。
+访问令牌固定在过期前 5 分钟刷新，manager 每 60 秒扫描一次，这两项无需配置。
+
+业务命令首次触发透明授权时只建立 `offline_access`；业务权限必须通过
+`lark-cli-auth login` 显式传入本次任务所需的 `--scope` 或 `--domain`。
+需要增加权限时可单独执行 `lark-cli-auth`，`--scope` 可以重复，
+也可以用逗号或空格一次传入多个 scope；`--domain` 使用原生 lark-cli 的业务域目录，
+可传逗号/空格分隔的多个域或 `all`；已有授权范围由飞书授权服务维护：
 
 ```bash
-lark-oauth --scope docs:doc:readonly --scope drive:drive:readonly
-lark-oauth --scope "docs:doc:readonly,drive:drive:readonly"
+lark-cli-auth login --scope docs:doc:readonly --scope drive:drive:readonly
+lark-cli-auth login --scope "docs:doc:readonly,drive:drive:readonly"
+lark-cli-auth login --domain calendar,task
 ```
-
-再次运行 scope 集合相同的 `lark-oauth` 命令时，程序会使用已保存的 `device_code` 轮询，每次最多
-等待 60 秒。第一次仍未授权时保留设备授权状态，允许再运行一次；第二次仍未授权时删除
-`device_code` 文件并返回“用户未授权”，下一次运行将生成新的授权 URL。取得新令牌后再重跑原业务命令。
 
 需要修改监听地址、端口或后端地址时，可通过对应命令的 `--help` 查看参数。
 
@@ -201,7 +200,7 @@ BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 
 ```bash
 docker compose ps
-docker compose logs -f browserless backend feishu web_client
+docker compose logs -f token-manager browserless backend feishu web_client
 ```
 
 持久化数据统一映射到宿主机
@@ -209,7 +208,7 @@ docker compose logs -f browserless backend feishu web_client
 `browser_preview`，Web 用户数据库保存在 `web_client/users.db`；缓存目录不做宿主机磁盘
 映射。`conf.toml` 以只读方式挂载，`.env` 通过 `env_file` 注入进程。普通运行时配置修改后重建容器
 即可生效；`feishu.app_id` 或 `feishu.app_secret` 修改后需要增加 `--build` 重新编译 lark-cli 和
-lark-oauth：
+lark-cli-auth：
 
 ```bash
 docker compose up -d --force-recreate browserless backend feishu web_client

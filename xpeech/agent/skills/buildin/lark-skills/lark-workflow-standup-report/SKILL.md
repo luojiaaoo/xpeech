@@ -24,7 +24,7 @@ metadata:
 仅支持 **user 身份**。执行前确保已授权：
 
 ```bash
-lark-cli auth login --domain calendar,task
+lark-cli-auth login --domain calendar,task
 ```
 
 ## 工作流

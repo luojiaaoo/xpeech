@@ -116,3 +116,8 @@ tool_timeout = 120
 app_id = "cli_aa8fcbaccae41cba"
 app_secret = "xxxxxxx"
 idle_timeout = 5
+
+[feishu.lark_cli]
+# Used at image build time to bake the manager endpoint into lark-cli binaries.
+manager_url = "http://token-manager:7883"
+database_path = "data/lark-token-manager/tokens.db"

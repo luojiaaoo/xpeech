@@ -1,21 +1,20 @@
 ---
 name: lark-skills
-version: v1.0.90
-description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审批、妙搭应用开发、考勤、多维表格 Base、日历、通讯录、云文档 Docx/Wiki、云盘 Drive、事件订阅、即时通讯 IM、邮箱、Markdown、视频会议与纪要/妙记、OKR、原生 OpenAPI、电子表格 Sheets、幻灯片 Slides、任务 Task、画板 Whiteboard、知识库 Wiki，以及会议纪要汇总、日程待办摘要两个工作流和 Skill 制作器。当用户有任一飞书/Lark 需求（发消息、查日程、读写文档/表格/幻灯片/Base、管理云盘、处理审批/任务/考勤、查会议记录、开发妙搭应用等）时使用本技能，按本文件目录读取对应子技能库的 SKILL.md 后执行。认证/登录/令牌/scope 等授权类需求走独立技能 lark-oauth，不在本技能内。"
+description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审批、妙搭应用开发、考勤、多维表格 Base、日历、通讯录、云文档 Docx/Wiki、云盘 Drive、事件订阅、即时通讯 IM、邮箱、Markdown、视频会议与纪要/妙记、OKR、原生 OpenAPI、电子表格 Sheets、幻灯片 Slides、任务 Task、画板 Whiteboard、知识库 Wiki，以及会议纪要汇总、日程待办摘要两个工作流和 Skill 制作器。当用户有任一飞书/Lark 需求时使用本技能，按本文件目录读取对应子技能库的 SKILL.md 后执行。"
 ---
 
 # lark-skills — 飞书/Lark 能力聚合路由
 
 本技能是 **`lark-*` 子技能库的聚合入口 / 路由**。它本身不包含具体操作指令，只负责把需求路由到正确的子技能库；每个能力的具体用法都在对应的子技能库 `SKILL.md` 里。
 
-> 本技能刻意**不包含** `lark-oauth`（认证 / 登录 / 令牌刷新 / scope 申请等授权操作）。授权类需求走独立的顶级技能 `lark-oauth`。
+> 本技能负责业务能力路由；授权、状态和 scope 申请由独立的 `lark-cli-auth` 技能处理。
 
 ## 使用方法（路由规则）
 
 1. 收到飞书/Lark 相关需求后，在下方「目录」里按需求匹配最合适的子技能库。
 2. 用 Read 工具读取该子技能库的 `SKILL.md`，按其指引执行。
 3. 涉及认证、身份切换、权限不足（`missing_scopes`）、输出契约、高风险操作等通用规则时，先读取 `lark-shared/SKILL.md`。
-4. 涉及登录 / 授权 / 刷新令牌 / 追加 scope 的需求，改走 `lark-oauth`（独立技能，不在本技能内）。
+4. 普通业务直接执行 `lark-cli`。遇到 `authorization_required` 时读取并原样发送其中的授权链接；授权、注销和追加 scope 走 `lark-cli-auth`。
 
 ## 目录（子技能库一览）
 
@@ -78,7 +77,7 @@ lark-skills/
 | 封装新的飞书 Skill | `lark-skill-maker/SKILL.md` |
 | 会议纪要周报 | `lark-workflow-meeting-summary/SKILL.md` |
 | 今日/本周日程与待办摘要 | `lark-workflow-standup-report/SKILL.md` |
-| 认证 / 登录 / 令牌 / scope | `lark-oauth`（独立技能，不在此处） |
+| 认证 / 登录 / 令牌 / scope | `lark-cli-auth`（独立技能，不在此处） |
 | 认证、身份切换、权限通用规则 | `lark-shared/SKILL.md` |
 
 ## 重要：相对路径说明

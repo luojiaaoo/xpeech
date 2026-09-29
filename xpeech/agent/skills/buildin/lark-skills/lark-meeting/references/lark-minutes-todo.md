@@ -120,7 +120,7 @@ lark-cli minutes +todo --minute-token obcnxxxxxxxxxxxxxxxxxxxx --operation add -
 | `--todos` 与单条 flags 冲突 | 二选一 |
 | `todos[i]` 校验失败 | 检查该条 `operation` 与字段组合 |
 | `error.subtype` = `permission_denied` | **妙记资源无编辑权**：向妙记所有者申请该妙记的编辑/协作权限；**不要**走 `auth login --scope` |
-| 缺少 OAuth scope（`error.missing_scopes` 含 `minutes:minutes:update`） | `lark-cli auth login --scope "minutes:minutes:update"` |
+| 缺少 OAuth scope（`error.missing_scopes` 含 `minutes:minutes:update`） | `lark-cli-auth login --scope "minutes:minutes:update"` |
 
 ## 相关场景
 - [生成和修改妙记](../scenes/create-and-edit-minutes.md)

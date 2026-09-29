@@ -17,7 +17,7 @@ metadata:
 妙搭应用是用户的个人资产，统一 `--as user`（见开头）。已有用户身份可用时直接执行业务命令，**不要为了预防权限问题主动重新登录**，否则可能中断原任务并触发不必要的设备授权。仅当 CLI 明确返回未登录或缺少本域 scope 时，一次性执行：
 
 ```bash
-lark-cli auth login --domain apps
+lark-cli-auth login --domain apps
 ```
 
 因缺权限失败（`error.subtype == "missing_scope"`）时的通用处理见 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，同样按 `--domain apps` 授权；授权成功后只恢复原业务操作，不扩展任务范围。

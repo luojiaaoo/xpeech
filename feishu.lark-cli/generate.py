@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 APP_ID_MARKER = "{{APP_ID}}"
-APP_SECRET_MARKER = "{{APP_SECRET}}"
+TOKEN_MANAGER_URL_MARKER = "{{TOKEN_MANAGER_URL}}"
 
 
 class ConfigError(ValueError):
@@ -26,7 +26,7 @@ def _required_string(mapping: dict[str, Any], key: str, location: str) -> str:
     return value.strip()
 
 
-def load_build_config(config_path: Path) -> tuple[str, str]:
+def load_build_config(config_path: Path) -> tuple[str, str, str]:
     with config_path.open("rb") as config_file:
         config = tomllib.load(config_file)
 
@@ -35,16 +35,21 @@ def load_build_config(config_path: Path) -> tuple[str, str]:
         raise ConfigError("missing [feishu] configuration")
 
     app_id = _required_string(feishu, "app_id", "feishu")
-    app_secret = _required_string(feishu, "app_secret", "feishu")
-    return app_id, app_secret
+    lark_cli = feishu.get("lark_cli", {})
+    if not isinstance(lark_cli, dict):
+        raise ConfigError("feishu.lark_cli must be a table")
+    manager_url = lark_cli.get("manager_url", "http://token-manager:7883")
+    if not isinstance(manager_url, str) or not manager_url.strip():
+        raise ConfigError("feishu.lark_cli.manager_url must be a non-empty string")
+    return app_id, manager_url.strip()
 
 
 def render_source(config_path: Path, template_path: Path) -> str:
-    app_id, app_secret = load_build_config(config_path)
+    app_id, manager_url = load_build_config(config_path)
     source = template_path.read_text(encoding="utf-8")
     replacements = {
         APP_ID_MARKER: json.dumps(app_id),
-        APP_SECRET_MARKER: json.dumps(app_secret),
+        TOKEN_MANAGER_URL_MARKER: json.dumps(manager_url),
     }
     for marker, value in replacements.items():
         marker_count = source.count(marker)

@@ -78,7 +78,7 @@ lark-cli mail +share-to-chat --message-id <邮件ID> --receive-id alice@example.
 | `--message-id and --thread-id are mutually exclusive` | 两个参数同时传 | 只传一个 |
 | 403 `user not in chat` | 用户不在目标会话中 | 确认用户是群成员 |
 | 404 `message not found` | 邮件 ID 无效 | 确认邮件 ID 正确 |
-| 403 `permission not granted` | 缺少 `im:message` 或 `im:message.send_as_user` scope | 重新授权：`lark-cli auth login --scope "im:message,im:message.send_as_user"` |
+| 403 `permission not granted` | 缺少 `im:message` 或 `im:message.send_as_user` scope | 重新授权：`lark-cli-auth login --scope "im:message,im:message.send_as_user"` |
 
 ## 相关命令
 

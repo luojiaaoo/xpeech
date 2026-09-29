@@ -123,7 +123,7 @@ metadata:
 - **`--as user`（推荐）**：以当前登录用户身份创建、读取、管理演示文稿。执行前先完成用户授权：
 
 ```bash
-lark-cli auth login --domain slides
+lark-cli-auth login --domain slides
 ```
 
 - **`--as bot`**：仅在用户明确要求以应用身份操作，或需要让 bot 持有/创建资源时使用。使用 bot 身份时，要额外确认 bot 是否真的有目标演示文稿的访问权限。

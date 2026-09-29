@@ -149,12 +149,28 @@ class LLMConfig(BaseModel):
 
         return self._api_key_selector.next(self._api_keys)
 
+class LarkCLIConfig(BaseModel):
+    """Configuration shared by the token manager and lark-cli clients."""
+
+    manager_url: str = "http://token-manager:7883"
+    database_path: Path = Path("data/lark-token-manager/tokens.db")
+
+    @field_validator("manager_url")
+    @classmethod
+    def validate_lark_http_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("lark-cli URLs must be absolute HTTP(S) URLs")
+        return value.rstrip("/")
+
+
 class FeishuConfig(BaseModel):
     """Feishu channel configuration settings."""
 
     app_id: str
     app_secret: str
     idle_timeout: int = 5
+    lark_cli: LarkCLIConfig = Field(default_factory=LarkCLIConfig)
 
 
 class LoggingConfig(BaseModel):
