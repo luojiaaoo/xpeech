@@ -4,8 +4,10 @@ import platform
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from textwrap import dedent
 
@@ -19,7 +21,8 @@ from ..server.context import get_session_id
 from . import sandbox
 from .helper import is_direct_python_pip_exec, safe_resolve_workspace_path
 
-EXEC_TIMEOUT = 60 * 2
+DEFAULT_EXEC_TIMEOUT_MS = 120_000
+MAX_EXEC_TIMEOUT_MS = 240_000
 DENY_PATTERNS = [
     r"\brm\s+-[rf]{1,2}\b",  # rm -r, rm -rf, rm -fr
     r"\bdel\s+/[fq]\b",  # del /f, del /q
@@ -58,6 +61,20 @@ _BENIGN_DEVICE_PATHS: frozenset[str] = frozenset(
 
 class ShellArgs(BaseModel):
     command: str = Field(description="Bash command to execute")
+    timeout_ms: int = Field(
+        default=DEFAULT_EXEC_TIMEOUT_MS,
+        gt=0,
+        le=MAX_EXEC_TIMEOUT_MS,
+        description="Command execution timeout in milliseconds (maximum 240000).",
+    )
+
+
+@dataclass(frozen=True)
+class ShellCommandResult:
+    stdout: bytes
+    stderr: bytes
+    returncode: int | None
+    timed_out: bool = False
 
 
 def _is_benign_device_path(path: str) -> bool:
@@ -68,20 +85,23 @@ def _is_benign_device_path(path: str) -> bool:
 
 
 async def _stop_process(process: asyncio.subprocess.Process) -> None:
-    """Stop and reap the shell process without managing its background children."""
+    """Stop the isolated shell process group and reap the shell process."""
     if process.returncode is not None:
         return
     try:
-        process.terminate()
+        os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
-        return
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
     try:
         await asyncio.wait_for(process.wait(), timeout=3.0)
     except TimeoutError:
         try:
             process.kill()
         except ProcessLookupError:
-            return
+            pass
         await process.wait()
 
 
@@ -173,7 +193,8 @@ async def _run_wrapped_command(
     command: str,
     workspace: Path,
     env: dict[str, str] | None = None,
-) -> tuple[bytes, bytes, int | None]:
+    timeout_ms: int = DEFAULT_EXEC_TIMEOUT_MS,
+) -> ShellCommandResult:
     wrapped_command = sandbox.wrap_command(command, workspace, env=env)
     logger.info(f"Running wrapped command: {wrapped_command}")
     with tempfile.TemporaryFile(mode="w+b") as stdout_f, tempfile.TemporaryFile(mode="w+b") as stderr_f:
@@ -186,10 +207,13 @@ async def _run_wrapped_command(
             stdout=stdout_f,
             stderr=stderr_f,
             cwd=workspace,
+            start_new_session=True,
         )
+        timed_out = False
         try:
-            await asyncio.wait_for(process.wait(), timeout=EXEC_TIMEOUT)
+            await asyncio.wait_for(process.wait(), timeout=timeout_ms / 1000)
         except TimeoutError:
+            timed_out = True
             await _stop_process(process)
         except asyncio.CancelledError:
             await _stop_process(process)
@@ -197,10 +221,17 @@ async def _run_wrapped_command(
 
         stdout_f.seek(0)
         stderr_f.seek(0)
-        return stdout_f.read(), stderr_f.read(), process.returncode
+        return ShellCommandResult(stdout_f.read(), stderr_f.read(), process.returncode, timed_out)
 
 
-def _format_command_output(stdout: bytes, stderr: bytes, returncode: int | None) -> str:
+def _format_command_output(
+    stdout: bytes,
+    stderr: bytes,
+    returncode: int | None,
+    *,
+    timed_out: bool = False,
+    timeout_ms: int = DEFAULT_EXEC_TIMEOUT_MS,
+) -> str:
     output_parts = []
 
     if stdout:
@@ -211,17 +242,21 @@ def _format_command_output(stdout: bytes, stderr: bytes, returncode: int | None)
         if stderr_text.strip():
             output_parts.append(f"STDERR:\n{stderr_text}")
 
-    output_parts.append(f"\nExit code: {returncode}")
+    if timed_out:
+        output_parts.append(f"\nCommand timed out after {timeout_ms / 1000:g}s (process terminated)")
+    output_parts.append(f"Exit code: {returncode}")
     return "\n".join(output_parts) if output_parts else "(no output)"
 
 
 async def _ensure_workspace_uv_venv(workspace: Path) -> None:
     if (workspace / ".venv").exists():
         return
-    stdout, stderr, returncode = await _run_wrapped_command("uv venv .venv", workspace)
-    if returncode != 0:
-        result = _format_command_output(stdout, stderr, returncode)
-        raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{result}")
+    result = await _run_wrapped_command("uv venv .venv", workspace)
+    if result.returncode != 0:
+        output = _format_command_output(
+            result.stdout, result.stderr, result.returncode, timed_out=result.timed_out
+        )
+        raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{output}")
 
 
 def build_shell_tools(workspace: str | Path):
@@ -241,8 +276,14 @@ def build_shell_tools(workspace: str | Path):
             session_id=get_session_id(),
         )
         await _ensure_workspace_uv_venv(workspace)
-        stdout, stderr, returncode = await _run_wrapped_command(command, workspace, env=env)
-        return _format_command_output(stdout, stderr, returncode)
+        result = await _run_wrapped_command(command, workspace, env=env, timeout_ms=args.timeout_ms)
+        return _format_command_output(
+            result.stdout,
+            result.stderr,
+            result.returncode,
+            timed_out=result.timed_out,
+            timeout_ms=args.timeout_ms,
+        )
 
     shell.__doc__ = dedent(
         """
@@ -250,6 +291,8 @@ def build_shell_tools(workspace: str | Path):
 
             Commands run on Linux inside a bubblewrap sandbox. The current
             workspace is isolated from other workspaces.
+            Commands time out after 120 seconds by default; timeout_ms can
+            request up to 240 seconds. On timeout, partial output is returned.
             Python must be run through uv, for example:
             uv run python script.py
         """

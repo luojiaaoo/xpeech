@@ -8,9 +8,16 @@ from openai import pydantic_function_tool
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from xpeech.agent.tool_executor import ToolExecutor
+from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
-from xpeech.agent.tools.shell import _format_command_output, _guard_command
+from xpeech.agent.tools.shell import (
+    MAX_EXEC_TIMEOUT_MS,
+    ShellArgs,
+    _format_command_output,
+    _guard_command,
+    _run_wrapped_command,
+)
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 from xpeech.provider.schema import ToolCallRequest
 
@@ -115,6 +122,45 @@ class TestToolExecutor:
 
         assert result.startswith("x" * 10_001)
         assert "truncated" not in result
+
+    def test_shell_timeout_argument_is_bounded(self):
+        assert ShellArgs(command="true").timeout_ms == 120_000
+        assert ShellArgs(command="true", timeout_ms=MAX_EXEC_TIMEOUT_MS).timeout_ms == MAX_EXEC_TIMEOUT_MS
+        with pytest.raises(ValidationError, match="timeout_ms"):
+            ShellArgs(command="true", timeout_ms=0)
+        with pytest.raises(ValidationError, match="timeout_ms"):
+            ShellArgs(command="true", timeout_ms=MAX_EXEC_TIMEOUT_MS + 1)
+
+    @pytest.mark.asyncio
+    async def test_shell_timeout_terminates_command_and_preserves_partial_output(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(sandbox, "wrap_command", lambda command, workspace, env=None: command)
+
+        result = await asyncio.wait_for(
+            _run_wrapped_command("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500),
+            timeout=2,
+        )
+
+        assert result.timed_out is True
+        assert result.stdout == b"partial output\n"
+        output = _format_command_output(
+            result.stdout,
+            result.stderr,
+            result.returncode,
+            timed_out=result.timed_out,
+            timeout_ms=500,
+        )
+        assert "partial output" in output
+        assert "Command timed out after 0.5s" in output
+
+    @pytest.mark.asyncio
+    async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(sandbox, "wrap_command", lambda command, workspace, env=None: command)
+
+        result = await _run_wrapped_command("printf done", tmp_path, timeout_ms=1_000)
+
+        assert result.stdout == b"done"
+        assert result.returncode == 0
+        assert result.timed_out is False
 
     def test_mcp_output_is_not_truncated_before_executor(self):
         full_result = "x" * 50_001
