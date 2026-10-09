@@ -83,6 +83,7 @@ repetition_penalty = 1.0
 
 [tool]
 max_result_chars = 10000
+max_tool_timeout = 300 # 工具自身超时之外的最终兜底上限（秒）
 
 [tool.browser_preview]
 browser_preview_base_url = "http://backend:7878/browser_preview"

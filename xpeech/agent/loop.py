@@ -66,6 +66,7 @@ class AgentLoop:
         self.tool_executor = ToolExecutor(
             workspace=self.workspace,
             max_result_chars=settings.tool.max_result_chars,
+            max_tool_timeout=settings.tool.max_tool_timeout,
         )
         self.compressor = ConversationCompressor(
             chat=self.chat,

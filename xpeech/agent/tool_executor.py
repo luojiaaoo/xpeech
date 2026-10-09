@@ -34,11 +34,15 @@ class ToolExecutor:
         self,
         workspace: str | Path,
         max_result_chars: int,
+        max_tool_timeout: float = 300.0,
     ) -> None:
         if max_result_chars < 1:
             raise ValueError("max_result_chars must be positive")
+        if max_tool_timeout <= 0:
+            raise ValueError("max_tool_timeout must be positive")
         self._workspace = Path(workspace).expanduser().resolve()
         self._max_result_chars = max_result_chars
+        self._max_tool_timeout = max_tool_timeout
 
     async def _limit_text(self, tool_call: ToolCallRequest, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
@@ -74,6 +78,7 @@ class ToolExecutor:
                 tool_call.name,
                 tool_call.arguments,
             )
+            timeout_scope = asyncio.timeout(self._max_tool_timeout)
             try:
                 if tool_call_func is None:
                     raise ValueError(f"Tool is not registered for this request: {tool_call.name}")
@@ -85,15 +90,43 @@ class ToolExecutor:
                     kwargs["session_id"] = session_id
                 if model_info.has_sender_name:
                     kwargs["sender_name"] = sender_name
-                if not model_info.has_pydantic_param:
-                    value = await tool_call_func(**kwargs)
+                async with timeout_scope:
+                    if not model_info.has_pydantic_param:
+                        value = await tool_call_func(**kwargs)
+                    else:
+                        value = await tool_call_func(model_info.model_cls(**tool_call.arguments), **kwargs)
+                    if (
+                        isinstance(value, str)
+                        and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS
+                    ):
+                        value = await self._limit_text(tool_call, value, self._max_result_chars)
+            except TimeoutError as exc:
+                duration = time.perf_counter() - start_time
+                if timeout_scope.expired():
+                    error = f"Tool call timed out after {self._max_tool_timeout:g}s"
+                    logger.warning(
+                        "Tool call timed out loop_count={} tool_name={} args={} timeout={}s duration={:.2f}s",
+                        loop_count,
+                        tool_call.name,
+                        tool_call.arguments,
+                        self._max_tool_timeout,
+                        duration,
+                    )
                 else:
-                    value = await tool_call_func(model_info.model_cls(**tool_call.arguments), **kwargs)
-                if (
-                    isinstance(value, str)
-                    and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS
-                ):
-                    value = await self._limit_text(tool_call, value, self._max_result_chars)
+                    error = format_exception2llm(exc)
+                    logger.exception(
+                        "Tool call failed loop_count={} tool_name={} args={} duration={:.2f}s",
+                        loop_count,
+                        tool_call.name,
+                        tool_call.arguments,
+                        duration,
+                    )
+                return ToolExecutionResult(
+                    call=tool_call,
+                    value=error,
+                    succeeded=False,
+                    duration_seconds=duration,
+                )
             except PathProtectionError as exc:
                 duration = time.perf_counter() - start_time
                 error = format_exception2llm(exc)

@@ -1,10 +1,16 @@
-from ...utils.security.network import validate_url_target
-from markitdown import MarkItDown
-from pydantic import BaseModel, Field
 import asyncio
 from urllib.parse import urlencode
+
+import requests
+from markitdown import MarkItDown
+from pydantic import BaseModel, Field
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import SSLError, Timeout
+
+from ...utils.security.network import validate_url_target
+
+WEB_CONNECT_TIMEOUT_SECONDS = 10
+WEB_READ_TIMEOUT_SECONDS = 60
 
 
 class WebFetchArgs(BaseModel):
@@ -21,9 +27,22 @@ async def web_fetch(args: WebFetchArgs) -> str:
     is_valid, error_msg = validate_url_target(args.url)
     if not is_valid:
         return f"URL validation failed: {error_msg}"
-    md = MarkItDown()
-    result = await asyncio.to_thread(md.convert, args.url)
-    return f"""[TITLE: {result.title}]\n\n{result.text_content}"""
+    return await asyncio.to_thread(_fetch_and_convert, args.url)
+
+
+def _fetch_and_convert(url: str) -> str:
+    with requests.Session() as session:
+        session.headers.update(
+            {"Accept": "text/markdown, text/html;q=0.9, text/plain;q=0.8, */*;q=0.1"}
+        )
+        with session.get(
+            url,
+            stream=True,
+            timeout=(WEB_CONNECT_TIMEOUT_SECONDS, WEB_READ_TIMEOUT_SECONDS),
+        ) as response:
+            response.raise_for_status()
+            result = MarkItDown().convert(response)
+    return f"[TITLE: {result.title}]\n\n{result.text_content}"
 
 
 async def web_search(args: WebSearchArgs) -> str:

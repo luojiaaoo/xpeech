@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date
 from pathlib import Path
 from typing import Annotated
@@ -101,8 +102,11 @@ class TestToolExecutor:
 
     def test_result_limit_is_global_not_mcp_specific(self):
         assert ToolConfig().max_result_chars == 10_000
+        assert ToolConfig().max_tool_timeout == 300
         with pytest.raises(ValidationError, match="max_result_chars"):
             MCPServerSettings(command="mcp-server", max_result_chars=1_000)
+        with pytest.raises(ValidationError, match="max_tool_timeout"):
+            ToolConfig(max_tool_timeout=0)
 
     def test_shell_output_is_not_truncated_before_executor(self):
         stdout = b"x" * 10_001
@@ -138,6 +142,53 @@ class TestToolExecutor:
         assert [result.call.id for result in results] == ["2", "1"]
         assert [result.value for result in results] == ["second", "first"]
         assert all(result.succeeded for result in results)
+
+    @pytest.mark.asyncio
+    async def test_timed_out_tool_does_not_block_other_results(self, tmp_path: Path):
+        cancelled = asyncio.Event()
+
+        async def stuck_tool() -> str:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        async def fast_tool() -> str:
+            return "ready"
+
+        calls = [
+            ToolCallRequest(id="1", name="stuck_tool", arguments={}),
+            ToolCallRequest(id="2", name="fast_tool", arguments={}),
+        ]
+        results = await ToolExecutor(
+            workspace=tmp_path,
+            max_result_chars=10_000,
+            max_tool_timeout=0.02,
+        ).execute(calls, {"stuck_tool": stuck_tool, "fast_tool": fast_tool})
+
+        assert cancelled.is_set()
+        assert [result.call.id for result in results] == ["1", "2"]
+        assert results[0].succeeded is False
+        assert results[0].value == "Tool call timed out after 0.02s"
+        assert results[1].succeeded is True
+        assert results[1].value == "ready"
+
+    @pytest.mark.asyncio
+    async def test_tool_raised_timeout_keeps_its_own_error(self, tmp_path: Path):
+        async def network_tool() -> str:
+            raise TimeoutError("read timed out")
+
+        [result] = await ToolExecutor(
+            workspace=tmp_path,
+            max_result_chars=10_000,
+            max_tool_timeout=300,
+        ).execute(
+            [ToolCallRequest(id="1", name="network_tool", arguments={})],
+            {"network_tool": network_tool},
+        )
+
+        assert result.succeeded is False
+        assert result.value == "TimeoutError: read timed out"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("metadata", [{"channel": "test"}, {}, None])
