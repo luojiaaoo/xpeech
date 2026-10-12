@@ -139,26 +139,8 @@ async def build_system_prompt(workspace: Path) -> dict[str, Any]:
     # Memory
     parts.append(await MemoryStore(workspace).get_memory_context())
 
-    # Skills
-    skill_loader = SkillsLoader(workspace)
-    # Always skills
-    always_skills = await skill_loader.get_always_skills()
-    if always_skills:
-        always_content = await skill_loader.load_skills_for_context(always_skills)
-        if always_content:
-            parts.append(f"# Active Skills\n\n{always_content}")
-    # Skills summary
-    skills_summary = await skill_loader.build_skills_summary()
-    if skills_summary:
-        _template = dedent(
-            """
-                    # Skills
-
-                    The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-
-                    {skills_summary}
-                """
-        ).lstrip()
-        parts.append(_template.format(skills_summary=skills_summary))
+    skills_prompt = await SkillsLoader(workspace).build_skills_prompt()
+    if skills_prompt:
+        parts.append(skills_prompt)
 
     return {"role": "system", "content": "\n\n---\n\n".join(parts)}
