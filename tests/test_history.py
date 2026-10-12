@@ -32,7 +32,7 @@ class TestYamlHistoryRepository:
 
         assert await repository.load("session") == []
 
-    @pytest.mark.parametrize("session_id", ["", ".", "..", "../escape", r"..\\escape", "/absolute"])
+    @pytest.mark.parametrize("session_id", ["", ".", "..", "../escape", r"..\\escape", "/absolute", "x" * 129])
     @pytest.mark.asyncio
     async def test_rejects_unsafe_session_ids(self, tmp_path: Path, session_id: str):
         repository = YamlHistoryRepository(tmp_path)

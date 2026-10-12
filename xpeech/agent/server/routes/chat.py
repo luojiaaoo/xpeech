@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
 from ....utils.helper import save_to_workspace
@@ -13,7 +13,7 @@ from ...background import (
 )
 from ...loop import AgentLoop, QuestionEvent
 from ...runner import AgentRunner
-from ..dependencies import acquire_chat_session, content, sender_name_header, session_metadata
+from ..dependencies import acquire_chat_session, content, sender_name_header, session_id_header, session_metadata
 from ..schema import InboundMessage, InputContent
 
 router = APIRouter()
@@ -43,7 +43,7 @@ async def poll_background_message(
 
 @router.post("/answer_question")
 async def answer_question(
-    session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
+    session_id: Annotated[str, Depends(session_id_header)],
     answer: Annotated[str, Form(description="回答内容")],
 ):
     """提交用户答案并唤醒正在等待的 Agent 循环。"""
@@ -61,7 +61,7 @@ async def answer_question(
     dependencies=[Depends(acquire_chat_session, scope="request")],
 )
 async def chat(
-    session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
+    session_id: Annotated[str, Depends(session_id_header)],
     sender_name: Annotated[str, Depends(sender_name_header)],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],

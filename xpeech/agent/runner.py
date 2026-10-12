@@ -5,6 +5,7 @@ from ..config.settings import Settings, settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..utils.helper import ensure_path_async
 from ..utils.session import create_workspace_templates
+from ..utils.session_id import validate_session_id
 from .loop import AgentLoop
 from .server.schema import InboundMessage
 from .tools.registry import register_default_tools
@@ -14,9 +15,9 @@ class AgentRunner:
     """Prepare and run an agent for one conversation session."""
 
     def __init__(self, session_id: str, *, config: Settings) -> None:
-        self.session_id = session_id
+        self.session_id = validate_session_id(session_id)
         self.config = config
-        self.workspace = (config.path.workspace_base_path / session_id).resolve()
+        self.workspace = (config.path.workspace_base_path / self.session_id).resolve()
         self._agent_loop: AgentLoop | None = None
 
     @classmethod

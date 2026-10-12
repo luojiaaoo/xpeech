@@ -9,6 +9,7 @@ from loguru import logger
 
 from ..exceptions import PathProtectionError
 from ..utils.helper import LiteralDumper, ensure_path, read_text_async, write_text_async
+from ..utils.session_id import validate_session_id
 from .prompt.helper import remove_system_messages
 
 
@@ -21,16 +22,7 @@ class YamlHistoryRepository:
 
     def _history_path(self, session_id: str) -> Path:
         """校验会话 ID，并返回受保护的历史文件路径。"""
-        if (
-            not session_id
-            or session_id in {".", ".."}
-            or "/" in session_id
-            or "\\" in session_id
-            or "\0" in session_id
-        ):
-            raise PathProtectionError("Invalid session ID")
-
-        path = (self._base_dir / f"{session_id}.yaml").resolve()
+        path = (self._base_dir / f"{validate_session_id(session_id)}.yaml").resolve()
         try:
             path.relative_to(self._base_dir)
         except ValueError:

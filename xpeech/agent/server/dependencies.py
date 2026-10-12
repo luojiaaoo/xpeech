@@ -3,12 +3,27 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 from urllib.parse import unquote
 
-from fastapi import Form, Header, HTTPException, status
+from fastapi import Depends, Form, Header, HTTPException, status
 
+from ...exceptions import PathProtectionError
+from ...utils.session_id import validate_session_id
 from .schema import InputContent
 from .session_guard import SessionChatGuard
 
 CHAT_GUARD = SessionChatGuard()
+
+
+def session_id_header(
+    session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
+) -> str:
+    """Validate the session ID from the request header."""
+    try:
+        return validate_session_id(session_id)
+    except PathProtectionError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid session_id",
+        ) from None
 
 
 def sender_name_header(
@@ -68,7 +83,7 @@ def content(
 
 
 async def acquire_chat_session(
-    session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
+    session_id: Annotated[str, Depends(session_id_header)],
 ) -> AsyncIterator[None]:
     """占用会话直至响应结束，并拒绝同一会话的并发请求。"""
     if not await CHAT_GUARD.try_acquire(session_id):
