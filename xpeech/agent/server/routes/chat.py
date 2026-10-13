@@ -13,7 +13,7 @@ from ...background import (
 )
 from ...loop import AgentLoop, QuestionEvent
 from ...runner import AgentRunner
-from ..dependencies import acquire_chat_session, content, sender_name_header, session_id_header, session_metadata
+from ..dependencies import acquire_chat_session, content, sender_name_header, user_id_header, session_metadata
 from ..schema import InboundMessage, InputContent
 
 router = APIRouter()
@@ -43,11 +43,11 @@ async def poll_background_message(
 
 @router.post("/answer_question")
 async def answer_question(
-    session_id: Annotated[str, Depends(session_id_header)],
+    user_id: Annotated[str, Depends(user_id_header)],
     answer: Annotated[str, Form(description="回答内容")],
 ):
     """提交用户答案并唤醒正在等待的 Agent 循环。"""
-    question_event: QuestionEvent | None = AgentLoop.SESSION_QUESTION_EVENT.get(session_id)
+    question_event: QuestionEvent | None = AgentLoop.SESSION_QUESTION_EVENT.get(user_id)
     if question_event is not None:
         question_event.answer = answer
         question_event.event.set()
@@ -61,7 +61,7 @@ async def answer_question(
     dependencies=[Depends(acquire_chat_session, scope="request")],
 )
 async def chat(
-    session_id: Annotated[str, Depends(session_id_header)],
+    user_id: Annotated[str, Depends(user_id_header)],
     sender_name: Annotated[str, Depends(sender_name_header)],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],
@@ -69,14 +69,14 @@ async def chat(
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
 ):
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
-    runner = await AgentRunner.create(session_id)
+    runner = await AgentRunner.create(user_id)
 
     saved_files = []
     for file in files:
         saved_files.append(await save_to_workspace(file=file, workspace=runner.workspace))
 
     message = InboundMessage(
-        session_id=session_id,
+        user_id=user_id,
         sender_name=sender_name,
         session_metadata=session_metadata,
         content=content,

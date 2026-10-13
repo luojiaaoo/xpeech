@@ -35,10 +35,10 @@ class ChatStream:
         await self._client.aclose()
 
 
-def _backend_headers(session_id: str, sender_name: str | None = None) -> dict[str, str]:
+def _backend_headers(user_id: str, sender_name: str | None = None) -> dict[str, str]:
     headers = {
         "authorization": f"Bearer {create_access_token()}",
-        "x-session-id": session_id,
+        "x-user-id": user_id,
     }
     if sender_name is not None:
         headers["x-sender-name"] = quote(sender_name, safe="")
@@ -46,7 +46,7 @@ def _backend_headers(session_id: str, sender_name: str | None = None) -> dict[st
 
 
 async def open_chat_stream(
-    session_id: str,
+    user_id: str,
     sender_name: str,
     content: str,
     session_metadata: str,
@@ -66,7 +66,7 @@ async def open_chat_stream(
 
     client = httpx.AsyncClient(timeout=None)
     try:
-        headers = _backend_headers(session_id, sender_name)
+        headers = _backend_headers(user_id, sender_name)
         headers.update({"Accept": "text/event-stream", "Cache-Control": "no-store"})
         response = await client.send(
             client.build_request(
@@ -93,8 +93,8 @@ async def iter_chat_events(
     if not messages:
         return
 
-    session_id = messages[0].session_id
-    if any(message.session_id != session_id for message in messages):
+    user_id = messages[0].user_id
+    if any(message.user_id != user_id for message in messages):
         raise ValueError("All messages must belong to the same session.")
     sender_name = messages[0].sender_name
     if any(message.sender_name != sender_name for message in messages):
@@ -120,7 +120,7 @@ async def iter_chat_events(
             for file_path in files
         ]
         stream = await open_chat_stream(
-            session_id,
+            user_id,
             sender_name,
             json.dumps(content, ensure_ascii=False),
             json.dumps(
@@ -167,7 +167,7 @@ async def _iter_text_chunks(
         yield event.context
 
 
-async def submit_question(session_id: str, result: Any, chat_url: str) -> httpx.Response:
+async def submit_question(user_id: str, result: Any, chat_url: str) -> httpx.Response:
     """Submit a question answer and return the backend response without changing its status."""
 
     answer_url = str(URL(chat_url) / "answer_question")
@@ -175,30 +175,30 @@ async def submit_question(session_id: str, result: Any, chat_url: str) -> httpx.
     async with httpx.AsyncClient(timeout=30) as client:
         return await client.post(
             answer_url,
-            headers=_backend_headers(session_id),
+            headers=_backend_headers(user_id),
             data={"answer": answer},
         )
 
 
-async def notify_question(session_id: str, result: Any, chat_url: str) -> None:
-    response = await submit_question(session_id, result, chat_url)
+async def notify_question(user_id: str, result: Any, chat_url: str) -> None:
+    response = await submit_question(user_id, result, chat_url)
     response.raise_for_status()
 
 
-async def fetch_file(session_id: str, path: str, api_base_url: str) -> httpx.Response:
+async def fetch_file(user_id: str, path: str, api_base_url: str) -> httpx.Response:
     """Fetch a session file and return the backend response without changing its status."""
 
-    file_url = str(URL(api_base_url) / "sessions" / session_id / "files")
+    file_url = str(URL(api_base_url) / "sessions" / user_id / "files")
     async with httpx.AsyncClient(timeout=None) as client:
         return await client.get(
             file_url,
-            headers=_backend_headers(session_id),
+            headers=_backend_headers(user_id),
             params={"path": path},
         )
 
 
-async def download_file(session_id: str, path: str, api_base_url: str) -> DownloadedFile:
-    response = await fetch_file(session_id, path, api_base_url)
+async def download_file(user_id: str, path: str, api_base_url: str) -> DownloadedFile:
+    response = await fetch_file(user_id, path, api_base_url)
     response.raise_for_status()
 
     filename = _filename_from_content_disposition(response.headers.get("content-disposition")) or Path(path).name

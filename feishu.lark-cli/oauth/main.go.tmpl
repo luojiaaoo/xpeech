@@ -59,13 +59,13 @@ func run(args []string) int {
         fmt.Fprintln(os.Stderr, "lark-cli-auth: selected domains did not provide any user permission")
         return 2
     }
-    session := strings.TrimSpace(os.Getenv("SHELL_SESSION_ID"))
+    session := strings.TrimSpace(os.Getenv("SHELL_USER_ID"))
     if session == "" { fmt.Fprintln(os.Stderr, "lark-cli-auth: this command must run in an Xpeech managed session"); return 1 }
     endpoint := strings.TrimRight(managerURL, "/")
     switch command {
     case "login", "authorize":
         var result struct { AuthorizationURL string `json:"authorization_url"`; VerificationURI string `json:"verification_uri"`; UserCode string `json:"user_code"`; Scopes []string `json:"scopes"`; Status string `json:"status"` }
-        code := request(endpoint+"/v1/authorization/start", map[string]any{"session_id": session, "scopes": requestedScopes}, &result)
+        code := request(endpoint+"/v1/authorization/start", map[string]any{"user_id": session, "scopes": requestedScopes}, &result)
         if code != 0 { return code }
         fmt.Println(result.AuthorizationURL)
         if result.UserCode != "" { fmt.Fprintf(os.Stderr, "如未自动带入验证码，请输入：%s\n", result.UserCode) }
@@ -73,13 +73,13 @@ func run(args []string) int {
         return 0
     case "status":
         var result map[string]any
-        code := request(endpoint+"/v1/status?session_id="+urlEscape(session), nil, &result)
+        code := request(endpoint+"/v1/status?user_id="+urlEscape(session), nil, &result)
         if code != 0 { return code }
         data, _ := json.MarshalIndent(result, "", "  ")
         fmt.Println(string(data))
         return 0
     case "logout":
-        return request(endpoint+"/v1/logout", map[string]any{"session_id": session}, &struct{}{})
+        return request(endpoint+"/v1/logout", map[string]any{"user_id": session}, &struct{}{})
     default:
         fmt.Fprintf(os.Stderr, "lark-cli-auth: unknown command %q (use login, status, or logout)\n", command); return 2
     }

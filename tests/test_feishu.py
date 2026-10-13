@@ -280,7 +280,7 @@ async def test_parse_text_message_uses_employee_number_and_feishu_user_metadata(
 
     assert message.message_id == "om_message"
     assert message.chat_id == "oc_chat"
-    assert message.session_id == "E1001"
+    assert message.user_id == "E1001"
     assert message.sender_name == "Alice"
     assert message.timestamp == 123
     assert message.content == [TextData(text="hello")]
@@ -297,7 +297,7 @@ async def test_parse_text_message_allows_missing_email():
 
     message = await bridge._parse_msg(_inbound_message(TextContent(text="hello")))
 
-    assert message.session_id == "E1001"
+    assert message.user_id == "E1001"
     assert message.session_metadata == {
         "channel": "feishu",
         "open_id": "ou_sender",
@@ -309,7 +309,7 @@ async def test_on_message_logs_when_message_is_added(monkeypatch: pytest.MonkeyP
     message = Message(
         message_id="om_message",
         chat_id="oc_chat",
-        session_id="E1001",
+        user_id="E1001",
         sender_name="Alice",
         content=[TextData(text="hello")],
         timestamp=123,
@@ -325,7 +325,7 @@ async def test_on_message_logs_when_message_is_added(monkeypatch: pytest.MonkeyP
 
     assert bridge.receive_queues["E1001"].get_nowait() == message
     info.assert_called_once_with(
-        "Feishu message added session_id={} chat_id={} message_id={} sender_name={} queue_size={}",
+        "Feishu message added user_id={} chat_id={} message_id={} sender_name={} queue_size={}",
         "E1001",
         "oc_chat",
         "om_message",
@@ -362,7 +362,7 @@ async def test_channel_send_logs_message_type(monkeypatch: pytest.MonkeyPatch):
         to="oc_chat",
         message={"text": "hello"},
         opts={"reply_to": "om_parent"},
-        session_id="E1001",
+        user_id="E1001",
         sender_name="Alice",
         message_type=ChatEventType.ASSISTANT,
         iter_content=None,
@@ -375,7 +375,7 @@ async def test_channel_send_logs_message_type(monkeypatch: pytest.MonkeyPatch):
         opts={"reply_to": "om_parent"},
     )
     info.assert_called_once_with(
-        "Feishu message sending session_id={} sender_name={} message_type={}",
+        "Feishu message sending user_id={} sender_name={} message_type={}",
         "E1001",
         "Alice",
         ChatEventType.ASSISTANT,
@@ -498,7 +498,7 @@ async def test_failed_progress_send_does_not_cache_invalid_message_id(result: Se
             to="oc_chat",
             message={"card": {}},
             opts=None,
-            session_id="feishu_oc_chat",
+            user_id="feishu_oc_chat",
             sender_name="Alice",
             message_type=ChatEventType.TOOL_CALL,
             iter_content=None,
@@ -516,7 +516,7 @@ async def test_successful_progress_send_caches_message_id():
         to="oc_chat",
         message={"card": {}},
         opts=None,
-        session_id="feishu_oc_chat",
+        user_id="feishu_oc_chat",
         sender_name="Alice",
         message_type=ChatEventType.TOOL_CALL,
         iter_content=None,
@@ -582,7 +582,7 @@ async def test_streaming_thinking_uses_custom_card(monkeypatch: pytest.MonkeyPat
         to="oc_chat",
         message={"card": card},
         opts=None,
-        session_id="feishu_oc_chat",
+        user_id="feishu_oc_chat",
         sender_name="Alice",
         message_type=ChatEventType.THINKING,
         iter_content=chunks(),
@@ -629,7 +629,7 @@ async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.Mon
         Message(
             message_id="om_message",
             chat_id="oc_chat",
-            session_id="E1001",
+            user_id="E1001",
             sender_name="Alice",
             content=[TextData(text="hello")],
             timestamp=0,
@@ -689,7 +689,7 @@ async def test_consume_returns_backend_http_error_to_user(
         Message(
             message_id="om_message",
             chat_id="oc_chat",
-            session_id="E1001",
+            user_id="E1001",
             sender_name="Alice",
             content=[TextData(text="hello")],
             timestamp=0,

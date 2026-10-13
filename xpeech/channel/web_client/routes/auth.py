@@ -19,12 +19,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from yarl import URL
 
-from ..dao import DuplicateSessionIdError, User, WebClientDAO
+from ..dao import DuplicateUserIdError, User, WebClientDAO
 from ..models import (
     INJECT_PROMPT_STATE_MAX_LENGTH,
     INJECT_PROMPT_STATE_MIN_LENGTH,
     INJECT_PROMPT_STATE_PATTERN,
-    SESSION_ID_PATTERN,
+    USER_ID_PATTERN,
     InjectPromptWebConfig,
     LoginBody,
     OAuth2CreateBody,
@@ -53,7 +53,7 @@ class OAuth2LoginAttempt:
     code_verifier: str | None
     expires_at: datetime
     inject_prompt_state: str | None = None
-    user_session_id: str | None = None
+    user_id: str | None = None
     error: str | None = None
 
 
@@ -243,9 +243,9 @@ def create_auth_router(
 
     @router.post("/login")
     async def login(body: LoginBody, response: Response):
-        user = await dao.get_user_by_session_id(body.session_id)
+        user = await dao.get_user_by_user_id(body.user_id)
         if user is None or not user.is_active or not password_matches(body.password, user.password_hash):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "会话 ID 或密码错误")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户 ID 或密码错误")
         await create_login_session(user, response)
         return public_user(user)
 
@@ -351,7 +351,7 @@ def create_auth_router(
         if attempt is None:
             return _oauth2_result_page(False, "登录请求已失效，请返回登录页重试。")
         oauth2 = attempt.oauth2
-        if attempt.user_session_id is not None:
+        if attempt.user_id is not None:
             return _oauth2_result_page(True, "授权已完成，请返回原设备。")
         if attempt.error is not None:
             return _oauth2_result_page(False, attempt.error)
@@ -414,23 +414,23 @@ def create_auth_router(
             attempt.error = "OAuth2 用户信息未通过登录校验"
             return _oauth2_result_page(False, attempt.error)
 
-        session_id = oauth2_claim(userinfo, oauth2.session_id_claim)
-        if re.fullmatch(SESSION_ID_PATTERN, session_id) is None:
-            attempt.error = f"OAuth2 用户信息缺少有效的 {oauth2.session_id_claim}"
+        user_id = oauth2_claim(userinfo, oauth2.user_id_claim)
+        if re.fullmatch(USER_ID_PATTERN, user_id) is None:
+            attempt.error = f"OAuth2 用户信息缺少有效的 {oauth2.user_id_claim}"
             return _oauth2_result_page(False, attempt.error)
 
-        user = await dao.get_user_by_session_id(session_id)
+        user = await dao.get_user_by_user_id(user_id)
         if user is None and oauth2.auto_create_users:
             username = oauth2_claim(userinfo, oauth2.username_claim)[:64]
             try:
                 user = await dao.create_user(
                     username=username,
-                    session_id=session_id,
+                    user_id=user_id,
                     password_hash=password_hash(secrets.token_urlsafe(32)),
                     is_admin=False,
                 )
-            except DuplicateSessionIdError:
-                user = await dao.get_user_by_session_id(session_id)
+            except DuplicateUserIdError:
+                user = await dao.get_user_by_user_id(user_id)
         if user is None:
             attempt.error = "OAuth2 账号未绑定本地账号"
             return _oauth2_result_page(False, attempt.error)
@@ -450,7 +450,7 @@ def create_auth_router(
             discard_oauth2_attempt(login_id or "")
             return callback_response
 
-        attempt.user_session_id = user.session_id
+        attempt.user_id = user.user_id
         return _oauth2_result_page(True, "请返回原设备，登录页将自动进入系统。")
 
     @router.post("/oauth2/poll")
@@ -470,10 +470,10 @@ def create_auth_router(
             detail = attempt.error
             discard_oauth2_attempt(body.login_id)
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail)
-        if attempt.user_session_id is None:
+        if attempt.user_id is None:
             return {"status": "pending"}
 
-        user = await dao.get_user_by_session_id(attempt.user_session_id)
+        user = await dao.get_user_by_user_id(attempt.user_id)
         if user is None or not user.is_active:
             discard_oauth2_attempt(body.login_id)
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "账号不存在或已停用")

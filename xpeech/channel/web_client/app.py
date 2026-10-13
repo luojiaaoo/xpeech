@@ -177,7 +177,7 @@ def run(
             userinfo_url=oauth2_settings.userinfo_url,
             redirect_uri=oauth2_settings.redirect_uri,
             scopes=tuple(oauth2_settings.scopes),
-            session_id_claim=oauth2_settings.session_id_claim,
+            user_id_claim=oauth2_settings.user_id_claim,
             username_claim=oauth2_settings.username_claim,
             userinfo_filter=oauth2_settings.userinfo_filter,
             auto_create_users=oauth2_settings.auto_create_users,

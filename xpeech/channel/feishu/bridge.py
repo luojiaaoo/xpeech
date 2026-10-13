@@ -76,11 +76,11 @@ class FeishuBridge(
         except UnsupportedFeishuMessageError as exc:
             logger.warning(str(exc))
             return
-        queue = self.receive_queues.setdefault(msg.session_id, asyncio.Queue())
+        queue = self.receive_queues.setdefault(msg.user_id, asyncio.Queue())
         queue.put_nowait(msg)
         logger.info(
-            "Feishu message added session_id={} chat_id={} message_id={} sender_name={} queue_size={}",
-            msg.session_id,
+            "Feishu message added user_id={} chat_id={} message_id={} sender_name={} queue_size={}",
+            msg.user_id,
             msg.chat_id,
             msg.message_id,
             msg.sender_name,
@@ -88,9 +88,9 @@ class FeishuBridge(
         )
 
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
-        session_id, _ = await self.get_user_identity(card_action_event.operator.open_id)
+        user_id, _ = await self.get_user_identity(card_action_event.operator.open_id)
         form_data = card_action_event.action.form_value
-        await notify_question(session_id, form_data, self.chat_url)
+        await notify_question(user_id, form_data, self.chat_url)
         result = await self.channel.update_card(
             card_action_event.message_id,
             FINISH_CARD_CONTENT,
@@ -102,14 +102,14 @@ class FeishuBridge(
 
     async def consume(
         self,
-        session_id: str,
+        user_id: str,
         idle_timeout: int | None = None,
     ) -> None:
         idle_timeout = settings.feishu.idle_timeout if idle_timeout is None else idle_timeout
-        if session_id not in self.receive_queues:
+        if user_id not in self.receive_queues:
             return
 
-        queue = self.receive_queues[session_id]
+        queue = self.receive_queues[user_id]
         qsize = queue.qsize()
         if qsize == 0:
             return
@@ -137,7 +137,7 @@ class FeishuBridge(
             ):
                 if event.event == ChatEventType.SEND_FILE:
                     downloaded_file = await download_channel_file(
-                        session_id,
+                        user_id,
                         event.context,
                         self.chat_url,
                     )
@@ -174,7 +174,7 @@ class FeishuBridge(
                             if event.event == ChatEventType.ASSISTANT and reply_to is not None
                             else None
                         ),
-                        session_id=session_id,
+                        user_id=user_id,
                         sender_name=sender_name,
                         message_type=event.event,
                         iter_content=iter_content,
@@ -184,13 +184,13 @@ class FeishuBridge(
                 exc,
                 chat_id=chat_id,
                 reply_to=reply_to,
-                session_id=session_id,
+                user_id=user_id,
                 sender_name=sender_name,
             )
         except Exception:
             logger.exception(
-                "Failed to consume Feishu messages session_id={}",
-                session_id,
+                "Failed to consume Feishu messages user_id={}",
+                user_id,
             )
 
     async def _send_backend_error(
@@ -199,12 +199,12 @@ class FeishuBridge(
         *,
         chat_id: str,
         reply_to: str | None,
-        session_id: str,
+        user_id: str,
         sender_name: str,
     ) -> None:
         logger.warning(
-            "Feishu backend request failed session_id={} status_code={}",
-            session_id,
+            "Feishu backend request failed user_id={} status_code={}",
+            user_id,
             exc.response.status_code,
         )
         try:
@@ -234,35 +234,35 @@ class FeishuBridge(
             to=chat_id,
             message=message,
             opts={"reply_to": reply_to} if reply_to is not None else None,
-            session_id=session_id,
+            user_id=user_id,
             sender_name=sender_name,
             message_type=ChatEventType.ERROR,
             iter_content=iter_content,
         )
 
-    async def one_by_one_session_id(self) -> None:
-        for session_id, task in list(self.session_tasks.items()):
+    async def one_by_one_user_id(self) -> None:
+        for user_id, task in list(self.session_tasks.items()):
             if not task.done():
                 continue
-            self.session_tasks.pop(session_id, None)
-            self.session_update_message_id.pop(session_id, None)
+            self.session_tasks.pop(user_id, None)
+            self.session_update_message_id.pop(user_id, None)
             try:
                 task.result()
             except Exception:
                 logger.exception(
-                    "Feishu session task failed session_id={}",
-                    session_id,
+                    "Feishu session task failed user_id={}",
+                    user_id,
                 )
 
-        for session_id in list(self.receive_queues):
-            if session_id in self.session_tasks:
+        for user_id in list(self.receive_queues):
+            if user_id in self.session_tasks:
                 continue
-            self.session_tasks[session_id] = asyncio.create_task(self.consume(session_id))
+            self.session_tasks[user_id] = asyncio.create_task(self.consume(user_id))
 
     async def poll_sessions(self, interval: float = 2.0) -> None:
         while True:
             try:
-                await self.one_by_one_session_id()
+                await self.one_by_one_user_id()
                 await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 raise

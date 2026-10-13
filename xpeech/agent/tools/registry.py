@@ -14,7 +14,7 @@ from .web import web_fetch, web_search
 
 async def register_default_tools(
     *,
-    session_id: str,
+    user_id: str,
     provider: Any,
     workspace: Path,
     config: ToolConfig,
@@ -52,7 +52,7 @@ async def register_default_tools(
 
     for server_name, server_config in config.mcp_servers.items():
         registration = await get_session_mcp_registration_from_config(
-            session_id,
+            user_id,
             server_name,
             server_config,
             workspace=workspace,

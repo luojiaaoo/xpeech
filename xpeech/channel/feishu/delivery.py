@@ -85,7 +85,7 @@ class FeishuDeliveryMixin:
         to: str,
         message: dict | AsyncIterator[str],
         opts: dict | None,
-        session_id: str,
+        user_id: str,
         sender_name: str,
         message_type: ChatEventType,
         iter_content: AsyncIterator[str] | None,
@@ -99,8 +99,8 @@ class FeishuDeliveryMixin:
             ChatEventType.QUESTION,
         )
         logger.info(
-            "Feishu message sending session_id={} sender_name={} message_type={}",
-            session_id,
+            "Feishu message sending user_id={} sender_name={} message_type={}",
+            user_id,
             sender_name,
             message_type,
         )
@@ -112,10 +112,10 @@ class FeishuDeliveryMixin:
                 opts=opts,
             )
             self._ensure_send_success(result, operation="send message")
-            self.session_update_message_id.pop(session_id, None)
+            self.session_update_message_id.pop(user_id, None)
             return
 
-        message_id = self.session_update_message_id.get(session_id)
+        message_id = self.session_update_message_id.get(user_id)
         if message_id is None:
             send_result = await self.send(
                 to=to,
@@ -128,7 +128,7 @@ class FeishuDeliveryMixin:
                 operation="send progress card",
                 require_message_id=True,
             )
-            self.session_update_message_id[session_id] = send_result.message_id
+            self.session_update_message_id[user_id] = send_result.message_id
             return
 
         if isinstance(message, AsyncIterator):

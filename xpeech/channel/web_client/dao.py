@@ -2,7 +2,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Column, ForeignKey, Index, Integer, String, event
+from sqlalchemy import Column, ForeignKey, Index, Integer, String, event, inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import registry
@@ -27,7 +27,7 @@ class User(_WebClientSQLModel, table=True):
     __tablename__ = "users"
 
     id: int | None = Field(default=None, primary_key=True)
-    session_id: str = Field(sa_column=Column(String, nullable=False, unique=True))
+    user_id: str = Field(sa_column=Column(String, nullable=False, unique=True))
     username: str = Field(sa_column=Column(String(collation="NOCASE"), nullable=False))
     password_hash: str
     is_admin: bool = Field(default=False)
@@ -53,12 +53,12 @@ class AuthenticationSession(_WebClientSQLModel, table=True):
     created_at: datetime = Field(default_factory=_now)
 
 
-class DuplicateSessionIdError(Exception):
-    """会话 ID 违反唯一约束。"""
+class DuplicateUserIdError(Exception):
+    """用户 ID 违反唯一约束。"""
 
 
 class ProtectedAdminIdentityError(Exception):
-    """默认管理员的用户名和会话 ID 不允许修改。"""
+    """默认管理员的用户名和用户 ID 不允许修改。"""
 
 
 class ProtectedAdminDeletionError(Exception):
@@ -87,6 +87,13 @@ def create_web_client_engine(database_path: Path) -> AsyncEngine:
 async def create_db_and_tables(engine: AsyncEngine) -> None:
     """创建 Web 客户端认证表。"""
     async with engine.begin() as connection:
+        columns = await connection.run_sync(
+            lambda conn: {column["name"] for column in inspect(conn).get_columns("users")}
+            if inspect(conn).has_table("users")
+            else set()
+        )
+        if "session_id" in columns and "user_id" not in columns:
+            await connection.exec_driver_sql("ALTER TABLE users RENAME COLUMN session_id TO user_id")
         await connection.run_sync(_WebClientSQLModel.metadata.create_all)
 
 
@@ -128,7 +135,7 @@ class WebClientDAO:
                 session.add(
                     User(
                         username="admin",
-                        session_id="admin",
+                        user_id="admin",
                         password_hash=default_admin_password_hash_factory(),
                         is_admin=True,
                     )
@@ -161,11 +168,11 @@ class WebClientDAO:
         async with AsyncSession(self._engine) as session:
             return (await session.exec(statement)).one_or_none()
 
-    async def get_user_by_session_id(self, session_id: str) -> User | None:
-        """按唯一会话 ID 读取用户。"""
+    async def get_user_by_user_id(self, user_id: str) -> User | None:
+        """按唯一用户 ID 读取用户。"""
         async with AsyncSession(self._engine) as session:
             return (
-                await session.exec(select(User).where(User.session_id == session_id))
+                await session.exec(select(User).where(User.user_id == user_id))
             ).one_or_none()
 
     async def create_session(
@@ -225,13 +232,13 @@ class WebClientDAO:
         self,
         *,
         username: str,
-        session_id: str,
+        user_id: str,
         password_hash: str,
         is_admin: bool,
     ) -> User:
         user = User(
             username=username,
-            session_id=session_id,
+            user_id=user_id,
             password_hash=password_hash,
             is_admin=is_admin,
         )
@@ -241,35 +248,35 @@ class WebClientDAO:
                 await session.commit()
             except IntegrityError as error:
                 await session.rollback()
-                if "session_id" in str(error.orig):
-                    raise DuplicateSessionIdError(session_id) from error
+                if "user_id" in str(error.orig):
+                    raise DuplicateUserIdError(user_id) from error
                 raise
             await session.refresh(user)
         return user
 
     async def update_user(
         self,
-        user_id: int,
+        user_pk: int,
         *,
         username: str | None = None,
-        session_id: str | None = None,
+        user_id: str | None = None,
         password_hash: str | None = None,
         is_admin: bool | None = None,
         is_active: bool | None = None,
     ) -> User | None:
         async with AsyncSession(self._engine) as session:
-            user = await session.get(User, user_id)
+            user = await session.get(User, user_pk)
             if user is None:
                 return None
-            if user.session_id == "admin" and (
+            if user.user_id == "admin" and (
                 (username is not None and username != user.username)
-                or (session_id is not None and session_id != "admin")
+                or (user_id is not None and user_id != "admin")
             ):
                 raise ProtectedAdminIdentityError
             if username is not None:
                 user.username = username
-            if session_id is not None:
-                user.session_id = session_id
+            if user_id is not None:
+                user.user_id = user_id
             if password_hash is not None:
                 user.password_hash = password_hash
             if is_admin is not None:
@@ -279,7 +286,7 @@ class WebClientDAO:
             if is_active is False:
                 await session.exec(
                     delete(AuthenticationSession).where(
-                        AuthenticationSession.user_id == user_id
+                        AuthenticationSession.user_id == user_pk
                     )
                 )
             session.add(user)
@@ -287,8 +294,8 @@ class WebClientDAO:
                 await session.commit()
             except IntegrityError as error:
                 await session.rollback()
-                if "session_id" in str(error.orig):
-                    raise DuplicateSessionIdError(session_id or "") from error
+                if "user_id" in str(error.orig):
+                    raise DuplicateUserIdError(user_id or "") from error
                 raise
             await session.refresh(user)
             return user
@@ -299,7 +306,7 @@ class WebClientDAO:
             user = await session.get(User, user_id)
             if user is None:
                 return False
-            if user.session_id == "admin":
+            if user.user_id == "admin":
                 raise ProtectedAdminDeletionError
             await session.delete(user)
             await session.commit()

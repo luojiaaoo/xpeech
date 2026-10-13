@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ...config.settings import settings
 from ...utils.helper import ensure_path
-from ..server.context import get_session_id
+from ..server.context import get_user_id
 from ..skills.skill import iter_builtin_skill_dirs
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -58,8 +58,8 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
     workspace = Path(workspace).expanduser().resolve()
     workspace_python_env = workspace / ".venv"
     home = get_sandbox_home(workspace)
-    session_id = get_session_id()
-    agent_browser_cache_path = (settings.path.cache_path / session_id / "agent-browser").resolve()
+    user_id = get_user_id()
+    agent_browser_cache_path = (settings.path.cache_path / user_id / "agent-browser").resolve()
     workspace_skills = workspace / "skills"
 
     args = ["bwrap", "--new-session", "--die-with-parent"]
@@ -71,7 +71,7 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
         "UV_PROJECT_ENVIRONMENT": workspace_python_env,  # uv虚拟py环境路径
         "UV_CACHE_DIR": home / ".cache" / "uv",  # 包缓存目录
         "NPM_CONFIG_PREFIX": home / ".npm-global",  # npm 全局安装目录
-        "SHELL_SESSION_ID": session_id, # 注入 session_id，给插件使用
+        "SHELL_USER_ID": user_id, # 注入 user_id，给插件使用
     }
     sandbox_env.update(env or {})
     for key, value in sandbox_env.items():

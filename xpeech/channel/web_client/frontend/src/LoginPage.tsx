@@ -58,10 +58,10 @@ export default function LoginPage({
     }
   }, [autoRedirectProvider, injectPromptState]);
 
-  async function submit(values: { session_id: string; password: string }) {
+  async function submit(values: { user_id: string; password: string }) {
     setSubmitting(true);
     try {
-      onLogin(await authApi.login(values.session_id, values.password));
+      onLogin(await authApi.login(values.user_id, values.password));
     } catch (error) {
       message.error(String(error));
     } finally {
@@ -143,8 +143,8 @@ export default function LoginPage({
 
   const passwordLogin = (
     <Form layout="vertical" size="large" onFinish={submit}>
-      <Form.Item name="session_id" label="会话 ID" rules={[{ required: true, message: '请输入会话 ID' }]}>
-        <Input prefix={<UserOutlined />} autoComplete="username" placeholder="请输入会话 ID" />
+      <Form.Item name="user_id" label="用户 ID" rules={[{ required: true, message: '请输入用户 ID' }]}>
+        <Input prefix={<UserOutlined />} autoComplete="username" placeholder="请输入用户 ID" />
       </Form.Item>
       <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
         <Input.Password prefix={<LockOutlined />} autoComplete="current-password" placeholder="请输入密码" />

@@ -138,13 +138,13 @@ export default function UserManagement({
   useEffect(() => {
     if (editingUser) {
       editForm.setFieldsValue({
-        session_id: editingUser.session_id,
+        user_id: editingUser.user_id,
         username: editingUser.username,
       });
     }
   }, [editForm, editingUser]);
 
-  async function create(values: { username: string; session_id: string; password: string; is_admin?: boolean }) {
+  async function create(values: { username: string; user_id: string; password: string; is_admin?: boolean }) {
     try {
       await userApi.create({ ...values, is_admin: Boolean(values.is_admin) });
       setOpen(false);
@@ -156,7 +156,7 @@ export default function UserManagement({
     }
   }
 
-  async function update(user: User, values: { username?: string; session_id?: string; is_admin?: boolean; is_active?: boolean }) {
+  async function update(user: User, values: { username?: string; user_id?: string; is_admin?: boolean; is_active?: boolean }) {
     try {
       await userApi.update(user.id, values);
       await load();
@@ -179,7 +179,7 @@ export default function UserManagement({
     setEditingUser(user);
   }
 
-  async function saveIdentity(values: { session_id: string; username: string }) {
+  async function saveIdentity(values: { user_id: string; username: string }) {
     if (!editingUser) return;
     try {
       await userApi.update(editingUser.id, values);
@@ -207,9 +207,9 @@ export default function UserManagement({
         pagination={false}
         columns={[
           {
-            title: '会话 ID',
-            dataIndex: 'session_id',
-            ...columnSearch('会话 ID', (user) => user.session_id),
+            title: '用户 ID',
+            dataIndex: 'user_id',
+            ...columnSearch('用户 ID', (user) => user.user_id),
           },
           {
             title: '用户名',
@@ -246,7 +246,7 @@ export default function UserManagement({
               <Space size={0}>
                 <Button
                   type="link"
-                  disabled={user.session_id === 'admin'}
+                  disabled={user.user_id === 'admin'}
                   onClick={() => edit(user)}
                 >编辑</Button>
                 <Button type="link" onClick={() => Modal.confirm({
@@ -265,14 +265,14 @@ export default function UserManagement({
                   okText="删除"
                   cancelText="取消"
                   okButtonProps={{ danger: true }}
-                  disabled={user.id === currentUser.id || user.session_id === 'admin'}
+                  disabled={user.id === currentUser.id || user.user_id === 'admin'}
                   onConfirm={() => remove(user)}
                 >
                   <Button
                     danger
                     type="link"
                     icon={<DeleteOutlined />}
-                    disabled={user.id === currentUser.id || user.session_id === 'admin'}
+                    disabled={user.id === currentUser.id || user.user_id === 'admin'}
                   >删除</Button>
                 </Popconfirm>
               </Space>
@@ -292,8 +292,8 @@ export default function UserManagement({
       >
         <Form form={form} layout="vertical" onFinish={create}>
           <Form.Item
-            name="session_id"
-            label="会话 ID"
+            name="user_id"
+            label="用户 ID"
             extra="用于关联该用户的对话历史"
             rules={[
               { required: true },
@@ -328,8 +328,8 @@ export default function UserManagement({
       >
         <Form form={editForm} layout="vertical" onFinish={saveIdentity}>
           <Form.Item
-            name="session_id"
-            label="会话 ID"
+            name="user_id"
+            label="用户 ID"
             rules={[
               { required: true },
               { pattern: /^[\w@+-][\w.@+-]*$/u, message: '仅支持字母、数字、下划线、点、@、+ 和 -，且不能以点开头' },

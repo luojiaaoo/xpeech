@@ -42,7 +42,7 @@ userinfo_url = "https://login.example.com/oauth2/userinfo"
 redirect_uri = "http://127.0.0.1:7939/api/auth/oauth2/callback"
 scopes = ["openid", "profile"]
 # Claim paths are jq queries against the userinfo JSON, e.g. ".data.items[0].id".
-session_id_claim = ".sub"
+user_id_claim = ".sub"
 username_claim = ".name"
 # Optional jq filter for extra access control: login is allowed only when the
 # expression yields at least one output, and denied when it yields none.

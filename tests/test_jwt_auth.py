@@ -39,7 +39,7 @@ def test_expired_access_token_is_rejected():
 def test_api_requires_jwt():
     client = TestClient(app)
 
-    api_response = client.post("/answer_question", data={"answer": "ok"}, headers={"x-session-id": "test"})
+    api_response = client.post("/answer_question", data={"answer": "ok"}, headers={"x-user-id": "test"})
 
     assert api_response.status_code == 401
     assert api_response.headers["www-authenticate"] == "Bearer"
@@ -54,7 +54,7 @@ def test_api_rejects_token_signed_with_another_key():
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-session-id": "test",
+            "x-user-id": "test",
         },
     )
 
@@ -94,7 +94,7 @@ def test_token_endpoint_issues_one_minute_jwt_for_docs():
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-session-id": "test",
+            "x-user-id": "test",
         },
     )
     assert api_response.status_code == 200

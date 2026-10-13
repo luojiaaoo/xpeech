@@ -66,7 +66,7 @@ async def test_context_commands_continue_with_trailing_prompt(
     agent_loop._output_tokens = 0
     agent_loop._model_call_count = 0
     message = InboundMessage(
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text=command)],

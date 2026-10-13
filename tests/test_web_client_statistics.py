@@ -50,24 +50,24 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
         unauthorized = client.get("/api/statistics")
         login = client.post(
             "/api/auth/login",
-            json={"session_id": "admin", "password": "admin123456"},
+            json={"user_id": "admin", "password": "admin123456"},
         )
         protected_admin = client.patch(
             f"/api/admin/users/{login.json()['id']}",
-            json={"username": "renamed-admin", "session_id": "renamed-admin"},
+            json={"username": "renamed-admin", "user_id": "renamed-admin"},
         )
         created_user = client.post(
             "/api/admin/users",
             json={
                 "username": "viewer",
-                "session_id": "viewer-session",
+                "user_id": "viewer-session",
                 "password": "viewer123456",
                 "is_admin": False,
             },
         )
         updated_user = client.patch(
             f"/api/admin/users/{created_user.json()['id']}",
-            json={"username": "viewer-updated", "session_id": "viewer-session-updated"},
+            json={"username": "viewer-updated", "user_id": "viewer-session-updated"},
         )
         proxied = client.get(
             "/api/statistics/records/latest",
@@ -77,7 +77,7 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
         client.post("/api/auth/logout")
         viewer_login = client.post(
             "/api/auth/login",
-            json={"session_id": "viewer-session-updated", "password": "viewer123456"},
+            json={"user_id": "viewer-session-updated", "password": "viewer123456"},
         )
         forbidden = client.get("/api/statistics")
 
@@ -87,10 +87,10 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
     assert "xpeech_session=" not in login.headers["set-cookie"]
     assert protected_admin.status_code == 400
     assert created_user.status_code == 201
-    assert created_user.json()["session_id"] == "viewer-session"
+    assert created_user.json()["user_id"] == "viewer-session"
     assert updated_user.status_code == 200
     assert updated_user.json()["username"] == "viewer-updated"
-    assert updated_user.json()["session_id"] == "viewer-session-updated"
+    assert updated_user.json()["user_id"] == "viewer-session-updated"
     assert viewer_login.status_code == 200
     assert forbidden.status_code == 403
     assert proxied.status_code == 200
@@ -102,6 +102,6 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
     assert first_request["url"] == "http://backend.test/statistics/records/latest"
     assert first_request["params"] == [("limit", "20"), ("tag", "first"), ("tag", "second")]
     assert first_request["headers"]["authorization"].startswith("Bearer ")
-    assert first_request["headers"]["x-session-id"] == "admin"
+    assert first_request["headers"]["x-user-id"] == "admin"
     assert second_request["url"] == "http://backend.test/statistics/future/report"
     assert second_request["params"] == [("range", "week")]

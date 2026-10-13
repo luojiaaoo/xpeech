@@ -35,7 +35,7 @@ def test_render_oauth_source_uses_non_blocking_manager_client(tmp_path: Path):
 
     assert 'managerURL = "http://lark-token-manager:7883"' in source
     assert '"/v1/authorization/start"' in source
-    assert '"/v1/status?session_id="' in source
+    assert '"/v1/status?user_id="' in source
     assert '"/v1/logout"' in source
     assert '"domain"' in source
     assert "scopesForDomains" in source
@@ -65,7 +65,7 @@ def test_refresh_flow_requires_rotation_and_classifies_terminal_errors(
     source = lark_cli_generator.render_source(config_path, MYCRED_TEMPLATE_PATH)
 
     assert '"/v1/token/resolve"' in source
-    assert "SHELL_SESSION_ID" in source
+    assert "SHELL_USER_ID" in source
     assert "access_token" in source
     assert '"/v1/token/invalidate"' in source
     assert "sha256.Sum256" in source

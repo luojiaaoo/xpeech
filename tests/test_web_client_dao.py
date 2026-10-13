@@ -6,12 +6,38 @@ from sqlmodel import SQLModel
 
 from xpeech.channel.web_client.dao import (
     AuthenticationSession,
-    DuplicateSessionIdError,
+    DuplicateUserIdError,
     ProtectedAdminDeletionError,
     ProtectedAdminIdentityError,
     User,
     WebClientDAO,
 )
+
+
+@pytest.mark.asyncio
+async def test_web_client_migrates_identity_and_preserves_login(tmp_path: Path):
+    dao = WebClientDAO(tmp_path / "legacy.db")
+    try:
+        await dao.initialize(lambda: "original-hash")
+        admin = await dao.get_user_by_user_id("admin")
+        await dao.create_session(
+            token_hash="existing-login",
+            user_id=admin.id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        async with dao.engine.begin() as connection:
+            await connection.exec_driver_sql("ALTER TABLE users RENAME COLUMN user_id TO session_id")
+
+        await dao.initialize(lambda: pytest.fail("must preserve the existing administrator"))
+        await dao.initialize(lambda: pytest.fail("migration must be idempotent"))
+        user = await dao.get_user_for_session("existing-login")
+        assert user.user_id == "admin"
+        assert user.password_hash == "original-hash"
+        assert await dao.get_user_by_user_id("admin") == user
+        with pytest.raises(DuplicateUserIdError):
+            await dao.create_user(username="other", user_id="admin", password_hash="hash", is_admin=False)
+    finally:
+        await dao.close()
 
 
 @pytest.mark.asyncio
@@ -26,9 +52,9 @@ async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
 
     await dao.initialize(default_admin_hash)
     try:
-        admin = await dao.get_user_by_session_id("admin")
+        admin = await dao.get_user_by_user_id("admin")
         assert admin is not None
-        assert admin.session_id == "admin"
+        assert admin.user_id == "admin"
         assert admin.password_hash == "admin-hash"
         assert admin.is_admin is True
         assert generated_hashes == ["admin-hash"]
@@ -37,7 +63,7 @@ async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
             await dao.update_user(
                 admin.id,
                 username="renamed-admin",
-                session_id="renamed-admin-session",
+                user_id="renamed-admin-session",
             )
 
         with pytest.raises(ProtectedAdminDeletionError):
@@ -45,12 +71,12 @@ async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
 
         user = await dao.create_user(
             username="Alice",
-            session_id="alice-session",
+            user_id="alice-session",
             password_hash="alice-hash",
             is_admin=False,
         )
         assert user.id is not None
-        assert (await dao.get_user_by_session_id("alice-session")) == user
+        assert (await dao.get_user_by_user_id("alice-session")) == user
 
         await dao.create_session(
             token_hash="valid-token",
@@ -76,14 +102,14 @@ async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
         updated = await dao.update_user(
             user.id,
             username="AliceUpdated",
-            session_id="alice-updated-session",
+            user_id="alice-updated-session",
             password_hash="new-hash",
             is_admin=True,
             is_active=False,
         )
         assert updated is not None
         assert updated.username == "AliceUpdated"
-        assert updated.session_id == "alice-updated-session"
+        assert updated.user_id == "alice-updated-session"
         assert updated.password_hash == "new-hash"
         assert updated.is_admin is True
         assert updated.is_active is False
@@ -91,7 +117,7 @@ async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
 
         duplicate_name_user = await dao.create_user(
             username="AliceUpdated",
-            session_id="another-session",
+            user_id="another-session",
             password_hash="duplicate-hash",
             is_admin=False,
         )
@@ -103,14 +129,14 @@ async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
             expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
         assert await dao.delete_user(duplicate_name_user.id) is True
-        assert await dao.get_user_by_session_id("another-session") is None
+        assert await dao.get_user_by_user_id("another-session") is None
         assert await dao.get_user_for_session("deleted-user-token") is None
         assert await dao.delete_user(duplicate_name_user.id) is False
 
-        with pytest.raises(DuplicateSessionIdError):
+        with pytest.raises(DuplicateUserIdError):
             await dao.create_user(
                 username="Bob",
-                session_id="alice-updated-session",
+                user_id="alice-updated-session",
                 password_hash="duplicate-hash",
                 is_admin=False,
             )

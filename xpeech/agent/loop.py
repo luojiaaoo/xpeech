@@ -86,7 +86,7 @@ class AgentLoop:
         response: LLMResponse,
         messages_yaml: list,
         loop_count: int,
-        session_id: str,
+        user_id: str,
         sender_name: str,
         session_metadata: dict[str, str] | None = None,
     ):
@@ -127,7 +127,7 @@ class AgentLoop:
             response.mapping_tool_call_funcs,
             loop_count=loop_count,
             session_metadata=session_metadata,
-            session_id=session_id,
+            user_id=user_id,
             sender_name=sender_name,
         )
         for execution in execution_results:
@@ -173,14 +173,14 @@ class AgentLoop:
             elif tool_call.name == "ask_user_question" and success:
                 # 等待用户输入
                 logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
-                self.SESSION_QUESTION_EVENT[session_id] = QuestionEvent(event=asyncio.Event())
+                self.SESSION_QUESTION_EVENT[user_id] = QuestionEvent(event=asyncio.Event())
                 yield {"event": "question", "context": result}
                 try:
-                    await asyncio.wait_for(self.SESSION_QUESTION_EVENT[session_id].event.wait(), timeout=USER_TIMEOUT)
-                    logger.info("User answered the question {}", self.SESSION_QUESTION_EVENT[session_id].answer)
+                    await asyncio.wait_for(self.SESSION_QUESTION_EVENT[user_id].event.wait(), timeout=USER_TIMEOUT)
+                    logger.info("User answered the question {}", self.SESSION_QUESTION_EVENT[user_id].answer)
                 except TimeoutError:
                     logger.warning("User timeout answering the question")
-                append_tool_result_messages_yaml(tool_call, self.SESSION_QUESTION_EVENT[session_id].answer)
+                append_tool_result_messages_yaml(tool_call, self.SESSION_QUESTION_EVENT[user_id].answer)
             else:
                 append_tool_result_messages_yaml(tool_call, result)
                 tool_call_result.append((tool_call.id, tool_call.name, result, duration_seconds))
@@ -218,14 +218,14 @@ class AgentLoop:
                 yield {"event": "command", "context": "/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）"}
                 return
             elif command_name == "/new":
-                history = await self.history.load(message.session_id)
+                history = await self.history.load(message.user_id)
                 result = await self.memory_consolidator.consolidate(history)
-                await self.history.delete(message.session_id)
+                await self.history.delete(message.user_id)
                 yield {"event": "command", "context": f"新会话, {result.message}"}
                 if not continuation:
                     return
             elif command_name == "/clear":
-                await self.history.delete(message.session_id)
+                await self.history.delete(message.user_id)
                 yield {"event": "command", "context": "上下文已清空"}
                 if not continuation:
                     return
@@ -239,7 +239,7 @@ class AgentLoop:
             # 将命令后的内容作为清空上下文后的第一条用户消息。
             message.content[0].text = continuation
 
-        messages_yaml: list[dict] = [] if background else await self.history.load(message.session_id)
+        messages_yaml: list[dict] = [] if background else await self.history.load(message.user_id)
 
         # 拼接系统提示词
         messages_yaml = set_system_prompt(
@@ -311,7 +311,7 @@ class AgentLoop:
                             ),
                         }
                     )
-                    await self.history.save(message.session_id, messages_yaml)
+                    await self.history.save(message.user_id, messages_yaml)
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=str(exc),
@@ -329,7 +329,7 @@ class AgentLoop:
                     response,
                     messages_yaml,
                     loop_count,
-                    message.session_id,
+                    message.user_id,
                     message.sender_name,
                     session_metadata=message.session_metadata,
                 ):
@@ -367,7 +367,7 @@ class AgentLoop:
 
         # 保存历史记录
         if not background:
-            await self.history.save(message.session_id, messages_yaml)
+            await self.history.save(message.user_id, messages_yaml)
 
         # 追加本轮对话记录
         user_question = "\n".join(
@@ -376,7 +376,7 @@ class AgentLoop:
         duration_s = time.perf_counter() - start_time
         await self.records.append(
             ConversationRecord(
-                session_id=message.session_id,
+                user_id=message.user_id,
                 sender_name=message.sender_name,
                 user_question=user_question,
                 model_response=final_content,

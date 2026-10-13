@@ -37,7 +37,7 @@ def test_web_client_adds_channel_to_chat_metadata(tmp_path: Path, monkeypatch):
     with TestClient(app) as client:
         assert client.post(
             "/api/auth/login",
-            json={"session_id": "admin", "password": "admin123456"},
+            json={"user_id": "admin", "password": "admin123456"},
         ).status_code == 200
         proxied = client.post(
             "/api/chat",

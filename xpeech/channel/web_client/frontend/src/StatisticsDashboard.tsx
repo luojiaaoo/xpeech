@@ -110,7 +110,7 @@ function LatestRecordRow({ record, onSelect }: {
       <span className="statistics-qa-id">#{record.id}</span>
       <span
         className="statistics-qa-user"
-        title={`${record.sender_name} / ${record.session_id}`}
+        title={`${record.sender_name} / ${record.user_id}`}
       >
         {record.sender_name.slice(0, 1).toUpperCase()}
       </span>
@@ -172,7 +172,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
   const [queryModalOpen, setQueryModalOpen] = useState(false);
   const [queryUsers, setQueryUsers] = useState<StatisticsUser[]>([]);
   const [queryUsersLoading, setQueryUsersLoading] = useState(false);
-  const [querySessionIds, setQuerySessionIds] = useState<string[]>([]);
+  const [queryUserIds, setQueryUserIds] = useState<string[]>([]);
   const [queryKeyword, setQueryKeyword] = useState('');
   const [queryResult, setQueryResult] = useState<StatisticsRecords>();
   const [queryLoading, setQueryLoading] = useState(false);
@@ -278,14 +278,14 @@ export default function StatisticsDashboard({ systemName, onBack }: {
     setSelectedUser(user);
     setUserRecords(undefined);
     setUserRecordsError(undefined);
-    if (!user.session_id) {
+    if (!user.user_id) {
       setUserRecordsLoading(false);
-      setUserRecordsError('统计服务未返回会话 ID，请重启后端服务以加载最新接口后重试。');
+      setUserRecordsError('统计服务未返回用户 ID，请重启后端服务以加载最新接口后重试。');
       return;
     }
     setUserRecordsLoading(true);
     try {
-      const result = await statisticsApi.records(user.sender_name, user.session_id, 10);
+      const result = await statisticsApi.records(user.sender_name, user.user_id, 10);
       if (currentRequest === userRecordsRequestId.current) setUserRecords(result);
     } catch (recordsError) {
       if (currentRequest === userRecordsRequestId.current) setUserRecordsError(String(recordsError));
@@ -333,7 +333,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
   }
 
   async function executeRecordQuery() {
-    if (!querySessionIds.length) {
+    if (!queryUserIds.length) {
       setQueryError('请至少选择一个用户 / 会话。');
       return;
     }
@@ -341,7 +341,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
     setQueryLoading(true);
     setQueryError(undefined);
     try {
-      const result = await statisticsApi.searchRecords(querySessionIds, queryKeyword.trim(), 10);
+      const result = await statisticsApi.searchRecords(queryUserIds, queryKeyword.trim(), 10);
       if (currentRequest === queryRequestId.current) setQueryResult(result);
     } catch (recordsError) {
       if (currentRequest === queryRequestId.current) setQueryError(String(recordsError));
@@ -351,10 +351,10 @@ export default function StatisticsDashboard({ systemName, onBack }: {
   }
 
   const queryUserOptions = useMemo(() => queryUsers
-    .filter((user) => Boolean(user.session_id))
+    .filter((user) => Boolean(user.user_id))
     .map((user) => ({
-      value: user.session_id,
-      label: `${user.sender_name} / ${user.session_id}`,
+      value: user.user_id,
+      label: `${user.sender_name} / ${user.user_id}`,
     })), [queryUsers]);
 
   return (
@@ -435,14 +435,14 @@ export default function StatisticsDashboard({ systemName, onBack }: {
                   <button
                     type="button"
                     className="statistics-rank-row"
-                    key={`${user.sender_name}-${user.session_id}`}
+                    key={`${user.sender_name}-${user.user_id}`}
                     onClick={() => void openUserRecords(user)}
-                    aria-label={`查看 ${user.sender_name} / ${user.session_id} 最近 10 次会话`}
+                    aria-label={`查看 ${user.sender_name} / ${user.user_id} 最近 10 次会话`}
                   >
                     <span className={`statistics-rank-number rank-${index + 1}`}>{index + 1}</span>
-                    <span className="statistics-rank-name" title={`${user.sender_name} / ${user.session_id}`}>
+                    <span className="statistics-rank-name" title={`${user.sender_name} / ${user.user_id}`}>
                       <strong>{user.sender_name}</strong>
-                      <small>{user.session_id}</small>
+                      <small>{user.user_id}</small>
                     </span>
                     <span className="statistics-rank-bar"><i style={{ width: `${(user.question_count / maxUserQuestions) * 100}%` }} /></span>
                     <strong>{formatNumber(user.question_count)}</strong>
@@ -462,8 +462,8 @@ export default function StatisticsDashboard({ systemName, onBack }: {
               </div>
               <div className="statistics-session-list">
                 {data.sessions.data.length ? data.sessions.data.map((session) => (
-                  <div className="statistics-session-row" key={`${session.session_id}-${session.sender_name}`}>
-                    <span><strong>{session.sender_name}</strong><small title={session.session_id}>{session.session_id}</small></span>
+                  <div className="statistics-session-row" key={`${session.user_id}-${session.sender_name}`}>
+                    <span><strong>{session.sender_name}</strong><small title={session.user_id}>{session.user_id}</small></span>
                     <strong>{formatNumber(session.question_count)}</strong>
                     <span>{formatCompact(session.total_tokens)}</span>
                     <time>{formatTime(session.last_active_at, true)}</time>
@@ -520,11 +520,11 @@ export default function StatisticsDashboard({ systemName, onBack }: {
               loading={queryUsersLoading}
               optionFilterProp="label"
               maxTagCount="responsive"
-              value={querySessionIds}
+              value={queryUserIds}
               options={queryUserOptions}
               placeholder="选择一个或多个用户 / 会话"
               onChange={(values) => {
-                setQuerySessionIds(values);
+                setQueryUserIds(values);
                 setQueryResult(undefined);
               }}
               onClear={() => setQueryResult(undefined)}
@@ -555,7 +555,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
           {!queryLoading && queryResult ? (
             <div className="statistics-query-result">
               <div className="statistics-record-meta">
-                <span>已选 {querySessionIds.length} 个用户 / 会话</span>
+                <span>已选 {queryUserIds.length} 个用户 / 会话</span>
                 <span>匹配 {formatNumber(queryResult.total)} 次问答</span>
                 <span>{formatNumber(queryResult.total_tokens)} Token</span>
               </div>
@@ -582,7 +582,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
         {selectedUser ? (
           <div className="statistics-user-records">
             <div className="statistics-record-meta">
-              <span>{selectedUser.sender_name} / {selectedUser.session_id}</span>
+              <span>{selectedUser.sender_name} / {selectedUser.user_id}</span>
               <span>累计 {formatNumber(selectedUser.question_count)} 次问答</span>
               <span>{formatNumber(selectedUser.total_tokens)} Token</span>
             </div>
@@ -610,7 +610,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
         {selectedRecord ? (
           <div className="statistics-record-detail">
             <div className="statistics-record-meta">
-              <span>{selectedRecord.sender_name} / {selectedRecord.session_id}</span>
+              <span>{selectedRecord.sender_name} / {selectedRecord.user_id}</span>
               <span>{formatTime(selectedRecord.created_at, true)}</span>
               <span>{formatDuration(selectedRecord.duration_s)}</span>
               <span>{formatNumber(selectedRecord.total_tokens)} Token</span>

@@ -71,7 +71,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     config = make_config(tmp_path)
     runner = await AgentRunner.create("session-1", config=config)
     message = InboundMessage(
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={"channel": "test"},
         content=[InputText(text="Hi")],
@@ -99,7 +99,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
 async def test_runner_rejects_message_for_another_session(tmp_path: Path):
     runner = AgentRunner("session-1", config=make_config(tmp_path))
     message = InboundMessage(
-        session_id="session-2",
+        user_id="session-2",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="Hi")],
@@ -107,7 +107,7 @@ async def test_runner_rejects_message_for_another_session(tmp_path: Path):
         files=[],
     )
 
-    with pytest.raises(ValueError, match="session_id"):
+    with pytest.raises(ValueError, match="user_id"):
         _ = [event async for event in runner.run(message)]
 
 
@@ -115,7 +115,7 @@ async def test_runner_rejects_message_for_another_session(tmp_path: Path):
 async def test_runner_requires_async_factory(tmp_path: Path):
     runner = AgentRunner("session-1", config=make_config(tmp_path))
     message = InboundMessage(
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="Hi")],
@@ -131,7 +131,7 @@ async def test_runner_requires_async_factory(tmp_path: Path):
 async def test_runner_can_run_in_background(tmp_path: Path, runner_dependencies):
     runner = await AgentRunner.create("session-1", config=make_config(tmp_path))
     message = InboundMessage(
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Scheduler",
         session_metadata={"source": "scheduled_task"},
         content=[InputText(text="Run scheduled prompt")],
@@ -162,7 +162,7 @@ async def test_run_once_returns_only_last_complete_assistant_segment(tmp_path: P
 
     runner._agent_loop = EventLoop()
     message = InboundMessage(
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="Hi")],
@@ -183,7 +183,7 @@ async def test_run_once_rejects_missing_model_output(tmp_path: Path):
 
     runner._agent_loop = EventLoop()
     message = InboundMessage(
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="Hi")],

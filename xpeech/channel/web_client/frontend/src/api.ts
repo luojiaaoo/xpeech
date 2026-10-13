@@ -66,8 +66,8 @@ function createOAuth2Qr(providerName: string, state?: string) {
 
 export const authApi = {
   me: () => request<User>('/api/auth/me'),
-  login: (sessionId: string, password: string) =>
-    request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ session_id: sessionId, password }) }),
+  login: (userId: string, password: string) =>
+    request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ user_id: userId, password }) }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
   changePassword: (newPassword: string) => request<void>('/api/auth/password', {
     method: 'PATCH',
@@ -87,9 +87,9 @@ export const appApi = {
 
 export const userApi = {
   list: () => request<User[]>('/api/admin/users'),
-  create: (values: { username: string; session_id: string; password: string; is_admin: boolean }) =>
+  create: (values: { username: string; user_id: string; password: string; is_admin: boolean }) =>
     request<User>('/api/admin/users', { method: 'POST', body: JSON.stringify(values) }),
-  update: (id: number, values: { username?: string; session_id?: string; password?: string; is_admin?: boolean; is_active?: boolean }) =>
+  update: (id: number, values: { username?: string; user_id?: string; password?: string; is_admin?: boolean; is_active?: boolean }) =>
     request<User>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(values) }),
   remove: (id: number) => request<void>(`/api/admin/users/${id}`, { method: 'DELETE' }),
 };
@@ -123,16 +123,16 @@ export const statisticsApi = {
   updates: (dataAsOf: string | null, startAt?: string) => request<StatisticsUpdates>(
     statisticsUrl('/updates', startAt, dataAsOf ? { data_as_of: dataAsOf } : {}),
   ),
-  records: (senderName: string, sessionId: string, limit = 10) => request<StatisticsRecords>(
+  records: (senderName: string, userId: string, limit = 10) => request<StatisticsRecords>(
     statisticsUrl('/records', undefined, {
       sender_name: senderName,
-      session_id: sessionId,
+      user_id: userId,
       limit: String(limit),
     }),
   ),
-  searchRecords: (sessionIds: string[], keyword: string, limit = 10) => request<StatisticsRecords>(
+  searchRecords: (userIds: string[], keyword: string, limit = 10) => request<StatisticsRecords>(
     statisticsUrl('/records', undefined, {
-      session_id: sessionIds,
+      user_id: userIds,
       ...(keyword ? { keyword } : {}),
       limit: String(limit),
     }),

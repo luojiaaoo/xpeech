@@ -109,7 +109,7 @@ async def test_schedule_tools_offload_scheduler_database_calls(monkeypatch):
         worker_threads.append(get_ident())
         return SimpleNamespace(id="job-1", next_run_time=None)
 
-    def list_tasks(session_id):
+    def list_tasks(user_id):
         worker_threads.append(get_ident())
         return []
 
@@ -124,12 +124,12 @@ async def test_schedule_tools_offload_scheduler_database_calls(monkeypatch):
         FeishuScheduleArgs(prompt="task", run_at="2099-01-01T00:00:00+08:00"),
         session_metadata={"channel": "feishu", "open_id": "ou_1"},
         sender_name="Alice",
-        session_id="session-1",
+        user_id="session-1",
     )
-    await schedule_tools.feishu_schedule_list(session_id="session-1")
+    await schedule_tools.feishu_schedule_list(user_id="session-1")
     await schedule_tools.feishu_schedule_cancel(
         FeishuScheduleCancelArgs(job_id="job-1"),
-        session_id="session-1",
+        user_id="session-1",
     )
 
     assert len(worker_threads) == 3
@@ -145,7 +145,7 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
         prompt="task",
         run_at=(now + timedelta(hours=1)).replace(tzinfo=None),
         cron=None,
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={"channel": "feishu", "open_id": "ou_1"},
     )
@@ -156,7 +156,7 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
             prompt="past",
             run_at=now - timedelta(seconds=1),
             cron=None,
-            session_id="session-1",
+            user_id="session-1",
             sender_name="Alice",
             session_metadata={"channel": "feishu", "open_id": "ou_1"},
         )
@@ -165,7 +165,7 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
             prompt="bad cron",
             run_at=None,
             cron="not a cron",
-            session_id="session-1",
+            user_id="session-1",
             sender_name="Alice",
             session_metadata={"channel": "feishu", "open_id": "ou_1"},
         )
@@ -175,10 +175,49 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
                 prompt="too frequent cron",
                 run_at=None,
                 cron=cron,
-                session_id="session-1",
+                user_id="session-1",
                 sender_name="Alice",
                 session_metadata={"channel": "feishu", "open_id": "ou_1"},
             )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("schedule_type", ["run_at", "cron"])
+async def test_restart_migrates_persisted_task_owner(tmp_path: Path, schedule_type: str):
+    database = tmp_path / "legacy-schedule.db"
+    scheduler = start_background_scheduler(database)
+    job = schedule_feishu_task(
+        prompt="reminder",
+        run_at=datetime.now(scheduler.timezone) + timedelta(hours=1) if schedule_type == "run_at" else None,
+        cron="0 9 * * *" if schedule_type == "cron" else None,
+        user_id="alice",
+        sender_name="Alice",
+        session_metadata={"channel": "feishu", "open_id": "ou_1"},
+    )
+    original_next_run_time = job.next_run_time
+    # Reproduce the keyword arguments saved by the previous application version.
+    job.kwargs["session_id"] = job.kwargs.pop("user_id")
+    scheduler._jobstores["default"].update_job(job)
+    stop_background_scheduler()
+    await asyncio.sleep(0)
+
+    restored = start_background_scheduler(database)
+    migrated = restored.get_job(job.id)
+    assert migrated.kwargs["user_id"] == "alice"
+    assert "session_id" not in migrated.kwargs
+    assert migrated.next_run_time == original_next_run_time
+    assert migrated.kwargs["session_metadata"] == {"channel": "feishu", "open_id": "ou_1"}
+    assert [task.job_id for task in list_scheduled_tasks("alice")] == [job.id]
+    assert list_scheduled_tasks("bob") == []
+
+    stop_background_scheduler()
+    await asyncio.sleep(0)
+    restored = start_background_scheduler(database)
+    persisted = restored.get_job(job.id)
+    assert persisted.kwargs == migrated.kwargs
+    assert persisted.next_run_time == original_next_run_time
+    cancel_scheduled_task(user_id="alice", job_id=job.id)
+    assert restored.get_job(job.id) is None
 
 
 @pytest.mark.asyncio
@@ -190,7 +229,7 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
         prompt="once",
         run_at=base + timedelta(hours=1),
         cron=None,
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={"channel": "feishu", "open_id": "ou_1"},
     )
@@ -198,7 +237,7 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
         prompt="repeat",
         run_at=None,
         cron="0 * * * *",
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={"channel": "feishu", "open_id": "ou_1"},
     )
@@ -226,7 +265,7 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
             args,
             session_metadata=metadata,
             sender_name="Alice",
-            session_id="session-1",
+            user_id="session-1",
         )
     )
     job = scheduler.get_job(result["job_id"])
@@ -234,7 +273,7 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
     assert job.kwargs["session_metadata"] == metadata
     assert job.kwargs["sender_name"] == "Alice"
 
-    tasks = json.loads(await feishu_schedule_list(session_id="session-1"))
+    tasks = json.loads(await feishu_schedule_list(user_id="session-1"))
     assert tasks == [
         {
             "job_id": result["job_id"],
@@ -245,15 +284,15 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
             "next_run_time": result["next_run_time"],
         }
     ]
-    assert await feishu_schedule_list(session_id="another-session") == "[]"
+    assert await feishu_schedule_list(user_id="another-session") == "[]"
 
     with pytest.raises(ValueError, match="not available"):
-        cancel_scheduled_task(session_id="another-session", job_id=result["job_id"])
+        cancel_scheduled_task(user_id="another-session", job_id=result["job_id"])
     with pytest.raises(ValueError, match="not available"):
-        cancel_scheduled_task(session_id="session-1", job_id="missing")
+        cancel_scheduled_task(user_id="session-1", job_id="missing")
     assert await feishu_schedule_cancel(
         FeishuScheduleCancelArgs(job_id=result["job_id"]),
-        session_id="session-1",
+        user_id="session-1",
     )
     assert list_scheduled_tasks("session-1") == []
 
@@ -265,7 +304,7 @@ async def test_session_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
     common = {
         "run_at": run_at,
         "cron": None,
-        "session_id": "session-1",
+        "user_id": "session-1",
         "sender_name": "Alice",
         "session_metadata": {"channel": "feishu", "open_id": "ou_1"},
     }
@@ -279,7 +318,7 @@ async def test_session_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
     with pytest.raises(ValueError, match="maximum 8"):
         schedule_feishu_task(prompt="task-9", **common)
 
-    cancel_scheduled_task(session_id="session-1", job_id=jobs[0].id)
+    cancel_scheduled_task(user_id="session-1", job_id=jobs[0].id)
     replacement = schedule_feishu_task(prompt="replacement", **common)
     assert replacement.id
     assert len(list_scheduled_tasks("session-1")) == 8
@@ -305,7 +344,7 @@ async def test_feishu_schedule_validates_delivery_context(tmp_path: Path, metada
             args,
             session_metadata=metadata,
             sender_name="Alice",
-            session_id="session-1",
+            user_id="session-1",
         )
 
 
@@ -334,8 +373,8 @@ async def test_background_agent_queues_success_or_fixed_failure(
                 raise result
             return result
 
-    async def create(cls, session_id, **kwargs):
-        captured["session_id"] = session_id
+    async def create(cls, user_id, **kwargs):
+        captured["user_id"] = user_id
         return FakeRunner()
 
     monkeypatch.setattr(AgentRunner, "create", classmethod(create))
@@ -343,7 +382,7 @@ async def test_background_agent_queues_success_or_fixed_failure(
     await run_feishu_background_task(
         job_id="job-1",
         prompt="scheduled prompt",
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata=metadata,
         schedule_type="cron",
@@ -355,7 +394,7 @@ async def test_background_agent_queues_success_or_fixed_failure(
     ].get_nowait()
     assert queued.open_id == "ou_1"
     assert queued.content == expected
-    assert captured["session_id"] == "session-1"
+    assert captured["user_id"] == "session-1"
     assert captured["background"] is True
     assert captured["message"].sender_name == "Alice"
     scheduled_prompt = captured["message"].content[0].text
@@ -384,14 +423,14 @@ async def test_background_agent_waits_for_random_delay(monkeypatch):
         async def run_once(self, message, *, background=False):
             return "completed"
 
-    async def create(cls, session_id, **kwargs):
+    async def create(cls, user_id, **kwargs):
         return FakeRunner()
 
     monkeypatch.setattr(AgentRunner, "create", classmethod(create))
     await run_feishu_background_task(
         job_id="job-delayed",
         prompt="scheduled prompt",
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={"channel": "feishu", "open_id": "ou_1"},
         schedule_type="run_at",

@@ -42,10 +42,10 @@ func (p *Provider) ResolveToken(ctx context.Context, req credential.TokenSpec) (
     }
     tokenType := "user"
     if req.Type == credential.TokenTypeTAT { tokenType = "tenant" }
-    sessionID := strings.TrimSpace(os.Getenv("SHELL_SESSION_ID"))
-    if sessionID == "" { return nil, fmt.Errorf("xpeech token manager requires a managed session") }
-    migrateLegacy(ctx, endpointForManager(), sessionID)
-    payload, _ := json.Marshal(map[string]any{"session_id": sessionID, "token_type": tokenType})
+    userID := strings.TrimSpace(os.Getenv("SHELL_USER_ID"))
+    if userID == "" { return nil, fmt.Errorf("xpeech token manager requires a managed session") }
+    migrateLegacy(ctx, endpointForManager(), userID)
+    payload, _ := json.Marshal(map[string]any{"user_id": userID, "token_type": tokenType})
     endpoint := strings.TrimRight(managerURL, "/") + "/v1/token/resolve"
     request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
     if err != nil { return nil, fmt.Errorf("create token manager request: %w", err) }
@@ -72,13 +72,13 @@ func directUserAccessToken() string {
 
 func endpointForManager() string { return strings.TrimRight(managerURL, "/") }
 
-func migrateLegacy(ctx context.Context, endpoint, sessionID string) {
+func migrateLegacy(ctx context.Context, endpoint, userID string) {
     home, err := os.UserHomeDir(); if err != nil { return }
     path := home + "/.config/xpeech/lark-cli-user-token.json"
     data, err := os.ReadFile(path); if err != nil { return }
     var legacy struct { AppID string `json:"app_id"`; AccessToken string `json:"access_token"`; RefreshToken string `json:"refresh_token"`; Scope string `json:"scope"`; ExpiresAt int64 `json:"expires_at"`; RefreshTokenExpiresAt int64 `json:"refresh_token_expires_at"` }
     if json.Unmarshal(data, &legacy) != nil || legacy.AppID != appID || legacy.AccessToken == "" { return }
-    payload, _ := json.Marshal(map[string]any{"session_id": sessionID, "app_id": legacy.AppID, "access_token": legacy.AccessToken, "refresh_token": legacy.RefreshToken, "scope": legacy.Scope, "expires_at": legacy.ExpiresAt, "refresh_token_expires_at": legacy.RefreshTokenExpiresAt})
+    payload, _ := json.Marshal(map[string]any{"user_id": userID, "app_id": legacy.AppID, "access_token": legacy.AccessToken, "refresh_token": legacy.RefreshToken, "scope": legacy.Scope, "expires_at": legacy.ExpiresAt, "refresh_token_expires_at": legacy.RefreshTokenExpiresAt})
     request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/migrate", bytes.NewReader(payload)); if err != nil { return }
     request.Header.Set("Content-Type", "application/json")
     response, err := (&http.Client{Timeout: httpTimeout}).Do(request); if err != nil { return }; response.Body.Close()
@@ -97,12 +97,12 @@ func (p *tokenInvalidationProvider) SupportsRequestClass(class exttransport.Requ
     return class == exttransport.RequestClassPlatform
 }
 func (p *tokenInvalidationProvider) ResolveInterceptor(context.Context) exttransport.Interceptor {
-    sessionID := strings.TrimSpace(os.Getenv("SHELL_SESSION_ID"))
-    if sessionID == "" { return nil }
-    return &tokenInvalidationInterceptor{sessionID: sessionID, managerURL: managerURL}
+    userID := strings.TrimSpace(os.Getenv("SHELL_USER_ID"))
+    if userID == "" { return nil }
+    return &tokenInvalidationInterceptor{userID: userID, managerURL: managerURL}
 }
 
-type tokenInvalidationInterceptor struct { sessionID, managerURL string }
+type tokenInvalidationInterceptor struct { userID, managerURL string }
 func (i *tokenInvalidationInterceptor) PreRoundTrip(request *http.Request) func(*http.Response, error) {
     authorization := strings.TrimSpace(request.Header.Get("Authorization"))
     token := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
@@ -112,7 +112,7 @@ func (i *tokenInvalidationInterceptor) PreRoundTrip(request *http.Request) func(
     tokenHash := hex.EncodeToString(digest[:])
     return func(response *http.Response, requestErr error) {
         if requestErr != nil || response == nil || !invalidTokenResponse(response) { return }
-        payload, err := json.Marshal(map[string]string{"session_id": i.sessionID, "token_type": "user", "token_hash": tokenHash})
+        payload, err := json.Marshal(map[string]string{"user_id": i.userID, "token_type": "user", "token_hash": tokenHash})
         if err != nil { return }
         endpoint := strings.TrimRight(i.managerURL, "/") + "/v1/token/invalidate"
         report, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))

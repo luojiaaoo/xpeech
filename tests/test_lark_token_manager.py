@@ -6,6 +6,74 @@ import httpx
 import pytest
 
 
+def test_token_store_migrates_local_and_feishu_identities(tmp_path):
+    from xpeech.lark_token_manager import TokenStore
+
+    path = tmp_path / "tokens.db"
+    store = TokenStore(path)
+    store.ensure("employee-1")
+    store.db.execute(
+        "UPDATE sessions SET open_id='ou_123', access_token='access', refresh_token='refresh', scope='offline_access', access_expires_at=123, refresh_expires_at=456, status='authorized' WHERE user_id='employee-1'"
+    )
+    store.db.execute(
+        "INSERT INTO device_authorizations(user_id, device_code, verification_uri, scope, expires_at, updated_at) VALUES ('employee-1', 'device', 'https://example.com/device', 'offline_access', 9999999999, 1)"
+    )
+    store.db.execute("ALTER TABLE sessions RENAME COLUMN user_id TO session_id")
+    store.db.execute("ALTER TABLE sessions RENAME COLUMN open_id TO user_id")
+    store.db.execute("ALTER TABLE device_authorizations RENAME COLUMN user_id TO session_id")
+    store.db.commit()
+    store.db.close()
+
+    for _ in range(2):
+        migrated = TokenStore(path)
+        try:
+            row = migrated.row("employee-1")
+            assert row["user_id"] == "employee-1"
+            assert row["open_id"] == "ou_123"
+            assert row["access_token"] == "access"
+            assert row["refresh_token"] == "refresh"
+            assert row["scope"] == "offline_access"
+            assert row["access_expires_at"] == 123
+            assert row["refresh_expires_at"] == 456
+            assert row["status"] == "authorized"
+            pending = migrated.db.execute("SELECT * FROM device_authorizations WHERE user_id='employee-1'").fetchone()
+            assert pending["device_code"] == "device"
+            assert pending["scope"] == "offline_access"
+            assert pending["expires_at"] == 9999999999
+        finally:
+            migrated.db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("open_id", ["ou_123", None])
+async def test_authorization_status_and_logout_use_open_id(tmp_path, monkeypatch, open_id):
+    import xpeech.lark_token_manager as manager
+
+    store = manager.TokenStore(tmp_path / "tokens.db")
+    monkeypatch.setattr(manager, "store", store)
+    try:
+        store.ensure("employee-1")
+        manager._save_authorized(
+            "employee-1",
+            "offline_access",
+            {"access_token": "access", "refresh_token": "refresh"},
+            {"open_id": open_id, "union_id": "on_other", "user_id": "other", "name": "Alice"},
+        )
+        transport = httpx.ASGITransport(app=manager.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://manager") as client:
+            response = await client.get("/v1/status", params={"user_id": "employee-1"})
+            assert response.status_code == 200
+            assert response.json()["open_id"] == open_id
+            assert store.row("employee-1")["user_id"] == "employee-1"
+
+            response = await client.post("/v1/logout", json={"user_id": "employee-1"})
+            assert response.status_code == 200
+            assert store.row("employee-1")["open_id"] is None
+            assert store.row("employee-1")["access_token"] is None
+    finally:
+        store.db.close()
+
+
 @pytest.mark.asyncio
 async def test_token_manager_uses_device_flow_and_returns_nonblocking_url(monkeypatch):
     import xpeech.lark_token_manager as manager
@@ -28,13 +96,13 @@ async def test_token_manager_uses_device_flow_and_returns_nonblocking_url(monkey
     session = "test-" + uuid.uuid4().hex
     transport = httpx.ASGITransport(app=manager.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://manager") as client:
-        status = await client.get("/v1/status", params={"session_id": session})
+        status = await client.get("/v1/status", params={"user_id": session})
         assert status.status_code == 200
         assert status.json()["status"] == "unauthorized"
 
         started = await client.post(
             "/v1/authorization/start",
-            json={"session_id": session, "scopes": ["docs:doc:readonly"]},
+            json={"user_id": session, "scopes": ["docs:doc:readonly"]},
         )
         assert started.status_code == 200
         body = started.json()
@@ -45,24 +113,24 @@ async def test_token_manager_uses_device_flow_and_returns_nonblocking_url(monkey
 
         repeated = await client.post(
             "/v1/authorization/start",
-            json={"session_id": session, "scopes": ["docs:doc:readonly"]},
+            json={"user_id": session, "scopes": ["docs:doc:readonly"]},
         )
         assert repeated.json()["authorization_url"] == body["authorization_url"]
         assert requested_scopes[-1] == ["docs:doc:readonly", "offline_access"]
 
         next_started = await client.post(
             "/v1/authorization/start",
-            json={"session_id": session, "scopes": ["drive:drive:readonly"]},
+            json={"user_id": session, "scopes": ["drive:drive:readonly"]},
         )
         assert next_started.status_code == 200
         assert requested_scopes[-1] == ["drive:drive:readonly", "offline_access"]
 
 
-def _insert_authorized_session(manager, session_id: str, *, access_token: str, refresh_token: str, access_expires_at: int, refresh_expires_at: int) -> None:
-    manager.store.ensure(session_id)
+def _insert_authorized_session(manager, user_id: str, *, access_token: str, refresh_token: str, access_expires_at: int, refresh_expires_at: int) -> None:
+    manager.store.ensure(user_id)
     manager.store.db.execute(
-        "UPDATE sessions SET access_token=?, refresh_token=?, scope=?, access_expires_at=?, refresh_expires_at=?, status='authorized' WHERE session_id=?",
-        (access_token, refresh_token, "offline_access", access_expires_at, refresh_expires_at, session_id),
+        "UPDATE sessions SET access_token=?, refresh_token=?, scope=?, access_expires_at=?, refresh_expires_at=?, status='authorized' WHERE user_id=?",
+        (access_token, refresh_token, "offline_access", access_expires_at, refresh_expires_at, user_id),
     )
     manager.store.db.commit()
 
@@ -168,7 +236,7 @@ async def test_token_invalidate_only_invalidates_matching_current_token():
     async with httpx.AsyncClient(transport=transport, base_url="http://manager") as client:
         wrong = await client.post(
             "/v1/token/invalidate",
-            json={"session_id": session, "token_type": "user", "token_hash": hashlib.sha256(b"other").hexdigest()},
+            json={"user_id": session, "token_type": "user", "token_hash": hashlib.sha256(b"other").hexdigest()},
         )
         assert wrong.status_code == 200
         assert wrong.json() == {"invalidated": False}
@@ -176,7 +244,7 @@ async def test_token_invalidate_only_invalidates_matching_current_token():
 
         invalidated = await client.post(
             "/v1/token/invalidate",
-            json={"session_id": session, "token_type": "user", "token_hash": hashlib.sha256(access_token.encode()).hexdigest()},
+            json={"user_id": session, "token_type": "user", "token_hash": hashlib.sha256(access_token.encode()).hexdigest()},
         )
         assert invalidated.status_code == 200
         assert invalidated.json() == {"invalidated": True}
