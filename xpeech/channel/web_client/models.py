@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from .dao import User
 
-SESSION_ID_PATTERN = r"^[\w@+-][\w.@+-]*$"
+USER_ID_PATTERN = r"^[\w@+-][\w.@+-]*$"
 INJECT_PROMPT_STATE_MAX_LENGTH = 128
 INJECT_PROMPT_STATE_MIN_LENGTH = 16
 INJECT_PROMPT_STATE_PATTERN = r"^[A-Za-z0-9._~-]+$"
@@ -21,7 +21,7 @@ class OAuth2WebConfig:
     userinfo_url: str
     redirect_uri: str | None
     scopes: tuple[str, ...]
-    session_id_claim: str
+    user_id_claim: str
     username_claim: str
     use_pkce: bool
     token_auth_method: str
@@ -49,7 +49,7 @@ class WebConfig:
 
 
 class LoginBody(BaseModel):
-    session_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=256)
 
 
@@ -73,10 +73,10 @@ class OAuth2PollBody(BaseModel):
 
 
 class UserBody(BaseModel):
-    session_id: str = Field(
+    user_id: str = Field(
         min_length=1,
         max_length=128,
-        pattern=SESSION_ID_PATTERN,
+        pattern=USER_ID_PATTERN,
     )
     username: str = Field(min_length=1, max_length=64, pattern=r"^[\w.@+-]+$")
     password: str = Field(min_length=8, max_length=256)
@@ -90,11 +90,11 @@ class UserUpdateBody(BaseModel):
         max_length=64,
         pattern=r"^[\w.@+-]+$",
     )
-    session_id: str | None = Field(
+    user_id: str | None = Field(
         default=None,
         min_length=1,
         max_length=128,
-        pattern=SESSION_ID_PATTERN,
+        pattern=USER_ID_PATTERN,
     )
     password: str | None = Field(default=None, min_length=8, max_length=256)
     is_admin: bool | None = None
@@ -104,7 +104,7 @@ class UserUpdateBody(BaseModel):
 def public_user(user: User) -> dict[str, object]:
     return {
         "id": user.id,
-        "session_id": user.session_id,
+        "user_id": user.user_id,
         "username": user.username,
         "is_admin": user.is_admin,
         "is_active": user.is_active,

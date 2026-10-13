@@ -46,7 +46,7 @@ def test_api_rejects_invalid_user_access_token_claim(user_access_token):
     response = TestClient(app).post(
         "/answer_question",
         data={"answer": "ok"},
-        headers={"Authorization": f"Bearer {token}", "x-session-id": "test"},
+        headers={"Authorization": f"Bearer {token}", "x-user-id": "test"},
     )
 
     assert response.status_code == 401
@@ -64,7 +64,7 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
     observed = []
 
     async def run(message):
-        started.append(message.session_id)
+        started.append(message.user_id)
         if len(started) == 2:
             both_started.set()
         if len(started) <= 2:
@@ -75,22 +75,22 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
             args[index + 1]: args[index + 2]
             for index, value in enumerate(args) if value == "--setenv"
         }
-        observed.append((message.session_id, environment["LARKSUITE_CLI_USER_ACCESS_TOKEN"]))
+        observed.append((message.user_id, environment["LARKSUITE_CLI_USER_ACCESS_TOKEN"]))
         assert "user_access_token" not in message.model_dump_json()
         yield {"event": "assistant", "context": "ok"}
 
-    async def create(_session_id):
+    async def create(_user_id):
         return SimpleNamespace(workspace=tmp_path, run=run)
 
     monkeypatch.setattr(chat_routes.AgentRunner, "create", create)
 
-    async def send(client, session_id, user_access_token):
+    async def send(client, user_id, user_access_token):
         token = create_access_token(user_access_token=user_access_token)
         return await client.post(
             "/chat",
             headers={
                 "Authorization": f"Bearer {token}",
-                "x-session-id": session_id,
+                "x-user-id": user_id,
                 "x-sender-name": "test-user",
             },
             data={"content": '[{"text":"hello"}]'},
@@ -127,7 +127,7 @@ def test_expired_access_token_is_rejected():
 def test_api_requires_jwt():
     client = TestClient(app)
 
-    api_response = client.post("/answer_question", data={"answer": "ok"}, headers={"x-session-id": "test"})
+    api_response = client.post("/answer_question", data={"answer": "ok"}, headers={"x-user-id": "test"})
 
     assert api_response.status_code == 401
     assert api_response.headers["www-authenticate"] == "Bearer"
@@ -142,7 +142,7 @@ def test_api_rejects_token_signed_with_another_key():
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-session-id": "test",
+            "x-user-id": "test",
         },
     )
 
@@ -182,7 +182,7 @@ def test_token_endpoint_issues_one_minute_jwt_for_docs():
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-session-id": "test",
+            "x-user-id": "test",
         },
     )
     assert api_response.status_code == 200

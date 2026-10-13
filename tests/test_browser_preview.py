@@ -28,12 +28,12 @@ def file_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
 
 def test_download_session_file_requires_valid_jwt(file_roots: tuple[Path, Path]):
     workspace_root, _ = file_roots
-    session_id = "session-1"
-    session_workspace = workspace_root / session_id
+    user_id = "session-1"
+    session_workspace = workspace_root / user_id
     session_workspace.mkdir()
     (session_workspace / "result.txt").write_text("downloaded", encoding="utf-8")
     client = TestClient(app)
-    url = f"/sessions/{session_id}/files"
+    url = f"/sessions/{user_id}/files"
     params = {"path": "result.txt"}
 
     missing_token = client.get(url, params=params)

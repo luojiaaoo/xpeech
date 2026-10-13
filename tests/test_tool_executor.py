@@ -53,7 +53,7 @@ def test_tool_model_info(has_model, has_metadata):
 
     assert info.has_pydantic_param is has_model
     assert info.has_session_metadata is has_metadata
-    assert info.has_session_id is False
+    assert info.has_user_id is False
     assert info.has_sender_name is False
     if has_model:
         assert info.model_cls is EchoArgs
@@ -188,7 +188,7 @@ class TestToolExecutor:
 
         monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
         monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
-        monkeypatch.setattr(shell_module, "get_session_id", lambda: "test-session")
+        monkeypatch.setattr(shell_module, "get_user_id", lambda: "test-session")
         monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", skip_venv)
         monkeypatch.setattr(shell_module, "_run_wrapped_command", timed_out_command)
         shell = build_shell_tools(tmp_path)
@@ -317,11 +317,11 @@ class TestToolExecutor:
         async def context(
             args: EchoArgs,
             session_metadata,
-            session_id,
+            user_id,
             sender_name,
         ) -> str:
             """Return all runtime context."""
-            return f"{args.text}:{session_id}:{sender_name}:{session_metadata['channel']}"
+            return f"{args.text}:{user_id}:{sender_name}:{session_metadata['channel']}"
 
         schema = as_tool(context)["function"]["parameters"]
         assert set(schema["properties"]) == {"text"}
@@ -329,7 +329,7 @@ class TestToolExecutor:
             [ToolCallRequest(id="1", name="context", arguments={"text": "ok"})],
             {"context": context},
             session_metadata={"channel": "feishu"},
-            session_id="session-1",
+            user_id="session-1",
             sender_name="Alice",
         )
         assert result.value == "ok:session-1:Alice:feishu"

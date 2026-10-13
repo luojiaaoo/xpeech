@@ -4,7 +4,7 @@ from uuid import uuid4
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .context import request_id_var, session_id_var, user_access_token_var
+from .context import request_id_var, user_id_var, user_access_token_var
 
 
 class ContextASGIMiddleware:
@@ -18,10 +18,10 @@ class ContextASGIMiddleware:
             return
 
         headers = Headers(scope=scope)
-        session_id = headers.get("x-session-id") or str(uuid4())
+        user_id = headers.get("x-user-id") or str(uuid4())
         request_id = str(uuid4())
 
-        session_id_token = session_id_var.set(session_id)
+        user_id_token = user_id_var.set(user_id)
         request_id_token = request_id_var.set(request_id)
         user_access_token_token = user_access_token_var.set(None)
 
@@ -29,7 +29,7 @@ class ContextASGIMiddleware:
 
             if message["type"] == "http.response.start":
                 response_headers = MutableHeaders(scope=message)
-                response_headers["x-session-id"] = session_id
+                response_headers["x-user-id"] = user_id
                 response_headers["x-request-id"] = request_id
 
             await send(message)
@@ -39,4 +39,4 @@ class ContextASGIMiddleware:
         finally:
             user_access_token_var.reset(user_access_token_token)
             request_id_var.reset(request_id_token)
-            session_id_var.reset(session_id_token)
+            user_id_var.reset(user_id_token)

@@ -349,7 +349,7 @@ class MCPToolBinding:
 @dataclass
 class MCPServerRegistration:
     config: MCPServerConfig
-    session_id: str | None = None
+    user_id: str | None = None
     _session: Any | None = dataclass_field(default=None, init=False, repr=False)
     _bindings: list[MCPToolBinding] | None = dataclass_field(default=None, init=False, repr=False)
     _lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock, init=False, repr=False)
@@ -382,7 +382,7 @@ class MCPServerRegistration:
             try:
                 await self._connect()
                 self._bindings = await self._discover_tool_bindings()
-                await _refresh_session_expiry(self.session_id)
+                await _refresh_session_expiry(self.user_id)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -427,7 +427,7 @@ class MCPServerRegistration:
                 self._session.call_tool(tool_name, arguments=dict(arguments)),
                 timeout=self.config.tool_timeout,
             )
-            await _refresh_session_expiry(self.session_id)
+            await _refresh_session_expiry(self.user_id)
             return _render_mcp_result(result)
         except asyncio.TimeoutError:
             logger.warning(
@@ -508,7 +508,7 @@ class MCPServerRegistration:
         try:
             await asyncio.wait_for(ready, timeout=self.config.connect_timeout)
             self._retry_after = None
-            await _refresh_session_expiry(self.session_id)
+            await _refresh_session_expiry(self.user_id)
         except BaseException:
             close_event.set()
             owner_task.cancel()
@@ -784,66 +784,66 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
 
 
 async def get_session_mcp_registration_from_config(
-    session_id: str,
+    user_id: str,
     server_name: str,
     config: Any,
     workspace: str | Path | None = None,
 ) -> MCPServerRegistration:
     """Return a reusable MCP connection owned by one conversation session."""
-    if not session_id:
-        raise ValueError("session_id cannot be empty")
+    if not user_id:
+        raise ValueError("user_id cannot be empty")
     registration = create_mcp_registration_from_config(server_name, config, workspace=workspace)
-    registration.session_id = session_id
+    registration.user_id = user_id
     key = _persistent_registration_key(registration.config)
     async with _mcp_connections_lock():
-        session_connections = MCP_CONNECTIONS.setdefault(session_id, {})
+        session_connections = MCP_CONNECTIONS.setdefault(user_id, {})
         cached = session_connections.get(key)
         if cached is not None:
             return cached
         session_connections[key] = registration
-        _schedule_session_expiry_locked(session_id)
+        _schedule_session_expiry_locked(user_id)
         return registration
 
 
-def _schedule_session_expiry_locked(session_id: str) -> None:
-    if session_id in _SESSION_EXPIRY_HANDLES:
+def _schedule_session_expiry_locked(user_id: str) -> None:
+    if user_id in _SESSION_EXPIRY_HANDLES:
         return
 
     handle: asyncio.TimerHandle
 
     def expire() -> None:
         asyncio.create_task(
-            _expire_session(session_id, handle),
-            name=f"mcp-expiry-{session_id}",
+            _expire_session(user_id, handle),
+            name=f"mcp-expiry-{user_id}",
         )
 
     handle = asyncio.get_running_loop().call_later(MCP_CONNECTION_TTL_SECONDS, expire)
-    _SESSION_EXPIRY_HANDLES[session_id] = handle
+    _SESSION_EXPIRY_HANDLES[user_id] = handle
 
 
-async def _refresh_session_expiry(session_id: str | None) -> None:
+async def _refresh_session_expiry(user_id: str | None) -> None:
     """Extend a connected session's idle lifetime after successful MCP I/O."""
-    if session_id is None:
+    if user_id is None:
         return
     async with _mcp_connections_lock():
-        if session_id not in MCP_CONNECTIONS:
+        if user_id not in MCP_CONNECTIONS:
             return
-        expiry_handle = _SESSION_EXPIRY_HANDLES.pop(session_id, None)
+        expiry_handle = _SESSION_EXPIRY_HANDLES.pop(user_id, None)
         if expiry_handle is not None:
             expiry_handle.cancel()
-        _schedule_session_expiry_locked(session_id)
+        _schedule_session_expiry_locked(user_id)
 
 
-async def _expire_session(session_id: str, handle: asyncio.TimerHandle) -> None:
+async def _expire_session(user_id: str, handle: asyncio.TimerHandle) -> None:
     async with _mcp_connections_lock():
-        if _SESSION_EXPIRY_HANDLES.get(session_id) is not handle:
+        if _SESSION_EXPIRY_HANDLES.get(user_id) is not handle:
             return
-        registrations = MCP_CONNECTIONS.pop(session_id, {})
-        _SESSION_EXPIRY_HANDLES.pop(session_id, None)
+        registrations = MCP_CONNECTIONS.pop(user_id, {})
+        _SESSION_EXPIRY_HANDLES.pop(user_id, None)
 
     logger.info(
         "MCP session '{}' expired after {}s without successful MCP activity",
-        session_id,
+        user_id,
         MCP_CONNECTION_TTL_SECONDS,
     )
     await asyncio.gather(
@@ -852,10 +852,10 @@ async def _expire_session(session_id: str, handle: asyncio.TimerHandle) -> None:
     )
 
 
-async def close_session_mcp_connections(session_id: str) -> None:
+async def close_session_mcp_connections(user_id: str) -> None:
     async with _mcp_connections_lock():
-        registrations = MCP_CONNECTIONS.pop(session_id, {})
-        expiry_handle = _SESSION_EXPIRY_HANDLES.pop(session_id, None)
+        registrations = MCP_CONNECTIONS.pop(user_id, {})
+        expiry_handle = _SESSION_EXPIRY_HANDLES.pop(user_id, None)
         if expiry_handle is not None:
             expiry_handle.cancel()
     await asyncio.gather(

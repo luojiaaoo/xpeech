@@ -48,6 +48,39 @@ def make_response(
 
 class TestSqliteConversationRecordRepository:
     @pytest.mark.asyncio
+    async def test_migrates_existing_records_and_preserves_indexes(self, tmp_path: Path):
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}")
+        try:
+            await create_db_and_tables(engine)
+            record = ConversationRecord(
+                user_id="alice",
+                sender_name="Alice",
+                user_question="question",
+                model_response="answer",
+                input_tokens=12,
+                output_tokens=4,
+                model_call_count=1,
+                duration_s=1.25,
+            )
+            await SqliteConversationRecordRepository(engine).append(record)
+            async with engine.begin() as connection:
+                await connection.exec_driver_sql(
+                    "ALTER TABLE conversation_records RENAME COLUMN user_id TO session_id"
+                )
+            await create_db_and_tables(engine)
+            await create_db_and_tables(engine)
+            async with AsyncSession(engine) as session:
+                restored = (await session.exec(select(ConversationRecord))).one()
+                assert restored.user_id == "alice"
+                assert restored.user_question == "question"
+                assert restored.input_tokens == 12
+            async with engine.connect() as connection:
+                indexes = await connection.run_sync(lambda conn: inspect(conn).get_indexes(TABLE_NAME))
+            assert any("user_id" in index["column_names"] for index in indexes)
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
     async def test_appends_all_session_records_to_one_database(self, tmp_path: Path):
         database_path = tmp_path / "record.db"
         engine = create_async_engine(f"sqlite+aiosqlite:///{database_path.as_posix()}")
@@ -56,7 +89,7 @@ class TestSqliteConversationRecordRepository:
         first_created_at = datetime(2026, 8, 19, 1, 2, 3, tzinfo=UTC)
         second_created_at = datetime(2026, 8, 19, 1, 3, 4, tzinfo=UTC)
         record = ConversationRecord(
-            session_id="session-1",
+            user_id="session-1",
             sender_name="张三",
             user_question="你好",
             model_response="你好！",
@@ -67,7 +100,7 @@ class TestSqliteConversationRecordRepository:
             duration_s=1.25,
         )
         second_record = ConversationRecord(
-            session_id="session-2",
+            user_id="session-2",
             sender_name="张三",
             user_question="再见",
             model_response="再见！",
@@ -103,7 +136,7 @@ class TestSqliteConversationRecordRepository:
         assert records == [
             ConversationRecord(
                 id=1,
-                session_id="session-1",
+                user_id="session-1",
                 sender_name="张三",
                 user_question="你好",
                 model_response="你好！",
@@ -115,7 +148,7 @@ class TestSqliteConversationRecordRepository:
             ),
             ConversationRecord(
                 id=2,
-                session_id="session-2",
+                user_id="session-2",
                 sender_name="张三",
                 user_question="再见",
                 model_response="再见！",
@@ -204,7 +237,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     await create_db_and_tables(engine)
     agent_loop.records = SqliteConversationRecordRepository(engine)
     message = InboundMessage(
-        session_id="session",
+        user_id="session",
         sender_name="alice",
         session_metadata={},
         content=[InputText(text="first question"), InputText(text="second line")],
@@ -231,7 +264,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     assert len(records) == 1
     record = records[0]
     assert record.id == 1
-    assert record.session_id == "session"
+    assert record.user_id == "session"
     assert record.sender_name == "alice"
     assert record.user_question == "first question\nsecond line"
     assert record.model_response == "final answer"

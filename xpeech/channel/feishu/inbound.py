@@ -71,8 +71,8 @@ class FeishuInboundMixin:
             return await self.channel.download_resource_to_file(file_key, **kwargs)
 
         if inbound_msg.chat_type == "p2p":
-            session_id, email = await self.get_user_identity(inbound_msg.sender_id)
-            resource_dest_dir = FEISHU_CACHE_DIR / session_id
+            user_id, email = await self.get_user_identity(inbound_msg.sender_id)
+            resource_dest_dir = FEISHU_CACHE_DIR / user_id
             session_metadata = {
                 "channel": "feishu",
                 "open_id": inbound_msg.sender_id,
@@ -82,7 +82,7 @@ class FeishuInboundMixin:
             common_fields = {
                 "message_id": inbound_msg.message_id,
                 "chat_id": inbound_msg.chat_id,
-                "session_id": session_id,
+                "user_id": user_id,
                 "sender_name": inbound_msg.sender_name,
                 "timestamp": timestamp,
                 "session_metadata": session_metadata,

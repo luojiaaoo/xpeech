@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from ....config.settings import settings
 from ....exceptions import PathProtectionError
 from ....utils.helper import is_relative_path
-from ....utils.session_id import MAX_SESSION_ID_LENGTH, validate_session_id
+from ....utils.user_id import MAX_USER_ID_LENGTH, validate_user_id
 from ...skills.skill import SkillInfo, SkillsLoader
 
 router = APIRouter(prefix="/skills", tags=["skills"])
@@ -14,22 +14,22 @@ router = APIRouter(prefix="/skills", tags=["skills"])
 MAX_SKILL_FILE_SIZE = 25 * 1024 * 1024
 
 
-def _session_workspace(session_id: str) -> Path:
-    """Resolve a session workspace without allowing path traversal."""
+def _user_workspace(user_id: str) -> Path:
+    """Resolve a user workspace without allowing path traversal."""
     try:
-        validated_session_id = validate_session_id(session_id)
+        validated_user_id = validate_user_id(user_id)
     except PathProtectionError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid session_id",
+            detail="Invalid user_id",
         ) from None
 
     workspace_root = settings.path.workspace_base_path.expanduser().resolve()
-    workspace = (workspace_root / validated_session_id).resolve()
+    workspace = (workspace_root / validated_user_id).resolve()
     if not is_relative_path(workspace, workspace_root):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid session_id",
+            detail="Invalid user_id",
         )
     return workspace
 
@@ -67,23 +67,23 @@ def _import_skill_file(data: bytes, workspace: Path) -> SkillInfo:
 
 @router.get("", response_model=list[SkillInfo])
 async def list_skills(
-    session_id: Annotated[
+    user_id: Annotated[
         str | None,
-        Query(max_length=MAX_SESSION_ID_LENGTH, description="会话ID；为空时仅返回内置技能"),
+        Query(max_length=MAX_USER_ID_LENGTH, description="用户 ID；为空时仅返回内置技能"),
     ] = None,
 ) -> list[SkillInfo]:
-    """返回内置技能，以及指定会话可用的用户 SKILL 列表。"""
-    workspace = _session_workspace(session_id) if session_id else None
+    """返回内置技能，以及指定用户可用的 SKILL 列表。"""
+    workspace = _user_workspace(user_id) if user_id else None
     return await SkillsLoader(workspace).list_skill_info()
 
 
 @router.post("/import", response_model=SkillInfo, status_code=status.HTTP_201_CREATED)
 def import_skill(
-    session_id: Annotated[str, Query(min_length=1, max_length=MAX_SESSION_ID_LENGTH, description="会话ID")],
+    user_id: Annotated[str, Query(min_length=1, max_length=MAX_USER_ID_LENGTH, description="用户 ID")],
     file: Annotated[UploadFile, File(description="SKILL.md 文件")],
 ) -> SkillInfo:
-    """将用户上传的 SKILL.md 导入指定会话工作区。"""
-    workspace = _session_workspace(session_id)
+    """将用户上传的 SKILL.md 导入指定用户工作区。"""
+    workspace = _user_workspace(user_id)
     if file.filename != "SKILL.md":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

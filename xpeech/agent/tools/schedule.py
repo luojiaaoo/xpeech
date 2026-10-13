@@ -74,7 +74,7 @@ async def feishu_schedule(
     args: FeishuScheduleArgs,
     session_metadata: dict[str, str] | None,
     sender_name: str | None,
-    session_id: str | None,
+    user_id: str | None,
 ) -> str:
     """创建飞书后台定时 Agent 任务。
 
@@ -114,14 +114,14 @@ async def feishu_schedule(
 
     open_id = session_metadata.get("open_id")
     _require_text(open_id, "session_metadata.open_id")
-    validated_session_id = _require_text(session_id, "session_id")
+    validated_user_id = _require_text(user_id, "user_id")
     validated_sender_name = _require_text(sender_name, "sender_name")
 
     job = await ensure_async(schedule_feishu_task)(
         prompt=args.prompt,
         run_at=args.run_at,
         cron=args.cron,
-        session_id=validated_session_id,
+        user_id=validated_user_id,
         sender_name=validated_sender_name,
         session_metadata=session_metadata,
     )
@@ -134,10 +134,10 @@ async def feishu_schedule(
     )
 
 
-async def feishu_schedule_list(session_id: str | None) -> str:
+async def feishu_schedule_list(user_id: str | None) -> str:
     """列出当前会话所有渠道仍有效的后台定时任务。"""
-    validated_session_id = _require_text(session_id, "session_id")
-    tasks = await ensure_async(list_scheduled_tasks)(validated_session_id)
+    validated_user_id = _require_text(user_id, "user_id")
+    tasks = await ensure_async(list_scheduled_tasks)(validated_user_id)
     return json.dumps(
         [task.model_dump() for task in tasks],
         ensure_ascii=False,
@@ -146,12 +146,12 @@ async def feishu_schedule_list(session_id: str | None) -> str:
 
 async def feishu_schedule_cancel(
     args: FeishuScheduleCancelArgs,
-    session_id: str | None,
+    user_id: str | None,
 ) -> str:
     """取消当前会话拥有的后台定时任务。"""
-    validated_session_id = _require_text(session_id, "session_id")
+    validated_user_id = _require_text(user_id, "user_id")
     await ensure_async(cancel_scheduled_task)(
-        session_id=validated_session_id,
+        user_id=validated_user_id,
         job_id=args.job_id,
     )
     return f"Scheduled task cancelled successfully: {args.job_id}"

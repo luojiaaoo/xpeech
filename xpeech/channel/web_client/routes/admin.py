@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..dao import (
-    DuplicateSessionIdError,
+    DuplicateUserIdError,
     ProtectedAdminDeletionError,
     ProtectedAdminIdentityError,
     User,
@@ -34,12 +34,12 @@ def create_admin_router(
         try:
             user = await dao.create_user(
                 username=body.username,
-                session_id=body.session_id,
+                user_id=body.user_id,
                 password_hash=password_hash(body.password),
                 is_admin=body.is_admin,
             )
-        except DuplicateSessionIdError:
-            raise HTTPException(status.HTTP_409_CONFLICT, "会话 ID 已存在")
+        except DuplicateUserIdError:
+            raise HTTPException(status.HTTP_409_CONFLICT, "用户 ID 已存在")
         return public_user(user)
 
     @router.patch("/users/{user_id}")
@@ -57,7 +57,7 @@ def create_admin_router(
             user = await dao.update_user(
                 user_id,
                 username=values.get("username"),
-                session_id=values.get("session_id"),
+                user_id=values.get("user_id"),
                 password_hash=(
                     password_hash(values["password"])
                     if "password" in values
@@ -66,12 +66,12 @@ def create_admin_router(
                 is_admin=values.get("is_admin"),
                 is_active=values.get("is_active"),
             )
-        except DuplicateSessionIdError:
-            raise HTTPException(status.HTTP_409_CONFLICT, "会话 ID 已存在")
+        except DuplicateUserIdError:
+            raise HTTPException(status.HTTP_409_CONFLICT, "用户 ID 已存在")
         except ProtectedAdminIdentityError:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                "默认管理员的用户名和会话 ID 不可修改",
+                "默认管理员的用户名和用户 ID 不可修改",
             )
         if user is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")

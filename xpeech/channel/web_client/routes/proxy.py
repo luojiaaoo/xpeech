@@ -59,7 +59,7 @@ def create_proxy_router(
                 )
             )
         chat_stream = await open_chat_stream(
-            user.session_id,
+            user.user_id,
             user.username,
             content,
             json.dumps(metadata, ensure_ascii=False),
@@ -97,7 +97,7 @@ def create_proxy_router(
         answer: Annotated[str, Form()],
         user: CurrentUser,
     ):
-        upstream = await submit_question(user.session_id, answer, backend_url)
+        upstream = await submit_question(user.user_id, answer, backend_url)
         return Response(
             upstream.content,
             status_code=upstream.status_code,
@@ -109,7 +109,7 @@ def create_proxy_router(
         path: str,
         user: CurrentUser,
     ):
-        upstream = await fetch_file(user.session_id, path, backend_url)
+        upstream = await fetch_file(user.user_id, path, backend_url)
         headers = {}
         if disposition := upstream.headers.get("content-disposition"):
             headers["Content-Disposition"] = disposition
@@ -134,7 +134,7 @@ def create_proxy_router(
         async with httpx.AsyncClient(timeout=30) as client:
             upstream = await client.get(
                 upstream_url,
-                headers=_backend_headers(user.session_id),
+                headers=_backend_headers(user.user_id),
                 params=request.query_params.multi_items(),
             )
 

@@ -3,8 +3,10 @@ import os
 import subprocess
 import sys
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -14,6 +16,7 @@ from xpeech.agent.record import (
     create_db_and_tables,
 )
 from xpeech.agent.server.api import app
+from xpeech.agent.server import server as server_module
 from xpeech.agent.server.routes.statistics import (
     STATISTICS_CACHE_TTL_S,
     SqliteConversationStatisticsRepository,
@@ -43,13 +46,13 @@ def test_statistics_timezone_does_not_depend_on_system_tzdata():
     assert result.stdout.strip() == "8:00:00"
 
 
-async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
+async def _seed_statistics_database(database_path: Path, *, legacy_schema: bool = False) -> AsyncEngine:
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path.as_posix()}")
     await create_db_and_tables(engine)
     repository = SqliteConversationRecordRepository(engine)
     records = [
         ConversationRecord(
-            session_id="session-alice",
+            user_id="session-alice",
             sender_name="alice",
             user_question="first question",
             model_response="first answer",
@@ -60,7 +63,7 @@ async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
             duration_s=1.25,
         ),
         ConversationRecord(
-            session_id="session-bob",
+            user_id="session-bob",
             sender_name="alice",
             user_question="second question",
             model_response="second answer",
@@ -71,7 +74,7 @@ async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
             duration_s=2.5,
         ),
         ConversationRecord(
-            session_id="session-alice",
+            user_id="session-alice",
             sender_name="alice",
             user_question="latest question",
             model_response="latest answer",
@@ -84,6 +87,11 @@ async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
     ]
     for record in records:
         await repository.append(record)
+    if legacy_schema:
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql(
+                "ALTER TABLE conversation_records RENAME COLUMN user_id TO session_id"
+            )
     await engine.dispose()
     return engine
 
@@ -101,8 +109,12 @@ def _clear_statistics_caches() -> None:
         getattr(SqliteConversationStatisticsRepository, method_name).cache_clear()
 
 
-def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records(tmp_path: Path):
-    engine = asyncio.run(_seed_statistics_database(tmp_path / "statistics.db"))
+@pytest.mark.parametrize("legacy_schema", [False, True])
+def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy_schema: bool,
+):
+    engine = asyncio.run(_seed_statistics_database(tmp_path / "statistics.db", legacy_schema=legacy_schema))
+    monkeypatch.setattr(server_module, "create_db_and_tables", partial(create_db_and_tables, engine))
     repository = SqliteConversationStatisticsRepository(engine)
     _clear_statistics_caches()
     app.dependency_overrides[get_statistics_repository] = lambda: repository
@@ -144,8 +156,8 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
             searched = client.get(
                 "/statistics/records",
                 params=[
-                    ("session_id", "session-alice"),
-                    ("session_id", "session-bob"),
+                    ("user_id", "session-alice"),
+                    ("user_id", "session-bob"),
                     ("keyword", "second"),
                     ("limit", "10"),
                 ],
@@ -177,13 +189,13 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
     }
     assert [point["bucket"] for point in timeseries.json()["data"]] == ["2026-08-18", "2026-08-19"]
     assert [user["sender_name"] for user in users.json()["data"]] == ["alice", "alice"]
-    assert [user["session_id"] for user in users.json()["data"]] == [
+    assert [user["user_id"] for user in users.json()["data"]] == [
         "session-alice",
         "session-bob",
     ]
     assert users.json()["total"] == 2
     assert users.json()["data"][0]["active_day_count"] == 2
-    assert [session["session_id"] for session in sessions.json()["data"]] == [
+    assert [session["user_id"] for session in sessions.json()["data"]] == [
         "session-alice",
         "session-bob",
     ]

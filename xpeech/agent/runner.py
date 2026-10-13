@@ -5,35 +5,35 @@ from ..config.settings import Settings, settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..utils.helper import ensure_path_async
 from ..utils.session import create_workspace_templates
-from ..utils.session_id import validate_session_id
+from ..utils.user_id import validate_user_id
 from .loop import AgentLoop
 from .server.schema import InboundMessage
 from .tools.registry import register_default_tools
 
 
 class AgentRunner:
-    """Prepare and run an agent for one conversation session."""
+    """Prepare and run an agent in one user's workspace."""
 
-    def __init__(self, session_id: str, *, config: Settings) -> None:
-        self.session_id = validate_session_id(session_id)
+    def __init__(self, user_id: str, *, config: Settings) -> None:
+        self.user_id = validate_user_id(user_id)
         self.config = config
-        self.workspace = (config.path.workspace_base_path / self.session_id).resolve()
+        self.workspace = (config.path.workspace_base_path / self.user_id).resolve()
         self._agent_loop: AgentLoop | None = None
 
     @classmethod
     async def create(
         cls,
-        session_id: str,
+        user_id: str,
         *,
         config: Settings = settings,
     ) -> Self:
-        """Create a fully initialized runner for one conversation session."""
-        runner = cls(session_id, config=config)
+        """Create a fully initialized runner for one user."""
+        runner = cls(user_id, config=config)
         await runner._initialize()
         return runner
 
     async def _initialize(self) -> None:
-        """Initialize the session workspace, provider, tools, and agent loop."""
+        """Initialize the user workspace, provider, tools, and agent loop."""
         await create_workspace_templates(await ensure_path_async(self.workspace))
 
         llm_config = self.config.llm
@@ -56,7 +56,7 @@ class AgentRunner:
             max_iterations=llm_config.max_iterations,
         )
         await register_default_tools(
-            session_id=self.session_id,
+            user_id=self.user_id,
             provider=provider,
             workspace=self.workspace,
             config=self.config.tool,
@@ -70,8 +70,8 @@ class AgentRunner:
         background: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one inbound message and yield the agent's events."""
-        if message.session_id != self.session_id:
-            raise ValueError("Inbound message session_id does not match the runner session")
+        if message.user_id != self.user_id:
+            raise ValueError("Inbound message user_id does not match the runner user")
 
         if self._agent_loop is None:
             raise RuntimeError("AgentRunner must be created with AgentRunner.create()")

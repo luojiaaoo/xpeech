@@ -161,6 +161,11 @@ def start_background_scheduler(
     timezone = scheduler.timezone
     scheduler.start(paused=True)
     try:
+        for job in scheduler.get_jobs():
+            if job.func is run_feishu_background_task and "session_id" in job.kwargs:
+                kwargs = dict(job.kwargs)
+                kwargs["user_id"] = kwargs.pop("session_id")
+                scheduler.modify_job(job.id, kwargs=kwargs)
         current_time = now or datetime.now(timezone)
         if current_time.tzinfo is None:
             current_time = current_time.replace(tzinfo=timezone)
@@ -204,7 +209,7 @@ def schedule_feishu_task(
     prompt: str,
     run_at: datetime | None,
     cron: str | None,
-    session_id: str,
+    user_id: str,
     sender_name: str,
     session_metadata: dict[str, str],
 ) -> Job:
@@ -234,7 +239,7 @@ def schedule_feishu_task(
     # Keep the count-and-add operation atomic inside the supported single process.
     with _schedule_lock:
         session_job_count = sum(
-            job.kwargs.get("session_id") == session_id
+            job.kwargs.get("user_id") == user_id
             for job in scheduler.get_jobs()
         )
         if session_job_count >= MAX_SCHEDULED_TASKS_PER_SESSION:
@@ -252,7 +257,7 @@ def schedule_feishu_task(
             kwargs={
                 "job_id": job_id,
                 "prompt": prompt,
-                "session_id": session_id,
+                "user_id": user_id,
                 "sender_name": sender_name,
                 "session_metadata": dict(session_metadata),
                 "schedule_type": schedule_type,
@@ -265,11 +270,11 @@ def schedule_feishu_task(
         )
 
 
-def list_scheduled_tasks(session_id: str) -> list[ScheduledTask]:
+def list_scheduled_tasks(user_id: str) -> list[ScheduledTask]:
     """List all active scheduled tasks owned by a session, regardless of channel."""
     tasks = []
     for job in get_background_scheduler().get_jobs():
-        if job.kwargs.get("session_id") != session_id:
+        if job.kwargs.get("user_id") != user_id:
             continue
         metadata = job.kwargs.get("session_metadata") or {}
         tasks.append(
@@ -292,11 +297,11 @@ def list_scheduled_tasks(session_id: str) -> list[ScheduledTask]:
     )
 
 
-def cancel_scheduled_task(*, session_id: str, job_id: str) -> None:
+def cancel_scheduled_task(*, user_id: str, job_id: str) -> None:
     """Remove a job only when it belongs to the requesting session."""
     scheduler = get_background_scheduler()
     job = scheduler.get_job(job_id)
-    if job is None or job.kwargs.get("session_id") != session_id:
+    if job is None or job.kwargs.get("user_id") != user_id:
         raise ValueError("Scheduled task is not available for this session")
     scheduler.remove_job(job_id)
 
@@ -305,7 +310,7 @@ async def run_feishu_background_task(
     *,
     job_id: str,
     prompt: str,
-    session_id: str,
+    user_id: str,
     sender_name: str,
     session_metadata: dict[str, str],
     schedule_type: str,
@@ -332,7 +337,7 @@ async def run_feishu_background_task(
         metadata = dict(session_metadata)
         metadata["source"] = "scheduled_task"
         message = InboundMessage(
-            session_id=session_id,
+            user_id=user_id,
             sender_name=sender_name,
             session_metadata=metadata,
             content=[
@@ -348,15 +353,15 @@ async def run_feishu_background_task(
             timestamp=datetime.now().astimezone(),
             files=[],
         )
-        runner = await AgentRunner.create(session_id)
+        runner = await AgentRunner.create(user_id)
         content = await runner.run_once(message, background=True)
         if not isinstance(content, str) or not content.strip():
             raise RuntimeError("Scheduled Agent task completed without model output")
     except Exception:
         logger.exception(
-            "Scheduled Agent task failed job_id={} session_id={}",
+            "Scheduled Agent task failed job_id={} user_id={}",
             job_id,
-            session_id,
+            user_id,
         )
         content = BACKGROUND_TASK_FAILURE_MESSAGE
     finally:

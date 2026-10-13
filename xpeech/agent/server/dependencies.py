@@ -6,23 +6,23 @@ from urllib.parse import unquote
 from fastapi import Depends, Form, Header, HTTPException, status
 
 from ...exceptions import PathProtectionError
-from ...utils.session_id import validate_session_id
+from ...utils.user_id import validate_user_id
 from .schema import InputContent
 from .session_guard import SessionChatGuard
 
 CHAT_GUARD = SessionChatGuard()
 
 
-def session_id_header(
-    session_id: Annotated[str, Header(description="会话的ID", alias="x-session-id")],
+def user_id_header(
+    user_id: Annotated[str, Header(description="用户 ID", alias="x-user-id")],
 ) -> str:
-    """Validate the session ID from the request header."""
+    """Validate the user ID from the request header."""
     try:
-        return validate_session_id(session_id)
+        return validate_user_id(user_id)
     except PathProtectionError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid session_id",
+            detail="Invalid user_id",
         ) from None
 
 
@@ -83,15 +83,15 @@ def content(
 
 
 async def acquire_chat_session(
-    session_id: Annotated[str, Depends(session_id_header)],
+    user_id: Annotated[str, Depends(user_id_header)],
 ) -> AsyncIterator[None]:
     """占用会话直至响应结束，并拒绝同一会话的并发请求。"""
-    if not await CHAT_GUARD.try_acquire(session_id):
+    if not await CHAT_GUARD.try_acquire(user_id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Session '{session_id}' already has an active chat request",
+            detail=f"Session '{user_id}' already has an active chat request",
         )
     try:
         yield
     finally:
-        await CHAT_GUARD.release(session_id)
+        await CHAT_GUARD.release(user_id)

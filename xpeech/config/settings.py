@@ -186,7 +186,7 @@ class OAuth2Config(BaseModel):
     userinfo_url: str = ""
     redirect_uri: str | None = None
     scopes: list[str] = Field(default_factory=lambda: ["openid", "profile"])
-    session_id_claim: str = Field(default=".sub", min_length=1)
+    user_id_claim: str = Field(default=".sub", min_length=1)
     username_claim: str = Field(default=".name", min_length=1)
     auto_create_users: bool = False
     use_pkce: bool = True
@@ -196,7 +196,7 @@ class OAuth2Config(BaseModel):
     extra_authorization_params: dict[str, str] = Field(default_factory=dict)
     userinfo_filter: str | None = Field(default=None, min_length=1)
 
-    @field_validator("session_id_claim", "username_claim", "userinfo_filter")
+    @field_validator("user_id_claim", "username_claim", "userinfo_filter")
     @classmethod
     def validate_jq_expressions(cls, value: str | None) -> str | None:
         if value is None:

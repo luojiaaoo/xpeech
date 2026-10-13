@@ -63,7 +63,7 @@ async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeyp
     config = ToolConfig.model_validate({"mcpServers": {"demo": {"command": "demo"}}})
 
     await registry.register_default_tools(
-        session_id="session-1",
+        user_id="session-1",
         provider=provider,
         workspace=tmp_path,
         config=config,

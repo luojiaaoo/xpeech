@@ -30,7 +30,7 @@ class SqliteConversationStatisticsRepository:
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         sender_name: str | None = None,
-        session_ids: tuple[str, ...] = (),
+        user_ids: tuple[str, ...] = (),
         question_keyword: str | None = None,
         after_id: int | None = None,
     ) -> Any:
@@ -40,8 +40,8 @@ class SqliteConversationStatisticsRepository:
             statement = statement.where(ConversationRecord.created_at < end_at)
         if sender_name is not None:
             statement = statement.where(ConversationRecord.sender_name == sender_name)
-        if session_ids:
-            statement = statement.where(ConversationRecord.session_id.in_(session_ids))
+        if user_ids:
+            statement = statement.where(ConversationRecord.user_id.in_(user_ids))
         if question_keyword:
             statement = statement.where(
                 ConversationRecord.user_question.contains(question_keyword, autoescape=True)
@@ -59,16 +59,16 @@ class SqliteConversationStatisticsRepository:
         sender_name: str | None = None,
     ) -> dict[str, Any]:
         users = self._with_filters(
-            select(ConversationRecord.sender_name, ConversationRecord.session_id),
+            select(ConversationRecord.sender_name, ConversationRecord.user_id),
             start_at=start_at,
             end_at=end_at,
             sender_name=sender_name,
-        ).group_by(ConversationRecord.sender_name, ConversationRecord.session_id)
+        ).group_by(ConversationRecord.sender_name, ConversationRecord.user_id)
         active_user_count = select(func.count()).select_from(users.subquery()).scalar_subquery()
         statement = select(
             func.count(ConversationRecord.id).label("question_count"),
             active_user_count.label("active_user_count"),
-            func.count(distinct(ConversationRecord.session_id)).label("session_count"),
+            func.count(distinct(ConversationRecord.user_id)).label("session_count"),
             func.coalesce(func.sum(ConversationRecord.model_call_count), 0).label("model_call_count"),
             func.coalesce(func.sum(ConversationRecord.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(ConversationRecord.output_tokens), 0).label("output_tokens"),
@@ -111,7 +111,7 @@ class SqliteConversationStatisticsRepository:
             select(
                 bucket,
                 ConversationRecord.sender_name,
-                ConversationRecord.session_id,
+                ConversationRecord.user_id,
                 func.count(ConversationRecord.id).label("question_count"),
                 func.coalesce(func.sum(ConversationRecord.model_call_count), 0).label("model_call_count"),
                 func.coalesce(func.sum(ConversationRecord.input_tokens), 0).label("input_tokens"),
@@ -120,7 +120,7 @@ class SqliteConversationStatisticsRepository:
                 func.count(ConversationRecord.duration_s).label("duration_count"),
             )
             .where(ConversationRecord.created_at.is_not(None))
-            .group_by(bucket, ConversationRecord.sender_name, ConversationRecord.session_id)
+            .group_by(bucket, ConversationRecord.sender_name, ConversationRecord.user_id)
         )
         per_user_statement = self._with_filters(
             per_user_statement,
@@ -134,7 +134,7 @@ class SqliteConversationStatisticsRepository:
                 per_user.c.bucket,
                 func.sum(per_user.c.question_count).label("question_count"),
                 func.count().label("active_user_count"),
-                func.count(distinct(per_user.c.session_id)).label("session_count"),
+                func.count(distinct(per_user.c.user_id)).label("session_count"),
                 func.sum(per_user.c.model_call_count).label("model_call_count"),
                 func.sum(per_user.c.input_tokens).label("input_tokens"),
                 func.sum(per_user.c.output_tokens).label("output_tokens"),
@@ -168,31 +168,31 @@ class SqliteConversationStatisticsRepository:
         statement = (
             select(
                 ConversationRecord.sender_name,
-                ConversationRecord.session_id,
+                ConversationRecord.user_id,
                 question_count,
                 func.count(distinct(local_day)).label("active_day_count"),
-                func.count(distinct(ConversationRecord.session_id)).label("session_count"),
+                func.count(distinct(ConversationRecord.user_id)).label("session_count"),
                 func.coalesce(func.sum(ConversationRecord.model_call_count), 0).label("model_call_count"),
                 func.coalesce(func.sum(ConversationRecord.input_tokens), 0).label("input_tokens"),
                 func.coalesce(func.sum(ConversationRecord.output_tokens), 0).label("output_tokens"),
                 func.avg(ConversationRecord.duration_s).label("average_duration_s"),
                 func.max(ConversationRecord.created_at).label("last_active_at"),
             )
-            .group_by(ConversationRecord.sender_name, ConversationRecord.session_id)
+            .group_by(ConversationRecord.sender_name, ConversationRecord.user_id)
             .order_by(
                 desc(question_count),
                 asc(ConversationRecord.sender_name),
-                asc(ConversationRecord.session_id),
+                asc(ConversationRecord.user_id),
             )
             .offset(offset)
             .limit(limit)
         )
         statement = self._with_filters(statement, start_at=start_at, end_at=end_at)
         filtered_users = self._with_filters(
-            select(ConversationRecord.sender_name, ConversationRecord.session_id),
+            select(ConversationRecord.sender_name, ConversationRecord.user_id),
             start_at=start_at,
             end_at=end_at,
-        ).group_by(ConversationRecord.sender_name, ConversationRecord.session_id)
+        ).group_by(ConversationRecord.sender_name, ConversationRecord.user_id)
         total_statement = select(func.count()).select_from(filtered_users.subquery())
         async with AsyncSession(self._engine) as session:
             rows = (await session.exec(statement)).all()
@@ -212,7 +212,7 @@ class SqliteConversationStatisticsRepository:
         question_count = func.count(ConversationRecord.id).label("question_count")
         statement = (
             select(
-                ConversationRecord.session_id,
+                ConversationRecord.user_id,
                 ConversationRecord.sender_name,
                 question_count,
                 func.coalesce(func.sum(ConversationRecord.model_call_count), 0).label("model_call_count"),
@@ -222,7 +222,7 @@ class SqliteConversationStatisticsRepository:
                 func.min(ConversationRecord.created_at).label("first_active_at"),
                 func.max(ConversationRecord.created_at).label("last_active_at"),
             )
-            .group_by(ConversationRecord.session_id, ConversationRecord.sender_name)
+            .group_by(ConversationRecord.user_id, ConversationRecord.sender_name)
             .order_by(desc(func.max(ConversationRecord.id)))
             .offset(offset)
             .limit(limit)
@@ -234,11 +234,11 @@ class SqliteConversationStatisticsRepository:
             sender_name=sender_name,
         )
         filtered_groups = self._with_filters(
-            select(ConversationRecord.session_id, ConversationRecord.sender_name),
+            select(ConversationRecord.user_id, ConversationRecord.sender_name),
             start_at=start_at,
             end_at=end_at,
             sender_name=sender_name,
-        ).group_by(ConversationRecord.session_id, ConversationRecord.sender_name)
+        ).group_by(ConversationRecord.user_id, ConversationRecord.sender_name)
         total_statement = select(func.count()).select_from(filtered_groups.subquery())
         async with AsyncSession(self._engine) as session:
             rows = (await session.exec(statement)).all()
@@ -271,7 +271,7 @@ class SqliteConversationStatisticsRepository:
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         sender_name: str | None = None,
-        session_ids: tuple[str, ...] = (),
+        user_ids: tuple[str, ...] = (),
         question_keyword: str | None = None,
         after_id: int | None = None,
         limit: int = 20,
@@ -283,7 +283,7 @@ class SqliteConversationStatisticsRepository:
             start_at=start_at,
             end_at=end_at,
             sender_name=sender_name,
-            session_ids=session_ids,
+            user_ids=user_ids,
             question_keyword=question_keyword,
             after_id=after_id,
         )
@@ -300,7 +300,7 @@ class SqliteConversationStatisticsRepository:
             start_at=start_at,
             end_at=end_at,
             sender_name=sender_name,
-            session_ids=session_ids,
+            user_ids=user_ids,
             question_keyword=question_keyword,
             after_id=after_id,
         )
@@ -347,7 +347,7 @@ class TimeseriesResponse(BaseModel):
 
 class UserStatistics(BaseModel):
     sender_name: str
-    session_id: str
+    user_id: str
     question_count: int
     active_day_count: int
     session_count: int
@@ -367,7 +367,7 @@ class UserStatisticsResponse(BaseModel):
 
 
 class SessionStatistics(BaseModel):
-    session_id: str
+    user_id: str
     sender_name: str
     question_count: int
     model_call_count: int
@@ -390,7 +390,7 @@ class ConversationRecordResponse(BaseModel):
     id: int
     created_at: datetime
     duration_s: float
-    session_id: str
+    user_id: str
     sender_name: str
     user_question: str
     model_response: str
@@ -481,7 +481,7 @@ def _record_response(record: ConversationRecord) -> ConversationRecordResponse:
         id=record.id,
         created_at=_as_utc(record.created_at),
         duration_s=_rounded_duration(record.duration_s),
-        session_id=record.session_id,
+        user_id=record.user_id,
         sender_name=record.sender_name,
         user_question=record.user_question,
         model_response=record.model_response,
@@ -589,7 +589,7 @@ async def users(
         data.append(
             UserStatistics(
                 sender_name=row["sender_name"],
-                session_id=row["session_id"],
+                user_id=row["user_id"],
                 question_count=int(row["question_count"]),
                 active_day_count=int(row["active_day_count"]),
                 session_count=int(row["session_count"]),
@@ -628,7 +628,7 @@ async def sessions(
         output_tokens = int(row["output_tokens"])
         data.append(
             SessionStatistics(
-                session_id=row["session_id"],
+                user_id=row["user_id"],
                 sender_name=row["sender_name"],
                 question_count=int(row["question_count"]),
                 model_call_count=int(row["model_call_count"]),
@@ -682,7 +682,7 @@ async def records(
     start_at: Annotated[datetime | None, Query(description="统计开始时间，包含该时间")] = None,
     end_at: Annotated[datetime | None, Query(description="统计结束时间，不包含该时间")] = None,
     sender_name: Annotated[str | None, Query(description="按发送者用户名筛选")] = None,
-    session_id: Annotated[list[str] | None, Query(description="按一个或多个会话 ID 筛选")] = None,
+    user_id: Annotated[list[str] | None, Query(description="按一个或多个用户 ID 筛选")] = None,
     keyword: Annotated[str | None, Query(max_length=200, description="按问题内容关键词筛选")] = None,
     after_id: Annotated[int | None, Query(ge=0, description="只返回 ID 大于该值的新记录")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -691,13 +691,13 @@ async def records(
     """分页查询完整问答；传 after_id 时按 ID 正序返回增量记录。"""
     response.headers["Cache-Control"] = "no-store"
     normalized_start, normalized_end = _period(start_at, end_at)
-    session_ids = tuple(dict.fromkeys(value.strip() for value in (session_id or []) if value.strip()))
+    user_ids = tuple(dict.fromkeys(value.strip() for value in (user_id or []) if value.strip()))
     normalized_keyword = keyword.strip() if keyword and keyword.strip() else None
     result, summary = await repository.records(
         start_at=normalized_start,
         end_at=normalized_end,
         sender_name=sender_name,
-        session_ids=session_ids,
+        user_ids=user_ids,
         question_keyword=normalized_keyword,
         after_id=after_id,
         limit=limit,

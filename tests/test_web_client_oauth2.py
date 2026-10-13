@@ -86,13 +86,13 @@ def test_oauth2_jq_expression_settings_are_validated_at_startup(tmp_path: Path):
     with pytest.raises(ValueError, match="jq 表达式"):
         OAuth2SettingsConfig(provider_name="XX", userinfo_filter="department == 1")
     with pytest.raises(ValueError, match="jq 表达式"):
-        OAuth2SettingsConfig(provider_name="XX", session_id_claim="sub")
+        OAuth2SettingsConfig(provider_name="XX", user_id_claim="sub")
     with pytest.raises(ValueError, match="jq 表达式"):
         OAuth2SettingsConfig(provider_name="XX", username_claim="data.name")
     assert (
         OAuth2SettingsConfig(
             provider_name="XX",
-            session_id_claim=".data.employee_no",
+            user_id_claim=".data.employee_no",
             username_claim=".data.name",
             userinfo_filter='.data.department == "R&D"',
         ).userinfo_filter
@@ -195,7 +195,7 @@ def test_oauth2_login_maps_to_an_existing_web_user(
                     userinfo_url="https://login.example.test/userinfo",
                     redirect_uri="https://assistant.example.test/api/auth/oauth2/callback",
                     scopes=("openid", "profile"),
-                    session_id_claim=".data.employee_no",
+                    user_id_claim=".data.employee_no",
                     username_claim=".data.name",
                     use_pkce=True,
                     token_auth_method="client_secret_post",
@@ -218,13 +218,13 @@ def test_oauth2_login_maps_to_an_existing_web_user(
 
         assert client.post(
             "/api/auth/login",
-            json={"session_id": "admin", "password": "admin123456"},
+            json={"user_id": "admin", "password": "admin123456"},
         ).status_code == 200
         assert client.post(
             "/api/admin/users",
             json={
                 "username": "OAuthUser",
-                "session_id": "oauth-user-42",
+                "user_id": "oauth-user-42",
                 "password": "local-password",
                 "is_admin": False,
             },
@@ -287,7 +287,7 @@ def test_oauth2_login_maps_to_an_existing_web_user(
             callback_location = urlsplit(callback.headers["location"])
             assert callback_location.path == "/"
             assert parse_qs(callback_location.query)["state"] == [entry_state]
-            assert client.get("/api/auth/me").json()["session_id"] == "oauth-user-42"
+            assert client.get("/api/auth/me").json()["user_id"] == "oauth-user-42"
 
             repeated_callback = client.get(
                 "/api/auth/oauth2/callback",
@@ -312,9 +312,9 @@ def test_oauth2_login_maps_to_an_existing_web_user(
             approved = client.post("/api/auth/oauth2/poll", json=poll_body)
             assert approved.status_code == 200
             assert approved.json()["status"] == "approved"
-            assert approved.json()["user"]["session_id"] == "oauth-user-42"
+            assert approved.json()["user"]["user_id"] == "oauth-user-42"
             assert "user_prefix" not in approved.json()
-            assert client.get("/api/auth/me").json()["session_id"] == "oauth-user-42"
+            assert client.get("/api/auth/me").json()["user_id"] == "oauth-user-42"
 
         injected = client.get("/api/auth/inject-prompt", params={"state": entry_state})
         assert injected.status_code == 200
@@ -390,7 +390,7 @@ def test_oauth2_login_uses_the_selected_provider(tmp_path: Path, monkeypatch):
             userinfo_url=f"{base_url}/userinfo",
             redirect_uri=None,
             scopes=("openid",),
-            session_id_claim=".sub",
+            user_id_claim=".sub",
             username_claim=".name",
             use_pkce=True,
             token_auth_method="client_secret_post",
@@ -474,7 +474,7 @@ def test_oauth2_endpoints_are_hidden_when_disabled(tmp_path: Path, monkeypatch):
         ).status_code == 404
         assert client.post(
             "/api/auth/login",
-            json={"session_id": "admin", "password": "admin123456"},
+            json={"user_id": "admin", "password": "admin123456"},
         ).status_code == 200
         assert client.get(
             "/api/auth/inject-prompt",

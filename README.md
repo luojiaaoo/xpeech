@@ -145,7 +145,7 @@ lark-cli docs +fetch --doc "<文档 URL 或 token>" --as user
 令牌按请求隔离，不存入会话历史，也不会写入进程级环境变量；同一会话的下次请求需重新携带。
 未提供令牌时仍可使用普通 Agent 工具，但飞书业务命令会报告缺少令牌。令牌过期或缺少权限时，
 由调用方取得有效令牌并通过新的 JWT 传入；后端不会自动申请或刷新。当前 CLI 仅支持用户身份。
-`SHELL_SESSION_ID` 仍用于会话上下文，不再用于查找令牌。
+`SHELL_USER_ID` 用于用户上下文。
 
 CLI 的 `app_id` 从 `conf.toml` 在构建时注入，修改后需重新构建镜像；
 `app_secret` 仅供可单独运行的飞书桥接使用，CLI 不读取它。
@@ -228,13 +228,26 @@ docker compose up -d --build --force-recreate backend
 
 ## 发送消息
 
-`/chat` 需要 Bearer JWT，并通过请求头传入会话 ID 和发送者用户名。JWT、会话 ID
-和发送者用户名都是必填项；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码：
+`/chat` 需要 Bearer JWT，并通过请求头传入用户 ID 和发送者用户名。JWT、用户 ID
+和发送者用户名都是必填项；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码。
+
+`user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、历史记录、技能、定时任务和 MCP 连接。
+请求头使用 `x-user-id`，接口字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
+OAuth2 用户标识配置使用 `user_id_claim`。升级时需要同步更新调用方和配置；
+启动时会自动迁移旧数据库字段和已保存定时任务的参数，现有工作区及历史文件路径不变。
+
+SQLite 自动迁移覆盖以下数据，无需手工修改数据库：
+
+- 后台任务：将已保存任务参数中的 `session_id` 转为 `user_id` 并写回 SQLite，之后再恢复调度。
+- 统计记录：将 `conversation_records.session_id` 改为 `user_id`，保留历史问答、Token 用量和索引。
+- Web 登录：将 `users.session_id` 改为 `user_id`，保留用户与登录状态。
+
+迁移可重复运行，后续启动会直接使用已转换的数据。
 
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-session-id: demo-session" \
+  -H "x-user-id: demo-user" \
   -H "x-sender-name: demo-user" \
   -F 'session_metadata={"channel":"curl"}' \
   -F 'content=[{"text":"你好，介绍一下你自己"}]'
@@ -245,7 +258,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-session-id: demo-session" \
+  -H "x-user-id: demo-user" \
   -H "x-sender-name: demo-user" \
   -F 'session_metadata={"channel":"curl"}' \
   -F 'content=[{"text":"帮我看看这个文件"}]' \
@@ -275,7 +288,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 
 每次成功完成的普通对话都会通过 SQLModel 追加到统一的
 `session_record_path` 数据库文件。SQLite 表名为 `conversation_records`，
-包含 `session_id`、`sender_name`、`user_question`、`model_response`、`input_tokens`、
+包含 `user_id`、`sender_name`、`user_question`、`model_response`、`input_tokens`、
 `output_tokens`、`model_call_count`、`created_at` 和 `duration_s` 九个业务字段，以及 ORM 使用的自增
 `id`。`created_at` 是应用写入记录时的 UTC 时间，`duration_s` 是本轮 Agent 处理耗时（秒）。
 `session_record_path` 默认是
@@ -441,7 +454,7 @@ tool_timeout = 120
 
 `command` 和 `url` 只能二选一。MCP Server 配置会按原样传入，不会做运行时字符串替换。
 
-MCP 连接按 `session_id` 隔离。同一会话在最后一次会话请求或 MCP 工具调用后的 10 分钟内复用连接；空闲超时后自动关闭，不同会话不会共享连接。
+MCP 连接按 `user_id` 隔离。同一会话在最后一次会话请求或 MCP 工具调用后的 10 分钟内复用连接；空闲超时后自动关闭，不同会话不会共享连接。
 
 注册后的工具名会加上 `mcp_<server>_` 前缀，例如 `filesystem` Server 暴露的 `read_file` 会注册为 `mcp_filesystem_read_file`。`enabled_tools` 可以填写 MCP 原始工具名，也可以填写加前缀后的工具名。
 
@@ -631,14 +644,14 @@ token_url = "https://login.example.com/oauth2/token"
 userinfo_url = "https://login.example.com/oauth2/userinfo"
 redirect_uri = "https://assistant.example.com/api/auth/oauth2/callback"
 scopes = ["openid", "profile"]
-session_id_claim = ".sub"
+user_id_claim = ".sub"
 username_claim = ".name"
 auto_create_users = false
 use_pkce = true
 token_auth_method = "client_secret_post"
 ```
 
-`session_id_claim` / `username_claim` 是对 userinfo JSON求值的
+`user_id_claim` / `username_claim` 是对 userinfo JSON求值的
 [jq](https://jqlang.github.io/jq/manual/) 查询，例如 `".data.employee_no"` 或
 `".data.items[0].id"`。
 
@@ -659,7 +672,7 @@ userinfo_filter = 'select(.data.department == "R&D")'
 `provider_name` 必须唯一（忽略首尾空格和大小写），前端和创建授权请求时用它选择对应配置。
 
 需要在 OAuth2 服务商后台将 `redirect_uri` 注册为回调地址。服务端会用
-`session_id_claim` 指定的用户信息字段查找本地用户的 `session_id`。默认
+`user_id_claim` 指定的用户信息字段查找本地用户的 `user_id`。默认
 `auto_create_users = false`，管理员需要预先创建匹配的本地账号；设为 `true` 时会自动创建
 普通用户，并使用 `username_claim` 作为显示名称。若服务商要求 HTTP Basic 方式提交客户端
 密钥，可将 `token_auth_method` 改为 `client_secret_basic`。额外的授权参数可通过

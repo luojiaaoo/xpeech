@@ -46,7 +46,7 @@ async def test_background_run_skips_yaml_history(tmp_path: Path, monkeypatch: py
     agent_loop._output_tokens = 0
     agent_loop._model_call_count = 0
     message = InboundMessage(
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Scheduler",
         session_metadata={"source": "scheduled_task"},
         content=[InputText(text="/new Run scheduled prompt")],
@@ -102,7 +102,7 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     agent_loop._output_tokens = 0
     agent_loop._model_call_count = 0
     message = InboundMessage(
-        session_id="session-1",
+        user_id="session-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="hello")],
@@ -116,8 +116,8 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "provider unavailable"
     agent_loop.history.save.assert_awaited_once()
-    saved_session_id, saved_messages = agent_loop.history.save.await_args.args
-    assert saved_session_id == "session-1"
+    saved_user_id, saved_messages = agent_loop.history.save.await_args.args
+    assert saved_user_id == "session-1"
     assert saved_messages[-1] == {
         "role": "user",
         "content": (

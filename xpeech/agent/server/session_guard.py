@@ -9,20 +9,20 @@ class SessionChatGuard:
         self._lock = asyncio.Lock()
         self._active_sessions: set[str] = set()
 
-    async def try_acquire(self, session_id: str) -> bool:
+    async def try_acquire(self, user_id: str) -> bool:
         """尝试立即占用会话；会话已被占用时返回 False。"""
         async with self._lock:
-            if session_id in self._active_sessions:
+            if user_id in self._active_sessions:
                 return False
-            self._active_sessions.add(session_id)
+            self._active_sessions.add(user_id)
             return True
 
-    async def release(self, session_id: str) -> None:
+    async def release(self, user_id: str) -> None:
         """释放指定会话；会话未被占用时不报错。"""
         async with self._lock:
-            self._active_sessions.discard(session_id)
+            self._active_sessions.discard(user_id)
 
-    async def is_active(self, session_id: str) -> bool:
+    async def is_active(self, user_id: str) -> bool:
         """判断指定会话当前是否已被请求占用。"""
         async with self._lock:
-            return session_id in self._active_sessions
+            return user_id in self._active_sessions

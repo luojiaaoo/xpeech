@@ -24,7 +24,7 @@ async def test_iter_chat_events_reads_streaming_error_response(monkeypatch: pyte
     message = Message(
         message_id="om_message",
         chat_id="oc_chat",
-        session_id="E1001",
+        user_id="E1001",
         sender_name="Alice",
         content=[TextData(text="hello")],
         timestamp=0,
@@ -64,7 +64,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
     message = Message(
         message_id="om_message",
         chat_id="oc_chat",
-        session_id="E1001",
+        user_id="E1001",
         sender_name="Alice",
         content=[TextData(text="hello")],
         timestamp=0,

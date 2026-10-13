@@ -31,7 +31,7 @@ def test_password_login_can_resolve_injected_prompt(tmp_path: Path):
         ).status_code == 401
         assert client.post(
             "/api/auth/login",
-            json={"session_id": "admin", "password": "admin123456"},
+            json={"user_id": "admin", "password": "admin123456"},
         ).status_code == 200
 
         injected = client.get("/api/auth/inject-prompt", params={"state": state})
@@ -56,7 +56,7 @@ def test_admin_can_delete_a_user_but_not_themselves(tmp_path: Path):
 
         login = client.post(
             "/api/auth/login",
-            json={"session_id": "admin", "password": "admin123456"},
+            json={"user_id": "admin", "password": "admin123456"},
         )
         admin_id = login.json()["id"]
         assert client.delete(f"/api/admin/users/{admin_id}").status_code == 400
@@ -65,7 +65,7 @@ def test_admin_can_delete_a_user_but_not_themselves(tmp_path: Path):
             "/api/admin/users",
             json={
                 "username": "测试Viewer",
-                "session_id": "viewer-session",
+                "user_id": "viewer-session",
                 "password": "viewer123456",
                 "is_admin": False,
             },
@@ -98,13 +98,13 @@ def test_regular_user_can_change_their_own_password(tmp_path: Path):
         ).status_code == 401
         client.post(
             "/api/auth/login",
-            json={"session_id": "admin", "password": "admin123456"},
+            json={"user_id": "admin", "password": "admin123456"},
         )
         client.post(
             "/api/admin/users",
             json={
                 "username": "普通用户",
-                "session_id": "regular-user",
+                "user_id": "regular-user",
                 "password": "old-password",
                 "is_admin": False,
             },
@@ -112,7 +112,7 @@ def test_regular_user_can_change_their_own_password(tmp_path: Path):
         client.post("/api/auth/logout")
         login = client.post(
             "/api/auth/login",
-            json={"session_id": "regular-user", "password": "old-password"},
+            json={"user_id": "regular-user", "password": "old-password"},
         )
         changed = client.patch(
             "/api/auth/password",
@@ -127,9 +127,9 @@ def test_regular_user_can_change_their_own_password(tmp_path: Path):
         client.post("/api/auth/logout")
         assert client.post(
             "/api/auth/login",
-            json={"session_id": "regular-user", "password": "old-password"},
+            json={"user_id": "regular-user", "password": "old-password"},
         ).status_code == 401
         assert client.post(
             "/api/auth/login",
-            json={"session_id": "regular-user", "password": "new-password"},
+            json={"user_id": "regular-user", "password": "new-password"},
         ).status_code == 200

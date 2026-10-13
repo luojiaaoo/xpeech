@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 export interface User {
   id: number;
-  session_id: string;
+  user_id: string;
   username: string;
   is_admin: boolean;
   is_active: boolean;
@@ -67,7 +67,7 @@ export interface StatisticsTimeseries {
 
 export interface StatisticsUser {
   sender_name: string;
-  session_id: string;
+  user_id: string;
   question_count: number;
   active_day_count: number;
   session_count: number;
@@ -87,7 +87,7 @@ export interface StatisticsUsers {
 }
 
 export interface StatisticsSession {
-  session_id: string;
+  user_id: string;
   sender_name: string;
   question_count: number;
   model_call_count: number;
@@ -110,7 +110,7 @@ export interface StatisticsRecord {
   id: number;
   created_at: string;
   duration_s: number;
-  session_id: string;
+  user_id: string;
   sender_name: string;
   user_question: string;
   model_response: string;

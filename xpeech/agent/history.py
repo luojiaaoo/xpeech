@@ -9,7 +9,7 @@ from loguru import logger
 
 from ..exceptions import PathProtectionError
 from ..utils.helper import LiteralDumper, ensure_path, read_text_async, write_text_async
-from ..utils.session_id import validate_session_id
+from ..utils.user_id import validate_user_id
 from .prompt.helper import remove_system_messages
 
 
@@ -20,18 +20,18 @@ class YamlHistoryRepository:
         """初始化历史目录。"""
         self._base_dir = ensure_path(base_dir.expanduser().resolve())
 
-    def _history_path(self, session_id: str) -> Path:
-        """校验会话 ID，并返回受保护的历史文件路径。"""
-        path = (self._base_dir / f"{validate_session_id(session_id)}.yaml").resolve()
+    def _history_path(self, user_id: str) -> Path:
+        """校验用户 ID，并返回受保护的历史文件路径。"""
+        path = (self._base_dir / f"{validate_user_id(user_id)}.yaml").resolve()
         try:
             path.relative_to(self._base_dir)
         except ValueError:
             raise PathProtectionError("Session history path escapes its storage directory") from None
         return path
 
-    async def load(self, session_id: str) -> list[dict[str, Any]]:
+    async def load(self, user_id: str) -> list[dict[str, Any]]:
         """加载会话历史，并移除已失效的系统提示词。"""
-        path = self._history_path(session_id)
+        path = self._history_path(user_id)
         if not path.exists():
             return []
         content = yaml.safe_load(await read_text_async(path)) or []
@@ -43,9 +43,9 @@ class YamlHistoryRepository:
         logger.info("Session history loaded messages={}", len(messages))
         return messages
 
-    async def save(self, session_id: str, history: list[dict[str, Any]]) -> None:
+    async def save(self, user_id: str, history: list[dict[str, Any]]) -> None:
         """以原子替换方式保存会话历史。"""
-        path = self._history_path(session_id)
+        path = self._history_path(user_id)
         serialized = yaml.dump(
             history,
             Dumper=LiteralDumper,
@@ -65,9 +65,9 @@ class YamlHistoryRepository:
                 await asyncio.to_thread(temporary_path.unlink)
         logger.info("Session history saved")
 
-    async def delete(self, session_id: str) -> None:
+    async def delete(self, user_id: str) -> None:
         """删除指定会话的历史文件；文件不存在时不报错。"""
-        path = self._history_path(session_id)
+        path = self._history_path(user_id)
         if path.exists():
             await asyncio.to_thread(path.unlink)
         logger.info("Session history deleted")
