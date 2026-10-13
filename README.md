@@ -79,8 +79,8 @@ algorithm = "HS256"
 access_token_expire_seconds = 60
 ```
 
-`secret_key` 至少 32 个字符；访问令牌最长有效 60 秒。Compose 中的 backend
-读取挂载的 `conf.toml`。
+`secret_key` 至少 32 个字符；访问令牌最长有效 60 秒。Compose 中的 backend 和
+web_client 会读取同一份 `conf.toml`，无需分别配置。
 
 ## 启动
 
@@ -170,10 +170,11 @@ Xpeech Deck 是自托管平台，需要与 Docker 和所有受管 Xpeech 实例�
 
 ## Docker Compose 部署
 
-Compose 只包含后端及其配套服务：
+Compose 会启动后端、Web 客户端及其配套服务：
 
 - `browserless`：Browserless Chromium CDP 服务，仅限 Docker 内网访问
 - `backend`：Xpeech API、Agent 和工具执行服务
+- `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
 
 先准备配置和环境变量：
 
@@ -184,35 +185,37 @@ cp .env.example .env
 
 填写 `conf.toml` 中的 `llm.api_key` 和 `jwt.secret_key`，并确认
 `.env` 中的 `CDP_URL` 与容器网络一致，并配置 CLI 使用的 `feishu.app_id`。
-构建并启动后端及其配套服务：
+构建并启动：
 
 ```bash
 docker compose up -d --build
 ```
 
-如之前已启动飞书、Web 或令牌管理容器，迁移时使用以下命令移除已不在配置中的旧容器，
-宿主机 `docker_data` 中的持久化数据保留：
+如之前已启动飞书或令牌管理容器，迁移时可使用以下命令移除已不在配置中的旧容器，
+宿主机 `docker_data` 中的持久化数据会保留：
 
 ```bash
 docker compose up -d --build --remove-orphans
 ```
 
-后端默认暴露在 `http://localhost:7878`，可通过 `BACKEND_PORT` 修改端口。
+后端默认暴露在 `http://localhost:7878`，Web 客户端默认暴露在
+`http://localhost:7939`。可通过 `BACKEND_PORT` 和 `WEB_CLIENT_PORT` 修改端口。
 
 ```bash
-BACKEND_PORT=8080 docker compose up -d --build
+BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 ```
 
 查看运行状态和日志：
 
 ```bash
 docker compose ps
-docker compose logs -f browserless backend
+docker compose logs -f browserless backend web_client
 ```
 
 持久化数据统一映射到宿主机
 的 `./docker_data/` 目录，其中包含 `session`、`workspace_base`、
-`browser_preview` 和 `logs`；缓存目录不做宿主机磁盘
+`browser_preview`、`logs` 和 `web_client`；Web 用户数据库保存在
+`web_client/users.db`，缓存目录不做宿主机磁盘
 映射。`conf.toml` 以只读方式挂载，`.env` 通过 `env_file` 注入进程。普通运行时配置修改后重建容器
 即可生效；`feishu.app_id` 修改后需要增加 `--build` 重新编译 lark-cli：
 
