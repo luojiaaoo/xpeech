@@ -214,6 +214,11 @@ async def _run_wrapped_command(
             await asyncio.wait_for(process.wait(), timeout=timeout_ms / 1000)
         except TimeoutError:
             timed_out = True
+            logger.error(
+                "Shell command timed out after {}ms; terminating process group pid={}",
+                timeout_ms,
+                process.pid,
+            )
             await _stop_process(process)
         except asyncio.CancelledError:
             await _stop_process(process)
