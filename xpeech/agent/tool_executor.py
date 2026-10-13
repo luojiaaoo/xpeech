@@ -95,14 +95,11 @@ class ToolExecutor:
                         value = await tool_call_func(**kwargs)
                     else:
                         value = await tool_call_func(model_info.model_cls(**tool_call.arguments), **kwargs)
-                    if (
-                        isinstance(value, str)
-                        and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS
-                    ):
+                    if isinstance(value, str) and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS:
                         value = await self._limit_text(tool_call, value, self._max_result_chars)
-            except TimeoutError as exc:
+            except Exception as exc:  # noqa: BLE001 - tool failures are returned to the model
                 duration = time.perf_counter() - start_time
-                if timeout_scope.expired():
+                if isinstance(exc, TimeoutError) and timeout_scope.expired():
                     error = f"Tool call timed out after {self._max_tool_timeout:g}s"
                     logger.warning(
                         "Tool call timed out loop_count={} tool_name={} args={} timeout={}s duration={:.2f}s",
@@ -114,46 +111,23 @@ class ToolExecutor:
                     )
                 else:
                     error = format_exception2llm(exc)
-                    logger.exception(
-                        "Tool call failed loop_count={} tool_name={} args={} duration={:.2f}s",
-                        loop_count,
-                        tool_call.name,
-                        tool_call.arguments,
-                        duration,
-                    )
-                return ToolExecutionResult(
-                    call=tool_call,
-                    value=error,
-                    succeeded=False,
-                    duration_seconds=duration,
-                )
-            except PathProtectionError as exc:
-                duration = time.perf_counter() - start_time
-                error = format_exception2llm(exc)
-                logger.warning(
-                    "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
-                    loop_count,
-                    tool_call.name,
-                    tool_call.arguments,
-                    error,
-                    duration,
-                )
-                return ToolExecutionResult(
-                    call=tool_call,
-                    value=error,
-                    succeeded=False,
-                    duration_seconds=duration,
-                )
-            except Exception as exc:  # noqa: BLE001 - tool failures are returned to the model
-                duration = time.perf_counter() - start_time
-                error = format_exception2llm(exc)
-                logger.exception(
-                    "Tool call failed loop_count={} tool_name={} args={} duration={:.2f}s",
-                    loop_count,
-                    tool_call.name,
-                    tool_call.arguments,
-                    duration,
-                )
+                    if isinstance(exc, PathProtectionError):
+                        logger.warning(
+                            "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
+                            loop_count,
+                            tool_call.name,
+                            tool_call.arguments,
+                            error,
+                            duration,
+                        )
+                    else:
+                        logger.exception(
+                            "Tool call failed loop_count={} tool_name={} args={} duration={:.2f}s",
+                            loop_count,
+                            tool_call.name,
+                            tool_call.arguments,
+                            duration,
+                        )
                 return ToolExecutionResult(
                     call=tool_call,
                     value=error,

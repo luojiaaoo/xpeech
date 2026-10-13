@@ -136,14 +136,22 @@ class TestToolExecutor:
     @pytest.mark.asyncio
     async def test_shell_timeout_terminates_command_and_preserves_partial_output(self, tmp_path: Path, monkeypatch):
         monkeypatch.setattr(sandbox, "wrap_command", lambda command, workspace, env=None: command)
+        logged_errors: list[str] = []
+        monkeypatch.setattr(
+            shell_module.logger,
+            "error",
+            lambda message, *args: logged_errors.append(message.format(*args)),
+        )
 
         result = await asyncio.wait_for(
             _run_wrapped_command("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500),
-            timeout=2,
+            timeout=5,
         )
 
         assert result.timed_out is True
         assert result.stdout == b"partial output\n"
+        assert len(logged_errors) == 1
+        assert logged_errors[0].startswith("Shell command timed out after 500ms; terminating process group pid=")
         output = _format_command_output(
             result.stdout,
             result.stderr,
