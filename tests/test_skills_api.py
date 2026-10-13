@@ -59,7 +59,7 @@ def test_import_and_list_session_skill(skill_api: tuple[TestClient, Path, dict[s
 
 
 def test_skill_list_is_isolated_by_session(skill_api: tuple[TestClient, Path, dict[str, str]]):
-    client, _, headers = skill_api
+    client, workspace_root, headers = skill_api
     imported = client.post(
         "/skills/import",
         params={"session_id": "session-a"},
@@ -71,7 +71,36 @@ def test_skill_list_is_isolated_by_session(skill_api: tuple[TestClient, Path, di
     other_session = client.get("/skills", params={"session_id": "session-b"}, headers=headers)
 
     assert other_session.status_code == 200
+    assert {skill["source"] for skill in other_session.json()} == {"builtin"}
+    assert all(
+        Path(skill["path"]).is_relative_to(workspace_root / "session-b" / "skills")
+        for skill in other_session.json()
+    )
     assert "hello-skill" not in {skill["metadata"]["name"] for skill in other_session.json()}
+    assert (workspace_root / "session-b").is_dir()
+
+
+@pytest.mark.parametrize("params", [None, {"session_id": ""}])
+def test_skill_list_without_session_returns_only_builtin_skills(
+    skill_api: tuple[TestClient, Path, dict[str, str]],
+    params: dict[str, str] | None,
+):
+    client, _, headers = skill_api
+    imported = client.post(
+        "/skills/import",
+        params={"session_id": "session-a"},
+        files={"file": ("SKILL.md", _skill_file(), "text/markdown")},
+        headers=headers,
+    )
+    assert imported.status_code == 201
+
+    response = client.get("/skills", params=params, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()
+    assert {skill["source"] for skill in response.json()} == {"builtin"}
+    assert {skill["path"] for skill in response.json()} == {""}
+    assert "hello-skill" not in {skill["metadata"]["name"] for skill in response.json()}
 
 
 def test_import_rejects_duplicate_skill(skill_api: tuple[TestClient, Path, dict[str, str]]):

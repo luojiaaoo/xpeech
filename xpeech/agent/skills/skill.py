@@ -5,11 +5,12 @@ from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Literal
 
+import aiofiles.os
 import yaml
 from loguru import logger
 from pydantic import BaseModel, Field, computed_field
 
-from ...utils.helper import read_text_async
+from ...utils.helper import ensure_path_async, read_text_async
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent / "buildin"
@@ -91,36 +92,47 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
 
-    def __init__(self, workspace: Path):
-        self.workspace_skills = workspace / "skills"
+    def __init__(self, workspace: Path | None):
+        self.workspace_skills = workspace / "skills" if workspace is not None else None
         self.builtin_skills = BUILTIN_SKILLS_DIR
 
-    def _skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
+    async def _skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
         """Return skill documents, with built-ins taking precedence."""
         builtin_dirs = iter_builtin_skill_dirs()
         builtin_dir_names = {skill_dir.name for skill_dir in builtin_dirs}
         files: list[tuple[Path, Literal["builtin", "workspace"]]] = [
             (skill_dir / "SKILL.md", "builtin") for skill_dir in builtin_dirs
         ]
-        if self.workspace_skills.exists():
-            files.extend(
-                (skill_dir / "SKILL.md", "workspace")
-                for skill_dir in sorted(self.workspace_skills.iterdir(), key=lambda path: path.name)
-                if skill_dir.is_dir() and skill_dir.name not in builtin_dir_names and (skill_dir / "SKILL.md").is_file()
-            )
+        if self.workspace_skills is not None:
+            await ensure_path_async(self.workspace_skills)
+            entries = await aiofiles.os.scandir(self.workspace_skills)
+            for entry in sorted(entries, key=lambda item: item.name):
+                skill_dir = self.workspace_skills / entry.name
+                skill_file = skill_dir / "SKILL.md"
+                if (
+                    entry.name not in builtin_dir_names
+                    and await aiofiles.os.path.isdir(skill_dir)
+                    and await aiofiles.os.path.isfile(skill_file)
+                ):
+                    files.append((skill_file, "workspace"))
         return files
 
     async def list_skill_info(self) -> list[SkillInfo]:
         """Return valid skills with metadata and full SKILL.md content."""
         skills = []
         seen_names = set()
-        for skill_file, source in self._skill_files():
+        for skill_file, source in await self._skill_files():
             content = await read_text_async(skill_file)
             # Built-in skills are mounted into the workspace by the shell sandbox.
-            visible_file = (
-                self.workspace_skills / skill_file.parent.name / "SKILL.md" if source == "builtin" else skill_file
-            )
-            skill = SkillInfo(source=source, path=str(visible_file), content=content)
+            if source == "builtin":
+                visible_path = (
+                    str(self.workspace_skills / skill_file.parent.name / "SKILL.md")
+                    if self.workspace_skills is not None
+                    else ""
+                )
+            else:
+                visible_path = str(skill_file)
+            skill = SkillInfo(source=source, path=visible_path, content=content)
             try:
                 metadata = skill.metadata
             except ValueError as exc:
