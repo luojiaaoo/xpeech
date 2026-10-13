@@ -1,21 +1,25 @@
 """Skills loader for agent capabilities."""
 
 import re
+from functools import cached_property
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel
+from loguru import logger
+from pydantic import BaseModel, Field, computed_field
 
 from ...utils.helper import read_text_async
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent / "buildin"
+FRONTMATTER_PATTERN = re.compile(r"^---\r?\n(.*?)\r?\n---(?:\r?\n|$)", re.DOTALL)
 
 
 class SkillMetadata(BaseModel):
     """Fields read from a skill's YAML frontmatter."""
 
+    name: str
     description: str
     always: bool = False
 
@@ -23,10 +27,48 @@ class SkillMetadata(BaseModel):
 class SkillInfo(BaseModel):
     """Information about an available skill."""
 
-    name: str
-    metadata: SkillMetadata
     source: Literal["builtin", "workspace"]
     path: str
+    content: Annotated[str, Field(frozen=True)]
+
+    @computed_field
+    @cached_property
+    def metadata(self) -> SkillMetadata:
+        """Parse and cache metadata from the SKILL.md content."""
+
+        def read_frontmatter() -> dict | None:
+            match = FRONTMATTER_PATTERN.match(self.content)
+            if not match:
+                return None
+            try:
+                parsed = yaml.safe_load(match.group(1))
+            except yaml.YAMLError:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+
+        def metadata_from_frontmatter(frontmatter: dict, name: str) -> SkillMetadata:
+            description = frontmatter.get("description")
+            always = frontmatter.get("always")
+            return SkillMetadata(
+                name=name,
+                description=description.strip() if isinstance(description, str) and description.strip() else name,
+                always=always if isinstance(always, bool) else False,
+            )
+
+        frontmatter = read_frontmatter()
+        if frontmatter is None:
+            raise ValueError("Invalid SKILL.md frontmatter")
+        name = frontmatter.get("name")
+        return metadata_from_frontmatter(frontmatter, name)
+
+    @computed_field
+    @cached_property
+    def body(self) -> str:
+        """Return and cache the Markdown body without YAML frontmatter."""
+        match = FRONTMATTER_PATTERN.match(self.content)
+        if not match:
+            raise ValueError("Invalid SKILL.md frontmatter")
+        return self.content[match.end() :].strip()
 
 
 def iter_builtin_skill_dirs() -> list[Path]:
@@ -50,130 +92,84 @@ class SkillsLoader:
     """
 
     def __init__(self, workspace: Path):
-        self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = BUILTIN_SKILLS_DIR
 
-    def list_skills(self) -> list[dict[str, str]]:
-        """
-        List all available skills.
-
-        Args:
-            filter_unavailable: If True, filter out skills with unmet requirements.
-
-        Returns:
-            List of skill info dicts with 'name', 'path', 'source'.
-        """
-        skills = []
-
-        # Built-in skills (highest priority)
-        for skill_dir in iter_builtin_skill_dirs():
-            # Built-in skills are mounted into the workspace skills directory
-            # by the shell sandbox. Expose that unified path to the agent.
-            skill_file = self.workspace_skills / skill_dir.name / "SKILL.md"
-            skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
-
-        # Workspace skills cannot override a built-in skill with the same name.
+    def _skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
+        """Return skill documents, with built-ins taking precedence."""
+        builtin_dirs = iter_builtin_skill_dirs()
+        builtin_dir_names = {skill_dir.name for skill_dir in builtin_dirs}
+        files: list[tuple[Path, Literal["builtin", "workspace"]]] = [
+            (skill_dir / "SKILL.md", "builtin") for skill_dir in builtin_dirs
+        ]
         if self.workspace_skills.exists():
-            builtin_names = {skill["name"] for skill in skills}
-            for skill_dir in sorted(self.workspace_skills.iterdir(), key=lambda path: path.name):
-                if skill_dir.is_dir() and skill_dir.name not in builtin_names:
-                    skill_file = skill_dir / "SKILL.md"
-                    if skill_file.exists():
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "workspace"})
-
-        return skills
+            files.extend(
+                (skill_dir / "SKILL.md", "workspace")
+                for skill_dir in sorted(self.workspace_skills.iterdir(), key=lambda path: path.name)
+                if skill_dir.is_dir() and skill_dir.name not in builtin_dir_names and (skill_dir / "SKILL.md").is_file()
+            )
+        return files
 
     async def list_skill_info(self) -> list[SkillInfo]:
-        """Return all available skills with their display metadata."""
-        result = []
-        for skill in self.list_skills():
-            result.append(
-                SkillInfo(
-                    name=skill["name"],
-                    metadata=await self.get_skill_metadata(skill["name"]),
-                    source=skill["source"],
-                    path=skill["path"],
-                )
+        """Return valid skills with metadata and full SKILL.md content."""
+        skills = []
+        seen_names = set()
+        for skill_file, source in self._skill_files():
+            content = await read_text_async(skill_file)
+            # Built-in skills are mounted into the workspace by the shell sandbox.
+            visible_file = (
+                self.workspace_skills / skill_file.parent.name / "SKILL.md" if source == "builtin" else skill_file
             )
-        return result
-
-    async def load_skill(self, name: str) -> str | None:
-        """
-        Load a skill by name.
-
-        Args:
-            name: Skill name (directory name).
-
-        Returns:
-            Skill content or None if not found.
-        """
-        # Check built-in first
-        if self.builtin_skills:
-            builtin_skill = self.builtin_skills / name / "SKILL.md"
-            if builtin_skill.exists():
-                return await read_text_async(builtin_skill)
-
-        # Fall back to workspace skills
-        workspace_skill = self.workspace_skills / name / "SKILL.md"
-        if workspace_skill.exists():
-            return await read_text_async(workspace_skill)
-
-        return None
-
-    async def load_skills_for_context(self, skill_names: list[str]) -> str:
-        """
-        Load specific skills for inclusion in agent context.
-
-        Args:
-            skill_names: List of skill names to load.
-
-        Returns:
-            Formatted skills content.
-        """
-        parts = []
-        for name in skill_names:
-            content = await self.load_skill(name)
-            if content:
-                content = self._strip_frontmatter(content)
-                parts.append(f"### Skill: {name}\n\n{content}")
-
-        return "\n\n---\n\n".join(parts) if parts else ""
-
-    @staticmethod
-    def _format_skills_summary(skills: list[SkillInfo]) -> str:
-        """Format already loaded skill information as XML."""
-        if not skills:
-            return ""
-
-        def escape_xml(s: str) -> str:
-            return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-        lines = ["<skills>"]
-        for skill in skills:
-            lines.append(f"  <skill source='{skill.source}'>")
-            lines.append(f"    <name>{escape_xml(skill.name)}</name>")
-            lines.append(f"    <description>{escape_xml(skill.metadata.description)}</description>")
-            lines.append(f"    <location>{escape_xml(skill.path)}</location>")
-            lines.append("  </skill>")
-        lines.append("</skills>")
-
-        return "\n".join(lines)
+            skill = SkillInfo(source=source, path=str(visible_file), content=content)
+            try:
+                metadata = skill.metadata
+            except ValueError as exc:
+                logger.warning("Skipping invalid skill '{}': {}", skill_file, exc)
+                continue
+            if metadata.name in seen_names:
+                logger.warning("Skipping duplicate skill '{}' at '{}'", metadata.name, skill_file)
+                continue
+            seen_names.add(metadata.name)
+            skills.append(skill)
+        return skills
 
     async def build_skills_prompt(self) -> str:
         """Build the complete skills section for the system prompt."""
+
+        def format_skills_summary(skills: list[SkillInfo]) -> str:
+            """Format already loaded skill information as XML."""
+            if not skills:
+                return ""
+
+            def escape_xml(s: str) -> str:
+                return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+            lines = ["<skills>"]
+            for skill in skills:
+                lines.append(f"  <skill source='{skill.source}'>")
+                lines.append(f"    <name>{escape_xml(skill.metadata.name)}</name>")
+                lines.append(f"    <description>{escape_xml(skill.metadata.description)}</description>")
+                lines.append(f"    <location>{escape_xml(skill.path)}</location>")
+                lines.append("  </skill>")
+            lines.append("</skills>")
+
+            return "\n".join(lines)
+
         skills = await self.list_skill_info()
         if not skills:
             return ""
 
         parts = []
-        always_skills = [skill.name for skill in skills if skill.metadata.always]
-        if always_skills:
-            always_content = await self.load_skills_for_context(always_skills)
-            if always_content:
-                parts.append(f"# Active Skills\n\n{always_content}")
+        active_skills = [
+            f"### Skill: {skill.metadata.name}\n\n{skill.body}"
+            for skill in skills
+            if skill.metadata.always
+        ]
+        if active_skills:
+            active_content = "\n\n---\n\n".join(active_skills)
+            parts.append(f"# Active Skills\n\n{active_content}")
 
-        skills_summary = self._format_skills_summary(skills)
+        skills_summary = format_skills_summary(skills)
         if skills_summary:
             parts.append(
                 "# Skills\n\n"
@@ -183,43 +179,3 @@ class SkillsLoader:
             )
 
         return "\n\n---\n\n".join(parts)
-
-    def _strip_frontmatter(self, content: str) -> str:
-        """Remove YAML frontmatter from markdown content."""
-        if content.startswith("---"):
-            match = re.match(r"^---\n.*?\n---\n", content, re.DOTALL)
-            if match:
-                return content[match.end() :].strip()
-        return content
-
-    async def get_skill_metadata(self, name: str) -> SkillMetadata:
-        """
-        Extract description and always from a skill's frontmatter.
-
-        Args:
-            name: Skill name.
-
-        Returns:
-            Typed metadata, with the skill name and always=False as fallbacks.
-        """
-        content = await self.load_skill(name)
-        if content is None:
-            return SkillMetadata(description=name)
-
-        parsed: dict = {}
-        if content.startswith("---"):
-            match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
-            if match:
-                try:
-                    metadata = yaml.safe_load(match.group(1))
-                except yaml.YAMLError:
-                    metadata = None
-                if isinstance(metadata, dict):
-                    parsed = metadata
-
-        description = parsed.get("description")
-        always = parsed.get("always")
-        return SkillMetadata(
-            description=description.strip() if isinstance(description, str) and description.strip() else name,
-            always=always if isinstance(always, bool) else False,
-        )
