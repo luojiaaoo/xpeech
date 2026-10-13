@@ -23,6 +23,7 @@ const (
     appID = {{APP_ID}}
     managerURL = {{TOKEN_MANAGER_URL}}
     httpTimeout = 10 * time.Second
+    directUserAccessTokenEnv = "LARKSUITE_CLI_USER_ACCESS_TOKEN"
 )
 
 type Provider struct{}
@@ -34,6 +35,11 @@ func (p *Provider) ResolveAccount(context.Context) (*credential.Account, error) 
 }
 
 func (p *Provider) ResolveToken(ctx context.Context, req credential.TokenSpec) (*credential.Token, error) {
+    if req.Type == credential.TokenTypeUAT {
+        if token := directUserAccessToken(); token != "" {
+            return &credential.Token{Value: token, Source: "env:" + directUserAccessTokenEnv}, nil
+        }
+    }
     tokenType := "user"
     if req.Type == credential.TokenTypeTAT { tokenType = "tenant" }
     sessionID := strings.TrimSpace(os.Getenv("SHELL_SESSION_ID"))
@@ -58,6 +64,10 @@ func (p *Provider) ResolveToken(ctx context.Context, req credential.TokenSpec) (
         return nil, fmt.Errorf("token manager rejected token request: %s", firstNonEmpty(body.Detail.Message, response.Status))
     }
     return &credential.Token{Value: body.AccessToken, Scopes: body.Scope, Source: "xpeech:token-manager"}, nil
+}
+
+func directUserAccessToken() string {
+    return strings.TrimSpace(os.Getenv(directUserAccessTokenEnv))
 }
 
 func endpointForManager() string { return strings.TrimRight(managerURL, "/") }
@@ -97,6 +107,7 @@ func (i *tokenInvalidationInterceptor) PreRoundTrip(request *http.Request) func(
     authorization := strings.TrimSpace(request.Header.Get("Authorization"))
     token := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
     if token == "" || token == authorization { return nil }
+    if token == directUserAccessToken() { return nil }
     digest := sha256.Sum256([]byte(token))
     tokenHash := hex.EncodeToString(digest[:])
     return func(response *http.Response, requestErr error) {

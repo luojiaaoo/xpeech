@@ -124,6 +124,16 @@ Docker 镜像会从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签�
 令牌加密存储和周期刷新；`lark-cli` 通过内部接口取得当前 Xpeech session 的短期令牌。
 `app_id`、`app_secret` 只由 token-manager 在运行时读取，修改后重启服务即可。
 
+已有用户访问令牌时，通过环境变量 `LARKSUITE_CLI_USER_ACCESS_TOKEN` 注入即可，
+用户身份命令会直接使用该令牌，跳过 token-manager 的令牌获取、迁移和失效通知。
+此时无需 `SHELL_SESSION_ID`，令牌过期后由调用方替换：
+
+```bash
+LARKSUITE_CLI_USER_ACCESS_TOKEN="<user_access_token>" lark-cli docs +fetch --doc "<文档 URL 或 token>" --as user
+```
+
+未提供令牌时使用下述托管认证流程。修改 CLI 后需重新构建 Docker 镜像才能生效。
+
 首次执行需要用户身份的命令时，Credential Provider 会立即返回 `authorization_required` 和授权 URL，
 不会阻塞命令。也可以先执行 `lark-cli-auth login --scope "<本次任务所需 scope>"` 或
 `lark-cli-auth login --domain calendar,task` 获取链接；`login` 至少需要一个非空的
