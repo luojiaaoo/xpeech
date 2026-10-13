@@ -16,9 +16,9 @@ lark-cli-auth status
 lark-cli-auth logout
 ```
 
-`login` 必须明确传入本次任务需要的至少一个 `--scope` 或 `--domain`；两者可以组合。`--domain` 使用原生 lark-cli 的业务域目录，将该域对应的用户 scopes 展开后再提交授权；支持逗号、空格分隔和 `all`。缺少或传入空值会直接报错，不会发起授权。命令会立即输出一次性设备授权链接并退出。把完整链接原样交给用户；lark-token-manager 会在飞书返回的有效期内后台轮询，用户完成授权后即可重跑原业务命令。客户端不要等待、轮询或要求用户回复“已完成”，也不要保存 device code。授权链接只显示地址和必要的 user code，不显示令牌。
+`login` 必须明确传入本次任务需要的至少一个 `--scope` 或 `--domain`；两者可以组合。`--domain` 使用原生 lark-cli 的业务域目录，将该域对应的用户 scopes 展开后再提交授权；支持逗号、空格分隔和 `all`。缺少或传入空值会直接报错，不会发起授权。命令会立即输出一次性设备授权链接并退出。把完整 URL 写成可点击的 Markdown 链接 `[打开飞书授权页面](完整 URL)` 交给用户；不要把 URL 放进行内代码或代码块。lark-token-manager 会在飞书返回的有效期内后台轮询，用户完成授权后即可重跑原业务命令。客户端不要等待、轮询或要求用户回复“已完成”，也不要保存 device code。授权链接只显示地址和必要的 user code，不显示令牌。
 
-新增权限时，执行 `login --scope` 或 `login --domain` 传入本次任务需要的权限；已授权范围由飞书授权服务维护，不由 manager 本地拼接。若业务命令返回 `authorization_required`，发送返回的 `authorization_url` 并结束当前任务；授权完成后重跑原命令。
+新增权限时，执行 `login --scope` 或 `login --domain` 传入本次任务需要的权限；已授权范围由飞书授权服务维护，不由 manager 本地拼接。若业务命令返回 `authorization_required`，把返回的 `authorization_url` 按上述可点击 Markdown 链接格式发送并结束当前任务；授权完成后重跑原命令。
 
 ## 状态与错误
 
