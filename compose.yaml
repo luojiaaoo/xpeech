@@ -47,7 +47,7 @@ services:
     depends_on:
       browserless:
         condition: service_started
-      token-manager:
+      lark-token-manager:
         condition: service_healthy
     ports:
       - "${BACKEND_PORT:-7878}:${BACKEND_PORT:-7878}"

@@ -33,7 +33,7 @@ def test_render_oauth_source_uses_non_blocking_manager_client(tmp_path: Path):
 
     source = lark_cli_generator.render_source(config_path, OAUTH_TEMPLATE_PATH)
 
-    assert 'managerURL = "http://token-manager:7883"' in source
+    assert 'managerURL = "http://lark-token-manager:7883"' in source
     assert '"/v1/authorization/start"' in source
     assert '"/v1/status?session_id="' in source
     assert '"/v1/logout"' in source
@@ -50,7 +50,7 @@ def test_render_mycred_source_delegates_user_auth_to_executable(tmp_path: Path):
 
     source = lark_cli_generator.render_source(config_path, MYCRED_TEMPLATE_PATH)
 
-    assert 'managerURL = "http://token-manager:7883"' in source
+    assert 'managerURL = "http://lark-token-manager:7883"' in source
     assert "token manager" in source
     assert "oauthExecutable" not in source
     assert "XPEECH_TOKEN_MANAGER_URL" not in source

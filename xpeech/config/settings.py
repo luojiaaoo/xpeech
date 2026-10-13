@@ -153,7 +153,7 @@ class LLMConfig(BaseModel):
 class LarkCLIConfig(BaseModel):
     """Configuration shared by the token manager and lark-cli clients."""
 
-    manager_url: str = "http://token-manager:7883"
+    manager_url: str = "http://lark-token-manager:7883"
     database_path: Path = Path("data/lark-token-manager/tokens.db")
 
     @field_validator("manager_url")

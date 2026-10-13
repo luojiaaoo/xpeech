@@ -120,12 +120,12 @@ Swagger UI 右上角点击 `Authorize`：`username` 可填写任意标识（例�
 - `feishu.app_secret`：飞书应用密钥
 
 Docker 镜像会从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签编译
-`lark-cli` 和非阻塞的 `/usr/local/bin/lark-cli-auth`。独立的 `token-manager` 服务负责设备授权、
+`lark-cli` 和非阻塞的 `/usr/local/bin/lark-cli-auth`。独立的 `lark-token-manager` 服务负责设备授权、
 令牌加密存储和周期刷新；`lark-cli` 通过内部接口取得当前 Xpeech session 的短期令牌。
-`app_id`、`app_secret` 只由 token-manager 在运行时读取，修改后重启服务即可。
+`app_id`、`app_secret` 只由 lark-token-manager 在运行时读取，修改后重启服务即可。
 
 已有用户访问令牌时，通过环境变量 `LARKSUITE_CLI_USER_ACCESS_TOKEN` 注入即可，
-用户身份命令会直接使用该令牌，跳过 token-manager 的令牌获取、迁移和失效通知。
+用户身份命令会直接使用该令牌，跳过 lark-token-manager 的令牌获取、迁移和失效通知。
 此时无需 `SHELL_SESSION_ID`，令牌过期后由调用方替换：
 
 ```bash
@@ -138,10 +138,10 @@ LARKSUITE_CLI_USER_ACCESS_TOKEN="<user_access_token>" lark-cli docs +fetch --doc
 不会阻塞命令。也可以先执行 `lark-cli-auth login --scope "<本次任务所需 scope>"` 或
 `lark-cli-auth login --domain calendar,task` 获取链接；`login` 至少需要一个非空的
 `--scope` 或 `--domain`，两者可以组合。用户在浏览器完成设备授权后重跑原命令，
-token-manager 会按 session 绑定飞书用户。令牌数据库持久化在 `docker_data/lark-token-manager`，
+lark-token-manager 会按 session 绑定飞书用户。令牌数据库持久化在 `docker_data/lark-token-manager`，
 后台任务每分钟扫描并在过期前刷新，refresh token 按单次轮换原子保存。
-飞书授权使用设备码流程，无需配置 `redirect_uri` 或暴露 callback 端口。token-manager 使用飞书
-返回的 device code 有效期在后台轮询；token-manager 只在 Xpeech 内部网络提供 session 级接口。
+飞书授权使用设备码流程，无需配置 `redirect_uri` 或暴露 callback 端口。lark-token-manager 使用飞书
+返回的 device code 有效期在后台轮询；lark-token-manager 只在 Xpeech 内部网络提供 session 级接口。
 访问令牌固定在过期前 5 分钟刷新，manager 每 60 秒扫描一次，这两项无需配置。
 
 业务命令首次触发透明授权时只建立 `offline_access`；业务权限必须通过
@@ -210,7 +210,7 @@ BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 
 ```bash
 docker compose ps
-docker compose logs -f token-manager browserless backend feishu web_client
+docker compose logs -f lark-token-manager browserless backend feishu web_client
 ```
 
 持久化数据统一映射到宿主机

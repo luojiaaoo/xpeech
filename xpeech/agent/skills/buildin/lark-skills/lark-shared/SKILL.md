@@ -1,7 +1,7 @@
 ---
 name: lark-shared
 version: 1.1.0
-description: "Use for lark-cli identity, permissions, missing scopes, token-manager authorization status, and handling _notice JSON."
+description: "Use for lark-cli identity, permissions, missing scopes, lark-token-manager authorization status, and handling _notice JSON."
 metadata:
   requires:
     bins: ["lark-cli"]

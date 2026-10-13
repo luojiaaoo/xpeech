@@ -38,7 +38,7 @@ def load_build_config(config_path: Path) -> tuple[str, str, str]:
     lark_cli = feishu.get("lark_cli", {})
     if not isinstance(lark_cli, dict):
         raise ConfigError("feishu.lark_cli must be a table")
-    manager_url = lark_cli.get("manager_url", "http://token-manager:7883")
+    manager_url = lark_cli.get("manager_url", "http://lark-token-manager:7883")
     if not isinstance(manager_url, str) or not manager_url.strip():
         raise ConfigError("feishu.lark_cli.manager_url must be a non-empty string")
     return app_id, manager_url.strip()

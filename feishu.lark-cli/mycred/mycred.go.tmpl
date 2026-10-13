@@ -27,7 +27,7 @@ const (
 )
 
 type Provider struct{}
-func (p *Provider) Name() string { return "xpeech-token-manager" }
+func (p *Provider) Name() string { return "xpeech-lark-token-manager" }
 func (p *Provider) Priority() int { return 0 }
 
 func (p *Provider) ResolveAccount(context.Context) (*credential.Account, error) {
@@ -63,7 +63,7 @@ func (p *Provider) ResolveToken(ctx context.Context, req credential.TokenSpec) (
         if body.Detail.Type == "authorization_required" && body.Detail.AuthorizationURL != "" { return nil, fmt.Errorf("authorization_required: open %s", body.Detail.AuthorizationURL) }
         return nil, fmt.Errorf("token manager rejected token request: %s", firstNonEmpty(body.Detail.Message, response.Status))
     }
-    return &credential.Token{Value: body.AccessToken, Scopes: body.Scope, Source: "xpeech:token-manager"}, nil
+    return &credential.Token{Value: body.AccessToken, Scopes: body.Scope, Source: "xpeech:lark-token-manager"}, nil
 }
 
 func directUserAccessToken() string {
@@ -92,7 +92,7 @@ func firstNonEmpty(values ...string) string { for _, value := range values { if 
 // only its SHA-256 digest is sent to the manager, which must match the token
 // currently stored for this session before invalidating it.
 type tokenInvalidationProvider struct{}
-func (p *tokenInvalidationProvider) Name() string { return "xpeech-token-manager-invalidation" }
+func (p *tokenInvalidationProvider) Name() string { return "xpeech-lark-token-manager-invalidation" }
 func (p *tokenInvalidationProvider) SupportsRequestClass(class exttransport.RequestClass) bool {
     return class == exttransport.RequestClassPlatform
 }
