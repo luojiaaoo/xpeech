@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ...config.settings import settings
 from ...utils.helper import ensure_path
-from ..server.context import get_session_id
+from ..server.context import get_session_id, get_user_access_token
 from ..skills.skill import iter_builtin_skill_dirs
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -74,6 +74,8 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
         "SHELL_SESSION_ID": session_id, # 注入 session_id，给插件使用
     }
     sandbox_env.update(env or {})
+    # Always shadow inherited credentials, including for requests without a token.
+    sandbox_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = get_user_access_token() or ""
     for key, value in sandbox_env.items():
         _add_setenv(args, key, value)
 

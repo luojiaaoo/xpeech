@@ -79,8 +79,8 @@ algorithm = "HS256"
 access_token_expire_seconds = 60
 ```
 
-`secret_key` 至少 32 个字符；访问令牌最长有效 60 秒。Compose 中的 backend、feishu
-和 web_client 会读取同一份 `conf.toml`，无需分别配置。
+`secret_key` 至少 32 个字符；访问令牌最长有效 60 秒。Compose 中的 backend
+读取挂载的 `conf.toml`。
 
 ## 启动
 
@@ -120,41 +120,35 @@ Swagger UI 右上角点击 `Authorize`：`username` 可填写任意标识（例�
 - `feishu.app_secret`：飞书应用密钥
 
 Docker 镜像会从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签编译
-`lark-cli` 和非阻塞的 `/usr/local/bin/lark-cli-auth`。独立的 `token-manager` 服务负责设备授权、
-令牌加密存储和周期刷新；`lark-cli` 通过内部接口取得当前 Xpeech session 的短期令牌。
-`app_id`、`app_secret` 只由 token-manager 在运行时读取，修改后重启服务即可。
+`lark-cli`。它只使用调用方提供的用户访问令牌，不发起设备授权、不刷新令牌，也不访问令牌管理服务。
 
-已有用户访问令牌时，通过环境变量 `LARKSUITE_CLI_USER_ACCESS_TOKEN` 注入即可，
-用户身份命令会直接使用该令牌，跳过 token-manager 的令牌获取、迁移和失效通知。
-此时无需 `SHELL_SESSION_ID`，令牌过期后由调用方替换：
+调用 `/chat` 时，在已签名的 Bearer JWT payload 中携带可选的 `user_access_token`：
 
-```bash
-LARKSUITE_CLI_USER_ACCESS_TOKEN="<user_access_token>" lark-cli docs +fetch --doc "<文档 URL 或 token>" --as user
+```python
+import time
+import jwt
+
+payload = {
+    "exp": int(time.time()) + 60,
+    "user_access_token": "<飞书 user_access_token>",
+}
+token = jwt.encode(payload, "<conf.toml 中的 jwt.secret_key>", algorithm="HS256")
 ```
 
-未提供令牌时使用下述托管认证流程。修改 CLI 后需重新构建 Docker 镜像才能生效。
-
-首次执行需要用户身份的命令时，Credential Provider 会立即返回 `authorization_required` 和授权 URL，
-不会阻塞命令。也可以先执行 `lark-cli-auth login --scope "<本次任务所需 scope>"` 或
-`lark-cli-auth login --domain calendar,task` 获取链接；`login` 至少需要一个非空的
-`--scope` 或 `--domain`，两者可以组合。用户在浏览器完成设备授权后重跑原命令，
-token-manager 会按 session 绑定飞书用户。令牌数据库持久化在 `docker_data/lark-token-manager`，
-后台任务每分钟扫描并在过期前刷新，refresh token 按单次轮换原子保存。
-飞书授权使用设备码流程，无需配置 `redirect_uri` 或暴露 callback 端口。token-manager 使用飞书
-返回的 device code 有效期在后台轮询；token-manager 只在 Xpeech 内部网络提供 session 级接口。
-访问令牌固定在过期前 5 分钟刷新，manager 每 60 秒扫描一次，这两项无需配置。
-
-业务命令首次触发透明授权时只建立 `offline_access`；业务权限必须通过
-`lark-cli-auth login` 显式传入本次任务所需的 `--scope` 或 `--domain`。
-需要增加权限时可单独执行 `lark-cli-auth`，`--scope` 可以重复，
-也可以用逗号或空格一次传入多个 scope；`--domain` 使用原生 lark-cli 的业务域目录，
-可传逗号/空格分隔的多个域或 `all`；已有授权范围由飞书授权服务维护：
+后端校验 JWT 签名和有效期后，将 `user_access_token` 保存在当前请求上下文中，
+执行 shell 时自动注入 `LARKSUITE_CLI_USER_ACCESS_TOKEN`。模型直接执行普通业务命令即可：
 
 ```bash
-lark-cli-auth login --scope docs:doc:readonly --scope drive:drive:readonly
-lark-cli-auth login --scope "docs:doc:readonly,drive:drive:readonly"
-lark-cli-auth login --domain calendar,task
+lark-cli docs +fetch --doc "<文档 URL 或 token>" --as user
 ```
+
+令牌按请求隔离，不存入会话历史，也不会写入进程级环境变量；同一会话的下次请求需重新携带。
+未提供令牌时仍可使用普通 Agent 工具，但飞书业务命令会报告缺少令牌。令牌过期或缺少权限时，
+由调用方取得有效令牌并通过新的 JWT 传入；后端不会自动申请或刷新。当前 CLI 仅支持用户身份。
+`SHELL_SESSION_ID` 仍用于会话上下文，不再用于查找令牌。
+
+CLI 的 `app_id` 从 `conf.toml` 在构建时注入，修改后需重新构建镜像；
+`app_secret` 仅供可单独运行的飞书桥接使用，CLI 不读取它。
 
 需要修改监听地址、端口或后端地址时，可通过对应命令的 `--help` 查看参数。
 
@@ -176,12 +170,10 @@ Xpeech Deck 是自托管平台，需要与 Docker 和所有受管 Xpeech 实例�
 
 ## Docker Compose 部署
 
-Compose 会启动四个容器：
+Compose 只包含后端及其配套服务：
 
 - `browserless`：Browserless Chromium CDP 服务，仅限 Docker 内网访问
 - `backend`：Xpeech API、Agent 和工具执行服务
-- `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
-- `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
 
 先准备配置和环境变量：
 
@@ -190,38 +182,42 @@ cp conf.toml.example conf.toml
 cp .env.example .env
 ```
 
-填写 `conf.toml` 中的 `llm.api_key` 和 `feishu.app_secret`，并确认
-`.env` 中的 `CDP_URL` 与容器网络一致，再确认
-`conf.toml` 中的 `llm`、`feishu.app_id` 等普通配置正确，然后构建并启动：
+填写 `conf.toml` 中的 `llm.api_key` 和 `jwt.secret_key`，并确认
+`.env` 中的 `CDP_URL` 与容器网络一致，并配置 CLI 使用的 `feishu.app_id`。
+构建并启动后端及其配套服务：
 
 ```bash
 docker compose up -d --build
 ```
 
-后端默认暴露在 `http://localhost:7878`，Web 客户端默认暴露在
-`http://localhost:7939`。可通过环境变量 `BACKEND_PORT` 和 `WEB_CLIENT_PORT` 修改端口；
-lark-cli 使用设备授权流程，不依赖这两个端口：
+如之前已启动飞书、Web 或令牌管理容器，迁移时使用以下命令移除已不在配置中的旧容器，
+宿主机 `docker_data` 中的持久化数据保留：
 
 ```bash
-BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
+docker compose up -d --build --remove-orphans
+```
+
+后端默认暴露在 `http://localhost:7878`，可通过 `BACKEND_PORT` 修改端口。
+
+```bash
+BACKEND_PORT=8080 docker compose up -d --build
 ```
 
 查看运行状态和日志：
 
 ```bash
 docker compose ps
-docker compose logs -f token-manager browserless backend feishu web_client
+docker compose logs -f browserless backend
 ```
 
 持久化数据统一映射到宿主机
-的 `./docker_data/` 目录，其中包含 `session`、`workspace_base` 和
-`browser_preview`，Web 用户数据库保存在 `web_client/users.db`；缓存目录不做宿主机磁盘
+的 `./docker_data/` 目录，其中包含 `session`、`workspace_base`、
+`browser_preview` 和 `logs`；缓存目录不做宿主机磁盘
 映射。`conf.toml` 以只读方式挂载，`.env` 通过 `env_file` 注入进程。普通运行时配置修改后重建容器
-即可生效；`feishu.app_id` 或 `feishu.app_secret` 修改后需要增加 `--build` 重新编译 lark-cli 和
-lark-cli-auth：
+即可生效；`feishu.app_id` 修改后需要增加 `--build` 重新编译 lark-cli：
 
 ```bash
-docker compose up -d --force-recreate browserless backend feishu web_client
+docker compose up -d --force-recreate
 
 # lark-cli 构建配置发生变化时
 docker compose up -d --build --force-recreate backend

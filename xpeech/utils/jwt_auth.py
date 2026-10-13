@@ -10,14 +10,18 @@ def create_access_token(
     *,
     config: JWTConfig | None = None,
     now: datetime | None = None,
+    user_access_token: str | None = None,
 ) -> str:
     """Create a short-lived JWT for one request to the Xpeech API."""
 
     jwt_config = config or settings.jwt
     issued_at = now or datetime.now(UTC)
     expires_at = issued_at + timedelta(seconds=jwt_config.access_token_expire_seconds)
+    claims: dict[str, Any] = {"exp": expires_at}
+    if user_access_token is not None:
+        claims["user_access_token"] = user_access_token
     return jwt.encode(
-        {"exp": expires_at},
+        claims,
         jwt_config.secret_key,
         algorithm=jwt_config.algorithm,
     )

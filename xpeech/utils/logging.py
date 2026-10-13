@@ -28,10 +28,12 @@ def configure_logging():
     logger.add(
         sys.stderr,
         format=_FORMAT,
+        diagnose=False,
     )
     logger.add(
         settings.path.log_path / "xpeech.log",
         format=_FORMAT,
+        diagnose=False,
         encoding="utf-8",
         rotation=f"{settings.logging.max_file_size_mb} MB",
         retention=f"{settings.logging.retention_days} days",

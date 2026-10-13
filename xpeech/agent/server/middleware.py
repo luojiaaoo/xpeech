@@ -4,7 +4,7 @@ from uuid import uuid4
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .context import request_id_var, session_id_var
+from .context import request_id_var, session_id_var, user_access_token_var
 
 
 class ContextASGIMiddleware:
@@ -23,6 +23,7 @@ class ContextASGIMiddleware:
 
         session_id_token = session_id_var.set(session_id)
         request_id_token = request_id_var.set(request_id)
+        user_access_token_token = user_access_token_var.set(None)
 
         async def send_wrapper(message: Message):
 
@@ -36,5 +37,6 @@ class ContextASGIMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
+            user_access_token_var.reset(user_access_token_token)
             request_id_var.reset(request_id_token)
             session_id_var.reset(session_id_token)

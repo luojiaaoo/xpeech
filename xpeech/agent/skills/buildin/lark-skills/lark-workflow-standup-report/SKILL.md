@@ -24,7 +24,7 @@ metadata:
 仅支持 **user 身份**。执行前确保已授权：
 
 ```bash
-lark-cli-auth login --domain calendar,task
+# 调用方需通过 JWT 提供具备 calendar、task 所需权限的 user_access_token
 ```
 
 ## 工作流

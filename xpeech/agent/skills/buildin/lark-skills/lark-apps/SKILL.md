@@ -14,13 +14,13 @@ metadata:
 
 ## 身份与授权
 
-妙搭应用是用户的个人资产，统一 `--as user`（见开头）。已有用户身份可用时直接执行业务命令，**不要为了预防权限问题主动重新登录**，否则可能中断原任务并触发不必要的设备授权。仅当 CLI 明确返回未登录或缺少本域 scope 时，一次性执行：
+妙搭应用是用户的个人资产，统一 `--as user`。用户访问令牌由请求 JWT 注入；缺失或权限不足时报告问题，由调用方提供有效令牌，不主动登录。
 
 ```bash
-lark-cli-auth login --domain apps
+# 调用方需通过 JWT 提供具备 apps 所需权限的 user_access_token
 ```
 
-因缺权限失败（`error.subtype == "missing_scope"`）时的通用处理见 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，同样按 `--domain apps` 授权；授权成功后只恢复原业务操作，不扩展任务范围。
+因缺权限失败时，按 `lark-shared` 规则报告所需 scope，由调用方在新的 JWT 中提供具备相应权限的令牌，再恢复原业务操作。
 
 ## 意图路由
 

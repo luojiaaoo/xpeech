@@ -1,9 +1,17 @@
+import asyncio
+import shlex
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import httpx
 import jwt
+import pytest
 from fastapi.testclient import TestClient
 
 from xpeech.agent.server.api import app
+from xpeech.agent.server.context import get_user_access_token
+from xpeech.agent.server.routes import chat as chat_routes
+from xpeech.agent.tools import sandbox
 from xpeech.config.settings import JWTConfig, settings
 from xpeech.utils.jwt_auth import create_access_token, decode_access_token
 
@@ -20,6 +28,86 @@ def test_access_token_is_valid_for_exactly_one_minute():
     )
 
     assert claims == {"exp": int((now + timedelta(seconds=60)).timestamp())}
+
+
+def test_access_token_can_carry_user_access_token():
+    token = create_access_token(config=TEST_CONFIG, user_access_token="u-request-token")
+
+    assert decode_access_token(token, config=TEST_CONFIG)["user_access_token"] == "u-request-token"
+
+
+@pytest.mark.parametrize("user_access_token", [123, False, {}, [], "u-token\x00invalid"])
+def test_api_rejects_invalid_user_access_token_claim(user_access_token):
+    token = jwt.encode(
+        {"exp": datetime.now(UTC) + timedelta(seconds=60), "user_access_token": user_access_token},
+        settings.jwt.secret_key,
+        algorithm=settings.jwt.algorithm,
+    )
+    response = TestClient(app).post(
+        "/answer_question",
+        data={"answer": "ok"},
+        headers={"Authorization": f"Bearer {token}", "x-session-id": "test"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or expired bearer token"}
+
+
+@pytest.mark.asyncio
+async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox.settings.path, "cache_path", tmp_path / "cache")
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "sandbox-home")
+    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setenv("LARKSUITE_CLI_USER_ACCESS_TOKEN", "u-process-token")
+    both_started = asyncio.Event()
+    started = []
+    observed = []
+
+    async def run(message):
+        started.append(message.session_id)
+        if len(started) == 2:
+            both_started.set()
+        if len(started) <= 2:
+            await asyncio.wait_for(both_started.wait(), timeout=5)
+        await asyncio.sleep(0)
+        args = shlex.split(sandbox.wrap_command("lark-cli whoami", tmp_path))
+        environment = {
+            args[index + 1]: args[index + 2]
+            for index, value in enumerate(args) if value == "--setenv"
+        }
+        observed.append((message.session_id, environment["LARKSUITE_CLI_USER_ACCESS_TOKEN"]))
+        assert "user_access_token" not in message.model_dump_json()
+        yield {"event": "assistant", "context": "ok"}
+
+    async def create(_session_id):
+        return SimpleNamespace(workspace=tmp_path, run=run)
+
+    monkeypatch.setattr(chat_routes.AgentRunner, "create", create)
+
+    async def send(client, session_id, user_access_token):
+        token = create_access_token(user_access_token=user_access_token)
+        return await client.post(
+            "/chat",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "x-session-id": session_id,
+                "x-sender-name": "test-user",
+            },
+            data={"content": '[{"text":"hello"}]'},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        responses = await asyncio.gather(
+            send(client, "session-one", "u-first"),
+            send(client, "session-two", "u-second"),
+        )
+        assert all(response.status_code == 200 for response in responses)
+        assert set(observed) == {("session-one", "u-first"), ("session-two", "u-second")}
+        response = await send(client, "session-one", None)
+
+    assert response.status_code == 200
+    assert observed[-1] == ("session-one", "")
+    assert get_user_access_token() is None
 
 
 def test_expired_access_token_is_rejected():

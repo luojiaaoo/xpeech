@@ -196,7 +196,7 @@ async def _run_wrapped_command(
     timeout_ms: int = DEFAULT_EXEC_TIMEOUT_MS,
 ) -> ShellCommandResult:
     wrapped_command = sandbox.wrap_command(command, workspace, env=env)
-    logger.info(f"Running wrapped command: {wrapped_command}")
+    logger.info("Running shell command: {}", command)
     with tempfile.TemporaryFile(mode="w+b") as stdout_f, tempfile.TemporaryFile(mode="w+b") as stderr_f:
         process = await asyncio.create_subprocess_exec(
             "bash",

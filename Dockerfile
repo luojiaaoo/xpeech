@@ -19,22 +19,14 @@ RUN git clone --filter=blob:none --no-checkout https://gitee.com/luojiaaoo/lark-
 COPY feishu.lark-cli/main.go ./main.go
 COPY feishu.lark-cli/generate.py /build/generate.py
 COPY feishu.lark-cli/mycred/mycred.go.tmpl /build/mycred.go.tmpl
-COPY feishu.lark-cli/oauth/main.go.tmpl /build/oauth-main.go.tmpl
-COPY feishu.lark-cli/oauth/main_test.go ./cmd/xpeech-lark-cli-auth/main_test.go
 RUN --mount=type=bind,source=conf.toml,target=/build/conf.toml,readonly \
     uv run --no-project python /build/generate.py \
         --config /build/conf.toml \
         --template /build/mycred.go.tmpl \
-        --output ./mycred/mycred.go && \
-    uv run --no-project python /build/generate.py \
-        --config /build/conf.toml \
-        --template /build/oauth-main.go.tmpl \
-        --output ./cmd/xpeech-lark-cli-auth/main.go
+        --output ./mycred/mycred.go
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go test ./cmd/xpeech-lark-cli-auth && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/lark-cli . && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/lark-cli-auth ./cmd/xpeech-lark-cli-auth
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/lark-cli .
 
 FROM docker.1panel.live/library/ubuntu:22.04
 
@@ -90,7 +82,6 @@ RUN cd xpeech/channel/web_client/frontend && \
 RUN npm i -g agent-browser
 
 COPY --from=lark-cli-builder /out/lark-cli /usr/local/bin/lark-cli
-COPY --from=lark-cli-builder /out/lark-cli-auth /usr/local/bin/lark-cli-auth
 
 RUN printf '0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} + > /dev/null 2>&1\n' | crontab -
 

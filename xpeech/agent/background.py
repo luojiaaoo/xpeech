@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..config.settings import settings
 from .server.schema import InboundMessage, InputText
+from .server.context import user_access_token_var
 
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
 MAX_BACKGROUND_TASK_DELAY_SECONDS = 3 * 60
@@ -321,6 +322,8 @@ async def run_feishu_background_task(
     await asyncio.sleep(delay_seconds)
 
     open_id = session_metadata["open_id"]
+    # Scheduled runs must not reuse a JWT credential inherited from a chat request.
+    user_access_token_token = user_access_token_var.set(None)
     try:
         # Keep this import lazy so persisted jobs can import this module without a
         # runner/background/registry import cycle.
@@ -356,6 +359,8 @@ async def run_feishu_background_task(
             session_id,
         )
         content = BACKGROUND_TASK_FAILURE_MESSAGE
+    finally:
+        user_access_token_var.reset(user_access_token_token)
 
     await BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU].put(
         FeishuBackgroundMessage(open_id=open_id, content=content),

@@ -25,6 +25,7 @@ from xpeech.agent.background import (
     stop_background_scheduler,
 )
 from xpeech.agent.runner import AgentRunner
+from xpeech.agent.server.context import get_user_access_token, user_access_token_var
 from xpeech.agent.server.routes import chat
 from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.schedule import (
@@ -328,6 +329,7 @@ async def test_background_agent_queues_success_or_fixed_failure(
 
     class FakeRunner:
         async def run_once(self, message, *, background=False):
+            assert get_user_access_token() is None
             captured["message"] = message
             captured["background"] = background
             if isinstance(result, Exception):
@@ -340,15 +342,20 @@ async def test_background_agent_queues_success_or_fixed_failure(
 
     monkeypatch.setattr(AgentRunner, "create", classmethod(create))
     metadata = {"channel": "feishu", "open_id": "ou_1", "custom": "kept"}
-    await run_feishu_background_task(
-        job_id="job-1",
-        prompt="scheduled prompt",
-        session_id="session-1",
-        sender_name="Alice",
-        session_metadata=metadata,
-        schedule_type="cron",
-        schedule_value="0 9 * * *",
-    )
+    context_token = user_access_token_var.set("u-inherited-request-token")
+    try:
+        await run_feishu_background_task(
+            job_id="job-1",
+            prompt="scheduled prompt",
+            session_id="session-1",
+            sender_name="Alice",
+            session_metadata=metadata,
+            schedule_type="cron",
+            schedule_value="0 9 * * *",
+        )
+        assert get_user_access_token() == "u-inherited-request-token"
+    finally:
+        user_access_token_var.reset(context_token)
 
     queued = background.BACKGROUND_MESSAGE_QUEUES[
         BackgroundMessageChannel.FEISHU

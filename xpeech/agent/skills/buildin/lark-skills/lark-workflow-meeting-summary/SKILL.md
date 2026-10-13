@@ -22,9 +22,9 @@ metadata:
 仅支持 **user 身份**。执行前确保已授权：
 
 ```bash
-lark-cli-auth login --domain vc                 # 基础（查询+纪要）
-lark-cli-auth login --domain vc,drive           # 含读取纪要文档正文、生成文档
-lark-cli-auth login --domain vc,drive,minutes   # 含妙记备选路径
+# 调用方需通过 JWT 提供具备本次会议、文档或妙记操作所需权限的 user_access_token
+# 调用方需通过 JWT 提供具备本次会议、文档或妙记操作所需权限的 user_access_token
+# 调用方需通过 JWT 提供具备本次会议、文档或妙记操作所需权限的 user_access_token
 ```
 
 ## 工作流

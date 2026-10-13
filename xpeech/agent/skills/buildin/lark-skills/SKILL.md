@@ -7,14 +7,14 @@ description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审
 
 本技能是 **`lark-*` 子技能库的聚合入口 / 路由**。它本身不包含具体操作指令，只负责把需求路由到正确的子技能库；每个能力的具体用法都在对应的子技能库 `SKILL.md` 里。
 
-> 本技能负责业务能力路由；授权、状态和 scope 申请由独立的 `lark-cli-auth` 技能处理。
+> 用户访问令牌由请求 JWT 注入。认证、令牌缺失和权限不足处理统一读取 `lark-shared/SKILL.md`，不主动发起授权。
 
 ## 使用方法（路由规则）
 
 1. 收到飞书/Lark 相关需求后，在下方「目录」里按需求匹配最合适的子技能库。
 2. 用 Read 工具读取该子技能库的 `SKILL.md`，按其指引执行。
 3. 涉及认证、身份切换、权限不足（`missing_scopes`）、输出契约、高风险操作等通用规则时，先读取 `lark-shared/SKILL.md`。
-4. 普通业务直接执行 `lark-cli`。遇到 `authorization_required` 时读取并原样发送其中的授权链接；授权、注销和追加 scope 走 `lark-cli-auth`。
+4. 普通业务直接执行 `lark-cli ... --as user`。令牌缺失、失效或缺少 scope 时，报告问题，由调用方在新的 JWT 中提供有效令牌。
 
 ## 目录（子技能库一览）
 
@@ -77,7 +77,7 @@ lark-skills/
 | 封装新的飞书 Skill | `lark-skill-maker/SKILL.md` |
 | 会议纪要周报 | `lark-workflow-meeting-summary/SKILL.md` |
 | 今日/本周日程与待办摘要 | `lark-workflow-standup-report/SKILL.md` |
-| 认证 / 登录 / 令牌 / scope | `lark-cli-auth`（独立技能，不在此处） |
+| 认证 / 令牌 / scope | `lark-shared/SKILL.md`（JWT 注入，不主动登录） |
 | 认证、身份切换、权限通用规则 | `lark-shared/SKILL.md` |
 
 ## 重要：相对路径说明
