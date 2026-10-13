@@ -42,7 +42,7 @@ def _import_skill_file(data: bytes, workspace: Path) -> SkillInfo:
         raise ValueError("SKILL.md must be UTF-8 encoded") from exc
     skill = SkillInfo(source="workspace", path="", content=content)
     name = skill.metadata.name
-    skills_dir = loader.workspace_skills.resolve()
+    skills_dir = (workspace / "skills").resolve()
     destination = (skills_dir / name).resolve()
     if destination.parent != skills_dir:
         raise ValueError("Skill destination must be a direct child of the skills directory")
@@ -67,10 +67,13 @@ def _import_skill_file(data: bytes, workspace: Path) -> SkillInfo:
 
 @router.get("", response_model=list[SkillInfo])
 async def list_skills(
-    session_id: Annotated[str, Query(min_length=1, max_length=MAX_SESSION_ID_LENGTH, description="会话ID")],
+    session_id: Annotated[
+        str | None,
+        Query(max_length=MAX_SESSION_ID_LENGTH, description="会话ID；为空时仅返回内置技能"),
+    ] = None,
 ) -> list[SkillInfo]:
-    """返回指定会话可用的内置及用户 SKILL 列表。"""
-    workspace = _session_workspace(session_id)
+    """返回内置技能，以及指定会话可用的用户 SKILL 列表。"""
+    workspace = _session_workspace(session_id) if session_id else None
     return await SkillsLoader(workspace).list_skill_info()
 
 

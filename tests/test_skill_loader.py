@@ -8,6 +8,19 @@ from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillInfo, SkillMetadata, SkillsLoader
 
 
+@pytest.mark.asyncio
+async def test_skills_loader_creates_workspace_when_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [])
+    workspace = tmp_path / "workspace"
+
+    loader = SkillsLoader(workspace)
+
+    assert not workspace.exists()
+    assert loader.workspace_skills == workspace / "skills"
+    assert await loader.list_skill_info() == []
+    assert (workspace / "skills").is_dir()
+
+
 def test_skill_content_is_frozen_after_creation():
     content = "---\nname: original\n---\n# Original"
     skill = SkillInfo(source="workspace", path="SKILL.md", content=content)
