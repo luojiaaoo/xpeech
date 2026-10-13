@@ -234,6 +234,9 @@ def _format_command_output(
 ) -> str:
     output_parts = []
 
+    if timed_out:
+        output_parts.append(f"ERROR: Command timed out after {timeout_ms / 1000:g}s (process terminated)")
+
     if stdout:
         output_parts.append(stdout.decode("utf-8", errors="replace"))
 
@@ -242,8 +245,6 @@ def _format_command_output(
         if stderr_text.strip():
             output_parts.append(f"STDERR:\n{stderr_text}")
 
-    if timed_out:
-        output_parts.append(f"\nCommand timed out after {timeout_ms / 1000:g}s (process terminated)")
     output_parts.append(f"Exit code: {returncode}")
     return "\n".join(output_parts) if output_parts else "(no output)"
 

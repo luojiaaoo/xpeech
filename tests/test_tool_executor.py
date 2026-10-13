@@ -8,15 +8,17 @@ from openai import pydantic_function_tool
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from xpeech.agent.tool_executor import ToolExecutor
-from xpeech.agent.tools import sandbox
+from xpeech.agent.tools import sandbox, shell as shell_module
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
 from xpeech.agent.tools.shell import (
     MAX_EXEC_TIMEOUT_MS,
     ShellArgs,
+    ShellCommandResult,
     _format_command_output,
     _guard_command,
     _run_wrapped_command,
+    build_shell_tools,
 )
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 from xpeech.provider.schema import ToolCallRequest
@@ -149,6 +151,7 @@ class TestToolExecutor:
             timed_out=result.timed_out,
             timeout_ms=500,
         )
+        assert output.startswith("ERROR: Command timed out after 0.5s")
         assert "partial output" in output
         assert "Command timed out after 0.5s" in output
 
@@ -161,6 +164,40 @@ class TestToolExecutor:
         assert result.stdout == b"done"
         assert result.returncode == 0
         assert result.timed_out is False
+
+    @pytest.mark.asyncio
+    async def test_shell_timeout_result_is_limited_normally(self, tmp_path: Path, monkeypatch):
+        async def skip_venv(_workspace: Path) -> None:
+            return None
+
+        async def timed_out_command(*_args, **_kwargs) -> ShellCommandResult:
+            return ShellCommandResult(
+                stdout=b"partial output\n",
+                stderr=b"still running\n",
+                returncode=-9,
+                timed_out=True,
+            )
+
+        monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(shell_module, "get_session_id", lambda: "test-session")
+        monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", skip_venv)
+        monkeypatch.setattr(shell_module, "_run_wrapped_command", timed_out_command)
+        shell = build_shell_tools(tmp_path)
+
+        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=32).execute(
+            [ToolCallRequest(id="1", name="shell", arguments={"command": "sleep 10", "timeout_ms": 500})],
+            {"shell": shell},
+        )
+
+        assert result.succeeded is True
+        assert result.value.startswith("ERROR: Command timed out after 0")
+        assert "Full result saved to:" in result.value
+        full_result = self._saved_result_path(tmp_path, result.value).read_text(encoding="utf-8")
+        assert full_result.startswith("ERROR: Command timed out after 0.5s")
+        assert "partial output" in full_result
+        assert "STDERR:\nstill running" in full_result
+        assert "Command timed out after 0.5s" in full_result
 
     def test_mcp_output_is_not_truncated_before_executor(self):
         full_result = "x" * 50_001
