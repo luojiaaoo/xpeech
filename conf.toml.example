@@ -12,6 +12,22 @@ log_path = "data/logs"
 retention_days = 7
 max_file_size_mb = 10
 
+[sandbox]
+domain = "localhost:8080"
+image = "xpeech-runtime:local"
+use_server_proxy = true
+# Must be the absolute data directory on the Docker daemon host, not a path
+# inside the backend container. Compose sets this via environment variables.
+host_data_path = "/srv/xpeech/data"
+callback_url = "http://backend:7878/internal/runtime"
+ttl_seconds = 1800
+run_timeout_seconds = 1500
+ready_timeout_seconds = 120
+# api_key is supplied through XPEECH_SANDBOX__API_KEY.
+
+[sandbox.runtime_env]
+CDP_URL = "http://browserless:3000"
+
 [jwt]
 # Generate a dedicated value with: python -c "import secrets; print(secrets.token_hex(32))"
 secret_key = "replace-with-a-random-secret-of-at-least-32-characters"

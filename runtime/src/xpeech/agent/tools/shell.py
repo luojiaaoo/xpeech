@@ -268,7 +268,8 @@ async def _ensure_workspace_uv_venv(workspace: Path) -> None:
 def build_shell_tools(workspace: str | Path):
     if platform.system() != "Linux":
         raise RuntimeError("Shell tool requires Linux with bubblewrap; Windows and other platforms are not supported.")
-    missing = [name for name in ("bwrap", "bash", "uv") if shutil.which(name) is None]
+    required = ("bash", "uv") if os.environ.get("XPEECH_RUNTIME_SHELL") == "container" else ("bwrap", "bash", "uv")
+    missing = [name for name in required if shutil.which(name) is None]
     if missing:
         raise RuntimeError(f"Shell tool requires executable(s) on PATH: {', '.join(missing)}")
     workspace = Path(workspace).expanduser().resolve()
@@ -295,7 +296,7 @@ def build_shell_tools(workspace: str | Path):
         """
             Execute a bash command and return the output.
 
-            Commands run on Linux inside a bubblewrap sandbox. The current
+            Commands run on Linux inside the isolated agent container. The current
             workspace is isolated from other workspaces.
             Commands time out after 120 seconds by default; timeout_ms can
             request up to 240 seconds. On timeout, partial output is returned.

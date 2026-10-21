@@ -13,17 +13,18 @@ from starlette.datastructures import UploadFile
 from charset_normalizer import from_bytes, from_path
 from importlib.util import spec_from_file_location, module_from_spec
 import sys
-from litellm import token_counter as _token_counter
 from io import BytesIO
-from PIL import Image
 import tempfile
 from async_lru import alru_cache
 
-# PIL.Image.ANTIALIAS is deprecated, use PIL.Image.Resampling.LANCZOS instead
-if not hasattr(Image, "ANTIALIAS"):
-    Image.ANTIALIAS = Image.Resampling.LANCZOS
+def VideoFileClip(*args, **kwargs):
+    """Load runtime-only media dependencies when a media tool needs them."""
+    from PIL import Image
+    from moviepy.editor import VideoFileClip as load_clip
 
-from moviepy.editor import VideoFileClip
+    if not hasattr(Image, "ANTIALIAS"):
+        Image.ANTIALIAS = Image.Resampling.LANCZOS
+    return load_clip(*args, **kwargs)
 
 
 def ensure_async(func):
@@ -142,6 +143,7 @@ async def save_to_workspace(file: UploadFile, workspace: Path):
 
 
 async def token_counter(messages: list[dict]):
+    from litellm import token_counter as _token_counter
     cleaned_messages, video_tokens = await _strip_video_blocks_and_count_tokens(messages)
     return _token_counter(model="gpt-4o", messages=cleaned_messages) + video_tokens
 
@@ -204,6 +206,8 @@ def compress_image(
     min_quality: int = 10,
     max_quality: int = 95,
 ) -> tuple[bytes, str]:
+    from PIL import Image
+
     target_bytes = target_kb * 1024
     img = Image.open(BytesIO(input_bytes))
     if img.mode != "RGB":

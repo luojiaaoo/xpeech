@@ -1,0 +1,27 @@
+[project]
+name = "xpeech-runtime"
+version = "0.1.0"
+description = "Complete Xpeech agent loop and tools, executed inside OpenSandbox"
+requires-python = ">=3.12"
+dependencies = [
+    "xpeech==0.1.0",
+    "litellm>=1.83.0",
+    "markitdown[pdf,docx,pptx,xlsx,xls]>=0.1.5",
+    "mcp>=1.28.1",
+    "moviepy>=1.0.3,<2",
+    "openai>=2.36.0",
+    "pillow>=12.2.0",
+]
+
+[project.scripts]
+xpeech-runtime = "xpeech_runtime.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xpeech", "src/xpeech_runtime"]
+
+[tool.uv.sources]
+xpeech = { workspace = true }

@@ -6,7 +6,7 @@
 
 ![Xpeech screenshot](screenshot/image.png)
 
-Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口，可以接收文本、图片和文件，调用大模型生成流式回复，并在需要时调用工具完成任务。
+Xpeech 是一个基于 FastAPI 和 OpenSandbox 的 Agent 服务。后端负责 Channel 交互与容器委托；完整 Agent loop、模型调用、工具、MCP、压缩和记忆由独立的 [runtime 子项目](runtime/README.md) 在沙盒内运行。
 
 适合用来快速启动一个可扩展的 AI Agent API 服务。
 
@@ -36,11 +36,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 uv sync
 ```
 
-Shell 工具只支持 Linux，并依赖 bubblewrap 沙盒。Debian/Ubuntu 可这样安装：
-
-```bash
-sudo apt-get install bubblewrap
-```
+生产部署需要 Docker 和 OpenSandbox Server。镜像构建、数据目录和启动步骤见 [Runtime 部署说明](runtime/README.md)。开发环境 `uv sync` 会安装两个 workspace 项目；单独安装根项目只包含后端依赖。
 
 提前安装内置技能依赖：
 
@@ -50,7 +46,7 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 npm config set registry https://registry.npmmirror.com/
 ```
 
-Docker 镜像已安装 `agent-browser`。Compose 通过 Browserless Chromium 容器提供 CDP 服务，Xpeech 不会在 backend 容器内安装、启动或管理本地浏览器。
+Runtime 镜像已安装 `agent-browser`。Compose 通过 Browserless Chromium 容器提供 CDP 服务。
 
 ## 配置
 
@@ -176,10 +172,12 @@ Xpeech Deck 是自托管平台，需要与 Docker 和所有受管 Xpeech 实例�
 
 ## Docker Compose 部署
 
-Compose 会启动四个容器：
+Compose 启动以下常驻服务，并通过 OpenSandbox 按请求创建 Agent 运行时容器：
 
 - `browserless`：Browserless Chromium CDP 服务，仅限 Docker 内网访问
-- `backend`：Xpeech API、Agent 和工具执行服务
+- `opensandbox`：沙盒生命周期与端点代理服务
+- `lark-token-manager`：飞书长期凭据管理服务
+- `backend`：Xpeech API、Channel 协议、后台调度和沙盒委托
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
 - `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
 
@@ -191,11 +189,13 @@ cp .env.example .env
 ```
 
 填写 `conf.toml` 中的 `llm.api_key` 和 `feishu.app_secret`，并确认
-`.env` 中的 `CDP_URL` 与容器网络一致，再确认
+`.env` 中的 `XPEECH_HOST_DATA_PATH` 为宿主机绝对路径，并设置独立的
+`OPENSANDBOX_API_KEY`，再确认
 `conf.toml` 中的 `llm`、`feishu.app_id` 等普通配置正确，然后构建并启动：
 
 ```bash
-docker compose up -d --build
+docker compose --profile build build runtime-image backend
+docker compose up -d
 ```
 
 后端默认暴露在 `http://localhost:7878`，Web 客户端默认暴露在
@@ -210,21 +210,22 @@ BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 
 ```bash
 docker compose ps
-docker compose logs -f lark-token-manager browserless backend feishu web_client
+docker compose logs -f opensandbox lark-token-manager browserless backend feishu web_client
 ```
 
 持久化数据统一映射到宿主机
-的 `./docker_data/` 目录，其中包含 `session`、`workspace_base` 和
-`browser_preview`，Web 用户数据库保存在 `web_client/users.db`；缓存目录不做宿主机磁盘
-映射。`conf.toml` 以只读方式挂载，`.env` 通过 `env_file` 注入进程。普通运行时配置修改后重建容器
-即可生效；`feishu.app_id` 或 `feishu.app_secret` 修改后需要增加 `--build` 重新编译 lark-cli 和
-lark-cli-auth：
+的 `XPEECH_HOST_DATA_PATH`，其中包含 `session`、`workspace_base`、`cache`、
+`sandbox-home` 和 `browser_preview`。Web 用户数据库保存在 `./docker_data/web_client/users.db`。
+`conf.toml` 只挂载到后端及 Channel；运行时只收到执行所需配置。内置技能、自定义工具和 CLI
+编译配置变化后需要重新构建 `runtime-image`。首次目录准备及完整部署说明见
+[runtime/README.md](runtime/README.md)。
 
 ```bash
 docker compose up -d --force-recreate browserless backend feishu web_client
 
-# lark-cli 构建配置发生变化时
-docker compose up -d --build --force-recreate backend
+# lark-cli 或工具构建配置发生变化时
+docker compose --profile build build runtime-image backend
+docker compose up -d --force-recreate backend
 ```
 
 ## 发送消息
@@ -471,7 +472,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `write_file` | 向工作区写入文件 |
 | `edit_file` | 编辑工作区内的文件 |
 | `list_dir` | 列出工作区或内置技能目录内容 |
-| `shell` | 执行 Bash 命令（带工作区路径限制和 bwrap 沙盒） |
+| `shell` | 在 Agent 容器内执行 Bash 命令，带工作区路径限制与超时取消 |
 | `web_fetch` | 抓取网页内容并转为 Markdown |
 | `web_search` | 搜索网页并返回结果 |
 | `create_browser_preview` | 将工作区内目录或单个 HTML 复制到 UUID 预览目录，返回目录 URL 前缀或完整文件 URL |
@@ -498,14 +499,16 @@ Shell 命令默认 120 秒超时，可在单次调用中通过 `timeout_ms` 指�
 
 - **统一路径解析**：文件工具、文件发送工具和 Shell 绝对路径检查统一通过 `xpeech/agent/tools/helper.py` 解析路径；默认限制在工作区内，读取类操作可额外访问内置技能目录，写入和编辑仍只能落在工作区内
 - **预览目录隔离**：`create_browser_preview` 只能复制当前会话工作区内的目录或 HTML，每次写入 `<browser_preview_path>/<uuid>/`，请求子路径不能越出对应 UUID 目录
-- **Shell 沙盒**：Shell 命令通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离
+- **运行时沙盒**：完整 Agent loop 和工具在 OpenSandbox 容器内运行，只挂载当前用户的持久目录
 - **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到 `<workspace>/home`，不会在会话间共享可写状态
 - **Shell 黑名单**：禁止执行 `rm -rf`、`format`、`dd` 等危险命令
 - **路径遍历检测**：拦截包含 `..` 的路径操作
 
-### 沙盒
+### 沙盒（OpenSandbox 分支）
 
-Shell 命令会在 bwrap 进程沙盒中执行：
+每个实时请求或后台任务创建独立 OpenSandbox 容器，完整 loop 和工具在容器内执行。后端转发 SSE、用户回答、调度回调和记录；运行结束或取消后销毁容器。部署与职责边界详见 [runtime/README.md](runtime/README.md)。
+
+以下是迁移前 Bubblewrap 后端的实现说明，保留供行为对照；当前生产运行时由容器提供隔离：
 
 - 每个会话工作区会绑定为可读写目录，并作为命令工作目录。
 - 内置技能目录以只读方式挂载，便于读取技能脚本和资源。

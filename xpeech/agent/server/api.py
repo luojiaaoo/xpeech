@@ -7,6 +7,7 @@ from .routes.files import router as files_router
 from .routes.public_file import router as public_file_router
 from .routes.skills import router as skills_router
 from .routes.statistics import router as statistics_router
+from .routes.runtime import router as runtime_router
 from .server import app
 
 app.include_router(auth_router)
@@ -15,3 +16,4 @@ app.include_router(chat_router, dependencies=[Depends(require_jwt)])
 app.include_router(skills_router, dependencies=[Depends(require_jwt)])
 app.include_router(statistics_router, dependencies=[Depends(require_jwt)])
 app.include_router(public_file_router)
+app.include_router(runtime_router)

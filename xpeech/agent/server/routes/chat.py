@@ -11,8 +11,7 @@ from ...background import (
     BackgroundMessageChannel,
     FeishuBackgroundMessage,
 )
-from ...loop import AgentLoop, QuestionEvent
-from ...runner import AgentRunner
+from ...runner import AgentRunner, answer_runtime_question
 from ..dependencies import acquire_chat_session, content, sender_name_header, user_id_header, session_metadata
 from ..schema import InboundMessage, InputContent
 
@@ -47,10 +46,7 @@ async def answer_question(
     answer: Annotated[str, Form(description="回答内容")],
 ):
     """提交用户答案并唤醒正在等待的 Agent 循环。"""
-    question_event: QuestionEvent | None = AgentLoop.SESSION_QUESTION_EVENT.get(user_id)
-    if question_event is not None:
-        question_event.answer = answer
-        question_event.event.set()
+    if await answer_runtime_question(user_id, answer):
         return {"message": "Answer received"}
     return {"message": "Question event not found"}
 

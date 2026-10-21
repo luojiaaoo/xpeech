@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from ....config.settings import settings
 from ....exceptions import PathProtectionError
 from ....utils.user_id import validate_user_id
-from ...tools.helper import safe_resolve_workspace_path
+from ....utils.workspace import safe_resolve_workspace_path
 
 router = APIRouter()
 

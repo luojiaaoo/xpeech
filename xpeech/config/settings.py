@@ -311,6 +311,32 @@ class WebClientConfig(BaseModel):
         return self
 
 
+class SandboxConfig(BaseModel):
+    """Gateway settings for delegating a complete run to OpenSandbox."""
+
+    domain: str = "localhost:8080"
+    protocol: Literal["http", "https"] = "http"
+    api_key: str | None = Field(default=None, repr=False)
+    image: str = "xpeech-runtime:local"
+    use_server_proxy: bool = True
+    runtime_port: int = Field(default=8090, ge=1, le=65535)
+    ttl_seconds: int = Field(default=1800, ge=60)
+    ready_timeout_seconds: int = Field(default=120, ge=1)
+    run_timeout_seconds: int = Field(default=1500, ge=1)
+    callback_url: str = "http://host.docker.internal:7878/internal/runtime"
+    # Directory on the Docker daemon host containing workspace_base/, session/,
+    # browser_preview/, cache/, and sandbox-home/. No arbitrary mounts from tools.
+    host_data_path: Path = Path("data")
+    resource: dict[str, str] = Field(default_factory=lambda: {"cpu": "2", "memory": "4Gi"})
+    runtime_env: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def ttl_covers_run(self):
+        if self.ttl_seconds <= self.run_timeout_seconds:
+            raise ValueError("sandbox ttl_seconds must exceed run_timeout_seconds")
+        return self
+
+
 class Settings(BaseSettings):
     path: PathConfig
     tool: ToolConfig = ToolConfig()
@@ -319,6 +345,7 @@ class Settings(BaseSettings):
     logging: LoggingConfig = LoggingConfig()
     jwt: JWTConfig
     web_client: WebClientConfig = Field(default_factory=WebClientConfig)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
     @classmethod
     def settings_customise_sources(

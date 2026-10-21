@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from xpeech.agent import runner as runner_module
-from xpeech.agent.runner import AgentRunner
+from xpeech.agent import runtime_runner as runner_module
+from xpeech.agent.runtime_runner import AgentRunner
 from xpeech.agent.server.schema import InboundMessage, InputText
 
 

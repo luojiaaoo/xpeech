@@ -253,7 +253,12 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_tools_capture_context_list_across_channels_and_enforce_cancel_owner(tmp_path: Path):
+async def test_tools_capture_context_list_across_channels_and_enforce_cancel_owner(tmp_path: Path, monkeypatch):
+    # The runtime tools use scoped HTTP callbacks now. Exercise the same
+    # scheduler semantics here; callback ownership is verified separately.
+    monkeypatch.setattr(schedule_tools, "schedule_feishu_task", schedule_feishu_task)
+    monkeypatch.setattr(schedule_tools, "list_scheduled_tasks", list_scheduled_tasks)
+    monkeypatch.setattr(schedule_tools, "cancel_scheduled_task", cancel_scheduled_task)
     scheduler = start_background_scheduler(tmp_path / "schedule.db")
     args = FeishuScheduleArgs(
         prompt="daily report",

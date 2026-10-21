@@ -1,12 +1,34 @@
 configs:
   xpeech_conf:
     file: ./conf.toml
+  opensandbox_conf:
+    content: |
+      [server]
+      host = "0.0.0.0"
+      port = 8080
+      api_key = "${OPENSANDBOX_API_KEY:?Set OPENSANDBOX_API_KEY}"
+      max_sandbox_timeout_seconds = 86400
+      [runtime]
+      type = "docker"
+      execd_image = "opensandbox/execd:v1.1.0"
+      [storage]
+      allowed_host_paths = ["${XPEECH_HOST_DATA_PATH:?Set an absolute XPEECH_HOST_DATA_PATH}"]
+      [docker]
+      network_mode = "xpeech-net"
+      drop_capabilities = ["SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYS_MODULE"]
+      no_new_privileges = true
+      pids_limit = 4096
+      [proxy]
+      resolve_internal = true
+      [ingress]
+      mode = "direct"
 
 x-xpeech-service: &xpeech-service
   image: xpeech:local
   build:
     context: .
     dockerfile: Dockerfile
+    target: backend
   env_file:
     - ./.env
   environment:
@@ -22,15 +44,39 @@ x-xpeech-service: &xpeech-service
       target: /app/conf.toml
   init: true
   restart: unless-stopped
+  networks: [xpeech-net]
 
 services:
+  opensandbox:
+    image: opensandbox/server:release-1.1.0
+    command: ["--config", "/etc/opensandbox.toml"]
+    environment:
+      SANDBOX_CONFIG_PATH: /etc/opensandbox.toml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${XPEECH_HOST_DATA_PATH}:${XPEECH_HOST_DATA_PATH}
+      - opensandbox-state:/root/.opensandbox
+    configs:
+      - source: opensandbox_conf
+        target: /etc/opensandbox.toml
+    networks: [xpeech-net]
+    restart: unless-stopped
+
+  runtime-image:
+    image: xpeech-runtime:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    profiles: [build]
+
   lark-token-manager:
     <<: *xpeech-service
     command: ["token_manager", "--host", "0.0.0.0", "--port", "7883"]
     volumes:
       - ./docker_data/lark-token-manager:/app/data/lark-token-manager
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:7883/health"]
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7883/health')"]
       interval: 20s
       timeout: 5s
       retries: 6
@@ -40,11 +86,14 @@ services:
     image: ghcr.io/browserless/chromium:v2.55.0
     init: true
     restart: unless-stopped
+    networks: [xpeech-net]
 
   backend:
     <<: *xpeech-service
     command: ["api", "--host", "0.0.0.0", "--port", "${BACKEND_PORT:-7878}"]
     depends_on:
+      opensandbox:
+        condition: service_started
       browserless:
         condition: service_started
       lark-token-manager:
@@ -55,24 +104,27 @@ services:
       # 内置技能及本地自定义内置技能（x-*）
       - ./xpeech/agent/skills/buildin:/app/xpeech/agent/skills/buildin:ro
       # 会话上下文
-      - ./docker_data/session:/app/data/session
+      - ${XPEECH_HOST_DATA_PATH}/session:/app/data/session
       # 工作目录
-      - ./docker_data/workspace_base:/app/data/workspace_base
+      - ${XPEECH_HOST_DATA_PATH}/workspace_base:/app/data/workspace_base
       # 沙盒内包管理器的国内镜像配置（逐用户只读映射到 HOME）
-      - ./data/sandbox-home:/app/data/sandbox-home:ro
+      - ${XPEECH_HOST_DATA_PATH}/sandbox-home:/app/data/sandbox-home:ro
       # 网页预览目录
-      - ./docker_data/browser_preview:/app/data/browser_preview
+      - ${XPEECH_HOST_DATA_PATH}/browser_preview:/app/data/browser_preview
+      - ${XPEECH_HOST_DATA_PATH}/cache:/app/data/cache
       # 运行日志目录
       - ./docker_data/logs:/app/data/logs
       # 头像等
       - ./assets:/app/assets:ro
-    cap_add:
-      - SYS_ADMIN
-    security_opt:
-      - apparmor=unconfined
-      - seccomp=unconfined
+    environment:
+      TZ: Asia/Shanghai
+      XPEECH_SANDBOX__DOMAIN: opensandbox:8080
+      XPEECH_SANDBOX__API_KEY: ${OPENSANDBOX_API_KEY}
+      XPEECH_SANDBOX__HOST_DATA_PATH: ${XPEECH_HOST_DATA_PATH}
+      XPEECH_SANDBOX__CALLBACK_URL: http://backend:${BACKEND_PORT:-7878}/internal/runtime
+      XPEECH_SANDBOX__RUNTIME_ENV: '{"CDP_URL":"http://browserless:3000"}'
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:${BACKEND_PORT:-7878}/health"]
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${BACKEND_PORT:-7878}/health')"]
       interval: 20s
       timeout: 5s
       retries: 6
@@ -96,3 +148,10 @@ services:
     volumes:
       # Web 用户和登录会话数据库
       - ./docker_data/web_client:/app/data/web_client
+
+networks:
+  xpeech-net:
+    name: xpeech-net
+
+volumes:
+  opensandbox-state:

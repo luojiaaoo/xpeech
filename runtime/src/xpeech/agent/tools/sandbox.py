@@ -74,6 +74,21 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
         "SHELL_USER_ID": user_id, # 注入 user_id，给插件使用
     }
     sandbox_env.update(env or {})
+    if os.environ.get("XPEECH_RUNTIME_SHELL") == "container":
+        # OpenSandbox provides the process/container boundary. All tools and
+        # the loop already run here, so no nested privileged bwrap is needed.
+        for source, relative_path in _iter_sandbox_home_config_files():
+            target = home / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists() and not target.is_symlink():
+                target.symlink_to(source)
+        workspace_skills.mkdir(parents=True, exist_ok=True)
+        for skill in iter_builtin_skill_dirs():
+            target = workspace_skills / skill.name
+            if not target.exists() and not target.is_symlink():
+                target.symlink_to(skill.resolve(), target_is_directory=True)
+        exports = " ".join(f"{key}={shlex.quote(str(value))}" for key, value in sandbox_env.items())
+        return f"env {exports} bash -c {shlex.quote(command)}"
     for key, value in sandbox_env.items():
         _add_setenv(args, key, value)
 

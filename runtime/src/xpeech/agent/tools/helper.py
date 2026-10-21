@@ -53,54 +53,10 @@ def safe_resolve_workspace_path(
     workspace: str | Path,
     protect_read_only_file: bool = True,
 ) -> Path:
-    """Resolve a workspace path, including read-only sandbox mount mappings."""
-    workspace = Path(workspace).expanduser().resolve()
-    path = _expand_sandbox_home_path(user_path, workspace)
+    """Resolve logical workspace paths identically in gateway and runtime."""
+    from ...utils.workspace import safe_resolve_workspace_path as resolve
 
-    if path.is_absolute():
-        resolved_path = path.resolve()
-    else:
-        resolved_path = (workspace / path).resolve()
-
-    # 先确保用户输入没有逃离工作区。
-    if not is_relative_path(path_target=resolved_path, base=workspace):
-        raise PathProtectionError("Path escapes workspace")
-
-    # shell 工具会把公共 HOME 配置映射到工作区 HOME，
-    # 文件工具在沙盒外运行，需要在这里做相同的路径映射。
-    workspace_home = workspace / "home"
-    try:
-        home_relative = resolved_path.relative_to(workspace_home)
-    except ValueError:
-        pass
-    else:
-        if home_relative.parts:
-            config_root = settings.path.sandbox_home_path.expanduser().resolve()
-            config_path = config_root.joinpath(*home_relative.parts)
-            if config_path.is_file():
-                if protect_read_only_file:
-                    raise PathProtectionError("Sandbox HOME config files are read-only")
-                return config_path.resolve()
-
-    # 非 skills 目录下的路径无需进行内置技能转换。
-    workspace_skills = workspace / "skills"
-    try:
-        skill_relative = resolved_path.relative_to(workspace_skills)
-    except ValueError:
-        return resolved_path
-
-    # 访问 workspace/skills
-    if not skill_relative.parts:
-        return resolved_path
-
-    # 内置技能路径转换
-    builtin_skill = (BUILTIN_SKILLS_DIR / skill_relative.parts[0]).resolve()
-    if (builtin_skill / "SKILL.md").is_file():
-        if protect_read_only_file:
-            raise PathProtectionError("Built-in skills are read-only")
-        return builtin_skill.joinpath(*skill_relative.parts[1:]).resolve()
-    else:
-        return resolved_path
+    return resolve(user_path, workspace, protect_read_only_file)
 
 
 class EmptyToolArgs(BaseModel):

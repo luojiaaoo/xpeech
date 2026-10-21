@@ -5,11 +5,29 @@ from typing import Annotated
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ...utils.helper import ensure_async
-from ..background import (
-    cancel_scheduled_task,
-    list_scheduled_tasks,
-    schedule_feishu_task,
-)
+from xpeech_runtime.callbacks import gateway_call
+from types import SimpleNamespace
+
+
+async def schedule_feishu_task(**kwargs):
+    result = await gateway_call("schedule", {
+        "prompt": kwargs["prompt"],
+        "run_at": kwargs["run_at"].isoformat() if kwargs["run_at"] else None,
+        "cron": kwargs["cron"],
+    })
+    return SimpleNamespace(
+        id=result["job_id"],
+        next_run_time=datetime.fromisoformat(result["next_run_time"]) if result["next_run_time"] else None,
+    )
+
+
+async def list_scheduled_tasks(user_id):
+    result = await gateway_call("schedule_list", {})
+    return [SimpleNamespace(model_dump=lambda item=item: item) for item in result]
+
+
+async def cancel_scheduled_task(*, user_id, job_id):
+    await gateway_call("schedule_cancel", {"job_id": job_id})
 
 
 def _require_text(value: object, name: str) -> str:

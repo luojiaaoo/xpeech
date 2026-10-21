@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...agent.tools.question import validate_question_json
+from ...protocol.questions import validate_question_json
 
 FINISH_CARD_CONTENT = {
     "schema": "2.0",
