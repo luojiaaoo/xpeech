@@ -102,6 +102,7 @@ class MCPServerSettings(BaseModel):
     env: dict[str, str] | None = None
     url: str | None = None
     transport: Literal["stdio", "sse", "streamable-http"] | None = None
+    command_authorization_token: str | None = None
     headers: dict[str, str] | None = None
     verify_tls: bool = Field(default=True, validation_alias="verify_tls")
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")

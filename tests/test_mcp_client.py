@@ -37,9 +37,11 @@ def test_tls_verification_can_be_disabled_from_config():
         {
             "mcpServers": {
                 "test": {
-                "url": "https://example.test/mcp",
-                "verify_tls": False,
-                "connect_timeout": 45,
+                    "url": "https://example.test/mcp",
+                    "command_authorization_token": "token-helper --user $user_id",
+                    "headers": {"Authorization": "Bearer ${authorization_token}"},
+                    "verify_tls": False,
+                    "connect_timeout": 45,
                 }
             }
         }
@@ -51,6 +53,92 @@ def test_tls_verification_can_be_disabled_from_config():
 
     assert registration.config.verify_tls is False
     assert registration.config.connect_timeout == 45
+    assert registration.config.command_authorization_token == "token-helper --user $user_id"
+    assert registration.config.headers == {"Authorization": "Bearer ${authorization_token}"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user_id_placeholder", "token_placeholder"),
+    [
+        ("$user_id", "$authorization_token"),
+        ("${user_id}", "${authorization_token}"),
+    ],
+)
+async def test_resolves_per_user_authorization_headers_without_a_shell(
+    monkeypatch: pytest.MonkeyPatch,
+    user_id_placeholder: str,
+    token_placeholder: str,
+):
+    process_args = None
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"secret-token\n", b""
+
+    async def create_subprocess_exec(*args, **_kwargs):
+        nonlocal process_args
+        process_args = args
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+    user_id = "user; echo not-a-command"
+
+    headers = await mcp_client._resolve_http_headers(
+        {
+            "Authorization": f"Bearer {token_placeholder}",
+            "X-User-ID": user_id_placeholder,
+            "X-Literal": "$user_identifier",
+        },
+        f"token-helper --user {user_id_placeholder}",
+        user_id,
+    )
+
+    assert process_args == ("token-helper", "--user", user_id)
+    assert headers == {
+        "Authorization": "Bearer secret-token",
+        "X-User-ID": user_id,
+        "X-Literal": "$user_identifier",
+    }
+
+
+@pytest.mark.asyncio
+async def test_authorization_token_header_requires_token_command():
+    with pytest.raises(ValueError, match="require command_authorization_token"):
+        await mcp_client._resolve_http_headers(
+            {"Authorization": "Bearer $authorization_token"},
+            None,
+            "user-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_does_not_run_token_command_without_authorization_token_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def unexpected_subprocess(*_args, **_kwargs):
+        raise AssertionError("token command should not run")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", unexpected_subprocess)
+
+    headers = await mcp_client._resolve_http_headers(
+        {"X-User-ID": "$user_id"},
+        "token-helper $user_id",
+        "user-1",
+    )
+
+    assert headers == {"X-User-ID": "user-1"}
+
+
+def test_authorization_token_command_requires_remote_mcp():
+    with pytest.raises(ValueError, match="requires a remote URL"):
+        mcp_client.create_mcp_registration(
+            server_name="test",
+            command="fake-server",
+            command_authorization_token="token-helper $user_id",
+        )
 
 
 @pytest.mark.asyncio
@@ -95,9 +183,11 @@ async def test_streamable_http_passes_tls_setting_to_httpx(monkeypatch: pytest.M
     registration = mcp_client.create_mcp_registration(
         server_name="test",
         url="https://example.test/mcp",
+        headers={"X-User-ID": "$user_id"},
         verify_tls=False,
         connect_timeout=45,
     )
+    registration.user_id = "user-42"
     ready = asyncio.get_running_loop().create_future()
     close_event = asyncio.Event()
     owner = asyncio.create_task(registration._run_connection(ready, close_event))
@@ -108,6 +198,7 @@ async def test_streamable_http_passes_tls_setting_to_httpx(monkeypatch: pytest.M
 
     assert client_kwargs["verify"] is False
     assert client_kwargs["timeout"].connect == 45
+    assert client_kwargs["headers"] == {"X-User-ID": "user-42"}
 
 
 @pytest.mark.asyncio

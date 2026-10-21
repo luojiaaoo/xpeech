@@ -422,7 +422,8 @@ tool_timeout = 30
 [tool.mcpServers.my-api]
 url = "https://mcp.example.com/sse"
 transport = "sse"
-headers = { Authorization = "Bearer xxx" }
+command_authorization_token = "curl --fail --silent 'https://auth.example.com/token?user_id=${user_id}'"
+headers = { Authorization = "Bearer ${authorization_token}", X-User-ID = "$user_id" }
 verify_tls = true
 enabled_tools = ["search", "read_record"]
 tool_timeout = 120
@@ -447,12 +448,19 @@ tool_timeout = 120
 - `url`：连接远程 MCP Server。`/sse` 结尾的地址使用 SSE transport，其他地址默认使用 streamable HTTP。
 - `transport`：可选，显式指定 `stdio`、`sse` 或 `streamable-http`。省略时按 `command` 或 URL 自动判断。
 - `env`：stdio Server 的环境变量。
-- `headers`：远程 MCP Server 的请求头。
+- `command_authorization_token`：连接远程 MCP Server 前执行的取 token 命令，stdout 作为 `authorization_token`。
+- `headers`：远程 MCP Server 的请求头，支持按用户替换占位符。
 - `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
 - `enabled_tools`：允许注册的 MCP 工具名，`["*"]` 表示全部注册。
 - `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
 
-`command` 和 `url` 只能二选一。MCP Server 配置会按原样传入，不会做运行时字符串替换。
+`command` 和 `url` 只能二选一。`command_authorization_token` 仅适用于远程 MCP，每次
+建立或重建用户连接时执行；命令中的 `$user_id` 和 `${user_id}` 会替换为当前用户 ID，
+但命令不经过 shell。命令必须在 10 秒内成功退出，并在 stdout 输出非空 UTF-8 token。
+
+`headers` 的值支持 `$user_id` / `${user_id}` 和 `$authorization_token` /
+`${authorization_token}`。后两者由 `command_authorization_token` 的 stdout 提供。其他 MCP 配置不做
+运行时字符串替换。
 
 MCP 连接按 `user_id` 隔离。同一会话在最后一次会话请求或 MCP 工具调用后的 10 分钟内复用连接；空闲超时后自动关闭，不同会话不会共享连接。
 
