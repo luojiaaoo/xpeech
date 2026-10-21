@@ -27,6 +27,8 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
+from ...utils.command_template import execute_command_template
+
 
 _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset(
     (
@@ -47,11 +49,17 @@ _HASH_LENGTH = 8
 MCPTransport = Literal["stdio", "sse", "streamable-http"]
 MCP_CONNECTION_TTL_SECONDS = 20 * 60
 MCP_CONNECT_TIMEOUT_SECONDS = 30
-MCP_RECONNECT_DELAY_SECONDS = 2 *60
+MCP_RECONNECT_DELAY_SECONDS = 2 * 60
+MCP_AUTHORIZATION_TOKEN_TIMEOUT_SECONDS = 10
 MCP_CONNECTIONS: dict[str, dict[tuple[Any, ...], "MCPServerRegistration"]] = {}
 
 _SESSION_EXPIRY_HANDLES: dict[str, asyncio.TimerHandle] = {}
 _MCP_CONNECTIONS_LOCK: asyncio.Lock | None = None
+
+_USER_ID_PLACEHOLDER_RE = re.compile(r"\$(?:\{user_id\}|user_id(?![a-zA-Z0-9_]))")
+_AUTHORIZATION_TOKEN_PLACEHOLDER_RE = re.compile(
+    r"\$(?:\{authorization_token\}|authorization_token(?![a-zA-Z0-9_]))"
+)
 
 
 class _MCPReconnectCooldownError(RuntimeError):
@@ -159,6 +167,67 @@ def _normalize_windows_stdio_command(
 
     comspec = (normalized_env or {}).get("COMSPEC") or os.environ.get("COMSPEC") or "cmd.exe"
     return comspec, ["/d", "/c", command, *normalized_args], normalized_env
+
+
+async def _resolve_http_headers(
+    headers: Mapping[str, str] | None,
+    command_authorization_token: str | None,
+    user_id: str | None,
+) -> dict[str, str]:
+    def replace_placeholder(
+        value: str,
+        pattern: re.Pattern[str],
+        replacement: str,
+    ) -> str:
+        return pattern.sub(lambda _match: replacement, value)
+
+    async def resolve_authorization_token(command_template: str, current_user_id: str) -> str:
+        token = await execute_command_template(
+            command_template,
+            {"user_id": current_user_id},
+            operation="MCP command_authorization_token",
+            timeout=MCP_AUTHORIZATION_TOKEN_TIMEOUT_SECONDS,
+        )
+        if not token:
+            raise RuntimeError("MCP authorization token command returned an empty token")
+        return token
+
+    resolved = dict(headers or {})
+    if user_id is None and any(
+        _USER_ID_PLACEHOLDER_RE.search(value) for value in resolved.values()
+    ):
+        raise ValueError("MCP header user_id placeholders require a user-scoped registration")
+    if user_id is not None:
+        resolved = {
+            name: replace_placeholder(value, _USER_ID_PLACEHOLDER_RE, user_id)
+            for name, value in resolved.items()
+        }
+
+    has_authorization_token_placeholder = any(
+        _AUTHORIZATION_TOKEN_PLACEHOLDER_RE.search(value) for value in resolved.values()
+    )
+    if has_authorization_token_placeholder:
+        if command_authorization_token is None:
+            raise ValueError(
+                "MCP header authorization_token placeholders require command_authorization_token"
+            )
+        if user_id is None:
+            raise ValueError(
+                "MCP command_authorization_token requires a user-scoped registration"
+            )
+        authorization_token = await resolve_authorization_token(
+            command_authorization_token,
+            user_id,
+        )
+        resolved = {
+            name: replace_placeholder(
+                value,
+                _AUTHORIZATION_TOKEN_PLACEHOLDER_RE,
+                authorization_token,
+            )
+            for name, value in resolved.items()
+        }
+    return resolved
 
 
 def _extract_nullable_branch(options: Any) -> tuple[dict[str, Any], bool] | None:
@@ -327,6 +396,7 @@ class MCPServerConfig:
     env: Mapping[str, str] | None = None
     url: str | None = None
     transport: MCPTransport = "stdio"
+    command_authorization_token: str | None = None
     headers: Mapping[str, str] | None = None
     verify_tls: bool = True
     enabled_tools: tuple[str, ...] = ("*",)
@@ -338,6 +408,10 @@ class MCPServerConfig:
             raise ValueError("MCP server must define either command or url")
         if self.command and self.url:
             raise ValueError("MCP server cannot define both command and url")
+        if self.command_authorization_token is not None and not self.url:
+            raise ValueError("MCP command_authorization_token requires a remote URL")
+        if self.command_authorization_token is not None and not self.command_authorization_token.strip():
+            raise ValueError("MCP command_authorization_token cannot be empty")
 
 
 @dataclass
@@ -543,7 +617,11 @@ class MCPServerRegistration:
                     )
                     read, write = await stack.enter_async_context(stdio_client(server_params))
                 else:
-                    headers = dict(cfg.headers or {})
+                    headers = await _resolve_http_headers(
+                        cfg.headers,
+                        cfg.command_authorization_token,
+                        self.user_id,
+                    )
                     if cfg.transport == "sse":
                         read, write = await stack.enter_async_context(
                             sse_client(
@@ -694,6 +772,7 @@ def create_mcp_registration(
     env: Mapping[str, str] | None = None,
     url: str | None = None,
     transport: str | None = None,
+    command_authorization_token: str | None = None,
     headers: Mapping[str, str] | None = None,
     verify_tls: bool = True,
     enabled_tools: Sequence[str] | None = None,
@@ -715,6 +794,7 @@ def create_mcp_registration(
             env=dict(env) if env is not None else None,
             url=url,
             transport=normalized_transport,
+            command_authorization_token=command_authorization_token,
             headers=dict(headers) if headers is not None else None,
             verify_tls=verify_tls,
             enabled_tools=("*",) if enabled_tools is None else tuple(enabled_tools),
@@ -747,6 +827,11 @@ def create_mcp_registration_from_config(
         env=dict(env) if env is not None else None,
         url=_get_mcp_config_value(config, "url"),
         transport=_get_mcp_config_value(config, "transport"),
+        command_authorization_token=_get_mcp_config_value(
+            config,
+            "command_authorization_token",
+            attr_name="command_authorization_token",
+        ),
         headers=dict(headers) if headers is not None else None,
         verify_tls=_get_mcp_config_value(config, "verify_tls", True),
         enabled_tools=_get_mcp_config_value(config, "enabled_tools", ["*"], attr_name="enabled_tools"),
@@ -775,6 +860,7 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         _hashable_mapping(config.env),
         config.url,
         config.transport,
+        config.command_authorization_token,
         _hashable_mapping(config.headers),
         config.verify_tls,
         config.enabled_tools,

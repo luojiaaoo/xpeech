@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import hashlib
 import hmac
@@ -6,7 +5,6 @@ import html
 import json
 import re
 import secrets
-import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,6 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from yarl import URL
 
+from ....utils.command_template import CommandTemplateError, execute_command_template
 from ..dao import DuplicateUserIdError, User, WebClientDAO
 from ..models import (
     INJECT_PROMPT_STATE_MAX_LENGTH,
@@ -86,60 +85,38 @@ async def resolve_injected_prompt(
     state: str,
 ) -> str:
     try:
-        command = shlex.split(config.command_template)
-    except ValueError as error:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "inject_prompt.command_template 格式无效",
-        ) from error
-    if not command:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "inject_prompt.command_template 不能为空",
+        prompt = await execute_command_template(
+            config.command_template,
+            {"state": state},
+            operation="inject_prompt.command_template",
+            timeout=10,
+            required_variables=("state",),
         )
-
-    has_state_placeholder = any("${state}" in argument or "$state" in argument for argument in command)
-    if not has_state_placeholder:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "inject_prompt.command_template 缺少 ${state} 或 $state",
-        )
-    # Replace placeholders after splitting arguments and never invoke a shell, so
-    # state cannot add options, pipelines, redirects, or another command.
-    command = [argument.replace("${state}", state).replace("$state", state) for argument in command]
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except OSError as error:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "提示词命令无法启动",
-        ) from error
-
-    try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
-    except TimeoutError as error:
-        process.kill()
-        await process.wait()
-        raise HTTPException(
-            status.HTTP_504_GATEWAY_TIMEOUT,
-            "提示词命令执行超时",
-        ) from error
-    if process.returncode != 0:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "提示词命令执行失败",
-        )
-    try:
-        prompt = stdout.decode("utf-8").strip()
-    except UnicodeDecodeError as error:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "提示词命令必须输出 UTF-8 文本",
-        ) from error
+    except CommandTemplateError as error:
+        if error.reason == "invalid":
+            detail = "inject_prompt.command_template 格式无效"
+            status_code = status.HTTP_502_BAD_GATEWAY
+        elif error.reason == "empty":
+            detail = "inject_prompt.command_template 不能为空"
+            status_code = status.HTTP_502_BAD_GATEWAY
+        elif error.reason == "missing_variable":
+            detail = "inject_prompt.command_template 缺少 ${state} 或 $state"
+            status_code = status.HTTP_502_BAD_GATEWAY
+        elif error.reason == "start":
+            detail = "提示词命令无法启动"
+            status_code = status.HTTP_502_BAD_GATEWAY
+        elif error.reason == "timeout":
+            detail = "提示词命令执行超时"
+            status_code = status.HTTP_504_GATEWAY_TIMEOUT
+        elif error.reason == "failed":
+            detail = "提示词命令执行失败"
+            status_code = status.HTTP_502_BAD_GATEWAY
+        elif error.reason == "non_utf8":
+            detail = "提示词命令必须输出 UTF-8 文本"
+            status_code = status.HTTP_502_BAD_GATEWAY
+        else:
+            raise
+        raise HTTPException(status_code, detail) from error
     if not prompt:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
