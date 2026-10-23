@@ -1,5 +1,6 @@
 ---
 name: agent-browser
+short_description: 浏览器自动化
 description: 面向 AI 代理的浏览器自动化 CLI。用于导航网站、点击元素、填写表单、提取页面数据、截图、测试 Web 应用以及其他浏览器自动化任务。浏览器由外部通过注入的 CDP 连接提供；不要安装、启动或管理本地浏览器。
 
 ---

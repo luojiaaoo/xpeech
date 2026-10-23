@@ -1,5 +1,6 @@
 ---
 name: lark-skills
+short_description: 飞书全能力助手
 description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审批、妙搭应用开发、考勤、多维表格 Base、日历、通讯录、云文档 Docx/Wiki、云盘 Drive、事件订阅、即时通讯 IM、邮箱、Markdown、视频会议与纪要/妙记、OKR、原生 OpenAPI、电子表格 Sheets、幻灯片 Slides、任务 Task、画板 Whiteboard、知识库 Wiki，以及会议纪要汇总、日程待办摘要两个工作流和 Skill 制作器。当用户有任一飞书/Lark 需求时使用本技能，按本文件目录读取对应子技能库的 SKILL.md 后执行。"
 ---
 

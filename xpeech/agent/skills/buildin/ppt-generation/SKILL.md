@@ -1,5 +1,6 @@
 ---
 name: ppt-generation
+short_description: 可编辑 PPT 演示文稿生成
 description: 当用户请求生成、创建或制作演示文稿PPTX时，请使用此技能。用 HTML-first 方法设计高质量 16:9 幻灯片，强制先做视觉 grammar 和浏览器可演示版本，再导出真正可编辑 PPTX。
 ---
 

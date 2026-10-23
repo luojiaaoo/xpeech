@@ -1,5 +1,6 @@
 ---
 name: markdown-formatter
+short_description: Markdown 格式化
 description: Format and beautify markdown documents with configurable styles. Preserve structure, fix formatting, ensure consistency.
 ---
 
