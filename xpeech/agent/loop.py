@@ -170,6 +170,7 @@ class AgentLoop:
                 logger.info("Sending file {}", result)
                 yield {"event": "send_file", "context": result}
                 append_tool_result_messages_yaml(tool_call, result)
+                tool_call_result.append((tool_call.id, tool_call.name, f'已发送：{result}', duration_seconds))
             elif tool_call.name == "ask_user_question" and success:
                 # 等待用户输入
                 logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
@@ -180,7 +181,9 @@ class AgentLoop:
                     logger.info("User answered the question {}", self.SESSION_QUESTION_EVENT[user_id].answer)
                 except TimeoutError:
                     logger.warning("User timeout answering the question")
-                append_tool_result_messages_yaml(tool_call, self.SESSION_QUESTION_EVENT[user_id].answer)
+                answer = self.SESSION_QUESTION_EVENT[user_id].answer
+                append_tool_result_messages_yaml(tool_call, answer)
+                tool_call_result.append((tool_call.id, tool_call.name, answer, duration_seconds))
             else:
                 append_tool_result_messages_yaml(tool_call, result)
                 tool_call_result.append((tool_call.id, tool_call.name, result, duration_seconds))
