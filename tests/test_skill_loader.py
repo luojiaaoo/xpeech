@@ -35,6 +35,15 @@ def test_skill_content_is_frozen_after_creation():
     assert skill.body == "# Original"
 
 
+@pytest.mark.parametrize("skill_name", ["ask-user-question", "memory", "skill-creator"])
+def test_internal_builtin_skills_are_marked(skill_name: str):
+    skill_file = skill_module.BUILTIN_SKILLS_DIR / skill_name / "SKILL.md"
+    skill = SkillInfo(source="builtin", path=str(skill_file), content=skill_file.read_text())
+
+    assert skill.metadata.internal is True
+    assert skill.metadata.kwargs == {}
+
+
 @pytest.mark.parametrize("content", ["# Instructions", "---\nname: example\n# Missing closing delimiter"])
 def test_skill_body_requires_frontmatter(content: str):
     skill = SkillInfo(source="workspace", path="SKILL.md", content=content)
@@ -62,15 +71,19 @@ async def test_skill_metadata_drives_list_and_prompt(
         name="custom-skill",
         description="Useful & focused",
         always=True,
+        kwargs={"extra": "ignored"},
     )
     skills_prompt = await loader.build_skills_prompt()
     assert skills_prompt.startswith("# Active Skills\n\n### Skill: custom-skill\n\n")
     assert "\n\n---\n\n# Skills\n\n" in skills_prompt
     assert "<description>Useful &amp; focused</description>" in skills_prompt
+    assert "`builtin` means a shared skill built into the sandbox" in skills_prompt
+    assert "`internal` marks a skill related to the agent's runtime mechanics" in skills_prompt
     summary_start = skills_prompt.index("<skills>")
     summary_end = skills_prompt.index("</skills>") + len("</skills>")
     summary = ElementTree.fromstring(skills_prompt[summary_start:summary_end])
     assert summary.findtext("skill/description") == "Useful & focused"
+    assert summary.find("skill").attrib == {"source": "workspace", "internal": "false"}
 
 
 @pytest.mark.asyncio
@@ -181,3 +194,23 @@ async def test_build_prompt_reads_each_skill_once(tmp_path: Path, monkeypatch: p
     assert reads == [skill_file]
     assert len(parses) == 1
     assert "### Skill: always-skill\n\n# Do this" in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_prompt_marks_internal_skill_without_activating_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [])
+    skill_file = tmp_path / "workspace" / "skills" / "internal-skill" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text(
+        "---\nname: internal-skill\ndescription: Internal utility\ninternal: true\n---\n# Internal instructions\n",
+        encoding="utf-8",
+    )
+
+    prompt = await SkillsLoader(tmp_path / "workspace").build_skills_prompt()
+
+    assert "# Active Skills" not in prompt
+    assert "# Internal instructions" not in prompt
+    assert "<skill source='workspace' internal='true'>" in prompt
