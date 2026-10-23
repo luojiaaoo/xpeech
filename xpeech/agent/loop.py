@@ -175,12 +175,15 @@ class AgentLoop:
                 # 等待用户输入
                 logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
                 self.SESSION_QUESTION_EVENT[user_id] = QuestionEvent(event=asyncio.Event())
+                question_start_time = time.perf_counter()
                 yield {"event": "question", "context": result}
                 try:
                     await asyncio.wait_for(self.SESSION_QUESTION_EVENT[user_id].event.wait(), timeout=USER_TIMEOUT)
                     logger.info("User answered the question {}", self.SESSION_QUESTION_EVENT[user_id].answer)
                 except TimeoutError:
                     logger.warning("User timeout answering the question")
+                # 覆盖方法调用的时间，遵守实际用户回答耗时
+                duration_seconds = time.perf_counter() - question_start_time
                 answer = self.SESSION_QUESTION_EVENT[user_id].answer
                 append_tool_result_messages_yaml(tool_call, answer)
                 tool_call_result.append((tool_call.id, tool_call.name, answer, duration_seconds))
