@@ -3,7 +3,7 @@
 import re
 from functools import cached_property
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import aiofiles.os
 import yaml
@@ -23,6 +23,8 @@ class SkillMetadata(BaseModel):
     name: str
     description: str
     always: bool = False
+    internal: bool = False
+    kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 class SkillInfo(BaseModel):
@@ -50,10 +52,18 @@ class SkillInfo(BaseModel):
         def metadata_from_frontmatter(frontmatter: dict, name: str) -> SkillMetadata:
             description = frontmatter.get("description")
             always = frontmatter.get("always")
+            internal = frontmatter.get("internal")
+            kwargs = {
+                key: value
+                for key, value in frontmatter.items()
+                if key not in {"name", "description", "always", "internal"}
+            }
             return SkillMetadata(
                 name=name,
                 description=description.strip() if isinstance(description, str) and description.strip() else name,
                 always=always if isinstance(always, bool) else False,
+                internal=internal if isinstance(internal, bool) else False,
+                kwargs=kwargs,
             )
 
         frontmatter = read_frontmatter()
@@ -158,7 +168,10 @@ class SkillsLoader:
 
             lines = ["<skills>"]
             for skill in skills:
-                lines.append(f"  <skill source='{skill.source}'>")
+                lines.append(
+                    f"  <skill source='{skill.source}' "
+                    f"internal='{str(skill.metadata.internal).lower()}'>"
+                )
                 lines.append(f"    <name>{escape_xml(skill.metadata.name)}</name>")
                 lines.append(f"    <description>{escape_xml(skill.metadata.description)}</description>")
                 lines.append(f"    <location>{escape_xml(skill.path)}</location>")
@@ -186,7 +199,10 @@ class SkillsLoader:
             parts.append(
                 "# Skills\n\n"
                 "The following skills extend your capabilities. To use a skill, "
-                "read its SKILL.md file using the read_file tool.\n\n"
+                "read its SKILL.md file using the read_file tool.\n"
+                "`builtin` means a shared skill built into the sandbox, `workspace` means a skill "
+                "placed in the workspace by the user, and `internal` marks a skill related to the "
+                "agent's runtime mechanics.\n\n"
                 f"{skills_summary}\n"
             )
 

@@ -40,7 +40,13 @@ def test_import_and_list_session_skill(skill_api: tuple[TestClient, Path, dict[s
 
     assert imported.status_code == 201
     assert imported.json() == {
-        "metadata": {"name": name, "description": "Say hello", "always": True},
+        "metadata": {
+            "name": name,
+            "description": "Say hello",
+            "always": True,
+            "internal": False,
+            "kwargs": {},
+        },
         "source": "workspace",
         "path": str(workspace_root / "session-1" / "skills" / name / "SKILL.md"),
         "content": _skill_file(name, always=True).decode("utf-8"),
@@ -148,7 +154,11 @@ def test_import_uses_loader_metadata_fallback(skill_api: tuple[TestClient, Path,
 
     assert response.status_code == 201
     assert response.json()["metadata"] == {
-        "name": "minimal-skill", "description": "minimal-skill", "always": False,
+        "name": "minimal-skill",
+        "description": "minimal-skill",
+        "always": False,
+        "internal": False,
+        "kwargs": {},
     }
 
 

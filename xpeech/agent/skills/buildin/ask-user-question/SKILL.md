@@ -2,6 +2,7 @@
 name: ask-user-question
 description: 用于向用户了解任务细节、收集信息、澄清需求、确认偏好或补全任务参数。支持组合生成单选、多选、输入框、日期选择、日期时间选择等表单控件。当你有问题需要问用户时触发。
 always: true
+internal: true
 ---
 
 # 主动询问用户问题
