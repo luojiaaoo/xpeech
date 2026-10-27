@@ -1,20 +1,18 @@
+import re
+
 from ..exceptions import PathProtectionError
 
 DEFAULT_SESSION_ID = "default"
 MAX_ID_LENGTH = 128
+_ID_PATTERN = re.compile(rf"[A-Za-z0-9 _-]{{1,{MAX_ID_LENGTH}}}")
 
 
 def _validate_id(value: str, kind: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or len(value) > MAX_ID_LENGTH
-        or value in {".", ".."}
-        or "/" in value
-        or "\\" in value
-        or "\0" in value
-    ):
-        raise PathProtectionError(f"Invalid {kind} ID")
+    if not isinstance(value, str) or _ID_PATTERN.fullmatch(value) is None:
+        raise PathProtectionError(
+            f"{kind.capitalize()} ID must be 1-{MAX_ID_LENGTH} characters long and contain only "
+            "ASCII letters, digits, hyphens, underscores, or spaces"
+        )
     return value
 
 
