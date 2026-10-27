@@ -222,6 +222,11 @@ def test_other_session_routes_reject_unsafe_id(skill_api: tuple[TestClient, Path
         data={"answer": "yes"},
         headers={**headers, "x-user-id": "../escape"},
     ).status_code == 422
+    assert client.post(
+        "/answer_question",
+        data={"answer": "yes"},
+        headers={**headers, "x-session-id": "../escape"},
+    ).status_code == 422
 
 
 def test_skill_endpoints_require_jwt(skill_api: tuple[TestClient, Path, dict[str, str]]):

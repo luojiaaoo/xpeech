@@ -10,7 +10,7 @@ from loguru import logger
 
 from ..exceptions import PathProtectionError
 from ..utils.helper import LiteralDumper, ensure_path, read_text_async, write_text_async
-from ..utils.ids import DEFAULT_SESSION_ID, validate_session_id, validate_user_id
+from ..utils.ids import DEFAULT_SESSION_ID
 from .prompt.helper import remove_system_messages
 
 
@@ -32,8 +32,6 @@ class YamlHistoryRepository:
         background: bool = False,
     ) -> Path:
         """统一生成普通会话或后台任务的历史文件路径。"""
-        user_id = validate_user_id(user_id)
-        history_id = validate_session_id(history_id)
         separator = self.BACKGROUND_SEPARATOR if background else self.SESSION_SEPARATOR
         filename = f"{user_id}{separator}{history_id}.yaml"
         return self._resolve_history_path(filename)
@@ -50,8 +48,6 @@ class YamlHistoryRepository:
 
     async def list_sessions(self, user_id: str) -> list[dict[str, Any]]:
         """按更新时间倒序列出当前用户的普通会话和后台历史。"""
-        user_id = validate_user_id(user_id)
-
         def collect() -> list[dict[str, Any]]:
             sessions = []
             default_path = self._history_path(user_id, DEFAULT_SESSION_ID)

@@ -8,7 +8,6 @@ from xpeech.agent.prompt.helper import build_user_prompt
 from xpeech.agent.server.schema import InboundMessage, InputText
 from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.sessions import ListSessionsArgs, ReadSessionArgs, build_session_tools
-from xpeech.exceptions import PathProtectionError
 
 
 @pytest.mark.asyncio
@@ -88,7 +87,7 @@ async def test_history_tools_cannot_read_another_user_or_follow_symlinks(tmp_pat
     for session_id in ("secret", "linked", "other~session~private"):
         with pytest.raises(FileNotFoundError):
             await read_session(ReadSessionArgs(session_id=session_id, user_id="bob"))
-    with pytest.raises(PathProtectionError):
+    with pytest.raises(FileNotFoundError):
         await read_session(ReadSessionArgs(session_id="../bob~session~secret"))
 
 

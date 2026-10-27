@@ -4,7 +4,6 @@ from typing import Any, Self
 from ..config.settings import Settings, settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..utils.helper import ensure_path_async
-from ..utils.ids import validate_user_id
 from ..utils.session import create_workspace_templates
 from .loop import AgentLoop
 from .server.schema import InboundMessage
@@ -15,7 +14,7 @@ class AgentRunner:
     """Prepare and run an agent in one user's workspace."""
 
     def __init__(self, user_id: str, *, config: Settings) -> None:
-        self.user_id = validate_user_id(user_id)
+        self.user_id = user_id
         self.config = config
         self.workspace = (config.path.workspace_base_path / self.user_id).resolve()
         self._agent_loop: AgentLoop | None = None
