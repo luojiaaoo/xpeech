@@ -15,32 +15,6 @@ from xpeech.channel.web_client.dao import (
 
 
 @pytest.mark.asyncio
-async def test_web_client_migrates_identity_and_preserves_login(tmp_path: Path):
-    dao = WebClientDAO(tmp_path / "legacy.db")
-    try:
-        await dao.initialize(lambda: "original-hash")
-        admin = await dao.get_user_by_user_id("admin")
-        await dao.create_session(
-            token_hash="existing-login",
-            user_id=admin.id,
-            expires_at=datetime.now(UTC) + timedelta(hours=1),
-        )
-        async with dao.engine.begin() as connection:
-            await connection.exec_driver_sql("ALTER TABLE users RENAME COLUMN user_id TO session_id")
-
-        await dao.initialize(lambda: pytest.fail("must preserve the existing administrator"))
-        await dao.initialize(lambda: pytest.fail("migration must be idempotent"))
-        user = await dao.get_user_for_session("existing-login")
-        assert user.user_id == "admin"
-        assert user.password_hash == "original-hash"
-        assert await dao.get_user_by_user_id("admin") == user
-        with pytest.raises(DuplicateUserIdError):
-            await dao.create_user(username="other", user_id="admin", password_hash="hash", is_admin=False)
-    finally:
-        await dao.close()
-
-
-@pytest.mark.asyncio
 async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
     database_path = tmp_path / "web-client.db"
     dao = WebClientDAO(database_path)

@@ -135,7 +135,7 @@ async def feishu_schedule(
 
 
 async def feishu_schedule_list(user_id: str | None) -> str:
-    """列出当前会话所有渠道仍有效的后台定时任务。"""
+    """列出当前用户所有渠道仍有效的后台定时任务。"""
     validated_user_id = _require_text(user_id, "user_id")
     tasks = await ensure_async(list_scheduled_tasks)(validated_user_id)
     return json.dumps(
@@ -148,7 +148,7 @@ async def feishu_schedule_cancel(
     args: FeishuScheduleCancelArgs,
     user_id: str | None,
 ) -> str:
-    """取消当前会话拥有的后台定时任务。"""
+    """取消当前用户拥有的后台定时任务。"""
     validated_user_id = _require_text(user_id, "user_id")
     await ensure_async(cancel_scheduled_task)(
         user_id=validated_user_id,

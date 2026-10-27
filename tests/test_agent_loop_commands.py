@@ -67,6 +67,7 @@ async def test_context_commands_continue_with_trailing_prompt(
     agent_loop._model_call_count = 0
     message = InboundMessage(
         user_id="session-1",
+        session_id="chat-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text=command)],
@@ -78,14 +79,14 @@ async def test_context_commands_continue_with_trailing_prompt(
 
     assert events[0] == {"event": "command", "context": command_result}
     assert {"event": "assistant", "context": "continued result"} in events
-    agent_loop.history.delete.assert_awaited_once_with("session-1")
+    agent_loop.history.delete.assert_awaited_once_with("session-1", "chat-1")
     if consolidates_memory:
         assert agent_loop.history.load.await_count == 2
         agent_loop.memory_consolidator.consolidate.assert_awaited_once_with(
             [{"role": "user", "content": "old context"}],
         )
     else:
-        agent_loop.history.load.assert_awaited_once_with("session-1")
+        agent_loop.history.load.assert_awaited_once_with("session-1", "chat-1")
         agent_loop.memory_consolidator.consolidate.assert_not_awaited()
 
     model_messages = agent_loop.chat.await_args.kwargs["messages"]

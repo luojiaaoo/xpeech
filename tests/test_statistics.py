@@ -46,7 +46,7 @@ def test_statistics_timezone_does_not_depend_on_system_tzdata():
     assert result.stdout.strip() == "8:00:00"
 
 
-async def _seed_statistics_database(database_path: Path, *, legacy_schema: bool = False) -> AsyncEngine:
+async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path.as_posix()}")
     await create_db_and_tables(engine)
     repository = SqliteConversationRecordRepository(engine)
@@ -87,11 +87,6 @@ async def _seed_statistics_database(database_path: Path, *, legacy_schema: bool 
     ]
     for record in records:
         await repository.append(record)
-    if legacy_schema:
-        async with engine.begin() as connection:
-            await connection.exec_driver_sql(
-                "ALTER TABLE conversation_records RENAME COLUMN user_id TO session_id"
-            )
     await engine.dispose()
     return engine
 
@@ -109,11 +104,11 @@ def _clear_statistics_caches() -> None:
         getattr(SqliteConversationStatisticsRepository, method_name).cache_clear()
 
 
-@pytest.mark.parametrize("legacy_schema", [False, True])
 def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy_schema: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    engine = asyncio.run(_seed_statistics_database(tmp_path / "statistics.db", legacy_schema=legacy_schema))
+    engine = asyncio.run(_seed_statistics_database(tmp_path / "statistics.db"))
     monkeypatch.setattr(server_module, "create_db_and_tables", partial(create_db_and_tables, engine))
     repository = SqliteConversationStatisticsRepository(engine)
     _clear_statistics_caches()

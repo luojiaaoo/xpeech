@@ -22,7 +22,7 @@ from .server.schema import InboundMessage, InputText
 
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
 MAX_BACKGROUND_TASK_DELAY_SECONDS = 3 * 60
-MAX_SCHEDULED_TASKS_PER_SESSION = 8
+MAX_SCHEDULED_TASKS_PER_USER = 8
 SCHEDULED_TASK_PROMPT_PREFIX = (
     "## 定时任务运行说明\n\n"
     "本次运行由后台定时任务触发，不是用户实时发起的新对话。\n"
@@ -160,11 +160,6 @@ def start_background_scheduler(
     timezone = scheduler.timezone
     scheduler.start(paused=True)
     try:
-        for job in scheduler.get_jobs():
-            if job.func is run_feishu_background_task and "session_id" in job.kwargs:
-                kwargs = dict(job.kwargs)
-                kwargs["user_id"] = kwargs.pop("session_id")
-                scheduler.modify_job(job.id, kwargs=kwargs)
         current_time = now or datetime.now(timezone)
         if current_time.tzinfo is None:
             current_time = current_time.replace(tzinfo=timezone)
@@ -237,14 +232,14 @@ def schedule_feishu_task(
 
     # Keep the count-and-add operation atomic inside the supported single process.
     with _schedule_lock:
-        session_job_count = sum(
+        user_job_count = sum(
             job.kwargs.get("user_id") == user_id
             for job in scheduler.get_jobs()
         )
-        if session_job_count >= MAX_SCHEDULED_TASKS_PER_SESSION:
+        if user_job_count >= MAX_SCHEDULED_TASKS_PER_USER:
             raise ValueError(
-                "Scheduled task limit reached for this session "
-                f"(maximum {MAX_SCHEDULED_TASKS_PER_SESSION})"
+                "Scheduled task limit reached for this user "
+                f"(maximum {MAX_SCHEDULED_TASKS_PER_USER})"
             )
 
         job_id = uuid4().hex
@@ -270,7 +265,7 @@ def schedule_feishu_task(
 
 
 def list_scheduled_tasks(user_id: str) -> list[ScheduledTask]:
-    """List all active scheduled tasks owned by a session, regardless of channel."""
+    """List all active scheduled tasks owned by a user, regardless of channel."""
     tasks = []
     for job in get_background_scheduler().get_jobs():
         if job.kwargs.get("user_id") != user_id:
@@ -297,11 +292,11 @@ def list_scheduled_tasks(user_id: str) -> list[ScheduledTask]:
 
 
 def cancel_scheduled_task(*, user_id: str, job_id: str) -> None:
-    """Remove a job only when it belongs to the requesting session."""
+    """Remove a job only when it belongs to the requesting user."""
     scheduler = get_background_scheduler()
     job = scheduler.get_job(job_id)
     if job is None or job.kwargs.get("user_id") != user_id:
-        raise ValueError("Scheduled task is not available for this session")
+        raise ValueError("Scheduled task is not available for this user")
     scheduler.remove_job(job_id)
 
 
@@ -333,8 +328,10 @@ async def run_feishu_background_task(
 
         metadata = dict(session_metadata)
         metadata["source"] = "scheduled_task"
+        timestamp = datetime.now().astimezone()
         message = InboundMessage(
             user_id=user_id,
+            session_id=uuid4().hex,
             sender_name=sender_name,
             session_metadata=metadata,
             content=[
@@ -347,7 +344,7 @@ async def run_feishu_background_task(
                     )
                 )
             ],
-            timestamp=datetime.now().astimezone(),
+            timestamp=timestamp,
             files=[],
         )
         runner = await AgentRunner.create(user_id)

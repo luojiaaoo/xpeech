@@ -63,15 +63,20 @@ def runner_dependencies(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("include_background_tools", [True, False])
 async def test_runner_initializes_dependencies_once_and_yields_events(
     tmp_path: Path,
     runner_dependencies,
+    include_background_tools: bool,
 ):
     ensure_path, create_templates, register_tools = runner_dependencies
     config = make_config(tmp_path)
-    runner = await AgentRunner.create("session-1", config=config)
+    runner = await AgentRunner.create(
+        "session-1", config=config, include_background_tools=include_background_tools
+    )
     message = InboundMessage(
         user_id="session-1",
+        session_id="chat-1",
         sender_name="Alice",
         session_metadata={"channel": "test"},
         content=[InputText(text="Hi")],
@@ -86,6 +91,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     ensure_path.assert_awaited_once_with(runner.workspace)
     create_templates.assert_awaited_once_with(runner.workspace)
     register_tools.assert_awaited_once()
+    assert register_tools.await_args.kwargs["include_background_tools"] is include_background_tools
     assert len(FakeAgentLoop.instances) == 1
     assert FakeAgentLoop.instances[0].messages == [message]
     assert FakeAgentLoop.instances[0].background_values == [False]
@@ -100,6 +106,7 @@ async def test_runner_rejects_message_for_another_session(tmp_path: Path):
     runner = AgentRunner("session-1", config=make_config(tmp_path))
     message = InboundMessage(
         user_id="session-2",
+        session_id="chat-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="Hi")],
@@ -116,6 +123,7 @@ async def test_runner_requires_async_factory(tmp_path: Path):
     runner = AgentRunner("session-1", config=make_config(tmp_path))
     message = InboundMessage(
         user_id="session-1",
+        session_id="chat-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="Hi")],
@@ -132,6 +140,7 @@ async def test_runner_can_run_in_background(tmp_path: Path, runner_dependencies)
     runner = await AgentRunner.create("session-1", config=make_config(tmp_path))
     message = InboundMessage(
         user_id="session-1",
+        session_id="chat-1",
         sender_name="Scheduler",
         session_metadata={"source": "scheduled_task"},
         content=[InputText(text="Run scheduled prompt")],
@@ -163,6 +172,7 @@ async def test_run_once_returns_only_last_complete_assistant_segment(tmp_path: P
     runner._agent_loop = EventLoop()
     message = InboundMessage(
         user_id="session-1",
+        session_id="chat-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="Hi")],
@@ -184,6 +194,7 @@ async def test_run_once_rejects_missing_model_output(tmp_path: Path):
     runner._agent_loop = EventLoop()
     message = InboundMessage(
         user_id="session-1",
+        session_id="chat-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="Hi")],

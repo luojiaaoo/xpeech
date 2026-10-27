@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import get_ident
@@ -182,45 +183,6 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("schedule_type", ["run_at", "cron"])
-async def test_restart_migrates_persisted_task_owner(tmp_path: Path, schedule_type: str):
-    database = tmp_path / "legacy-schedule.db"
-    scheduler = start_background_scheduler(database)
-    job = schedule_feishu_task(
-        prompt="reminder",
-        run_at=datetime.now(scheduler.timezone) + timedelta(hours=1) if schedule_type == "run_at" else None,
-        cron="0 9 * * *" if schedule_type == "cron" else None,
-        user_id="alice",
-        sender_name="Alice",
-        session_metadata={"channel": "feishu", "open_id": "ou_1"},
-    )
-    original_next_run_time = job.next_run_time
-    # Reproduce the keyword arguments saved by the previous application version.
-    job.kwargs["session_id"] = job.kwargs.pop("user_id")
-    scheduler._jobstores["default"].update_job(job)
-    stop_background_scheduler()
-    await asyncio.sleep(0)
-
-    restored = start_background_scheduler(database)
-    migrated = restored.get_job(job.id)
-    assert migrated.kwargs["user_id"] == "alice"
-    assert "session_id" not in migrated.kwargs
-    assert migrated.next_run_time == original_next_run_time
-    assert migrated.kwargs["session_metadata"] == {"channel": "feishu", "open_id": "ou_1"}
-    assert [task.job_id for task in list_scheduled_tasks("alice")] == [job.id]
-    assert list_scheduled_tasks("bob") == []
-
-    stop_background_scheduler()
-    await asyncio.sleep(0)
-    restored = start_background_scheduler(database)
-    persisted = restored.get_job(job.id)
-    assert persisted.kwargs == migrated.kwargs
-    assert persisted.next_run_time == original_next_run_time
-    cancel_scheduled_task(user_id="alice", job_id=job.id)
-    assert restored.get_job(job.id) is None
-
-
-@pytest.mark.asyncio
 async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
     database = tmp_path / "schedule.db"
     scheduler = start_background_scheduler(database)
@@ -272,6 +234,8 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
     assert job is not None
     assert job.kwargs["session_metadata"] == metadata
     assert job.kwargs["sender_name"] == "Alice"
+    assert job.kwargs["user_id"] == "session-1"
+    assert "session_id" not in job.kwargs
 
     tasks = json.loads(await feishu_schedule_list(user_id="session-1"))
     assert tasks == [
@@ -284,10 +248,13 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
             "next_run_time": result["next_run_time"],
         }
     ]
-    assert await feishu_schedule_list(user_id="another-session") == "[]"
+    assert await feishu_schedule_list(user_id="another-user") == "[]"
 
     with pytest.raises(ValueError, match="not available"):
-        cancel_scheduled_task(user_id="another-session", job_id=result["job_id"])
+        cancel_scheduled_task(
+            user_id="another-user",
+            job_id=result["job_id"],
+        )
     with pytest.raises(ValueError, match="not available"):
         cancel_scheduled_task(user_id="session-1", job_id="missing")
     assert await feishu_schedule_cancel(
@@ -298,7 +265,7 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
 
 
 @pytest.mark.asyncio
-async def test_session_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
+async def test_user_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
     scheduler = start_background_scheduler(tmp_path / "schedule.db")
     run_at = datetime.now(scheduler.timezone) + timedelta(hours=1)
     common = {
@@ -317,6 +284,9 @@ async def test_session_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
 
     with pytest.raises(ValueError, match="maximum 8"):
         schedule_feishu_task(prompt="task-9", **common)
+
+    schedule_feishu_task(prompt="other-user-task", **{**common, "user_id": "user-2"})
+    assert len(list_scheduled_tasks("user-2")) == 1
 
     cancel_scheduled_task(user_id="session-1", job_id=jobs[0].id)
     replacement = schedule_feishu_task(prompt="replacement", **common)
@@ -397,6 +367,7 @@ async def test_background_agent_queues_success_or_fixed_failure(
     assert captured["user_id"] == "session-1"
     assert captured["background"] is True
     assert captured["message"].sender_name == "Alice"
+    assert re.fullmatch(r"[0-9a-f]{32}", captured["message"].session_id)
     scheduled_prompt = captured["message"].content[0].text
     assert scheduled_prompt.startswith("## 定时任务运行说明")
     assert "本次运行由后台定时任务触发" in scheduled_prompt

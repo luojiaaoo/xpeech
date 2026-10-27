@@ -38,7 +38,12 @@ class FakeProvider:
 
 
 @pytest.mark.asyncio
-async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("include_background_tools", [True, False])
+async def test_registers_supported_default_and_mcp_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    include_background_tools: bool,
+):
     file_tools = tuple(
         named_tool(name)
         for name in ("read_image", "read_video", "read_file", "write_file", "edit_file", "read_office_file")
@@ -67,10 +72,11 @@ async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeyp
         provider=provider,
         workspace=tmp_path,
         config=config,
+        include_background_tools=include_background_tools,
     )
 
     assert "read_image" not in provider.registered
-    assert provider.registered == [
+    expected_tools = [
         "read_video",
         "read_file",
         "write_file",
@@ -82,10 +88,12 @@ async def test_registers_supported_default_and_mcp_tools(tmp_path: Path, monkeyp
         "read_office_file",
         "send_file",
         "ask_user_question",
-        "feishu_schedule",
-        "feishu_schedule_list",
-        "feishu_schedule_cancel",
+        "list_sessions",
+        "read_session",
     ]
+    if include_background_tools:
+        expected_tools += ["feishu_schedule", "feishu_schedule_list", "feishu_schedule_cancel"]
+    assert provider.registered == expected_tools
     assert provider.blocking == {
         tool_name: tool_name == "ask_user_question"
         for tool_name in provider.registered
