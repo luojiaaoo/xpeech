@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Index, inspect
+from sqlalchemy import Index
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel
@@ -58,15 +58,6 @@ class ConversationRecord(_RecordSQLModel, table=True):
 async def create_db_and_tables(engine: AsyncEngine = record_engine) -> None:
     """创建对话记录表。"""
     async with engine.begin() as connection:
-        columns = await connection.run_sync(
-            lambda conn: {column["name"] for column in inspect(conn).get_columns(TABLE_NAME)}
-            if inspect(conn).has_table(TABLE_NAME)
-            else set()
-        )
-        if "session_id" in columns and "user_id" not in columns:
-            await connection.exec_driver_sql(
-                "ALTER TABLE conversation_records RENAME COLUMN session_id TO user_id"
-            )
         await connection.run_sync(_RecordSQLModel.metadata.create_all)
         for index in ConversationRecord.__table__.indexes:
             await connection.run_sync(

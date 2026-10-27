@@ -2,7 +2,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Column, ForeignKey, Index, Integer, String, event, inspect
+from sqlalchemy import Column, ForeignKey, Index, Integer, String, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import registry
@@ -87,13 +87,6 @@ def create_web_client_engine(database_path: Path) -> AsyncEngine:
 async def create_db_and_tables(engine: AsyncEngine) -> None:
     """创建 Web 客户端认证表。"""
     async with engine.begin() as connection:
-        columns = await connection.run_sync(
-            lambda conn: {column["name"] for column in inspect(conn).get_columns("users")}
-            if inspect(conn).has_table("users")
-            else set()
-        )
-        if "session_id" in columns and "user_id" not in columns:
-            await connection.exec_driver_sql("ALTER TABLE users RENAME COLUMN session_id TO user_id")
         await connection.run_sync(_WebClientSQLModel.metadata.create_all)
 
 

@@ -161,11 +161,6 @@ def start_background_scheduler(
     timezone = scheduler.timezone
     scheduler.start(paused=True)
     try:
-        for job in scheduler.get_jobs():
-            if job.func is run_feishu_background_task and "session_id" in job.kwargs:
-                kwargs = dict(job.kwargs)
-                kwargs["user_id"] = kwargs.pop("session_id")
-                scheduler.modify_job(job.id, kwargs=kwargs)
         current_time = now or datetime.now(timezone)
         if current_time.tzinfo is None:
             current_time = current_time.replace(tzinfo=timezone)

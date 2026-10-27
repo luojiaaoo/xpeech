@@ -233,16 +233,7 @@ docker compose up -d --build --force-recreate backend
 
 `user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、历史记录、技能、定时任务和 MCP 连接。
 请求头使用 `x-user-id`，接口字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
-OAuth2 用户标识配置使用 `user_id_claim`。升级时需要同步更新调用方和配置；
-启动时会自动迁移旧数据库字段和已保存定时任务的参数，现有工作区及历史文件路径不变。
-
-SQLite 自动迁移覆盖以下数据，无需手工修改数据库：
-
-- 后台任务：将已保存任务参数中的 `session_id` 转为 `user_id` 并写回 SQLite，之后再恢复调度。
-- 统计记录：将 `conversation_records.session_id` 改为 `user_id`，保留历史问答、Token 用量和索引。
-- Web 登录：将 `users.session_id` 改为 `user_id`，保留用户与登录状态。
-
-迁移可重复运行，后续启动会直接使用已转换的数据。
+OAuth2 用户标识配置使用 `user_id_claim`。
 
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \

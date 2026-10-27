@@ -183,45 +183,6 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("schedule_type", ["run_at", "cron"])
-async def test_restart_migrates_persisted_task_owner(tmp_path: Path, schedule_type: str):
-    database = tmp_path / "legacy-schedule.db"
-    scheduler = start_background_scheduler(database)
-    job = schedule_feishu_task(
-        prompt="reminder",
-        run_at=datetime.now(scheduler.timezone) + timedelta(hours=1) if schedule_type == "run_at" else None,
-        cron="0 9 * * *" if schedule_type == "cron" else None,
-        user_id="alice",
-        sender_name="Alice",
-        session_metadata={"channel": "feishu", "open_id": "ou_1"},
-    )
-    original_next_run_time = job.next_run_time
-    # Reproduce the keyword arguments saved by the previous application version.
-    job.kwargs["session_id"] = job.kwargs.pop("user_id")
-    scheduler._jobstores["default"].update_job(job)
-    stop_background_scheduler()
-    await asyncio.sleep(0)
-
-    restored = start_background_scheduler(database)
-    migrated = restored.get_job(job.id)
-    assert migrated.kwargs["user_id"] == "alice"
-    assert "session_id" not in migrated.kwargs
-    assert migrated.next_run_time == original_next_run_time
-    assert migrated.kwargs["session_metadata"] == {"channel": "feishu", "open_id": "ou_1"}
-    assert [task.job_id for task in list_scheduled_tasks("alice")] == [job.id]
-    assert list_scheduled_tasks("bob") == []
-
-    stop_background_scheduler()
-    await asyncio.sleep(0)
-    restored = start_background_scheduler(database)
-    persisted = restored.get_job(job.id)
-    assert persisted.kwargs == migrated.kwargs
-    assert persisted.next_run_time == original_next_run_time
-    cancel_scheduled_task(user_id="alice", job_id=job.id)
-    assert restored.get_job(job.id) is None
-
-
-@pytest.mark.asyncio
 async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
     database = tmp_path / "schedule.db"
     scheduler = start_background_scheduler(database)
