@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import get_ident
@@ -234,6 +235,8 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
     assert job is not None
     assert job.kwargs["session_metadata"] == metadata
     assert job.kwargs["sender_name"] == "Alice"
+    assert job.kwargs["user_id"] == "session-1"
+    assert "session_id" not in job.kwargs
 
     tasks = json.loads(await feishu_schedule_list(user_id="session-1"))
     assert tasks == [
@@ -246,10 +249,13 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
             "next_run_time": result["next_run_time"],
         }
     ]
-    assert await feishu_schedule_list(user_id="another-session") == "[]"
+    assert await feishu_schedule_list(user_id="another-user") == "[]"
 
     with pytest.raises(ValueError, match="not available"):
-        cancel_scheduled_task(user_id="another-session", job_id=result["job_id"])
+        cancel_scheduled_task(
+            user_id="another-user",
+            job_id=result["job_id"],
+        )
     with pytest.raises(ValueError, match="not available"):
         cancel_scheduled_task(user_id="session-1", job_id="missing")
     assert await feishu_schedule_cancel(
@@ -260,7 +266,7 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
 
 
 @pytest.mark.asyncio
-async def test_session_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
+async def test_user_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
     scheduler = start_background_scheduler(tmp_path / "schedule.db")
     run_at = datetime.now(scheduler.timezone) + timedelta(hours=1)
     common = {
@@ -279,6 +285,9 @@ async def test_session_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
 
     with pytest.raises(ValueError, match="maximum 8"):
         schedule_feishu_task(prompt="task-9", **common)
+
+    schedule_feishu_task(prompt="other-user-task", **{**common, "user_id": "user-2"})
+    assert len(list_scheduled_tasks("user-2")) == 1
 
     cancel_scheduled_task(user_id="session-1", job_id=jobs[0].id)
     replacement = schedule_feishu_task(prompt="replacement", **common)
@@ -365,6 +374,10 @@ async def test_background_agent_queues_success_or_fixed_failure(
     assert captured["user_id"] == "session-1"
     assert captured["background"] is True
     assert captured["message"].sender_name == "Alice"
+    assert re.fullmatch(
+        rf"{captured['message'].timestamp:%Y%m%d%H%M%S}-[0-9a-f]{{8}}",
+        captured["message"].session_id,
+    )
     scheduled_prompt = captured["message"].content[0].text
     assert scheduled_prompt.startswith("## 定时任务运行说明")
     assert "本次运行由后台定时任务触发" in scheduled_prompt

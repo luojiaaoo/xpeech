@@ -4,8 +4,8 @@ from typing import Any, Self
 from ..config.settings import Settings, settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..utils.helper import ensure_path_async
+from ..utils.ids import validate_user_id
 from ..utils.session import create_workspace_templates
-from ..utils.user_id import validate_user_id
 from .loop import AgentLoop
 from .server.schema import InboundMessage
 from .tools.registry import register_default_tools
@@ -26,13 +26,14 @@ class AgentRunner:
         user_id: str,
         *,
         config: Settings = settings,
+        include_background_tools: bool = True,
     ) -> Self:
         """Create a fully initialized runner for one user."""
         runner = cls(user_id, config=config)
-        await runner._initialize()
+        await runner._initialize(include_background_tools=include_background_tools)
         return runner
 
-    async def _initialize(self) -> None:
+    async def _initialize(self, *, include_background_tools: bool = True) -> None:
         """Initialize the user workspace, provider, tools, and agent loop."""
         await create_workspace_templates(await ensure_path_async(self.workspace))
 
@@ -60,6 +61,7 @@ class AgentRunner:
             provider=provider,
             workspace=self.workspace,
             config=self.config.tool,
+            include_background_tools=include_background_tools,
         )
         self._agent_loop = agent_loop
 

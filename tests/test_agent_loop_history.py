@@ -18,7 +18,7 @@ def make_response(content: str) -> LLMResponse:
 
 
 @pytest.mark.asyncio
-async def test_background_run_skips_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_background_run_saves_separate_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     async def build_test_system_prompt(workspace: Path):
         assert workspace == tmp_path
         return {"role": "system", "content": "system"}
@@ -47,6 +47,7 @@ async def test_background_run_skips_yaml_history(tmp_path: Path, monkeypatch: py
     agent_loop._model_call_count = 0
     message = InboundMessage(
         user_id="session-1",
+        session_id="chat-1",
         sender_name="Scheduler",
         session_metadata={"source": "scheduled_task"},
         content=[InputText(text="/new Run scheduled prompt")],
@@ -57,7 +58,12 @@ async def test_background_run_skips_yaml_history(tmp_path: Path, monkeypatch: py
     events = [event async for event in agent_loop.run(message, background=True)]
 
     agent_loop.history.load.assert_not_awaited()
-    agent_loop.history.save.assert_not_awaited()
+    agent_loop.history.save.assert_awaited_once()
+    assert agent_loop.history.save.await_args.kwargs["background"] is True
+    saved_user_id, saved_session_id, saved_messages = agent_loop.history.save.await_args.args
+    assert saved_user_id == message.user_id
+    assert saved_session_id == message.session_id
+    assert saved_messages[-1] == {"role": "assistant", "content": "scheduled result"}
     agent_loop.history.delete.assert_not_awaited()
     agent_loop.memory_consolidator.consolidate.assert_not_awaited()
     messages = agent_loop.chat.await_args.kwargs["messages"]
@@ -72,9 +78,11 @@ async def test_background_run_skips_yaml_history(tmp_path: Path, monkeypatch: py
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
 async def test_provider_failure_persists_messages_and_raises_http_exception(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    background: bool,
 ):
     async def build_test_system_prompt(workspace: Path):
         assert workspace == tmp_path
@@ -103,6 +111,7 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     agent_loop._model_call_count = 0
     message = InboundMessage(
         user_id="session-1",
+        session_id="chat-1",
         sender_name="Alice",
         session_metadata={},
         content=[InputText(text="hello")],
@@ -111,13 +120,16 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     )
 
     with pytest.raises(loop_module.HTTPException) as exc_info:
-        _ = [event async for event in agent_loop.run(message)]
+        _ = [event async for event in agent_loop.run(message, background=background)]
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "provider unavailable"
-    agent_loop.history.save.assert_awaited_once()
-    saved_user_id, saved_messages = agent_loop.history.save.await_args.args
+    save = agent_loop.history.save
+    save.assert_awaited_once()
+    assert save.await_args.kwargs["background"] is background
+    saved_user_id, saved_identifier, saved_messages = save.await_args.args
     assert saved_user_id == "session-1"
+    assert saved_identifier == message.session_id
     assert saved_messages[-1] == {
         "role": "user",
         "content": (

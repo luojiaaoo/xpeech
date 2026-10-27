@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from ....config.settings import settings
 from ....exceptions import PathProtectionError
 from ....utils.helper import is_relative_path
-from ....utils.user_id import MAX_USER_ID_LENGTH, validate_user_id
+from ....utils.ids import MAX_ID_LENGTH, validate_user_id
 from ...skills.skill import SkillInfo, SkillsLoader
 
 router = APIRouter(prefix="/skills", tags=["skills"])
@@ -69,7 +69,7 @@ def _import_skill_file(data: bytes, workspace: Path) -> SkillInfo:
 async def list_skills(
     user_id: Annotated[
         str | None,
-        Query(max_length=MAX_USER_ID_LENGTH, description="用户 ID；为空时仅返回内置技能"),
+        Query(max_length=MAX_ID_LENGTH, description="用户 ID；为空时仅返回内置技能"),
     ] = None,
 ) -> list[SkillInfo]:
     """返回内置技能，以及指定用户可用的 SKILL 列表。"""
@@ -79,7 +79,7 @@ async def list_skills(
 
 @router.post("/import", response_model=SkillInfo, status_code=status.HTTP_201_CREATED)
 def import_skill(
-    user_id: Annotated[str, Query(min_length=1, max_length=MAX_USER_ID_LENGTH, description="用户 ID")],
+    user_id: Annotated[str, Query(min_length=1, max_length=MAX_ID_LENGTH, description="用户 ID")],
     file: Annotated[UploadFile, File(description="SKILL.md 文件")],
 ) -> SkillInfo:
     """将用户上传的 SKILL.md 导入指定用户工作区。"""

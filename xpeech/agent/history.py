@@ -9,7 +9,7 @@ from loguru import logger
 
 from ..exceptions import PathProtectionError
 from ..utils.helper import LiteralDumper, ensure_path, read_text_async, write_text_async
-from ..utils.user_id import validate_user_id
+from ..utils.ids import DEFAULT_SESSION_ID, validate_session_id, validate_user_id
 from .prompt.helper import remove_system_messages
 
 
@@ -20,18 +20,42 @@ class YamlHistoryRepository:
         """初始化历史目录。"""
         self._base_dir = ensure_path(base_dir.expanduser().resolve())
 
-    def _history_path(self, user_id: str) -> Path:
-        """校验用户 ID，并返回受保护的历史文件路径。"""
-        path = (self._base_dir / f"{validate_user_id(user_id)}.yaml").resolve()
+    def _history_path(
+        self,
+        user_id: str,
+        history_id: str,
+        *,
+        background: bool = False,
+    ) -> Path:
+        """统一生成普通会话或后台任务的历史文件路径。"""
+        user_id = validate_user_id(user_id)
+        history_id = validate_session_id(history_id)
+        history_type = "background" if background else "session"
+        filename = f"{user_id}~{history_type}~{history_id}.yaml"
+        return self._resolve_history_path(filename)
+
+    def _resolve_history_path(self, filename: str) -> Path:
+        if len(filename.encode()) > 255:
+            raise PathProtectionError("Session history filename is too long")
+        path = (self._base_dir / filename).resolve()
         try:
             path.relative_to(self._base_dir)
         except ValueError:
             raise PathProtectionError("Session history path escapes its storage directory") from None
         return path
 
-    async def load(self, user_id: str) -> list[dict[str, Any]]:
+    async def load(self, user_id: str, session_id: str) -> list[dict[str, Any]]:
         """加载会话历史，并移除已失效的系统提示词。"""
-        path = self._history_path(user_id)
+        path = self._history_path(user_id, session_id)
+        # TODO: 旧版 [user_id].yaml 全部迁移到 default 后，移除此兼容逻辑。
+        if session_id == DEFAULT_SESSION_ID and not path.exists():
+            legacy_path = self._resolve_history_path(f"{user_id}.yaml")
+            try:
+                await asyncio.to_thread(os.link, legacy_path, path)
+            except (FileNotFoundError, FileExistsError):
+                pass
+            else:
+                await asyncio.to_thread(legacy_path.unlink, missing_ok=True)
         if not path.exists():
             return []
         content = yaml.safe_load(await read_text_async(path)) or []
@@ -43,9 +67,16 @@ class YamlHistoryRepository:
         logger.info("Session history loaded messages={}", len(messages))
         return messages
 
-    async def save(self, user_id: str, history: list[dict[str, Any]]) -> None:
-        """以原子替换方式保存会话历史。"""
-        path = self._history_path(user_id)
+    async def save(
+        self,
+        user_id: str,
+        session_id: str,
+        history: list[dict[str, Any]],
+        *,
+        background: bool = False,
+    ) -> None:
+        """以原子替换方式保存普通会话或后台任务的历史。"""
+        path = self._history_path(user_id, session_id, background=background)
         serialized = yaml.dump(
             history,
             Dumper=LiteralDumper,
@@ -65,9 +96,12 @@ class YamlHistoryRepository:
                 await asyncio.to_thread(temporary_path.unlink)
         logger.info("Session history saved")
 
-    async def delete(self, user_id: str) -> None:
+    async def delete(self, user_id: str, session_id: str) -> None:
         """删除指定会话的历史文件；文件不存在时不报错。"""
-        path = self._history_path(user_id)
-        if path.exists():
-            await asyncio.to_thread(path.unlink)
+        path = self._history_path(user_id, session_id)
+        await asyncio.to_thread(path.unlink, missing_ok=True)
+        # TODO: 旧版 YAML 兼容期结束后，移除此清理逻辑。
+        if session_id == DEFAULT_SESSION_ID:
+            legacy_path = self._resolve_history_path(f"{user_id}.yaml")
+            await asyncio.to_thread(legacy_path.unlink, missing_ok=True)
         logger.info("Session history deleted")

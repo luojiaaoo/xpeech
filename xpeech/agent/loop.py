@@ -41,7 +41,7 @@ class AgentLoop:
     """Agent循环处理逻辑。"""
 
     ITERATION_STOP_PROMPT = "You have reached the maximum number of iterations and MUST stop calling tools."
-    SESSION_QUESTION_EVENT: ClassVar[dict[str, QuestionEvent]] = {}
+    SESSION_QUESTION_EVENT: ClassVar[dict[tuple[str, str], QuestionEvent]] = {}
 
     def __init__(
         self,
@@ -87,6 +87,7 @@ class AgentLoop:
         messages_yaml: list,
         loop_count: int,
         user_id: str,
+        session_id: str,
         sender_name: str,
         session_metadata: dict[str, str] | None = None,
     ):
@@ -174,17 +175,21 @@ class AgentLoop:
             elif tool_call.name == "ask_user_question" and success:
                 # 等待用户输入
                 logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
-                self.SESSION_QUESTION_EVENT[user_id] = QuestionEvent(event=asyncio.Event())
+                session_key = (user_id, session_id)
+                question_event = QuestionEvent(event=asyncio.Event())
+                self.SESSION_QUESTION_EVENT[session_key] = question_event
                 question_start_time = time.perf_counter()
                 yield {"event": "question", "context": result}
                 try:
-                    await asyncio.wait_for(self.SESSION_QUESTION_EVENT[user_id].event.wait(), timeout=USER_TIMEOUT)
-                    logger.info("User answered the question {}", self.SESSION_QUESTION_EVENT[user_id].answer)
+                    await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
+                    logger.info("User answered the question {}", question_event.answer)
                 except TimeoutError:
                     logger.warning("User timeout answering the question")
+                finally:
+                    self.SESSION_QUESTION_EVENT.pop(session_key, None)
                 # 覆盖方法调用的时间，遵守实际用户回答耗时
                 duration_seconds = time.perf_counter() - question_start_time
-                answer = self.SESSION_QUESTION_EVENT[user_id].answer
+                answer = question_event.answer
                 append_tool_result_messages_yaml(tool_call, answer)
                 tool_call_result.append((tool_call.id, tool_call.name, answer, duration_seconds))
             else:
@@ -224,14 +229,14 @@ class AgentLoop:
                 yield {"event": "command", "context": "/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）"}
                 return
             elif command_name == "/new":
-                history = await self.history.load(message.user_id)
+                history = await self.history.load(message.user_id, message.session_id)
                 result = await self.memory_consolidator.consolidate(history)
-                await self.history.delete(message.user_id)
+                await self.history.delete(message.user_id, message.session_id)
                 yield {"event": "command", "context": f"新会话, {result.message}"}
                 if not continuation:
                     return
             elif command_name == "/clear":
-                await self.history.delete(message.user_id)
+                await self.history.delete(message.user_id, message.session_id)
                 yield {"event": "command", "context": "上下文已清空"}
                 if not continuation:
                     return
@@ -245,7 +250,11 @@ class AgentLoop:
             # 将命令后的内容作为清空上下文后的第一条用户消息。
             message.content[0].text = continuation
 
-        messages_yaml: list[dict] = [] if background else await self.history.load(message.user_id)
+        messages_yaml: list[dict] = (
+            []
+            if background
+            else await self.history.load(message.user_id, message.session_id)
+        )
 
         # 拼接系统提示词
         messages_yaml = set_system_prompt(
@@ -307,17 +316,21 @@ class AgentLoop:
                     "Provider chat failed loop_count={}",
                     loop_count,
                 )
-                if not background:
-                    messages_yaml.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                f"The previous model call failed with this error: {exc}. "
-                                "Please retry the request and adjust your approach if needed."
-                            ),
-                        }
-                    )
-                    await self.history.save(message.user_id, messages_yaml)
+                messages_yaml.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"The previous model call failed with this error: {exc}. "
+                            "Please retry the request and adjust your approach if needed."
+                        ),
+                    }
+                )
+                await self.history.save(
+                    message.user_id,
+                    message.session_id,
+                    messages_yaml,
+                    background=background,
+                )
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=str(exc),
@@ -336,6 +349,7 @@ class AgentLoop:
                     messages_yaml,
                     loop_count,
                     message.user_id,
+                    message.session_id,
                     message.sender_name,
                     session_metadata=message.session_metadata,
                 ):
@@ -372,8 +386,12 @@ class AgentLoop:
         messages_yaml.append({"role": "assistant", "content": final_content})
 
         # 保存历史记录
-        if not background:
-            await self.history.save(message.user_id, messages_yaml)
+        await self.history.save(
+            message.user_id,
+            message.session_id,
+            messages_yaml,
+            background=background,
+        )
 
         # 追加本轮对话记录
         user_question = "\n".join(

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from fastapi.sse import EventSourceResponse
 
 from ....utils.helper import save_to_workspace
+from ....utils.ids import DEFAULT_SESSION_ID
 from ...background import (
     BACKGROUND_MESSAGE_QUEUES,
     BackgroundMessageChannel,
@@ -13,7 +14,14 @@ from ...background import (
 )
 from ...loop import AgentLoop, QuestionEvent
 from ...runner import AgentRunner
-from ..dependencies import acquire_chat_session, content, sender_name_header, user_id_header, session_metadata
+from ..dependencies import (
+    acquire_chat_session,
+    content,
+    sender_name_header,
+    session_id_header,
+    session_metadata,
+    user_id_header,
+)
 from ..schema import InboundMessage, InputContent
 
 router = APIRouter()
@@ -44,10 +52,13 @@ async def poll_background_message(
 @router.post("/answer_question")
 async def answer_question(
     user_id: Annotated[str, Depends(user_id_header)],
+    session_id: Annotated[str, Depends(session_id_header)],
     answer: Annotated[str, Form(description="回答内容")],
 ):
     """提交用户答案并唤醒正在等待的 Agent 循环。"""
-    question_event: QuestionEvent | None = AgentLoop.SESSION_QUESTION_EVENT.get(user_id)
+    question_event: QuestionEvent | None = AgentLoop.SESSION_QUESTION_EVENT.get(
+        (user_id, session_id)
+    )
     if question_event is not None:
         question_event.answer = answer
         question_event.event.set()
@@ -62,6 +73,7 @@ async def answer_question(
 )
 async def chat(
     user_id: Annotated[str, Depends(user_id_header)],
+    session_id: Annotated[str, Depends(session_id_header)],
     sender_name: Annotated[str, Depends(sender_name_header)],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],
@@ -69,7 +81,10 @@ async def chat(
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
 ):
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
-    runner = await AgentRunner.create(user_id)
+    runner = await AgentRunner.create(
+        user_id,
+        include_background_tools=session_id == DEFAULT_SESSION_ID,
+    )
 
     saved_files = []
     for file in files:
@@ -77,6 +92,7 @@ async def chat(
 
     message = InboundMessage(
         user_id=user_id,
+        session_id=session_id,
         sender_name=sender_name,
         session_metadata=session_metadata,
         content=content,

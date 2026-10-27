@@ -64,6 +64,7 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
     observed = []
 
     async def run(message):
+        assert message.session_id == "default"
         started.append(message.user_id)
         if len(started) == 2:
             both_started.set()
@@ -79,7 +80,8 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
         assert "user_access_token" not in message.model_dump_json()
         yield {"event": "assistant", "context": "ok"}
 
-    async def create(_user_id):
+    async def create(_user_id, *, include_background_tools):
+        assert include_background_tools is True
         return SimpleNamespace(workspace=tmp_path, run=run)
 
     monkeypatch.setattr(chat_routes.AgentRunner, "create", create)
