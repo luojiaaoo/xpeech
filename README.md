@@ -244,7 +244,9 @@ OAuth2 用户标识配置使用 `user_id_claim`。
 读取 `default` 会话时，若新文件不存在，会将旧的 `[user_id].yaml` 自动迁移到 default 文件。
 后台任务每次运行的上下文也保存在该目录，文件名为
 `[user_id]~background~[session_id].yaml`。后台任务每次执行时生成
-`YYYYMMDDHHMMSS-8位UUID` 格式的 `session_id`，保存历史时直接复用此 ID。
+`32 位 UUID` 格式的 `session_id`，保存历史时直接复用此 ID；执行时间以文件修改时间为准。
+模型可感知当前 `session_id`，并通过 `list_sessions` 和 `read_session` 分页查看当前用户已保存的
+普通会话及后台执行历史。历史查询只读，不会切换当前会话或自动合并其他会话的上下文。
 
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
@@ -489,6 +491,8 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `read_office_file` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |
 | `ask_user_question` | 向用户发送表单提问 |
+| `list_sessions` | 分页查看当前用户的普通会话和后台执行历史 |
+| `read_session` | 按会话 ID 和类型分页读取历史消息 |
 | `feishu_schedule` | 为当前飞书会话创建单次或周期后台定时任务 |
 | `feishu_schedule_list` | 查看当前用户的定时任务 |
 | `feishu_schedule_cancel` | 取消当前用户拥有的定时任务 |

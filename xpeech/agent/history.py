@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -16,6 +17,9 @@ from .prompt.helper import remove_system_messages
 class YamlHistoryRepository:
     """以 YAML 文件持久化各会话的对话历史。"""
 
+    SESSION_SEPARATOR = "~session~"
+    BACKGROUND_SEPARATOR = "~background~"
+
     def __init__(self, base_dir: Path) -> None:
         """初始化历史目录。"""
         self._base_dir = ensure_path(base_dir.expanduser().resolve())
@@ -30,8 +34,8 @@ class YamlHistoryRepository:
         """统一生成普通会话或后台任务的历史文件路径。"""
         user_id = validate_user_id(user_id)
         history_id = validate_session_id(history_id)
-        history_type = "background" if background else "session"
-        filename = f"{user_id}~{history_type}~{history_id}.yaml"
+        separator = self.BACKGROUND_SEPARATOR if background else self.SESSION_SEPARATOR
+        filename = f"{user_id}{separator}{history_id}.yaml"
         return self._resolve_history_path(filename)
 
     def _resolve_history_path(self, filename: str) -> Path:
@@ -44,11 +48,56 @@ class YamlHistoryRepository:
             raise PathProtectionError("Session history path escapes its storage directory") from None
         return path
 
-    async def load(self, user_id: str, session_id: str) -> list[dict[str, Any]]:
+    async def list_sessions(self, user_id: str) -> list[dict[str, Any]]:
+        """按更新时间倒序列出当前用户的普通会话和后台历史。"""
+        user_id = validate_user_id(user_id)
+
+        def collect() -> list[dict[str, Any]]:
+            sessions = []
+            default_path = self._history_path(user_id, DEFAULT_SESSION_ID)
+            for path in self._base_dir.iterdir():
+                if path.suffix != ".yaml" or path.is_symlink() or not path.is_file():
+                    continue
+                if path.name == f"{user_id}.yaml" and not default_path.exists():
+                    session_id, background = DEFAULT_SESSION_ID, False
+                else:
+                    stem = path.stem
+                    separator = max(
+                        (self.SESSION_SEPARATOR, self.BACKGROUND_SEPARATOR), key=stem.rfind
+                    )
+                    owner, found, session_id = stem.rpartition(separator)
+                    if not found or owner != user_id:
+                        continue
+                    background = separator == self.BACKGROUND_SEPARATOR
+                try:
+                    stat = path.stat()
+                except FileNotFoundError:
+                    continue
+                sessions.append({
+                    "session_id": session_id,
+                    "background": background,
+                    "updated_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
+                    "size_bytes": stat.st_size,
+                })
+            return sorted(
+                sessions,
+                key=lambda item: (item["updated_at"], item["session_id"], item["background"]),
+                reverse=True,
+            )
+
+        return await asyncio.to_thread(collect)
+
+    async def load(
+        self,
+        user_id: str,
+        session_id: str,
+        *,
+        background: bool = False,
+    ) -> list[dict[str, Any]]:
         """加载会话历史，并移除已失效的系统提示词。"""
-        path = self._history_path(user_id, session_id)
+        path = self._history_path(user_id, session_id, background=background)
         # TODO: 旧版 [user_id].yaml 全部迁移到 default 后，移除此兼容逻辑。
-        if session_id == DEFAULT_SESSION_ID and not path.exists():
+        if not background and session_id == DEFAULT_SESSION_ID and not path.exists():
             legacy_path = self._resolve_history_path(f"{user_id}.yaml")
             try:
                 await asyncio.to_thread(os.link, legacy_path, path)

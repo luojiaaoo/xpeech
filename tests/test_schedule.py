@@ -374,10 +374,7 @@ async def test_background_agent_queues_success_or_fixed_failure(
     assert captured["user_id"] == "session-1"
     assert captured["background"] is True
     assert captured["message"].sender_name == "Alice"
-    assert re.fullmatch(
-        rf"{captured['message'].timestamp:%Y%m%d%H%M%S}-[0-9a-f]{{8}}",
-        captured["message"].session_id,
-    )
+    assert re.fullmatch(r"[0-9a-f]{32}", captured["message"].session_id)
     scheduled_prompt = captured["message"].content[0].text
     assert scheduled_prompt.startswith("## 定时任务运行说明")
     assert "本次运行由后台定时任务触发" in scheduled_prompt

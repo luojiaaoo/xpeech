@@ -88,6 +88,8 @@ async def test_registers_supported_default_and_mcp_tools(
         "read_office_file",
         "send_file",
         "ask_user_question",
+        "list_sessions",
+        "read_session",
     ]
     if include_background_tools:
         expected_tools += ["feishu_schedule", "feishu_schedule_list", "feishu_schedule_cancel"]

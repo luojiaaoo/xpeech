@@ -334,7 +334,7 @@ async def run_feishu_background_task(
         timestamp = datetime.now().astimezone()
         message = InboundMessage(
             user_id=user_id,
-            session_id=f"{timestamp:%Y%m%d%H%M%S}-{uuid4().hex[:8]}",
+            session_id=uuid4().hex,
             sender_name=sender_name,
             session_metadata=metadata,
             content=[

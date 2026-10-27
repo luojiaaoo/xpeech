@@ -17,7 +17,10 @@ class TestYamlHistoryRepository:
         repository = YamlHistoryRepository(tmp_path)
         normal_history = [{"role": "user", "content": "normal conversation"}]
         await repository.save("alice", "default", normal_history)
-        session_ids = ["20261027102030-a1b2c3d4", "20261027102030-e5f60718"]
+        session_ids = [
+            "0123456789abcdef0123456789abcdef",
+            "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        ]
         histories = [
             [{"role": "user", "content": "background a"}],
             [{"role": "user", "content": "background b"}],
@@ -89,6 +92,8 @@ class TestYamlHistoryRepository:
         repository = YamlHistoryRepository(tmp_path)
 
         assert await repository.load("alice", "chat-1") == []
+        assert legacy_path.is_file()
+        assert await repository.load("alice", "default", background=True) == []
         assert legacy_path.is_file()
 
         histories = await asyncio.gather(
