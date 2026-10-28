@@ -3,7 +3,6 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
 import litellm
-from loguru import logger
 from pydantic import BaseModel
 
 from ..agent.tools.helper import as_tool, get_custom_tool_func
@@ -35,7 +34,7 @@ class LiteLLMProvider:
         support_image: bool = False,
         support_video: bool = False,
         support_json_output: bool = False,
-        extra_headers: dict = None,
+        extra_headers: dict | None = None,
     ):
         self.api_key = api_key
         self.api_base = api_base
@@ -147,15 +146,8 @@ class LiteLLMProvider:
         remove_blocking_tool: bool = False,
         json_output: bool = False,
     ) -> LLMResponse:
+        """调用模型；启用 JSON 输出且模型支持时，使用接口的 JSON 对象输出约束。"""
         parameters = self.parameters if parameters is None else self.parameters.copy_with(parameters)
-        if json_output:
-            if self.support_json_output:
-                json_output = True
-            else:
-                logger.warning("LLM does not support JSON output, ignoring json_output parameter.")
-                json_output = False
-        else:
-            json_output = False
 
         # 根据工具名称获取自定义工具，或使用工具函数
         tools = [get_custom_tool_func(tool) if isinstance(tool, str) else tool for tool in tools] if tools else []
@@ -200,7 +192,7 @@ class LiteLLMProvider:
             "top_p": parameters.top_p,
             "presence_penalty": parameters.presence_penalty,
             "extra_body": extra_body or None,
-            "response_format": {"type": "json_object"} if json_output else None,
+            "response_format": {"type": "json_object"} if json_output and self.support_json_output else None,
             "extra_headers": self.extra_headers,
             "reasoning_effort": parameters.reasoning_effort,
         }

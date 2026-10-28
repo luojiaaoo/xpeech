@@ -257,9 +257,15 @@ class AgentLoop:
         )
 
         # 拼接系统提示词
+        system_prompt = await build_system_prompt(workspace=self.workspace)
+        if message.json_output:
+            system_prompt["content"] += (
+                "\n\n## Response Format\n"
+                "Return your response as a valid JSON object. Do not wrap it in Markdown code fences."
+            )
         messages_yaml = set_system_prompt(
             messages_yaml,
-            await build_system_prompt(workspace=self.workspace),
+            system_prompt,
         )
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(
@@ -298,6 +304,7 @@ class AgentLoop:
                     messages=messages_yaml,
                     tools=self.tools,
                     remove_blocking_tool=background,
+                    json_output=message.json_output,
                 )
 
                 async for kind, chunk in response.iter_mix_chunks:

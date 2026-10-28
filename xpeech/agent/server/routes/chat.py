@@ -79,6 +79,7 @@ async def chat(
     content: Annotated[InputContent, Depends(content)],
     timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
+    json_output: Annotated[bool, Form(description="启用模型 JSON 对象输出，响应仍使用 SSE 流")] = False,
 ):
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
     runner = await AgentRunner.create(
@@ -98,6 +99,7 @@ async def chat(
         content=content,
         timestamp=timestamp,
         files=saved_files,
+        json_output=json_output,
     )
 
     async for event in runner.run(message=message):
