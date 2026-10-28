@@ -243,6 +243,25 @@ OAuth2 用户标识配置使用 `user_id_claim`。
 模型可感知当前 `session_id`，并通过 `list_sessions` 和 `read_session` 分页查看当前用户已保存的
 普通会话及后台执行历史。历史查询只读，不会切换当前会话或自动合并其他会话的上下文。
 
+同一会话同时只允许一个 `/chat` 请求，重复请求返回 HTTP 409；同一用户的不同会话可以并发运行，
+并共享 workspace。文件读写和锁统一由 `xpeech/utils/file_io.py` 管理，同一路径的单次读写互斥，
+覆盖写入通过同文件系统中的临时文件原子替换，读取会等待正在进行的受保护写入完成。
+普通工作区文件在读取、处理和写回之间不持续持锁，并发编辑仍可能互相覆盖。
+同名附件会在上传完成后原子分配名称，避免相互覆盖；
+工作区模板只在文件不存在时创建。长期记忆整理按 `memory/MEMORY.md` 路径串行执行，
+锁覆盖读取旧记忆、模型整理和保存新记忆，历史摘要追加也按文件串行执行。
+
+上述锁适用于当前单进程 backend（`workers=1`）。Shell、MCP 和自定义工具直接操作文件时，
+需要自行协调并发；同一文件的完整覆盖写入仍以后写入的内容为准。多会话同时处理文件时，
+建议使用不同的输出路径。
+
+代码中单独调用 `LockedFile(path).read_text()`、`write_text()`、`append_text()` 等方法时会自动
+加锁。同一路径的不同对象共享同一把锁。需要保护多个步骤时，使用
+`async with file.transaction()`，块内通过同一个 `file` 操作，已有锁会复用。
+也可写成 `async with file.transaction() as locked`，其中 `locked` 就是原来的 `file` 对象。
+其他任务的独立调用或新建的 `LockedFile(path)` 仍需获取锁。事务内创建的工具子任务可以
+继承当前对象的事务，但应在退出上下文前等待其完成；此处的事务只提供互斥，不提供回滚。
+
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \

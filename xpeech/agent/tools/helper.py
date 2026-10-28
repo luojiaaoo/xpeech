@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, get_type_hints, Type
 from pydantic import BaseModel
-from ...utils.helper import dynamic_import, is_relative_path
+from ...utils.file_io import is_relative_path
+from ...utils.helper import dynamic_import
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
 from ..skills.skill import BUILTIN_SKILLS_DIR

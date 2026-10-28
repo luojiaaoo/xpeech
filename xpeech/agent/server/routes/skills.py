@@ -5,7 +5,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from ....config.settings import settings
 from ....exceptions import PathProtectionError
-from ....utils.helper import is_relative_path
+from ....utils.file_io import is_relative_path
 from ....utils.ids import MAX_ID_LENGTH, validate_user_id
 from ...skills.skill import SkillInfo, SkillsLoader
 

@@ -176,18 +176,18 @@ async def test_build_prompt_reads_each_skill_once(tmp_path: Path, monkeypatch: p
     )
     reads = []
     parses = []
-    read_text_async = skill_module.read_text_async
+    read_text = skill_module.LockedFile.read_text
     safe_load = skill_module.yaml.safe_load
 
-    async def count_reads(path: Path) -> str:
-        reads.append(path)
-        return await read_text_async(path)
+    async def count_reads(file: skill_module.LockedFile) -> str:
+        reads.append(file.path)
+        return await read_text(file)
 
     def count_parses(content: str):
         parses.append(content)
         return safe_load(content)
 
-    monkeypatch.setattr(skill_module, "read_text_async", count_reads)
+    monkeypatch.setattr(skill_module.LockedFile, "read_text", count_reads)
     monkeypatch.setattr(skill_module.yaml, "safe_load", count_parses)
     prompt = await SkillsLoader(tmp_path / "workspace").build_skills_prompt()
 

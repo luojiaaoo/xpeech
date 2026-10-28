@@ -4,13 +4,9 @@ from datetime import datetime
 import math
 import re
 from typing import Union
-import aiofiles
-import aiofiles.os
 import inspect
 from asyncer import asyncify
 import yaml
-from starlette.datastructures import UploadFile
-from charset_normalizer import from_bytes, from_path
 from importlib.util import spec_from_file_location, module_from_spec
 import sys
 from litellm import token_counter as _token_counter
@@ -18,6 +14,9 @@ from io import BytesIO
 from PIL import Image
 import tempfile
 from async_lru import alru_cache
+
+from .file_io import LockedFile
+
 
 # PIL.Image.ANTIALIAS is deprecated, use PIL.Image.Resampling.LANCZOS instead
 if not hasattr(Image, "ANTIALIAS"):
@@ -31,61 +30,6 @@ def ensure_async(func):
         return func
     else:
         return asyncify(func)
-
-
-def ensure_path(path_: Path) -> Path:
-    path_.mkdir(parents=True, exist_ok=True)
-    return path_
-
-
-async def ensure_path_async(path_: Path) -> Path:
-    await aiofiles.os.makedirs(path_, exist_ok=True)
-    return path_
-
-
-async def read_text_async(file_path: str | Path, encoding: str | None = "utf-8") -> str:
-    async with aiofiles.open(file_path, "r", encoding=encoding) as file:
-        return await file.read()
-
-
-async def write_text_async(
-    file_path: str | Path,
-    content: str,
-    encoding: str | None = "utf-8",
-) -> None:
-    async with aiofiles.open(file_path, "w", encoding=encoding) as file:
-        await file.write(content)
-
-
-async def append_text_async(
-    file_path: str | Path,
-    content: str,
-    encoding: str | None = "utf-8",
-) -> None:
-    async with aiofiles.open(file_path, "a", encoding=encoding) as file:
-        await file.write(content)
-
-
-async def read_bytes_async(file_path: str | Path) -> bytes:
-    async with aiofiles.open(file_path, "rb") as file:
-        return await file.read()
-
-
-async def write_bytes_async(file_path: str | Path, content: bytes) -> None:
-    async with aiofiles.open(file_path, "wb") as file:
-        await file.write(content)
-
-
-def is_relative_path(path_target: Path, base: Path):
-    if not base.is_absolute():
-        raise ValueError("Base path must be absolute")
-    if not path_target.is_absolute():
-        raise ValueError("Path target must be absolute")
-    try:
-        path_target.relative_to(base)
-    except ValueError:
-        return False
-    return True
 
 
 def format_exception2llm(e: Exception) -> str:
@@ -122,25 +66,6 @@ def format_now(format_string: str = "%Y-%m-%d") -> str:
     return datetime.now().astimezone().strftime(format_string)
 
 
-async def save_to_workspace(file: UploadFile, workspace: Path):
-    attachments_dir = workspace / "attachments" / format_now()
-    attachments_dir.mkdir(parents=True, exist_ok=True)
-    file_path = attachments_dir / Path(file.filename).name
-
-    if file_path.exists():
-        stem = file_path.stem
-        suffix = file_path.suffix
-        index = 1
-        while file_path.exists():
-            file_path = attachments_dir / f"{stem}_{index}{suffix}"
-            index += 1
-
-    async with aiofiles.open(file_path, "wb") as out_file:
-        while chunk := await file.read(1024 * 1024):
-            await out_file.write(chunk)
-    return file_path
-
-
 async def token_counter(messages: list[dict]):
     cleaned_messages, video_tokens = await _strip_video_blocks_and_count_tokens(messages)
     return _token_counter(model="gpt-4o", messages=cleaned_messages) + video_tokens
@@ -172,7 +97,7 @@ async def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[li
             _, _bytes = _parse_base64_url(block["video_url"]["url"])
             with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
                 video_path = Path(temp_dir) / "video.mp4"
-                await write_bytes_async(video_path, _bytes)
+                await LockedFile(video_path).write_bytes(_bytes)
                 duration = (await read_video_metadata(video_path))["duration"]
             video_tokens += math.ceil(duration * 100)
             has_video = True
@@ -183,19 +108,6 @@ async def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[li
             cleaned_messages.append(message)
 
     return cleaned_messages, video_tokens
-
-
-async def super_read_text(file_path: Path = None, file_bytes: bytes = None) -> tuple[str | None, str | None]:
-    if not (file_path or file_bytes):
-        raise ValueError("Internal error: No file path or bytes provided")
-    if file_path:
-        content = (await asyncify(from_path)(file_path)).best()
-    elif file_bytes:
-        content = (await asyncify(from_bytes)(file_bytes)).best()
-    if content is not None:
-        return content.__str__(), content.encoding
-    else:
-        return None, None
 
 
 def compress_image(
@@ -301,7 +213,7 @@ async def compress_video(
     # 异步执行视频处理
     await asyncify(_process_video)()
 
-    return await read_bytes_async(output_path), "video/mp4"
+    return await LockedFile(output_path).read_bytes(), "video/mp4"
 
 
 @alru_cache(maxsize=1000)

@@ -10,7 +10,7 @@ import yaml
 from loguru import logger
 from pydantic import BaseModel, Field, computed_field
 
-from ...utils.helper import ensure_path_async, read_text_async
+from ...utils.file_io import LockedFile, ensure_path_async
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent / "buildin"
@@ -132,7 +132,7 @@ class SkillsLoader:
         skills = []
         seen_names = set()
         for skill_file, source in await self._skill_files():
-            content = await read_text_async(skill_file)
+            content = await LockedFile(skill_file).read_text()
             # Built-in skills are mounted into the workspace by the shell sandbox.
             if source == "builtin":
                 visible_path = (

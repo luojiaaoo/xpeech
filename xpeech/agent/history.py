@@ -3,13 +3,13 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import yaml
 from loguru import logger
 
 from ..exceptions import PathProtectionError
-from ..utils.helper import LiteralDumper, ensure_path, read_text_async, write_text_async
+from ..utils.file_io import LockedFile, ensure_path
+from ..utils.helper import LiteralDumper
 from ..utils.ids import DEFAULT_SESSION_ID
 from .prompt.helper import remove_system_messages
 
@@ -103,7 +103,7 @@ class YamlHistoryRepository:
                 await asyncio.to_thread(legacy_path.unlink, missing_ok=True)
         if not path.exists():
             return []
-        content = yaml.safe_load(await read_text_async(path)) or []
+        content = yaml.safe_load(await LockedFile(path).read_text()) or []
 
         if not isinstance(content, list) or any(not isinstance(message, dict) for message in content):
             raise ValueError(f"Invalid session history format: {path.name}")
@@ -131,14 +131,7 @@ class YamlHistoryRepository:
             sort_keys=False,
             width=1000,
         )
-        temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-
-        try:
-            await write_text_async(temporary_path, serialized)
-            await asyncio.to_thread(os.replace, temporary_path, path)
-        finally:
-            if temporary_path.exists():
-                await asyncio.to_thread(temporary_path.unlink)
+        await LockedFile(path).write_text(serialized)
         logger.info("Session history saved")
 
     async def delete(self, user_id: str, session_id: str) -> None:

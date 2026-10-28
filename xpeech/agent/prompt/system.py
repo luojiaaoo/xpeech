@@ -142,7 +142,7 @@ async def build_system_prompt(workspace: Path) -> dict[str, Any]:
     # AGENTS.md / SOUL.md / USER.md / TOOLS.md
     parts.append(_load_bootstrap_files(workspace))
 
-    # Memory
+    # 长期记忆
     parts.append(await MemoryStore(workspace).get_memory_context())
 
     skills_prompt = await SkillsLoader(workspace).build_skills_prompt()

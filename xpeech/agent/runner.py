@@ -3,7 +3,7 @@ from typing import Any, Self
 
 from ..config.settings import Settings, settings
 from ..provider.litellm_provider import LiteLLMProvider
-from ..utils.helper import ensure_path_async
+from ..utils.file_io import ensure_path_async
 from ..utils.session import create_workspace_templates
 from .loop import AgentLoop
 from .server.schema import InboundMessage
