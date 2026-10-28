@@ -17,6 +17,7 @@ from ...runner import AgentRunner
 from ..dependencies import (
     acquire_chat_session,
     content,
+    json_output_enabled,
     sender_name_header,
     session_id_header,
     session_metadata,
@@ -69,6 +70,7 @@ async def answer_question(
 @router.post(
     "/chat",
     response_class=EventSourceResponse,
+    responses={400: {"description": "The configured model does not support the requested JSON output mode"}},
     dependencies=[Depends(acquire_chat_session, scope="request")],
 )
 async def chat(
@@ -79,7 +81,7 @@ async def chat(
     content: Annotated[InputContent, Depends(content)],
     timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
-    json_output: Annotated[bool, Form(description="启用模型 JSON 对象输出，响应仍使用 SSE 流")] = False,
+    json_output: Annotated[bool, Depends(json_output_enabled)],
 ):
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
     runner = await AgentRunner.create(

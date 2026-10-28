@@ -78,7 +78,8 @@ async def test_background_run_saves_separate_yaml_history(tmp_path: Path, monkey
     assert {"event": "assistant", "context": "scheduled result"} in events
     assert agent_loop.chat.await_args.kwargs["remove_blocking_tool"] is True
     assert agent_loop.chat.await_args.kwargs["json_output"] is json_output
-    assert ("valid JSON object" in messages[0]["content"]) is json_output
+    assert messages[0] == {"role": "system", "content": "system"}
+    assert all("valid JSON object" not in part["text"] for part in messages[1]["content"])
 
 
 @pytest.mark.asyncio

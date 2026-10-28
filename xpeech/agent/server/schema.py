@@ -25,4 +25,7 @@ class InboundMessage(BaseModel):
     content: Annotated[list[InputText], Field(description="消息内容")]
     timestamp: Annotated[datetime, Field(description="消息时间戳")]
     files: Annotated[list[Path], Field(description="消息附件")]
-    json_output: bool = Field(default=False, description="是否要求模型输出 JSON 对象")
+    json_output: bool = Field(
+        default=False,
+        description='是否为大模型请求添加 response_format={"type":"json_object"}，不修改提示词；模型不支持时返回 HTTP 400',
+    )

@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
 import litellm
+from fastapi import HTTPException, status
 from pydantic import BaseModel
 
 from ..agent.tools.helper import as_tool, get_custom_tool_func
@@ -146,7 +147,12 @@ class LiteLLMProvider:
         remove_blocking_tool: bool = False,
         json_output: bool = False,
     ) -> LLMResponse:
-        """调用模型；启用 JSON 输出且模型支持时，使用接口的 JSON 对象输出约束。"""
+        """调用模型；启用 JSON 输出且模型支持时，仅添加 response_format，不修改提示词。"""
+        if json_output and not self.support_json_output:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The configured model does not support JSON output",
+            )
         parameters = self.parameters if parameters is None else self.parameters.copy_with(parameters)
 
         # 根据工具名称获取自定义工具，或使用工具函数
@@ -192,7 +198,7 @@ class LiteLLMProvider:
             "top_p": parameters.top_p,
             "presence_penalty": parameters.presence_penalty,
             "extra_body": extra_body or None,
-            "response_format": {"type": "json_object"} if json_output and self.support_json_output else None,
+            "response_format": {"type": "json_object"} if json_output else None,
             "extra_headers": self.extra_headers,
             "reasoning_effort": parameters.reasoning_effort,
         }

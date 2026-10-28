@@ -5,12 +5,31 @@ from urllib.parse import unquote
 
 from fastapi import Depends, Form, Header, HTTPException, status
 
+from ...config.settings import settings
 from ...exceptions import PathProtectionError
 from ...utils.ids import DEFAULT_SESSION_ID, validate_session_id, validate_user_id
 from .schema import InputContent
 from .session_guard import SessionChatGuard
 
 CHAT_GUARD = SessionChatGuard()
+
+
+def json_output_enabled(
+    json_output: Annotated[
+        bool,
+        Form(
+            description='为大模型请求添加 response_format={"type":"json_object"}，不修改提示词；'
+            "模型未配置支持 JSON 输出时返回 HTTP 400，成功响应仍使用 SSE 流"
+        ),
+    ] = False,
+) -> bool:
+    """在 SSE 响应开始前校验模型是否支持请求的 JSON 输出模式。"""
+    if json_output and not settings.llm.support_json_output:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The configured model does not support JSON output",
+        )
+    return json_output
 
 
 def user_id_header(
