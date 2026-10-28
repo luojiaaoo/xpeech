@@ -484,11 +484,11 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `edit_file` | 编辑工作区内的文件 |
 | `list_dir` | 列出工作区或内置技能目录内容 |
 | `shell` | 执行 Bash 命令（带工作区路径限制和 bwrap 沙盒） |
-| `web_fetch` | 抓取网页内容并转为 Markdown |
+| `web_fetch` | 使用 requests 抓取网页、Trafilatura 提取正文和评论并输出 Markdown，保留链接和表格；模型可通过 include_images 选择保留图片信息；支持 HTTP 重定向，不启动浏览器、不执行 JavaScript |
 | `web_search` | 使用百度、DuckDuckGo 或聚合新闻源搜索，返回标题、链接、摘要；支持条数和时间范围过滤（百度不支持时间过滤） |
 | `create_browser_preview` | 将工作区内目录或单个 HTML 复制到 UUID 预览目录，返回目录 URL 前缀或完整文件 URL |
 | `shell` + `agent-browser` | 通过注入的 CDP 连接搜索、打开、读取、检查和操作网页 |
-| `read_office_file` | 读取 Office 文档（docx/xlsx/pdf/pptx 等） |
+| `read_doc_file` | 使用 firecrawl-anydoc 读取 Word、PowerPoint、Excel（含旧版和宏格式）、OpenDocument、RTF、EPUB、CSV、PDF，输出 Markdown |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |
 | `ask_user_question` | 向用户发送表单提问 |
 | `list_sessions` | 分页查看当前用户的普通会话和后台执行历史 |

@@ -1,6 +1,5 @@
 import asyncio
 import json
-from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -11,10 +10,27 @@ from xpeech.agent.tools.helper import as_tool
 from xpeech.provider.schema import ToolCallRequest
 
 
-def test_web_fetch_sets_network_timeouts_and_closes_response(monkeypatch):
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_images", [False, True])
+async def test_web_fetch_includes_comments_and_optional_images(monkeypatch, include_images):
     calls = []
 
     class FakeResponse:
+        url = "https://example.com/page"
+        content = (
+            b"<html><head><title>Example</title></head><body><article><h1>Example</h1>"
+            b"<p>This article explains a useful method and its practical applications. "
+            b"The main text describes the research results in enough detail for readers to understand.</p>"
+            b'<p><img src="https://example.test/figure.png" alt="Research figure"></p>'
+            b"<p>The results are explained further in the final section. This paragraph discusses "
+            b"reproducible experiments and their practical limitations in detail.</p></article>"
+            b'<div id="comments"><p>A reader comment discussing the results and suggesting an alternative method.</p>'
+            b"</div></body></html>"
+        )
+
+        def __init__(self):
+            self.headers = {"Content-Type": "text/html; charset=utf-8"}
+
         def __enter__(self):
             return self
 
@@ -35,29 +51,113 @@ def test_web_fetch_sets_network_timeouts_and_closes_response(monkeypatch):
             calls.append("session_closed")
 
         def get(self, url, **kwargs):
+            assert self.headers["User-Agent"].startswith("Mozilla/5.0")
+            assert "python-requests" not in self.headers["User-Agent"]
+            assert "zh-CN" in self.headers["Accept-Language"]
             calls.append((url, kwargs))
             return FakeResponse()
 
-    class FakeMarkItDown:
-        def convert(self, response):
-            assert isinstance(response, FakeResponse)
-            return SimpleNamespace(title="Example", text_content="body")
-
     monkeypatch.setattr(web.requests, "Session", FakeSession)
-    monkeypatch.setattr(web, "MarkItDown", FakeMarkItDown)
 
-    result = web._fetch_and_convert("https://example.com/page")
+    args = web.WebFetchArgs(url="https://example.com/page", include_images=include_images)
+    result = await web.web_fetch(args)
 
-    assert result == "[TITLE: Example]\n\nbody"
+    assert result.startswith("[TITLE: Example]\n\n# Example")
+    assert "A reader comment discussing the results" in result
+    assert ("![Research figure](https://example.test/figure.png)" in result) == include_images
+    assert "include_images" in as_tool(web.web_fetch)["function"]["parameters"]["properties"]
     assert calls == [
         (
             "https://example.com/page",
-            {"stream": True, "timeout": (10, 60)},
+            {"stream": True, "allow_redirects": True, "timeout": (10, 60)},
         ),
         "status_checked",
         "response_closed",
         "session_closed",
     ]
+
+
+def make_response(data: bytes, content_type: str, url: str = "https://example.test/download"):
+    response = web.requests.Response()
+    response._content = data
+    response.headers["Content-Type"] = content_type
+    response.encoding = "utf-8"
+    response.url = url
+    return response
+
+
+@pytest.mark.parametrize(
+    "data,content_type,url,expected",
+    [
+        (
+            b"name,value\nalpha,42\n",
+            "text/csv; charset=utf-8",
+            "https://example.test/download",
+            "name,value\nalpha,42\n",
+        ),
+        (
+            b"# Markdown\n\n[link](https://example.test)",
+            "text/markdown",
+            "https://example.test/content",
+            "# Markdown\n\n[link](https://example.test)",
+        ),
+        (b"plain <text>", "text/plain", "https://example.test/content", "plain <text>"),
+    ],
+)
+def test_web_fetch_preserves_text(data, content_type, url, expected):
+    result = web._response_to_markdown(make_response(data, content_type, url))
+    assert result == expected
+
+
+@pytest.mark.parametrize("content_type", ["application/pdf", "application/octet-stream", "image/png"])
+def test_web_fetch_rejects_binary_content(content_type):
+    with pytest.raises(ValueError, match="Unsupported content type"):
+        web._response_to_markdown(make_response(b"binary data", content_type))
+
+
+def test_web_fetch_html_preserves_title_links_and_removes_images_and_scripts():
+    response = make_response(
+        b"<html><head><title>Page title</title></head><body><h1>Heading</h1>"
+        b'<p>See <a href="https://example.test">link</a></p><img src="image.png" alt="hidden image">'
+        b"<script>hidden script</script><style>hidden style</style></body></html>",
+        "text/html",
+    )
+    result = web._response_to_markdown(response)
+    assert result.startswith("[TITLE: Page title]\n\n# Heading")
+    assert "[link](https://example.test)" in result
+    assert "hidden" not in result
+
+
+def test_web_fetch_extracts_article_without_navigation_and_footer():
+    response = make_response(
+        (
+            b"<html><head><title>Research update</title></head><body>"
+            b"<nav><a href='/home'>Navigation menu</a><a href='/login'>Account login</a></nav>"
+            b"<article><h1>Research update</h1>"
+            b"<p>This article describes an important research result and its practical applications. "
+            b"The main text should remain readable after the page layout is removed.</p>"
+            b"<p>The results are explained in <a href='/details'>the detailed report</a>, "
+            b"which includes methods, measurements, and reproducible examples.</p>"
+            b"<table><tr><th>Method</th><th>Score</th></tr><tr><td>Baseline</td><td>42</td></tr></table>"
+            b"</article><footer>Copyright notice and privacy policy</footer></body></html>"
+        ),
+        "text/html",
+        "https://example.test/articles/update",
+    )
+    result = web._response_to_markdown(response)
+    assert result.startswith("[TITLE: Research update]")
+    assert "important research result" in result
+    assert "[the detailed report](https://example.test/details)" in result
+    assert "Baseline" in result and "42" in result
+    assert "Navigation menu" not in result
+    assert "Copyright notice" not in result
+
+
+def test_web_fetch_reports_empty_extraction(monkeypatch):
+    monkeypatch.setattr(web.trafilatura, "extract", lambda *_args, **_kwargs: None)
+    response = make_response(b"<html><body></body></html>", "text/html")
+    with pytest.raises(ValueError, match="No readable content"):
+        web._response_to_markdown(response)
 
 
 @pytest.mark.parametrize(

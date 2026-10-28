@@ -46,7 +46,7 @@ async def test_registers_supported_default_and_mcp_tools(
 ):
     file_tools = tuple(
         named_tool(name)
-        for name in ("read_image", "read_video", "read_file", "write_file", "edit_file", "read_office_file")
+        for name in ("read_image", "read_video", "read_file", "write_file", "edit_file")
     )
     monkeypatch.setattr(registry, "build_file_tools", lambda **_kwargs: file_tools)
     monkeypatch.setattr(registry, "build_shell_tools", lambda **_kwargs: named_tool("shell"))
@@ -87,7 +87,7 @@ async def test_registers_supported_default_and_mcp_tools(
         "arxiv_search",
         "arxiv_download",
         "browser_preview",
-        "read_office_file",
+        "read_doc_file",
         "send_file",
         "ask_user_question",
         "list_sessions",

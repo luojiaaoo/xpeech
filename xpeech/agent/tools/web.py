@@ -3,15 +3,18 @@ import json
 from typing import Annotated, Any, Literal, Self
 
 import requests
+import trafilatura
 from baidusearch.baidusearch import search as baidu_search
 from ddgs import DDGS
-from markitdown import MarkItDown
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from ...utils.security.network import validate_url_target
 
 WEB_CONNECT_TIMEOUT_SECONDS = 10
 WEB_READ_TIMEOUT_SECONDS = 60
+_WEB_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 _SEARCH_TIMEOUT_SECONDS = 20.0
 _DDGS_TIMEOUT = 10
 _DDGS_REGION = "cn-zh"
@@ -19,6 +22,10 @@ _DDGS_REGION = "cn-zh"
 
 class WebFetchArgs(BaseModel):
     url: str = Field(description="URL to fetch")
+    include_images: bool = Field(
+        default=False,
+        description="是否在 Markdown 中保留图片链接和替代文字；需要图片信息时设为 true，不会下载图片或进行视觉识别",
+    )
 
 
 class WebSearchArgs(BaseModel):
@@ -43,25 +50,68 @@ class WebSearchArgs(BaseModel):
 
 
 async def web_fetch(args: WebFetchArgs) -> str:
-    """Fetch URL and extract readable content (HTML → markdown) without images."""
+    """Fetch a webpage over HTTP and extract its main content and comments as Markdown, including links and tables.
+    Set include_images=true when image links and alt text are useful for the task.
+    Does not launch a browser or execute JavaScript. Returns plain text and Markdown responses directly.
+    """
 
     is_valid, error_msg = validate_url_target(args.url)
     if not is_valid:
         return f"URL validation failed: {error_msg}"
-    return await asyncio.to_thread(_fetch_and_convert, args.url)
+    return await asyncio.to_thread(_fetch_and_convert, args.url, include_images=args.include_images)
 
 
-def _fetch_and_convert(url: str) -> str:
+def _fetch_and_convert(url: str, *, include_images: bool = False) -> str:
     with requests.Session() as session:
-        session.headers.update({"Accept": "text/markdown, text/html;q=0.9, text/plain;q=0.8, */*;q=0.1"})
+        session.headers.update(
+            {
+                "User-Agent": _WEB_USER_AGENT,
+                "Accept": "text/markdown, text/html;q=0.9, text/plain;q=0.8, */*;q=0.1",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            }
+        )
         with session.get(
             url,
             stream=True,
+            allow_redirects=True,
             timeout=(WEB_CONNECT_TIMEOUT_SECONDS, WEB_READ_TIMEOUT_SECONDS),
         ) as response:
             response.raise_for_status()
-            result = MarkItDown().convert(response)
-    return f"[TITLE: {result.title}]\n\n{result.text_content}"
+            return _response_to_markdown(response, include_images=include_images)
+
+
+def _response_to_markdown(response: requests.Response, *, include_images: bool = False) -> str:
+    content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+    if (content_type.startswith("text/") and content_type != "text/html") or content_type in {
+        "application/xml",
+        "application/json",
+    }:
+        return response.text
+    if content_type and content_type not in {"text/html", "application/xhtml+xml"}:
+        raise ValueError(
+            f"Unsupported content type: {content_type}. Download documents and use read_doc_file instead."
+        )
+
+    tree = trafilatura.load_html(response.content)
+    if tree is None:
+        raise ValueError(f"No readable HTML found at {response.url}")
+    title = (tree.findtext(".//title") or "").strip()
+    if not title:
+        metadata = trafilatura.extract_metadata(tree, default_url=response.url)
+        title = metadata.title if metadata else None
+    content = trafilatura.extract(
+        tree,
+        url=response.url,
+        output_format="markdown",
+        favor_recall=True,
+        include_links=True,
+        include_tables=True,
+        include_comments=True,
+        include_images=include_images,
+    )
+    if not content or not content.strip():
+        raise ValueError(f"No readable content found at {response.url}")
+    return f"[TITLE: {title}]\n\n{content}" if title else content
 
 
 def _ddgs_search(category: str, query: str, max_results: int, timelimit: str | None) -> list[dict[str, Any]]:

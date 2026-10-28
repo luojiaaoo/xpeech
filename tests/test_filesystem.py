@@ -1,10 +1,8 @@
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from xpeech.agent.tools import filesystem
-from xpeech.agent.tools.filesystem import OfficeReadArgs, ReadFileArgs, build_file_tools
+from xpeech.agent.tools.filesystem import ReadFileArgs, build_file_tools
 from xpeech.agent.tools.helper import get_mime_type
 
 
@@ -34,7 +32,7 @@ def test_get_mime_type_returns_none_when_unknown():
 
 
 def _read_file_tool(workspace: Path, max_result_chars: int = 10_000):
-    _, _, read_file, _, _, _ = build_file_tools(
+    _, _, read_file, _, _ = build_file_tools(
         workspace=workspace,
         max_result_chars=max_result_chars,
     )
@@ -78,23 +76,3 @@ async def test_read_file_returns_paginated_result_under_limit(tmp_path: Path):
     result = await read_file(ReadFileArgs(path=file_path.name, offset=2, limit=1))
 
     assert result == "2| second\n\n(Showing lines 2-2 of 3. Use offset=3 to continue.)"
-
-
-@pytest.mark.asyncio
-async def test_read_office_file_resolves_relative_path_in_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    document = tmp_path / "example.docx"
-    document.write_bytes(b"placeholder")
-    converted_paths: list[str] = []
-
-    class FakeMarkItDown:
-        def convert(self, path: str):
-            converted_paths.append(path)
-            return SimpleNamespace(title="Example", text_content="# Content")
-
-    monkeypatch.setattr(filesystem, "MarkItDown", FakeMarkItDown)
-    _, _, _, _, _, read_office_file = build_file_tools(tmp_path)
-
-    result = await read_office_file(OfficeReadArgs(path=document.name))
-
-    assert converted_paths == [str(document)]
-    assert result == "[TITLE: Example]\n\n# Content"
