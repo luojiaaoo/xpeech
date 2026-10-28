@@ -84,6 +84,8 @@ async def test_registers_supported_default_and_mcp_tools(
         "shell",
         "web_fetch",
         "web_search",
+        "arxiv_search",
+        "arxiv_download",
         "browser_preview",
         "read_office_file",
         "send_file",

@@ -7,6 +7,7 @@ from .file_message import build_file_message_tools
 from .filesystem import build_file_tools
 from .mcp_client import get_session_mcp_registration_from_config
 from .question import ask_user_question
+from .research import build_research_tools
 from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .sessions import build_session_tools
 from .shell import build_shell_tools
@@ -36,6 +37,8 @@ async def register_default_tools(
     provider.register_tool()(build_shell_tools(workspace=workspace))
     provider.register_tool()(web_fetch)
     provider.register_tool()(web_search)
+    for tool in build_research_tools(workspace=workspace):
+        provider.register_tool()(tool)
 
     browser_preview = config.browser_preview
     provider.register_tool()(
