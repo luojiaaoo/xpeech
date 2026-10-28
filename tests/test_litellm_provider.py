@@ -261,7 +261,8 @@ async def test_chat_delegates_stream_defaults_to_retry_client():
 
 
 @pytest.mark.asyncio
-async def test_chat_omits_unset_optional_parameters():
+@pytest.mark.parametrize("json_output,support_json_output", [(False, False), (False, True), (True, False), (True, True)])
+async def test_chat_omits_unset_optional_parameters(json_output, support_json_output):
     captured_kwargs = None
 
     async def upstream():
@@ -281,20 +282,24 @@ async def test_chat_omits_unset_optional_parameters():
         api_base="https://example.test",
         default_model="test",
         parameters=LLMParameters(),
+        support_json_output=support_json_output,
     )
     provider._retry_client = RetryClient()
 
-    response = await provider.chat(messages=[{"role": "user", "content": "hello"}])
+    response = await provider.chat(messages=[{"role": "user", "content": "Return JSON"}], json_output=json_output)
     await response.flush()
 
     assert captured_kwargs is not None
     assert captured_kwargs["max_tokens"] == 32768
+    if json_output and support_json_output:
+        assert captured_kwargs["response_format"] == {"type": "json_object"}
+    else:
+        assert "response_format" not in captured_kwargs
     for parameter in (
         "temperature",
         "top_p",
         "presence_penalty",
         "extra_body",
-        "response_format",
         "extra_headers",
         "reasoning_effort",
     ):

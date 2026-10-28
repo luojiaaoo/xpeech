@@ -10,7 +10,6 @@ from yarl import URL
 from ...helper import _backend_headers, fetch_file, open_chat_stream, submit_question
 from ..dao import User
 
-
 UserDependency = Callable[..., Awaitable[User] | User]
 
 
@@ -31,6 +30,7 @@ def create_proxy_router(
         session_metadata: Annotated[str, Form()] = "{}",
         timestamp: Annotated[str | None, Form()] = None,
         files: Annotated[list[UploadFile] | None, File()] = None,
+        json_output: Annotated[bool, Form()] = False,
     ):
         try:
             metadata = json.loads(session_metadata)
@@ -66,6 +66,7 @@ def create_proxy_router(
             str(URL(backend_url) / "chat"),
             timestamp=timestamp,
             files=upload_data,
+            json_output=json_output,
         )
         upstream = chat_stream.response
         if upstream.status_code >= 400:

@@ -4,6 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, RootModel
 
+
 # ------------------ 输入内容块 ------------------
 class InputText(BaseModel):
     """文本输入内容块。"""
@@ -13,9 +14,6 @@ class InputText(BaseModel):
 
 class InputContent(RootModel[list[InputText]]):
     """输入内容块。"""
-
-    pass
-
 
 class InboundMessage(BaseModel):
     """请求的消息的 schema。"""
@@ -27,3 +25,4 @@ class InboundMessage(BaseModel):
     content: Annotated[list[InputText], Field(description="消息内容")]
     timestamp: Annotated[datetime, Field(description="消息时间戳")]
     files: Annotated[list[Path], Field(description="消息附件")]
+    json_output: bool = Field(default=False, description="是否要求模型输出 JSON 对象")

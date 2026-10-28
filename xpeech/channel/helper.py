@@ -9,8 +9,6 @@ from urllib.parse import quote
 
 import httpx
 from httpx_sse import EventSource
-from loguru import logger
-from pydantic import ValidationError
 from yarl import URL
 
 from ..utils.jwt_auth import create_access_token
@@ -54,6 +52,7 @@ async def open_chat_stream(
     *,
     timestamp: str | None = None,
     files: Any = None,
+    json_output: bool = False,
 ) -> ChatStream:
     """Open a streaming request to the backend chat endpoint."""
 
@@ -63,6 +62,8 @@ async def open_chat_stream(
     }
     if timestamp is not None:
         data["timestamp"] = timestamp
+    if json_output:
+        data["json_output"] = "true"
 
     client = httpx.AsyncClient(timeout=None)
     try:

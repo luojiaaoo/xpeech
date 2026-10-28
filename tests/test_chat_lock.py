@@ -47,11 +47,13 @@ def test_session_id_header_defaults_for_chat_and_answer():
     ("session_id", "include_background_tools"),
     [(None, True), ("default", True), ("chat-1", False)],
 )
+@pytest.mark.parametrize("json_output", [None, False, True])
 def test_chat_background_tools_are_available_only_for_default_session(
     tmp_path,
     monkeypatch,
     session_id,
     include_background_tools,
+    json_output,
 ):
     from xpeech.agent.server.routes import chat as chat_routes
 
@@ -71,15 +73,19 @@ def test_chat_background_tools_are_available_only_for_default_session(
     if session_id is not None:
         headers["x-session-id"] = session_id
 
+    data = {"content": '[{"text":"hello"}]'}
+    if json_output is not None:
+        data["json_output"] = str(json_output).lower()
     response = TestClient(app).post(
         "/chat",
         headers=headers,
-        data={"content": '[{"text":"hello"}]'},
+        data=data,
     )
 
     assert response.status_code == 200
     create.assert_awaited_once_with("user", include_background_tools=include_background_tools)
     assert messages[0].session_id == (session_id or "default")
+    assert messages[0].json_output is (json_output is True)
 
 
 def test_sender_name_header_decodes_and_rejects_blank_values():

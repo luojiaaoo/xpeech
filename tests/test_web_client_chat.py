@@ -5,10 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from xpeech.channel.helper import ChatStream
-
 
 web_client_app = import_module("xpeech.channel.web_client.app")
 proxy_routes = import_module("xpeech.channel.web_client.routes.proxy")
@@ -16,7 +16,8 @@ WebConfig = web_client_app.WebConfig
 create_app = web_client_app.create_app
 
 
-def test_web_client_adds_channel_to_chat_metadata(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("json_output", [False, True])
+def test_web_client_adds_channel_to_chat_metadata(tmp_path: Path, monkeypatch, json_output):
     response = httpx.Response(
         200,
         content=b'data: {"event":"command","context":"/new"}\n\n',
@@ -43,6 +44,7 @@ def test_web_client_adds_channel_to_chat_metadata(tmp_path: Path, monkeypatch):
             "/api/chat",
             data={
                 "content": '[{"text":"hello"}]',
+                "json_output": str(json_output).lower(),
                 "session_metadata": json.dumps(
                     {"channel": "spoofed", "source": "browser"}
                 ),
@@ -50,6 +52,7 @@ def test_web_client_adds_channel_to_chat_metadata(tmp_path: Path, monkeypatch):
         )
 
     assert proxied.status_code == 200
+    assert open_chat_stream.await_args.kwargs["json_output"] is json_output
     assert json.loads(open_chat_stream.await_args.args[3]) == {
         "channel": "web_client",
         "source": "browser",

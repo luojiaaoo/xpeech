@@ -18,7 +18,8 @@ def make_response(content: str) -> LLMResponse:
 
 
 @pytest.mark.asyncio
-async def test_background_run_saves_separate_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("json_output", [False, True])
+async def test_background_run_saves_separate_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
     async def build_test_system_prompt(workspace: Path):
         assert workspace == tmp_path
         return {"role": "system", "content": "system"}
@@ -53,6 +54,7 @@ async def test_background_run_saves_separate_yaml_history(tmp_path: Path, monkey
         content=[InputText(text="/new Run scheduled prompt")],
         timestamp="2026-09-06T10:00:00",
         files=[],
+        json_output=json_output,
     )
 
     events = [event async for event in agent_loop.run(message, background=True)]
@@ -75,6 +77,8 @@ async def test_background_run_saves_separate_yaml_history(tmp_path: Path, monkey
     ]
     assert {"event": "assistant", "context": "scheduled result"} in events
     assert agent_loop.chat.await_args.kwargs["remove_blocking_tool"] is True
+    assert agent_loop.chat.await_args.kwargs["json_output"] is json_output
+    assert ("valid JSON object" in messages[0]["content"]) is json_output
 
 
 @pytest.mark.asyncio
