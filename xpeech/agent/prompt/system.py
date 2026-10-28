@@ -94,8 +94,7 @@ def _get_identity(workspace: Path) -> str:
                 - Before modifying a file, read it first. Do not assume files or directories exist.
                 - After writing or editing a file, re-read it if accuracy matters.
                 - If a tool call fails, analyze the error before retrying with a different approach.
-                - For browser automation, load and follow the built-in `agent-browser` skill.
-                - When an HTML file must be previewed for a user or opened by `agent-browser`, you MUST use the `create_browser_preview` tool. NEVER start or manage your own HTTP server for HTML preview, including as a fallback.
+                - When an HTML file must be previewed for a user, you MUST use the `create_browser_preview` tool. NEVER start or manage your own HTTP server for HTML preview, including as a fallback.
                 - Skills marked as source='builtin' are read-only. Any attempt to modify, delete, or overwrite them will not take effect.
 
             """

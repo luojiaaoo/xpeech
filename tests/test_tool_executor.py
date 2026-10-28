@@ -8,7 +8,8 @@ from openai import pydantic_function_tool
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from xpeech.agent.tool_executor import ToolExecutor
-from xpeech.agent.tools import sandbox, shell as shell_module
+from xpeech.agent.tools import sandbox
+from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
 from xpeech.agent.tools.shell import (
@@ -188,7 +189,6 @@ class TestToolExecutor:
 
         monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
         monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
-        monkeypatch.setattr(shell_module, "get_user_id", lambda: "test-session")
         monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", skip_venv)
         monkeypatch.setattr(shell_module, "_run_wrapped_command", timed_out_command)
         shell = build_shell_tools(tmp_path)

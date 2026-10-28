@@ -79,8 +79,6 @@ RUN cd xpeech/channel/web_client/frontend && \
     npm run build && \
     rm -rf node_modules
 
-RUN npm i -g agent-browser
-
 COPY --from=lark-cli-builder /out/lark-cli /usr/local/bin/lark-cli
 
 RUN printf '0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} + > /dev/null 2>&1\n' | crontab -

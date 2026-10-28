@@ -24,17 +24,9 @@ x-xpeech-service: &xpeech-service
   restart: unless-stopped
 
 services:
-  browserless:
-    image: ghcr.io/browserless/chromium:v2.55.0
-    init: true
-    restart: unless-stopped
-
   backend:
     <<: *xpeech-service
     command: ["api", "--host", "0.0.0.0", "--port", "${BACKEND_PORT:-7878}"]
-    depends_on:
-      browserless:
-        condition: service_started
     ports:
       - "${BACKEND_PORT:-7878}:${BACKEND_PORT:-7878}"
     volumes:

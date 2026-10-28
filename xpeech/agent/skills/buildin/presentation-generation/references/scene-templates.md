@@ -87,7 +87,7 @@
 
 ---
 
-## 4. PPT / Keynote 演示
+## 4. HTML 演示文稿
 
 **规格**：
 - 标准：16:9（1920×1080px）
@@ -115,11 +115,11 @@
 
 ---
 
-## 5. PDF 白皮书 / 技术报告
+## 5. HTML 白皮书 / 技术报告
 
 **规格**：
-- A4 纵向（210×297mm / 595×842pt）
-- Letter 纵向（216×279mm / 612×792pt）
+- 桌面阅读：1440×900px 基准视口
+- 正文内容区：720～880px
 
 **关键设计要素**：
 - 长文阅读优化（行宽66字符、行高1.5-1.8）
@@ -134,8 +134,8 @@
 **场景提示词模板**：
 ```
 [风格DNA插入此处]
-- PDF document / white paper design
-- A4 portrait format (210×297mm)
+- HTML document / white paper design
+- Responsive desktop reading layout
 - Long-form reading optimized (66 char line width, 1.5 line height)
 - Clear chapter navigation system
 - Elegant header/footer/page number design

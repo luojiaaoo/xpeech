@@ -149,7 +149,8 @@ HTML文件头部先写你的**assumptions+reasoning comments**，像junior给man
 ### Pass 4：验证+交付
 
 - 用 `create_browser_preview` 托管 HTML，每次修改后重新生成预览 URL
-- 用 `agent-browser` 通过注入的远程 CDP 会话截图、检查 console/page errors 并肉眼确认（见`references/verification.md`）
+- 按 `references/verification.md` 检查 HTML 结构、资源引用、画布边界、缩放和导航代码
+- 只生成 HTML 页面，不在服务端转换为其他文档格式；用户需要 PPT 文件时，打包并发送完整 HTML 项目，再附上技能规定的转换提醒
 - 总结**极简**：只说caveats和next steps
 
 ## Variations的深度逻辑

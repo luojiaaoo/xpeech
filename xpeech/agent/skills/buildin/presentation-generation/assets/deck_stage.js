@@ -9,7 +9,7 @@
  * - localStorage持久化当前slide
  * - Speaker notes postMessage (支持外层渲染)
  * - Hash导航 (#slide-5 跳到第5张)
- * - Print-to-PDF支持 (Cmd+P / Ctrl+P 一页一slide)
+ * - 浏览器打印支持 (Cmd+P / Ctrl+P 一页一slide)
  * - 自动给每个slide添加 data-screen-label
  *
  * 用法：

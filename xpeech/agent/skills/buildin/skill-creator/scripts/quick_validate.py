@@ -16,6 +16,7 @@ except ModuleNotFoundError:
 MAX_SKILL_NAME_LENGTH = 64
 ALLOWED_FRONTMATTER_KEYS = {
     "name",
+    "short_description",
     "description",
     "metadata",
     "always",
