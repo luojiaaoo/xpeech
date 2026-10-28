@@ -1,7 +1,7 @@
 from pathlib import Path
 from textwrap import dedent
 
-from .helper import ensure_path_async, write_text_async
+from .file_io import LockedFile, ensure_path_async
 
 
 async def create_workspace_templates(workspace: Path):
@@ -81,46 +81,42 @@ async def create_workspace_templates(workspace: Path):
 
     for filename, content in templates.items():
         file_path = workspace / filename
-        if not file_path.exists():
-            await write_text_async(file_path, content)
+        await LockedFile(file_path).create_text(content)
 
     # Create memory directory and MEMORY.md
     memory_dir = await ensure_path_async(workspace / "memory")
     memory_file = memory_dir / "MEMORY.md"
-    if not memory_file.exists():
-        await write_text_async(
-            memory_file,
-            dedent(
-                """
-                    # Long-term Memory
+    await LockedFile(memory_file).create_text(
+        dedent(
+            """
+                # Long-term Memory
 
-                    This file stores important information that should persist across sessions.
+                This file stores important information that should persist across sessions.
 
-                    ## User Information
+                ## User Information
 
-                    (Important facts about the user)
+                (Important facts about the user)
 
-                    ## Preferences
+                ## Preferences
 
-                    (User preferences learned over time)
+                (User preferences learned over time)
 
-                    ## Project Context
+                ## Project Context
 
-                    (Information about ongoing projects)
+                (Information about ongoing projects)
 
-                    ## Important Notes
+                ## Important Notes
 
-                    (Things to remember)
+                (Things to remember)
 
-                    ---
+                ---
 
-                    *This file is automatically updated by xpeech when important information should be remembered.*
-                """
-            ).lstrip(),
-        )
+                *This file is automatically updated by xpeech when important information should be remembered.*
+            """
+        ).lstrip(),
+    )
     history_file = memory_dir / "HISTORY.md"
-    if not history_file.exists():
-        await write_text_async(history_file, "")
+    await LockedFile(history_file).create_text("")
 
     # Create skills directory for custom user skills
     await ensure_path_async(workspace / "skills")

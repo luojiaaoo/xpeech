@@ -7,7 +7,7 @@ from sqlmodel import Field, SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config.settings import settings
-from ..utils.helper import ensure_path
+from ..utils.file_io import ensure_path
 
 TABLE_NAME = "conversation_records"
 _record_registry = registry()

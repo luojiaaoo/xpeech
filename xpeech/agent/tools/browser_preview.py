@@ -6,7 +6,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from .helper import safe_resolve_workspace_path
-from ...utils.helper import is_relative_path
+from ...utils.file_io import is_relative_path
 
 
 class BrowserPreviewArgs(BaseModel):

@@ -1,18 +1,14 @@
+import asyncio
 from io import BytesIO
 from pathlib import Path
 
 import pytest
 from PIL import Image
+from starlette.datastructures import UploadFile
 
-from xpeech.utils import helper
-from xpeech.utils.helper import (
-    append_text_async,
-    compress_image,
-    read_bytes_async,
-    read_text_async,
-    write_bytes_async,
-    write_text_async,
-)
+from xpeech.utils import file_io, helper
+from xpeech.utils.file_io import LockedFile
+from xpeech.utils.helper import compress_image
 
 
 def test_compress_image_returns_raw_and_mime_type():
@@ -81,13 +77,64 @@ async def test_read_video_metadata_accepts_path(tmp_path: Path, monkeypatch: pyt
 @pytest.mark.asyncio
 async def test_async_file_read_write_helpers(tmp_path: Path):
     text_path = tmp_path / "content.txt"
-    await write_text_async(text_path, "first")
-    await append_text_async(text_path, " second")
-    assert await read_text_async(text_path) == "first second"
+    await LockedFile(text_path).write_text("first")
+    await LockedFile(text_path).append_text(" second")
+    assert await LockedFile(text_path).read_text() == "first second"
 
-    await write_text_async(text_path, "café", encoding="latin-1")
-    assert await read_text_async(text_path, encoding="latin-1") == "café"
+    await LockedFile(text_path).write_text("café", encoding="latin-1")
+    assert await LockedFile(text_path).read_text(encoding="latin-1") == "café"
 
     binary_path = tmp_path / "content.bin"
-    await write_bytes_async(binary_path, b"\x00\x01\xff")
-    assert await read_bytes_async(binary_path) == b"\x00\x01\xff"
+    await LockedFile(binary_path).write_bytes(b"\x00\x01\xff")
+    assert await LockedFile(binary_path).read_bytes() == b"\x00\x01\xff"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_name_uploads_preserve_all_contents(tmp_path: Path):
+    directory = tmp_path / "attachments" / helper.format_now()
+    directory.mkdir(parents=True)
+    existing = directory / "report.csv"
+    existing.write_bytes(b"existing")
+    payloads = [f"upload-{index}".encode() * 1000 for index in range(12)]
+
+    paths = await asyncio.gather(*(
+        file_io.save_to_workspace(
+            UploadFile(filename="report.csv", file=BytesIO(payload)), tmp_path,
+        )
+        for payload in payloads
+    ))
+
+    assert len(set(paths)) == len(payloads)
+    assert {path.name for path in paths} == {f"report_{index}.csv" for index in range(1, 13)}
+    assert [path.read_bytes() for path in paths] == payloads
+    assert existing.read_bytes() == b"existing"
+    assert len(list(directory.iterdir())) == 13
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_incomplete_uploads_are_not_published_and_temporary_is_cleaned(tmp_path, cancel):
+    started = asyncio.Event()
+
+    class InterruptedUpload:
+        filename = "report.csv"
+        reads = 0
+
+        async def read(self, _size):
+            self.reads += 1
+            if self.reads == 1:
+                return b"partial content"
+            started.set()
+            if cancel:
+                await asyncio.Event().wait()
+            raise RuntimeError("upload failed")
+
+    task = asyncio.create_task(file_io.save_to_workspace(InterruptedUpload(), tmp_path))
+    await asyncio.wait_for(started.wait(), 5)
+    if cancel:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+        await task
+
+    directory = tmp_path / "attachments" / helper.format_now()
+    assert list(directory.iterdir()) == []

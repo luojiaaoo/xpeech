@@ -21,7 +21,7 @@ from pydantic_settings import (
 )
 
 from ..provider.schema import LLMParameters
-from ..utils.helper import ensure_path
+from ..utils.file_io import ensure_path
 
 if Path(".env").exists():
     load_dotenv(".env")

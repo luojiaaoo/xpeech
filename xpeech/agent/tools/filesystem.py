@@ -6,15 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ...utils.helper import (
-    compress_image,
-    compress_video,
+from ...utils.file_io import (
+    LockedFile,
     ensure_path_async,
-    read_bytes_async,
-    read_video_metadata,
     super_read_text,
-    write_text_async,
 )
+from ...utils.helper import compress_image, compress_video, read_video_metadata
 from .helper import get_mime_type, safe_resolve_workspace_path
 
 
@@ -94,7 +91,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         if not file_path.is_file():
             raise ValueError(f"Not a file: {path}")
 
-        raw = await read_bytes_async(file_path)
+        raw = await LockedFile(file_path).read_bytes()
         if not raw:
             return f"(Empty file: {path})"
 
@@ -196,11 +193,11 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         if not file_path.is_file():
             raise ValueError(f"Not a file: {path}")
 
-        raw = await read_bytes_async(file_path)
+        raw = await LockedFile(file_path).read_bytes()
         if not raw:
             return f"(Empty file: {path})"
 
-        text_content, _ = await super_read_text(file_path)
+        text_content, _ = await super_read_text(file_bytes=raw)
 
         if text_content is None:
             raise ValueError(f"Cannot read binary file {path}.")
@@ -240,7 +237,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         content = args.content
         file_path = safe_resolve(path)
         await ensure_path_async(file_path.parent)
-        await write_text_async(file_path, content)
+        await LockedFile(file_path).write_text(content)
         return f"Successfully wrote {len(content)} bytes to {path}"
 
     async def edit_file(args: EditFileArgs) -> str:
@@ -331,7 +328,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
         # 原本是纯英文，后面加了中文，encoding会变成utf-8
         if encoding == "ascii":
             encoding = "utf-8"
-        await write_text_async(file_path, new_content, encoding=encoding)
+        await LockedFile(file_path).write_text(new_content, encoding=encoding)
         return f"Successfully edited {path}"
 
     return read_image, read_video, read_file, write_file, edit_file

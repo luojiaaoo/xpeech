@@ -1,8 +1,10 @@
+import asyncio
 from pathlib import Path
 
 import pytest
 
-from xpeech.agent.tools.filesystem import ReadFileArgs, build_file_tools
+from xpeech.agent.tools import filesystem
+from xpeech.agent.tools.filesystem import EditFileArgs, ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import get_mime_type
 
 
@@ -76,3 +78,61 @@ async def test_read_file_returns_paginated_result_under_limit(tmp_path: Path):
     result = await read_file(ReadFileArgs(path=file_path.name, offset=2, limit=1))
 
     assert result == "2| second\n\n(Showing lines 2-2 of 3. Use offset=3 to continue.)"
+
+
+@pytest.mark.asyncio
+async def test_edit_file_preserves_line_endings_and_symlink(tmp_path):
+    path = tmp_path / "notes.txt"
+    path.write_bytes(b"first=old\r\nsecond=old\r\n")
+    (tmp_path / "alias.txt").symlink_to(path.name)
+    *_, edit = build_file_tools(tmp_path)
+
+    await edit(EditFileArgs(path="alias.txt", old_text="first=old", new_text="first=new"))
+
+    assert path.read_bytes() == b"first=new\r\nsecond=old\r\n"
+    assert (tmp_path / "alias.txt").is_symlink()
+
+
+@pytest.mark.asyncio
+async def test_same_file_write_does_not_wait_for_edit_processing(tmp_path, monkeypatch):
+    path = tmp_path / "notes.txt"
+    path.write_text("old", encoding="utf-8")
+    first_read = asyncio.Event()
+    release_read = asyncio.Event()
+
+    async def read_snapshot(file_path):
+        content = file_path.read_text(encoding="utf-8")
+        first_read.set()
+        await release_read.wait()
+        return content, "utf-8"
+
+    monkeypatch.setattr(filesystem, "super_read_text", read_snapshot)
+    *_, edit = build_file_tools(tmp_path)
+    _, _, _, write, _ = build_file_tools(tmp_path)
+    first = asyncio.create_task(edit(EditFileArgs(path=path.name, old_text="old", new_text="edited")))
+    try:
+        await asyncio.wait_for(first_read.wait(), 5)
+        await asyncio.wait_for(write(WriteFileArgs(path=path.name, content="written")), 5)
+        assert path.read_text(encoding="utf-8") == "written"
+    finally:
+        release_read.set()
+        await first
+
+    assert path.read_text(encoding="utf-8") == "edited"
+
+
+@pytest.mark.asyncio
+async def test_read_file_decodes_one_snapshot_even_if_file_is_replaced(tmp_path, monkeypatch):
+    path = tmp_path / "notes.txt"
+    path.write_text("old", encoding="utf-8")
+    decode = filesystem.super_read_text
+
+    async def replace_then_decode(*args, **kwargs):
+        path.write_text("new", encoding="utf-8")
+        return await decode(*args, **kwargs)
+
+    monkeypatch.setattr(filesystem, "super_read_text", replace_then_decode)
+
+    assert await _read_file_tool(tmp_path)(ReadFileArgs(path=path.name)) == (
+        "1| old\n\n(End of file — 1 lines total)"
+    )

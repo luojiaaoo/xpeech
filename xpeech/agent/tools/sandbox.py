@@ -5,7 +5,7 @@ import shlex
 from pathlib import Path
 
 from ...config.settings import settings
-from ...utils.helper import ensure_path
+from ...utils.file_io import ensure_path
 from ..server.context import get_user_id
 from ..skills.skill import iter_builtin_skill_dirs
 

@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
-from ....utils.helper import save_to_workspace
+from ....utils.file_io import save_to_workspace
 from ....utils.ids import DEFAULT_SESSION_ID
 from ...background import (
     BACKGROUND_MESSAGE_QUEUES,

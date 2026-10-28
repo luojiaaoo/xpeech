@@ -7,7 +7,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from ..provider.schema import LLMParameters, LLMResponse, ToolCallRequest
-from ..utils.helper import append_text_async, ensure_path, read_text_async, write_text_async
+from ..utils.file_io import LockedFile, ensure_path
 from .prompt.helper import remove_system_messages
 from .tool_executor import ToolExecutionResult
 
@@ -47,25 +47,26 @@ class MemoryStore:
     def __init__(self, workspace: Path):
         """初始化记忆目录及相关文件路径。"""
         self.memory_dir = ensure_path(workspace / "memory")
-        self.memory_file = self.memory_dir / "MEMORY.md"
-        self.history_file = self.memory_dir / "HISTORY.md"
+        self.memory_file = LockedFile(self.memory_dir / "MEMORY.md")
+        self.history_file = LockedFile(self.memory_dir / "HISTORY.md")
 
     async def read_long_term(self) -> str:
         """读取长期记忆；文件不存在时返回空字符串。"""
-        if self.memory_file.exists():
-            return await read_text_async(self.memory_file)
-        return ""
+        try:
+            return await self.memory_file.read_text()
+        except FileNotFoundError:
+            return ""
 
     async def write_long_term(self, content: str) -> None:
-        """使用给定内容覆盖长期记忆文件。"""
-        await write_text_async(self.memory_file, content)
+        """覆盖当前存储的长期记忆。"""
+        await self.memory_file.write_text(content)
 
     async def append_history(self, entry: str) -> None:
         """向历史摘要文件追加一条记录。"""
-        await append_text_async(self.history_file, entry.rstrip() + "\n\n")
+        await self.history_file.append_text(entry.rstrip() + "\n\n")
 
     async def get_memory_context(self) -> str:
-        """生成可直接注入系统提示词的长期记忆上下文。"""
+        """读取长期记忆并生成系统提示词上下文。"""
         long_term = await self.read_long_term()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
 
@@ -107,6 +108,14 @@ class MemoryConsolidator:
         if not clean_messages:
             return ConsolidationResult(status="skipped", message="当前上下文为空，无需记忆")
 
+        # 模型根据旧记忆生成完整的新版本，锁需覆盖读取、模型生成和工具保存全过程。
+        async with self._store.memory_file.transaction():
+            return await self._consolidate_locked(clean_messages)
+
+    async def _consolidate_locked(
+        self, clean_messages: list[dict[str, Any]]
+    ) -> ConsolidationResult:
+        """在已有文件锁的保护下整理并保存记忆。"""
         memory_context = await self._store.get_memory_context() or "(empty)"
         messages_for_consolidation = [
             {"role": "system", "content": "## Current Long-term Memory\n" + memory_context},
@@ -128,10 +137,12 @@ class MemoryConsolidator:
             logger.info("No worth consolidating memory")
             return ConsolidationResult(status="skipped", message="未发现需要记忆的内容")
 
-        execution_results = await self._execute_tools(
-            response.tool_calls,
-            response.mapping_tool_call_funcs,
-        )
+        execution_results = []
+        # 同一模型响应中的多个保存调用也必须按顺序执行。
+        for tool_call in response.tool_calls:
+            execution_results.extend(
+                await self._execute_tools([tool_call], response.mapping_tool_call_funcs)
+            )
         saved = any(
             execution.call.name == "save_memory" and execution.succeeded
             for execution in execution_results
