@@ -3,6 +3,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 import xpeech.provider.litellm_provider as litellm_provider_module
 from xpeech.provider.litellm_provider import LiteLLMProvider
@@ -286,11 +287,20 @@ async def test_chat_omits_unset_optional_parameters(json_output, support_json_ou
     )
     provider._retry_client = RetryClient()
 
-    response = await provider.chat(messages=[{"role": "user", "content": "Return JSON"}], json_output=json_output)
+    if json_output and not support_json_output:
+        with pytest.raises(HTTPException) as exc_info:
+            await provider.chat(messages=[{"role": "user", "content": "hello"}], json_output=True)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "The configured model does not support JSON output"
+        assert captured_kwargs is None
+        return
+
+    response = await provider.chat(messages=[{"role": "user", "content": "hello"}], json_output=json_output)
     await response.flush()
 
     assert captured_kwargs is not None
     assert captured_kwargs["max_tokens"] == 32768
+    assert captured_kwargs["messages"] == [{"role": "user", "content": "hello"}]
     if json_output and support_json_output:
         assert captured_kwargs["response_format"] == {"type": "json_object"}
     else:

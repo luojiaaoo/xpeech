@@ -257,15 +257,9 @@ class AgentLoop:
         )
 
         # 拼接系统提示词
-        system_prompt = await build_system_prompt(workspace=self.workspace)
-        if message.json_output:
-            system_prompt["content"] += (
-                "\n\n## Response Format\n"
-                "Return your response as a valid JSON object. Do not wrap it in Markdown code fences."
-            )
         messages_yaml = set_system_prompt(
             messages_yaml,
-            system_prompt,
+            await build_system_prompt(workspace=self.workspace),
         )
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(
@@ -318,6 +312,8 @@ class AgentLoop:
                         yield {"event": "assistant_end", "context": ""}
                     elif (kind == "tool_calls" and isinstance(chunk, ToolCallRequest)) or (kind == "tool_calls_end"):
                         pass  # 工具调用事件在后续处理
+            except HTTPException:
+                raise
             except Exception as exc:
                 logger.exception(
                     "Provider chat failed loop_count={}",

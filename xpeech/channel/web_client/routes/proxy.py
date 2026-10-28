@@ -30,7 +30,13 @@ def create_proxy_router(
         session_metadata: Annotated[str, Form()] = "{}",
         timestamp: Annotated[str | None, Form()] = None,
         files: Annotated[list[UploadFile] | None, File()] = None,
-        json_output: Annotated[bool, Form()] = False,
+        json_output: Annotated[
+            bool,
+            Form(
+                description='为大模型请求添加 response_format={"type":"json_object"}，不修改提示词；'
+                "模型未配置支持 JSON 输出时返回 HTTP 400，成功响应仍使用 SSE 流"
+            ),
+        ] = False,
     ):
         try:
             metadata = json.loads(session_metadata)

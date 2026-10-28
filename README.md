@@ -274,9 +274,10 @@ curl -N -X POST "http://localhost:7878/chat" \
 响应是 SSE 流，可以边生成边读取。
 
 需要模型输出 JSON 对象时，添加表单参数 `-F 'json_output=true'`，默认关闭。
-后端会添加 JSON 输出提示词；当 `llm.support_json_output = true` 时，还会向模型传递
-`response_format={"type":"json_object"}`，启用模型接口的 JSON 对象输出约束。
-未声明支持 JSON 模式的模型仅使用提示词约束。
+此参数仅在 `llm.support_json_output = true` 时，为大模型请求添加
+`response_format={"type":"json_object"}`；不添加或修改任何系统提示词、用户提示词。
+如果请求开启 JSON 输出，但 `llm.support_json_output = false`，接口会在 SSE 流开始前返回 HTTP 400，
+不会调用模型。
 `/api/chat` 代理接口也支持此参数。响应仍为 SSE，JSON 内容通过 `assistant` 事件分片返回，
 需要拼接完整的最终回复后再解析 JSON。
 

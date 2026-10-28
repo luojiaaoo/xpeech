@@ -13,6 +13,7 @@ from xpeech.agent.server.dependencies import (
     acquire_chat_session,
     content,
     sender_name_header,
+    settings,
 )
 from xpeech.agent.server.routes.chat import answer_question
 from xpeech.utils.jwt_auth import create_access_token
@@ -65,6 +66,7 @@ def test_chat_background_tools_are_available_only_for_default_session(
 
     create = AsyncMock(return_value=SimpleNamespace(workspace=tmp_path, run=run))
     monkeypatch.setattr(chat_routes.AgentRunner, "create", create)
+    monkeypatch.setattr(settings.llm, "support_json_output", True)
     headers = {
         "Authorization": f"Bearer {create_access_token()}",
         "x-user-id": "user",
@@ -86,6 +88,28 @@ def test_chat_background_tools_are_available_only_for_default_session(
     create.assert_awaited_once_with("user", include_background_tools=include_background_tools)
     assert messages[0].session_id == (session_id or "default")
     assert messages[0].json_output is (json_output is True)
+
+
+def test_unsupported_json_output_returns_http_error_before_starting_stream(monkeypatch):
+    from xpeech.agent.server.routes import chat as chat_routes
+
+    monkeypatch.setattr(settings.llm, "support_json_output", False)
+    create = AsyncMock()
+    monkeypatch.setattr(chat_routes.AgentRunner, "create", create)
+    response = TestClient(app).post(
+        "/chat",
+        headers={
+            "Authorization": f"Bearer {create_access_token()}",
+            "x-user-id": "user",
+            "x-sender-name": "Alice",
+        },
+        data={"content": '[{"text":"hello"}]', "json_output": "true"},
+    )
+
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {"detail": "The configured model does not support JSON output"}
+    create.assert_not_awaited()
 
 
 def test_sender_name_header_decodes_and_rejects_blank_values():

@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -117,15 +117,17 @@ def test_session_tool_schemas_do_not_allow_selecting_a_user(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_current_session_metadata_cannot_be_overridden_by_channel_metadata(tmp_path):
+@pytest.mark.parametrize("json_output", [False, True])
+async def test_current_session_metadata_cannot_be_overridden_by_channel_metadata(tmp_path, json_output):
     message = InboundMessage(
         user_id="alice",
         session_id="current-chat",
         sender_name="Alice",
         session_metadata={"channel": "feishu", "user_id": "other", "session_id": "other-chat"},
         content=[InputText(text="continue our previous discussion")],
-        timestamp=datetime(2026, 10, 27, 10, 20, 30),
-        files=[],
+        timestamp=datetime(2026, 10, 27, 10, 20, 30, tzinfo=UTC),
+        files=[tmp_path / "example.csv"],
+        json_output=json_output,
     )
 
     prompt = await build_user_prompt(message, tmp_path)
@@ -135,3 +137,8 @@ async def test_current_session_metadata_cannot_be_overridden_by_channel_metadata
     assert "session_id: current-chat\n" in metadata
     assert "other-chat" not in metadata
     assert "channel: feishu\n" in metadata
+    parts = prompt["content"]
+    assert parts[1]["text"] == "continue our previous discussion"
+    assert "example.csv" in parts[2]["text"]
+    assert len(parts) == 3
+    assert prompt == await build_user_prompt(message.model_copy(update={"json_output": not json_output}), tmp_path)
