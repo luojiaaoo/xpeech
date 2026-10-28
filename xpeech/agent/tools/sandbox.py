@@ -59,7 +59,6 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
     workspace_python_env = workspace / ".venv"
     home = get_sandbox_home(workspace)
     user_id = get_user_id()
-    agent_browser_cache_path = (settings.path.cache_path / user_id / "agent-browser").resolve()
     workspace_skills = workspace / "skills"
 
     args = ["bwrap", "--new-session", "--die-with-parent"]
@@ -101,9 +100,7 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
             *("--tmpfs", "/tmp"),
             *("--tmpfs", str(workspace.parent)),
             *("--dir", str(workspace)),
-            *("--dir", str(agent_browser_cache_path)),
             *("--bind", str(workspace), str(workspace)),
-            *("--bind", str(agent_browser_cache_path), str(agent_browser_cache_path)),  # for AGENT_BROWSER_SOCKET_DIR
         ]
     )
 

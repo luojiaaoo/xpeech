@@ -21,17 +21,7 @@
 **读代码抄exact values**：hex codes、spacing scale、font stack、border radius。不要凭记忆重画。
 
 ### 3. 用户已发布的产品
-如果用户有上线的产品但没给代码，用 `agent-browser` 通过注入的远程 CDP 会话查看，或让用户提供截图。
-
-```bash
-# 公开 URL 可直接用 agent-browser；本地 HTML 必须先调用 create_browser_preview
-agent-browser open https://example.com
-agent-browser set viewport 1920 1080
-agent-browser wait --load networkidle
-agent-browser screenshot screenshot.png
-```
-
-让你看到真实的视觉vocabulary。
+如果用户有上线的产品但没给代码，优先使用 `web_fetch` 读取公开页面的正文和资源线索；如果页面依赖浏览器渲染或需要精确复刻视觉，请让用户提供关键页面截图。截图能直接呈现真实的视觉 vocabulary、间距、字体和组件状态。
 
 ### 4. 品牌指南/Logo/已有素材
 用户可能有：Logo文件、品牌色规范、营销物料、slide模板。这些都是context。

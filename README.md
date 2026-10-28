@@ -26,7 +26,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 内置记忆系统，自动总结和保存关键信息
 - 支持视频输入
 - Token 使用率实时监控
-- 丰富的内置工具集：文件读写、Shell 执行、Web 搜索与网页抓取、`agent-browser` 浏览器自动化、Office 文档读取、文件发送、向用户提问
+- 丰富的内置工具集：文件读写、Shell 执行、Web 搜索与网页抓取、HTML 预览、Office 文档读取、文件发送、向用户提问
 
 ## 安装
 
@@ -50,8 +50,6 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 npm config set registry https://registry.npmmirror.com/
 ```
 
-Docker 镜像已安装 `agent-browser`。Compose 通过 Browserless Chromium 容器提供 CDP 服务，Xpeech 不会在 backend 容器内安装、启动或管理本地浏览器。
-
 ## 配置
 
 从模板创建本地配置：
@@ -60,11 +58,7 @@ Docker 镜像已安装 `agent-browser`。Compose 通过 Browserless Chromium 容
 cp conf.toml.example conf.toml
 ```
 
-进程环境变量写在 `.env`，例如 PPT 导出脚本使用的远程 CDP 地址：
-
-```env
-CDP_URL=ws://browserless:3000
-```
+进程环境变量写在 `.env`。模板中包含 Compose 项目名和可选的服务端口配置。
 
 API 与各通道通过短期 JWT 认证。请在 `conf.toml` 中配置一个独立的共享密钥：
 
@@ -178,7 +172,7 @@ Xpeech Deck 是自托管平台，需要与 Docker 和所有受管 Xpeech 实例�
 
 Compose 会启动四个容器：
 
-- `browserless`：Browserless Chromium CDP 服务，仅限 Docker 内网访问
+- `lark-token-manager`：飞书用户令牌管理服务
 - `backend`：Xpeech API、Agent 和工具执行服务
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
 - `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
@@ -190,9 +184,8 @@ cp conf.toml.example conf.toml
 cp .env.example .env
 ```
 
-填写 `conf.toml` 中的 `llm.api_key` 和 `feishu.app_secret`，并确认
-`.env` 中的 `CDP_URL` 与容器网络一致，再确认
-`conf.toml` 中的 `llm`、`feishu.app_id` 等普通配置正确，然后构建并启动：
+填写 `conf.toml` 中的 `llm.api_key`、`jwt.secret_key` 和 `feishu.app_secret`，
+并确认 `feishu.app_id` 等普通配置正确，然后构建并启动：
 
 ```bash
 docker compose up -d --build
@@ -210,7 +203,7 @@ BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 
 ```bash
 docker compose ps
-docker compose logs -f lark-token-manager browserless backend feishu web_client
+docker compose logs -f lark-token-manager backend feishu web_client
 ```
 
 持久化数据统一映射到宿主机
@@ -221,13 +214,16 @@ docker compose logs -f lark-token-manager browserless backend feishu web_client
 lark-cli-auth：
 
 ```bash
-docker compose up -d --force-recreate browserless backend feishu web_client
+docker compose up -d --force-recreate lark-token-manager backend feishu web_client
 
 # lark-cli 构建配置发生变化时
 docker compose up -d --build --force-recreate backend
 ```
 
 ## 发送消息
+
+需要从自有业务后端、机器人通道或其他服务完整接入聊天、SSE 事件、追问回调和文件下载时，
+请参阅 [后端接入说明](docs/backend-integration.md)。
 
 `/chat` 需要 Bearer JWT，并通过请求头传入用户 ID 和发送者用户名。JWT、用户 ID
 和发送者用户名都是必填项；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码。
@@ -406,16 +402,6 @@ def echo(message: Message):
 
 工具函数需要有 docstring。函数可以不接收参数，也可以接收一个 Pydantic `BaseModel` 参数。
 
-## 浏览器自动化
-
-浏览器自动化通过内置 `agent-browser` 技能完成。Compose 内的 backend 通过
-`ws://browserless:3000` 连接 Browserless；browserless 不对外暴露端口，仅限容器内网访问。Agent 使用 Shell 执行
-`agent-browser` 命令时，执行层会自动追加当前请求的 `--session` 和配置的
-`--cdp` 参数。
-
-模型在首次进行浏览器操作前会从工作区的
-`skills/agent-browser/SKILL.md` 加载内置技能；该目录由沙盒以只读方式映射，并按其约束复用注入的
-CDP 连接和 session。Xpeech 不提供本地浏览器回退；CDP 连接失败时会直接报错。
 
 ## MCP 工具
 
@@ -449,9 +435,8 @@ tool_timeout = 120
 因此 MCP、内置文件工具和 Shell 的相对路径基准保持一致。远程 MCP 服务若需
 直接读写文件，必须能以相同绝对路径访问该目录。
 
-普通搜索和网页文本抓取使用 `web_search` 和 `web_fetch`；需要浏览器渲染或
-交互操作时使用 `agent-browser`。`browser_preview_base_url` 只负责生成
-`agent-browser` 能访问的 URL 前缀，FastAPI 路由由该 URL 的 path 部分自动注册；
+普通搜索和网页文本抓取使用 `web_search` 和 `web_fetch`。`browser_preview_base_url` 只负责生成
+用户可访问的 HTML 预览 URL 前缀，FastAPI 路由由该 URL 的 path 部分自动注册；
 `browser_preview_path` 只负责存放预览文件，两者没有
 路径推导关系。`create_browser_preview` 会把目录复制到 `<browser_preview_path>/<uuid>/`；
 传入目录时返回该 UUID 目录的 URL 前缀；传入单个 HTML 时保留源文件名，
@@ -496,7 +481,6 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `web_fetch` | 使用 requests 抓取网页、Trafilatura 提取正文和评论并输出 Markdown，保留链接和表格；模型可通过 include_images 选择保留图片信息；支持 HTTP 重定向，不启动浏览器、不执行 JavaScript |
 | `web_search` | 使用百度、DuckDuckGo 或聚合新闻源搜索，返回标题、链接、摘要；支持条数和时间范围过滤（百度不支持时间过滤） |
 | `create_browser_preview` | 将工作区内目录或单个 HTML 复制到 UUID 预览目录，返回目录 URL 前缀或完整文件 URL |
-| `shell` + `agent-browser` | 通过注入的 CDP 连接搜索、打开、读取、检查和操作网页 |
 | `read_doc_file` | 使用 firecrawl-anydoc 读取 Word、PowerPoint、Excel（含旧版和宏格式）、OpenDocument、RTF、EPUB、CSV、PDF，输出 Markdown |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |
 | `ask_user_question` | 向用户发送表单提问 |

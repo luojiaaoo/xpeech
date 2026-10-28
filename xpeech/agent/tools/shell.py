@@ -2,7 +2,6 @@ import asyncio
 import os
 import platform
 import re
-import shlex
 import shutil
 import signal
 import subprocess
@@ -14,10 +13,7 @@ from textwrap import dedent
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from ...config.settings import settings
 from ...exceptions import PathProtectionError
-from ...utils.helper import ensure_path
-from ..server.context import get_user_id
 from . import sandbox
 from .helper import is_direct_python_pip_exec, safe_resolve_workspace_path
 
@@ -156,39 +152,6 @@ def _guard_command(command: str, workspace: str | Path) -> str:
     return cmd
 
 
-_AGENT_BROWSER_PATTERN = re.compile(r"(?<![\w./-])agent-browser(?=\s|$)")
-_NPM_INSTALL_PATTERN = re.compile(r"(?:^|&&|\|\||[;|\n])\s*npm\s+(?:install|i)\b[^;&|\n]*$")
-
-
-def _inject_command_context(command: str, **context: object) -> tuple[str, dict[str, str]]:
-    """Inject managed command arguments and sandbox environment variables."""
-    env: dict[str, str] = {}
-    user_id = context.get("user_id")
-    user_cache_path = ensure_path(settings.path.cache_path / user_id)
-    agent_browser_socket_dir = ensure_path(user_cache_path / "agent-browser")
-
-    if _AGENT_BROWSER_PATTERN.search(command):
-        cdp_url = os.environ.get("CDP_URL", "").strip()
-        if not cdp_url:
-            raise RuntimeError("agent-browser requires the CDP_URL environment variable")
-        if not isinstance(user_id, str) or not user_id:
-            raise RuntimeError("agent-browser requires a user ID in the current request context")
-        quoted_cdp_url = shlex.quote(cdp_url)
-        quoted_user_id = shlex.quote(user_id)
-        args_suffix = f" --cdp {quoted_cdp_url} --session {quoted_user_id}"
-
-        def inject(match: re.Match[str]) -> str:
-            if _NPM_INSTALL_PATTERN.search(command[: match.start()]):
-                return match.group(0)
-            if re.match(r"\s+skills\b", command[match.end() :]):
-                return match.group(0)
-            return match.group(0) + args_suffix
-
-        command = _AGENT_BROWSER_PATTERN.sub(inject, command)
-        env["AGENT_BROWSER_SOCKET_DIR"] = str(agent_browser_socket_dir)
-    return command, env
-
-
 async def _run_wrapped_command(
     command: str,
     workspace: Path,
@@ -277,12 +240,8 @@ def build_shell_tools(workspace: str | Path):
 
     async def shell(args: ShellArgs) -> str:
         command = _guard_command(args.command, workspace)
-        command, env = _inject_command_context(
-            command,
-            user_id=get_user_id(),
-        )
         await _ensure_workspace_uv_venv(workspace)
-        result = await _run_wrapped_command(command, workspace, env=env, timeout_ms=args.timeout_ms)
+        result = await _run_wrapped_command(command, workspace, timeout_ms=args.timeout_ms)
         return _format_command_output(
             result.stdout,
             result.stderr,

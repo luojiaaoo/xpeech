@@ -18,7 +18,7 @@
 | # | 场景 | 规格 | Pentagram | Build | Takram |
 |---|------|------|-----------|-------|--------|
 | 1 | 公众号封面 | 1200×510 | `cover/cover-pentagram` | `cover/cover-build` | `cover/cover-takram` |
-| 2 | PPT数据页 | 1920×1080 | `ppt/ppt-pentagram` | `ppt/ppt-build` | `ppt/ppt-takram` |
+| 2 | 演示数据页 | 1920×1080 | `presentation/presentation-pentagram` | `presentation/presentation-build` | `presentation/presentation-takram` |
 | 3 | 竖版信息图 | 1080×1920 | `infographic/infographic-pentagram` | `infographic/infographic-build` | `infographic/infographic-takram` |
 
 ### 网站设计场景
@@ -39,7 +39,7 @@
 推荐设计方向后，可展示对应场景的预制截图：
 ```
 「这是 Pentagram 风格做公众号封面的效果 → [展示 cover/cover-pentagram.png]」
-「Takram 风格做 PPT 数据页是这种感觉 → [展示 ppt/ppt-takram.png]」
+「Takram 风格做演示数据页是这种感觉 → [展示 presentation/presentation-takram.png]」
 ```
 
 ### 场景匹配优先级
@@ -60,7 +60,7 @@
 - Build：超细字重「Agent」悬浮于 70% 留白中 + 暖金细线
 - Takram：8 节点放射状流程图作为艺术品 + 米色底
 
-### PPT数据页（ppt/）
+### 演示数据页（presentation/）
 - 内容：GLM-4.7 开源模型 Coding 能力突破（AIME 95.7 / SWE-bench 73.8% / τ²-Bench 87.4）
 - Pentagram：260px「95.7」锚点 + 红/灰/浅灰对比条形图
 - Build：三组 120px 超细数字悬浮 + 暖金渐变对比条

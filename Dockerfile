@@ -87,8 +87,6 @@ RUN cd xpeech/channel/web_client/frontend && \
     npm run build && \
     rm -rf node_modules
 
-RUN npm i -g agent-browser
-
 COPY --from=lark-cli-builder /out/lark-cli /usr/local/bin/lark-cli
 COPY --from=lark-cli-builder /out/lark-cli-auth /usr/local/bin/lark-cli-auth
 
