@@ -2,6 +2,9 @@ configs:
   xpeech_conf:
     file: ./conf.toml
 
+x-common-environment: &common-environment
+  TZ: Asia/Shanghai
+
 x-xpeech-service: &xpeech-service
   image: xpeech:local
   build:
@@ -9,8 +12,7 @@ x-xpeech-service: &xpeech-service
     dockerfile: Dockerfile
   env_file:
     - ./.env
-  environment:
-    - TZ=Asia/Shanghai
+  environment: *common-environment
   dns:
     - 10.123.14.6
     - 10.123.14.7
@@ -40,8 +42,8 @@ services:
     <<: *xpeech-service
     command: ["api", "--host", "0.0.0.0", "--port", "8080", "--scheduler-url", "http://scheduler:8090"]
     environment:
-      - TZ=Asia/Shanghai
-      - XPEECH_TOKEN_MANAGER_URL=http://lark-token-manager:7883
+      <<: *common-environment
+      XPEECH_TOKEN_MANAGER_URL: http://lark-token-manager:7883
     deploy:
       replicas: ${BACKEND_REPLICAS:-4}
     depends_on:
@@ -105,8 +107,9 @@ services:
     ports:
       - "${BACKEND_PORT:-7878}:${BACKEND_PORT:-7878}"
     environment:
-      - NGINX_PORT=${BACKEND_PORT:-7878}
-      - NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx
+      <<: *common-environment
+      NGINX_PORT: ${BACKEND_PORT:-7878}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
     volumes:
       - ./docker/nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
     init: true
