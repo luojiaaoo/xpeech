@@ -9,7 +9,6 @@ from lark_channel import (
     CardActionEvent,
     DedupConfig,
     Events,
-    FeishuChannel,
     InboundMessage,
     OutboundConfig,
     PolicyConfig,
@@ -30,6 +29,7 @@ from .cards import (
     build_feishu_background_task_card,
     build_feishu_question_card,
 )
+from .channel import XpeechFeishuChannel
 from .config import EMOJI_TYPES
 from .delivery import FeishuDeliveryMixin
 from .formatting import FeishuEventFormatter
@@ -49,13 +49,8 @@ class FeishuBridge(
         self.chat_url = chat_url
         self.app_id = app_id
         self.app_secret = app_secret
-        self._main_loop: asyncio.AbstractEventLoop | None = None
-        self._task_group: asyncio.TaskGroup | None = None
-        self._closing = False
-        self.receive_queues: dict[str, asyncio.Queue[Message]] = {}
-        self.session_tasks: dict[str, asyncio.Task] = {}
         self.session_update_message_id: dict[str, str] = {}
-        self.channel = FeishuChannel(
+        self.channel = XpeechFeishuChannel(
             app_id=self.app_id,
             app_secret=self.app_secret,
             policy=PolicyConfig(
@@ -73,30 +68,21 @@ class FeishuBridge(
         await self.channel.add_reaction(msg.message_id, random.choice(EMOJI_TYPES))
 
     async def _on_message(self, inbound_message: InboundMessage) -> None:
+        scope = inbound_message.chat_id or inbound_message.message_id
+        self.channel.block_batch_scope(scope)
+        messages: list[Message] = []
         try:
-            msg = await self._parse_msg(inbound_message)
-        except UnsupportedFeishuMessageError as exc:
-            logger.warning(str(exc))
-            return
-        if self._main_loop is None:
-            raise RuntimeError("Feishu bridge has not been started")
-        self._main_loop.call_soon_threadsafe(self._enqueue_message, msg)
-
-    def _enqueue_message(self, msg: Message) -> None:
-        """Enqueue and start consumption on the bridge's main event loop."""
-        if self._closing:
-            return
-        queue = self.receive_queues.setdefault(msg.user_id, asyncio.Queue())
-        queue.put_nowait(msg)
-        logger.info(
-            "Feishu message added user_id={} chat_id={} message_id={} sender_name={} queue_size={}",
-            msg.user_id,
-            msg.chat_id,
-            msg.message_id,
-            msg.sender_name,
-            queue.qsize(),
-        )
-        self._start_session_task(msg.user_id)
+            for source in inbound_message.batched_sources or [inbound_message]:
+                try:
+                    messages.append(await self._parse_msg(source))
+                except UnsupportedFeishuMessageError as exc:
+                    logger.warning(str(exc))
+            if messages:
+                await self.consume(messages)
+        finally:
+            for message in messages:
+                self.session_update_message_id.pop(message.user_id, None)
+            self.channel.unblock_batch_scope(scope)
 
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
         user_id, _ = await self.get_user_identity(card_action_event.operator.open_id)
@@ -111,29 +97,24 @@ class FeishuBridge(
             operation="update completed question card",
         )
 
-    async def consume(self, user_id: str) -> None:
-        if user_id not in self.receive_queues:
-            return
-
-        queue = self.receive_queues[user_id]
-        if queue.empty():
-            return
-
-        message = queue.get_nowait()
+    async def consume(self, messages: list[Message]) -> None:
+        message = messages[-1]
+        user_id = message.user_id
         chat_id = message.chat_id
         reply_to = message.message_id
         sender_name = message.sender_name
-        try:
-            await self.add_reaction(message)
-        except Exception:
-            logger.debug(
-                "Failed to add Feishu reaction message_id={}",
-                message.message_id,
-            )
+        for source in messages:
+            try:
+                await self.add_reaction(source)
+            except Exception:
+                logger.debug(
+                    "Failed to add Feishu reaction message_id={}",
+                    source.message_id,
+                )
 
         try:
             async for event in iter_chat_events(
-                [message],
+                messages,
                 str(URL(self.chat_url) / "chat"),
             ):
                 if event.event == ChatEventType.SEND_FILE:
@@ -241,38 +222,6 @@ class FeishuBridge(
             iter_content=iter_content,
         )
 
-    def _start_session_task(self, user_id: str) -> None:
-        if self._task_group is None:
-            raise RuntimeError("Feishu bridge task group is not running")
-        task = self.session_tasks.get(user_id)
-        if task is not None and not task.done():
-            return
-        if task is not None:
-            self._on_session_task_done(user_id, task)
-
-        task = self._task_group.create_task(self._consume_user_queue(user_id))
-        self.session_tasks[user_id] = task
-        task.add_done_callback(
-            lambda completed_task: self._on_session_task_done(user_id, completed_task)
-        )
-
-    async def _consume_user_queue(self, user_id: str) -> None:
-        try:
-            queue = self.receive_queues[user_id]
-            while not queue.empty():
-                await self.consume(user_id)
-        except Exception:
-            logger.exception(
-                "Feishu session task failed user_id={}",
-                user_id,
-            )
-
-    def _on_session_task_done(self, user_id: str, task: asyncio.Task) -> None:
-        if self.session_tasks.get(user_id) is not task:
-            return
-        self.session_tasks.pop(user_id, None)
-        self.session_update_message_id.pop(user_id, None)
-
     async def poll_background_message_once(
         self,
         client: httpx.AsyncClient,
@@ -316,21 +265,14 @@ class FeishuBridge(
                     await asyncio.sleep(BACKGROUND_MESSAGE_RETRY_SECONDS)
 
     async def start(self) -> None:
-        self._main_loop = asyncio.get_running_loop()
-        self._closing = False
         try:
             async with asyncio.TaskGroup() as task_group:
-                self._task_group = task_group
                 background_message_task = task_group.create_task(self.poll_background_messages())
                 try:
                     await self.channel.connect()
                 finally:
-                    self._closing = True
                     background_message_task.cancel()
-                    for task in tuple(self.session_tasks.values()):
-                        task.cancel()
         finally:
-            self._task_group = None
             await self.channel.disconnect()
 
 
