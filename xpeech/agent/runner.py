@@ -88,23 +88,30 @@ class AgentRunner:
         message: InboundMessage,
         *,
         background: bool = False,
-    ) -> str:
-        """Consume an Agent run and return its last complete assistant segment."""
-        current_segment: list[str] | None = None
-        final_segment: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Collect events in order, joining text chunks and omitting stream-end markers."""
+        events: list[dict[str, Any]] = []
+        text_chunks: list[str] = []
 
         async for event in self.run(message, background=background):
-            event_type = event.get("event")
-            if event_type == "assistant":
-                if current_segment is None:
-                    current_segment = []
-                context = event.get("context")
-                if isinstance(context, str):
-                    current_segment.append(context)
-            elif event_type == "assistant_end" and current_segment is not None:
-                final_segment = "".join(current_segment)
-                current_segment = None
+            context = event.get("context")
+            is_text_chunk = event.get("event") in {"assistant", "thinking"} and isinstance(context, str)
+            if text_chunks:
+                previous_metadata = {key: value for key, value in events[-1].items() if key != "context"}
+                metadata = {key: value for key, value in event.items() if key != "context"}
+                if is_text_chunk and metadata == previous_metadata:
+                    text_chunks.append(context)
+                    continue
+                events[-1]["context"] = "".join(text_chunks)
+                text_chunks.clear()
 
-        if final_segment is None or not final_segment.strip():
-            raise RuntimeError("Agent run completed without model output")
-        return final_segment
+            if event.get("event") in {"assistant_end", "thinking_end"}:
+                continue
+
+            events.append(event.copy())
+            if is_text_chunk:
+                text_chunks.append(context)
+
+        if text_chunks:
+            events[-1]["context"] = "".join(text_chunks)
+        return events

@@ -154,7 +154,7 @@ async def test_runner_can_run_in_background(tmp_path: Path, runner_dependencies)
 
 
 @pytest.mark.asyncio
-async def test_run_once_returns_only_last_complete_assistant_segment(tmp_path: Path):
+async def test_run_once_preserves_events_and_merges_text_chunks(tmp_path: Path):
     runner = AgentRunner("session-1", config=make_config(tmp_path))
 
     class EventLoop:
@@ -163,7 +163,12 @@ async def test_run_once_returns_only_last_complete_assistant_segment(tmp_path: P
             yield {"event": "assistant", "context": "draft"}
             yield {"event": "assistant_end", "context": ""}
             yield {"event": "tool_call", "context": "ignored"}
-            yield {"event": "thinking", "context": "ignored"}
+            yield {"event": "thinking", "context": "think "}
+            yield {"event": "thinking", "context": "more"}
+            yield {"event": "thinking_end", "context": ""}
+            yield {"event": "question", "context": {"question": "Continue?"}}
+            yield {"event": "send_file", "context": "report.txt"}
+            yield {"event": "tool_call_result", "context": "result"}
             yield {"event": "assistant", "context": "final "}
             yield {"event": "assistant", "context": "answer"}
             yield {"event": "assistant_end", "context": ""}
@@ -180,16 +185,59 @@ async def test_run_once_returns_only_last_complete_assistant_segment(tmp_path: P
         files=[],
     )
 
-    assert await runner.run_once(message, background=True) == "final answer"
+    assert await runner.run_once(message, background=True) == [
+        {"event": "assistant", "context": "draft"},
+        {"event": "tool_call", "context": "ignored"},
+        {"event": "thinking", "context": "think more"},
+        {"event": "question", "context": {"question": "Continue?"}},
+        {"event": "send_file", "context": "report.txt"},
+        {"event": "tool_call_result", "context": "result"},
+        {"event": "assistant", "context": "final answer"},
+        {"event": "token_usage", "context": "ignored"},
+    ]
 
 
 @pytest.mark.asyncio
-async def test_run_once_rejects_missing_model_output(tmp_path: Path):
+@pytest.mark.parametrize(
+    "events, expected",
+    [
+        ([], []),
+        ([{"event": "assistant_end", "context": ""}, {"event": "thinking_end", "context": ""}], []),
+        (
+            [
+                {"event": "assistant", "context": "first"},
+                {"event": "assistant_end", "context": ""},
+                {"event": "assistant", "context": "second"},
+            ],
+            [{"event": "assistant", "context": "first"}, {"event": "assistant", "context": "second"}],
+        ),
+        ([{"event": "command", "context": "help"}], [{"event": "command", "context": "help"}]),
+        ([{"event": "thinking", "context": "only thinking"}], [{"event": "thinking", "context": "only thinking"}]),
+        (
+            [{"event": "assistant", "context": ""}, {"event": "assistant", "context": "fallback"}],
+            [{"event": "assistant", "context": "fallback"}],
+        ),
+        (
+            [{"event": "assistant", "context": "before"}, {"event": "thinking", "context": "after"}],
+            [{"event": "assistant", "context": "before"}, {"event": "thinking", "context": "after"}],
+        ),
+        (
+            [{"event": "command", "context": "one"}, {"event": "command", "context": "two"}],
+            [{"event": "command", "context": "one"}, {"event": "command", "context": "two"}],
+        ),
+        (
+            [{"event": "assistant", "context": "one", "id": 1}, {"event": "assistant", "context": "two", "id": 2}],
+            [{"event": "assistant", "context": "one", "id": 1}, {"event": "assistant", "context": "two", "id": 2}],
+        ),
+    ],
+)
+async def test_run_once_preserves_partial_and_non_assistant_output(tmp_path: Path, events, expected):
     runner = AgentRunner("session-1", config=make_config(tmp_path))
 
     class EventLoop:
         async def run(self, message, *, background=False):
-            yield {"event": "thinking", "context": "only thinking"}
+            for event in events:
+                yield event
 
     runner._agent_loop = EventLoop()
     message = InboundMessage(
@@ -202,5 +250,6 @@ async def test_run_once_rejects_missing_model_output(tmp_path: Path):
         files=[],
     )
 
-    with pytest.raises(RuntimeError, match="without model output"):
-        await runner.run_once(message)
+    original_events = [event.copy() for event in events]
+    assert await runner.run_once(message) == expected
+    assert events == original_events

@@ -1,6 +1,7 @@
 """Synchronous Agent invocations executed inside the backend."""
 
 from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -33,8 +34,8 @@ async def execute_chat(
     timestamp: datetime | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
-) -> str:
-    """Run a plain synchronous Agent call and return only the final content."""
+) -> list[dict[str, Any]]:
+    """Run a synchronous Agent call and return all collected events."""
     from .runner import AgentRunner
 
     runner = await AgentRunner.create(
@@ -81,7 +82,11 @@ async def execute_scheduled_chat(user_id: str, request: ScheduledExecution) -> S
         files=[],
     )
     runner = await AgentRunner.create(user_id)
-    content = await runner.run_once(message, background=True)
+    events = await runner.run_once(message, background=True)
+    content = next(
+        (event["context"] for event in reversed(events) if event.get("event") == "assistant"),
+        "",
+    )
     return ScheduledExecutionResult(
         content=content,
         schedule_type=request.schedule_type,

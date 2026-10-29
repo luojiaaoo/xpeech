@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from fastapi.sse import EventSourceResponse
@@ -124,8 +124,8 @@ async def chat_sync(
     timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
     json_output: Annotated[bool, Depends(json_output_enabled)],
-) -> dict[str, str]:
-    """接收用户消息，阻塞运行 Agent，并一次性返回最终回复内容。"""
+) -> list[dict[str, Any]]:
+    """接收用户消息，阻塞运行 Agent，并一次性返回合并后的全部事件。"""
     result = await execute_chat(
         user_id,
         content=content,

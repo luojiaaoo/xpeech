@@ -392,7 +392,12 @@ async def test_background_agent_queues_success_or_fixed_failure(
             captured["background"] = background
             if isinstance(result, Exception):
                 raise result
-            return result
+            return [
+                {"event": "assistant", "context": "draft"},
+                {"event": "tool_call", "context": "tool"},
+                {"event": "assistant", "context": result},
+                {"event": "token_usage", "context": "usage"},
+            ]
 
     async def create(cls, user_id, **kwargs):
         captured["user_id"] = user_id
@@ -446,7 +451,7 @@ async def test_background_agent_waits_for_random_delay(monkeypatch, backend_http
 
     class FakeRunner:
         async def run_once(self, message, *, background=False):
-            return "completed"
+            return [{"event": "assistant", "context": "completed"}]
 
     async def create(cls, user_id, **kwargs):
         return FakeRunner()

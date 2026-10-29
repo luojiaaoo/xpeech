@@ -31,7 +31,10 @@ class FakeRunner:
     async def run_once(self, message, *, background=False):
         self.messages.append(message)
         self.background_values.append(background)
-        return "final answer"
+        return [
+            {"event": "assistant", "context": "final answer"},
+            {"event": "token_usage", "context": "usage"},
+        ]
 
 
 @pytest.fixture
@@ -49,7 +52,7 @@ def fake_runner(monkeypatch, tmp_path):
     return runner
 
 
-def test_chat_sync_returns_final_content(fake_runner):
+def test_chat_sync_returns_collected_events(fake_runner):
     response = TestClient(app).post(
         "/chat_sync",
         headers=chat_headers(**{"x-session-id": "chat-1"}),
@@ -60,7 +63,10 @@ def test_chat_sync_returns_final_content(fake_runner):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"assistant": "final answer"}
+    assert response.json() == [
+        {"event": "assistant", "context": "final answer"},
+        {"event": "token_usage", "context": "usage"},
+    ]
     assert fake_runner.created == {
         "user_id": "user",
         "kwargs": {"include_background_tools": False},
