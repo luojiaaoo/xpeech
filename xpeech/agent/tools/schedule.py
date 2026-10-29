@@ -1,15 +1,11 @@
 import json
 from datetime import datetime
 from typing import Annotated
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ...utils.helper import ensure_async
-from ..background import (
-    cancel_scheduled_task,
-    list_scheduled_tasks,
-    schedule_feishu_task,
-)
+from ...scheduler_client import scheduler_request
 
 
 def _require_text(value: object, name: str) -> str:
@@ -117,31 +113,24 @@ async def feishu_schedule(
     validated_user_id = _require_text(user_id, "user_id")
     validated_sender_name = _require_text(sender_name, "sender_name")
 
-    job = await ensure_async(schedule_feishu_task)(
-        prompt=args.prompt,
-        run_at=args.run_at,
-        cron=args.cron,
-        user_id=validated_user_id,
-        sender_name=validated_sender_name,
-        session_metadata=session_metadata,
-    )
-    return json.dumps(
-        {
-            "job_id": job.id,
-            "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+    job = await scheduler_request(
+        "POST",
+        "/schedules",
+        validated_user_id,
+        payload={
+            **args.model_dump(mode="json"),
+            "sender_name": validated_sender_name,
+            "session_metadata": session_metadata,
         },
-        ensure_ascii=False,
     )
+    return json.dumps(job, ensure_ascii=False)
 
 
 async def feishu_schedule_list(user_id: str | None) -> str:
     """列出当前用户所有渠道仍有效的后台定时任务。"""
     validated_user_id = _require_text(user_id, "user_id")
-    tasks = await ensure_async(list_scheduled_tasks)(validated_user_id)
-    return json.dumps(
-        [task.model_dump() for task in tasks],
-        ensure_ascii=False,
-    )
+    tasks = await scheduler_request("GET", "/schedules", validated_user_id)
+    return json.dumps(tasks, ensure_ascii=False)
 
 
 async def feishu_schedule_cancel(
@@ -150,8 +139,7 @@ async def feishu_schedule_cancel(
 ) -> str:
     """取消当前用户拥有的后台定时任务。"""
     validated_user_id = _require_text(user_id, "user_id")
-    await ensure_async(cancel_scheduled_task)(
-        user_id=validated_user_id,
-        job_id=args.job_id,
+    await scheduler_request(
+        "DELETE", f"/schedules/{quote(args.job_id, safe='')}", validated_user_id,
     )
     return f"Scheduled task cancelled successfully: {args.job_id}"

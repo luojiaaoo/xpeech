@@ -39,10 +39,15 @@ services:
   backend:
     <<: *xpeech-service
     command: ["api", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      - TZ=Asia/Shanghai
+      - XPEECH_SCHEDULER__URL=http://scheduler:8090
     deploy:
       replicas: ${BACKEND_REPLICAS:-4}
     depends_on:
       lark-token-manager:
+        condition: service_healthy
+      scheduler:
         condition: service_healthy
     expose:
       - "8080"
@@ -73,10 +78,33 @@ services:
       retries: 6
       start_period: 60s
 
+  scheduler:
+    <<: *xpeech-service
+    command: ["scheduler", "--host", "0.0.0.0", "--port", "8090"]
+    deploy:
+      replicas: 1
+    environment:
+      - TZ=Asia/Shanghai
+      - XPEECH_SCHEDULER__BACKEND_URL=http://nginx:7878
+    expose:
+      - "8090"
+    volumes:
+      # 保留原路径，兼容已有 schedule.db；只有 scheduler 读写此文件
+      - ./docker_data/session:/app/data/session
+      - ./docker_data/logs/scheduler:/app/data/logs
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
   nginx:
     image: nginx:1.27.5-alpine
     depends_on:
       backend:
+        condition: service_healthy
+      scheduler:
         condition: service_healthy
     ports:
       - "${BACKEND_PORT:-7878}:7878"

@@ -7,12 +7,14 @@ from threading import get_ident
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
 
-import xpeech.agent.background as background
-import xpeech.agent.tools.schedule as schedule_tools
+import xpeech.scheduler as scheduler_service
+from xpeech import scheduler_client
+from xpeech.agent import background
 from xpeech.agent.background import (
     BACKGROUND_TASK_FAILURE_MESSAGE,
     BackgroundMessageChannel,
@@ -26,7 +28,7 @@ from xpeech.agent.background import (
     stop_background_scheduler,
 )
 from xpeech.agent.runner import AgentRunner
-from xpeech.agent.server.routes import chat
+from xpeech.agent.server.api import app as backend_app
 from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.schedule import (
     FeishuScheduleArgs,
@@ -35,11 +37,45 @@ from xpeech.agent.tools.schedule import (
     feishu_schedule_cancel,
     feishu_schedule_list,
 )
+from xpeech.config.settings import settings
+from xpeech.utils.jwt_auth import create_access_token, decode_access_token
 
 
 def drain_queue(queue: FeishuBackgroundMessageQueue) -> None:
     while not queue.empty():
         queue.get_nowait()
+
+
+@pytest.fixture
+def scheduler_http(monkeypatch):
+    client_class = httpx.AsyncClient
+    transport = httpx.ASGITransport(app=scheduler_service.app)
+    monkeypatch.setattr(
+        scheduler_client, "AsyncClient",
+        lambda **kwargs: client_class(transport=transport, **kwargs),
+    )
+
+
+@pytest.fixture
+def backend_http(monkeypatch):
+    client_class = httpx.AsyncClient
+    transport = httpx.ASGITransport(app=backend_app, raise_app_exceptions=False)
+    requests = []
+
+    async def record_request(request):
+        requests.append(request)
+        token = request.headers["authorization"].removeprefix("Bearer ")
+        decode_access_token(token)
+        assert str(request.url) == f"{settings.scheduler.backend_url}/internal/scheduled-run"
+        assert request.headers["x-user-id"] == "session-1"
+
+    monkeypatch.setattr(
+        background.httpx, "AsyncClient",
+        lambda **kwargs: client_class(
+            transport=transport, event_hooks={"request": [record_request]}, **kwargs,
+        ),
+    )
+    return requests
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -102,7 +138,7 @@ def test_schedule_tool_explains_mutually_exclusive_time_fields():
 
 
 @pytest.mark.asyncio
-async def test_schedule_tools_offload_scheduler_database_calls(monkeypatch):
+async def test_schedule_api_offloads_database_calls(monkeypatch, scheduler_http):
     event_loop_thread = get_ident()
     worker_threads = []
 
@@ -117,18 +153,18 @@ async def test_schedule_tools_offload_scheduler_database_calls(monkeypatch):
     def cancel_task(**kwargs):
         worker_threads.append(get_ident())
 
-    monkeypatch.setattr(schedule_tools, "schedule_feishu_task", create_task)
-    monkeypatch.setattr(schedule_tools, "list_scheduled_tasks", list_tasks)
-    monkeypatch.setattr(schedule_tools, "cancel_scheduled_task", cancel_task)
+    monkeypatch.setattr(scheduler_service, "schedule_feishu_task", create_task)
+    monkeypatch.setattr(scheduler_service, "list_scheduled_tasks", list_tasks)
+    monkeypatch.setattr(scheduler_service, "cancel_scheduled_task", cancel_task)
 
-    await schedule_tools.feishu_schedule(
+    await feishu_schedule(
         FeishuScheduleArgs(prompt="task", run_at="2099-01-01T00:00:00+08:00"),
         session_metadata={"channel": "feishu", "open_id": "ou_1"},
         sender_name="Alice",
         user_id="session-1",
     )
-    await schedule_tools.feishu_schedule_list(user_id="session-1")
-    await schedule_tools.feishu_schedule_cancel(
+    await feishu_schedule_list(user_id="session-1")
+    await feishu_schedule_cancel(
         FeishuScheduleCancelArgs(job_id="job-1"),
         user_id="session-1",
     )
@@ -215,7 +251,7 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_tools_capture_context_list_across_channels_and_enforce_cancel_owner(tmp_path: Path):
+async def test_tools_capture_context_list_across_channels_and_enforce_cancel_owner(tmp_path: Path, scheduler_http):
     scheduler = start_background_scheduler(tmp_path / "schedule.db")
     args = FeishuScheduleArgs(
         prompt="daily report",
@@ -251,9 +287,8 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
     assert await feishu_schedule_list(user_id="another-user") == "[]"
 
     with pytest.raises(ValueError, match="not available"):
-        cancel_scheduled_task(
-            user_id="another-user",
-            job_id=result["job_id"],
+        await feishu_schedule_cancel(
+            FeishuScheduleCancelArgs(job_id=result["job_id"]), user_id="another-user",
         )
     with pytest.raises(ValueError, match="not available"):
         cancel_scheduled_task(user_id="session-1", job_id="missing")
@@ -329,6 +364,7 @@ async def test_feishu_schedule_validates_delivery_context(tmp_path: Path, metada
 )
 async def test_background_agent_queues_success_or_fixed_failure(
     monkeypatch,
+    backend_http,
     result,
     expected,
 ):
@@ -381,10 +417,11 @@ async def test_background_agent_queues_success_or_fixed_failure(
     assert scheduled_prompt.endswith("scheduled prompt")
     assert captured["message"].session_metadata == {**metadata, "source": "scheduled_task"}
     assert metadata == {"channel": "feishu", "open_id": "ou_1", "custom": "kept"}
+    assert len(backend_http) == 1  # Failures must not replay the Agent execution.
 
 
 @pytest.mark.asyncio
-async def test_background_agent_waits_for_random_delay(monkeypatch):
+async def test_background_agent_waits_for_random_delay(monkeypatch, backend_http):
     sleep = AsyncMock()
     monkeypatch.setattr(background.asyncio, "sleep", sleep)
     uniform = MagicMock(return_value=73.5)
@@ -426,22 +463,160 @@ def test_background_message_and_queue_are_strictly_typed():
 async def test_background_message_long_poll_returns_immediately(monkeypatch):
     queue = FeishuBackgroundMessageQueue()
     monkeypatch.setattr(
-        chat,
+        scheduler_service,
         "BACKGROUND_MESSAGE_QUEUES",
         {BackgroundMessageChannel.FEISHU: queue},
     )
     message = FeishuBackgroundMessage(open_id="ou_1", content="result")
     queue.put_nowait(message)
-    assert await chat.poll_background_message(BackgroundMessageChannel.FEISHU) == message
+    assert await scheduler_service.poll_background_message(BackgroundMessageChannel.FEISHU) == message
 
 
 @pytest.mark.asyncio
 async def test_background_message_long_poll_times_out_with_204(monkeypatch):
     monkeypatch.setattr(
-        chat,
+        scheduler_service,
         "BACKGROUND_MESSAGE_QUEUES",
         {BackgroundMessageChannel.FEISHU: FeishuBackgroundMessageQueue()},
     )
-    monkeypatch.setattr(chat, "BACKGROUND_MESSAGE_LONG_POLL_SECONDS", 0.001)
-    response = await chat.poll_background_message(BackgroundMessageChannel.FEISHU)
+    monkeypatch.setattr(scheduler_service, "BACKGROUND_MESSAGE_LONG_POLL_SECONDS", 0.001)
+    response = await scheduler_service.poll_background_message(BackgroundMessageChannel.FEISHU)
     assert response.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_http, monkeypatch):
+    queue = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
+    queue.put_nowait(FeishuBackgroundMessage(open_id="ou_1", content="completed"))
+    monkeypatch.setattr(scheduler_service, "BACKGROUND_MESSAGE_LONG_POLL_SECONDS", 0.001)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=backend_app), base_url="http://test",
+        headers={"Authorization": f"Bearer {create_access_token()}"},
+    ) as client:
+        response = await client.get("/background_message?channel=feishu")
+        assert response.status_code == 200
+        assert response.json() == {"channel": "feishu", "open_id": "ou_1", "content": "completed"}
+        response = await client.get("/background_message?channel=feishu")
+        assert response.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_only_scheduler_lifespan_starts_scheduling(tmp_path, monkeypatch):
+    from xpeech.agent.server import server
+
+    monkeypatch.setattr(settings.path, "session_schedule_path", tmp_path / "schedule.db")
+    monkeypatch.setattr(server, "create_db_and_tables", AsyncMock())
+    monkeypatch.setattr(server, "close_all_mcp_connections", AsyncMock())
+    monkeypatch.setattr(server, "record_engine", SimpleNamespace(dispose=AsyncMock()))
+
+    async with server.lifespan(backend_app):
+        assert background._scheduler is None
+
+    async with scheduler_service.lifespan(scheduler_service.app):
+        assert background.get_background_scheduler().running
+    assert background._scheduler is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "app, method, path",
+    [
+        (scheduler_service.app, "POST", "/schedules"),
+        (scheduler_service.app, "GET", "/schedules"),
+        (scheduler_service.app, "DELETE", "/schedules/job-1"),
+        (scheduler_service.app, "GET", "/background_message?channel=feishu"),
+        (backend_app, "POST", "/internal/scheduled-run"),
+    ],
+)
+async def test_scheduler_and_execution_endpoints_require_jwt(app, method, path):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.request(method, path, headers={"x-user-id": "alice"})
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_scheduler_api_validates_context_and_time(tmp_path, scheduler_http):
+    start_background_scheduler(tmp_path / "schedule.db")
+    payload = {
+        "prompt": "task",
+        "run_at": "2000-01-01T00:00:00+08:00",
+        "sender_name": "Alice",
+        "session_metadata": {"channel": "feishu", "open_id": "ou_1"},
+    }
+    with pytest.raises(ValueError, match="future"):
+        await scheduler_client.scheduler_request("POST", "/schedules", "alice", payload=payload)
+
+    payload["run_at"] = "2099-01-01T00:00:00+08:00"
+    payload["session_metadata"] = {"channel": "web"}
+    with pytest.raises(httpx.HTTPStatusError) as error:
+        await scheduler_client.scheduler_request("POST", "/schedules", "alice", payload=payload)
+    assert error.value.response.status_code == 422
+    assert list_scheduled_tasks("alice") == []
+
+
+@pytest.mark.asyncio
+async def test_scheduler_api_limit_is_shared_across_http_clients(tmp_path, scheduler_http):
+    start_background_scheduler(tmp_path / "schedule.db")
+    args = FeishuScheduleArgs(prompt="task", cron="0 9 * * *")
+    for _ in range(8):
+        await feishu_schedule(
+            args,
+            session_metadata={"channel": "feishu", "open_id": "ou_1"},
+            sender_name="Alice",
+            user_id="alice",
+        )
+    with pytest.raises(ValueError, match="maximum 8"):
+        await feishu_schedule(
+            args,
+            session_metadata={"channel": "feishu", "open_id": "ou_1"},
+            sender_name="Alice",
+            user_id="alice",
+        )
+
+
+@pytest.mark.asyncio
+async def test_execution_rejects_invalid_user_id_before_running(monkeypatch):
+    create = AsyncMock()
+    monkeypatch.setattr(AgentRunner, "create", create)
+    transport = httpx.ASGITransport(app=backend_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/internal/scheduled-run",
+            headers={"Authorization": f"Bearer {create_access_token()}", "x-user-id": "../escape"},
+            json={
+                "job_id": "job-1", "prompt": "task", "sender_name": "Alice",
+                "session_metadata": {}, "schedule_type": "cron", "schedule_value": "0 9 * * *",
+            },
+        )
+    assert response.status_code == 422
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["unavailable", "timeout", "invalid-result"])
+async def test_dispatch_failures_queue_one_failure_message_without_retry(monkeypatch, failure):
+    calls = []
+
+    async def handler(request):
+        calls.append(request)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("upstream timed out", request=request)
+        if failure == "unavailable":
+            return httpx.Response(503)
+        return httpx.Response(200, json={"content": "   "})
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(
+        background.httpx, "AsyncClient",
+        lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(background.random, "uniform", lambda *_: 0)
+    await run_feishu_background_task(
+        job_id="job-1", prompt="task", user_id="alice", sender_name="Alice",
+        session_metadata={"channel": "feishu", "open_id": "ou_1"},
+        schedule_type="cron", schedule_value="0 9 * * *",
+    )
+    queue = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
+    assert queue.get_nowait().content == BACKGROUND_TASK_FAILURE_MESSAGE
+    assert queue.empty()
+    assert len(calls) == 1

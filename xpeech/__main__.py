@@ -37,6 +37,10 @@ def main() -> None:
     token_manager_parser.add_argument("--port", type=int, default=7883)
     token_manager_parser.set_defaults(service="token_manager")
 
+    scheduler_parser = subparsers.add_parser("scheduler", help="Run the single scheduler service.")
+    scheduler_parser.add_argument("--host", default="0.0.0.0")
+    scheduler_parser.add_argument("--port", type=int, default=8090)
+
     args = parser.parse_args()
     service = args.service or "api"
 
@@ -66,6 +70,12 @@ def main() -> None:
 
     if service == "token_manager":
         from .lark_token_manager import run
+
+        run(host=args.host, port=args.port)
+        return
+
+    if service == "scheduler":
+        from .scheduler import run
 
         run(host=args.host, port=args.port)
         return

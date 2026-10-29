@@ -29,7 +29,7 @@ Xpeech API 默认监听 `http://localhost:7878`。一次完整的聊天交互如
 
 生产环境必须使用 HTTPS，并限制 API 只能被可信服务访问。
 
-Compose 部署默认由 Nginx 对外提供该 Base URL，并按 `x-user-id` 做一致性哈希，
+Compose 部署默认由 Nginx 对外提供该 Base URL，并按 `x-user-id` 做用户 ID 哈希，
 将同一用户的请求稳定转发到同一个 backend 副本。这是因为 `/chat` 的运行状态和
 `/answer_question` 的等待事件位于 backend 进程内存中。接入方必须在聊天、追问回答和文件请求中
 使用完全相同的 `x-user-id`；扩缩容或替换 backend 容器前，应等待正在进行的 SSE 会话结束。

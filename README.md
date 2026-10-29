@@ -87,6 +87,9 @@ uv run -m xpeech api
 # API 服务（省略服务名时的等价写法）
 uv run -m xpeech
 
+# 调度服务（单实例；到期后通过 HTTP 请求 API 执行）
+uv run -m xpeech scheduler
+
 # Web 客户端（依赖 API 服务）
 uv run -m xpeech web_client
 
@@ -169,10 +172,11 @@ Xpeech Deck 是自托管平台，需要与 Docker 和所有受管 Xpeech 实例�
 
 ## Docker Compose 部署
 
-Compose 会启动五类容器：
+Compose 会启动六类容器：
 
 - `lark-token-manager`：飞书用户令牌管理服务
 - `backend`：Xpeech API、Agent 和工具执行服务，默认启动 4 个副本
+- `scheduler`：单实例调度服务，独占 `schedule.db`，通过 Nginx 调用 backend 执行到期任务
 - `nginx`：后端 API 入口，按 `x-user-id` 将同一用户稳定分配到同一 backend
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
 - `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
@@ -200,15 +204,15 @@ docker compose up -d --build
 BACKEND_REPLICAS=4 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 ```
 
-Nginx 使用一致性哈希按 `x-user-id` 分流。`/chat`、`/answer_question` 和文件请求都必须
-携带相同的 `x-user-id`；调整副本数或替换 backend 容器可能改变少量用户的映射，操作前应先等待
+Nginx 使用用户 ID 哈希按 `x-user-id` 分流。`/chat`、`/answer_question` 和文件请求都必须
+携带相同的 `x-user-id`；调整副本数或替换 backend 容器可能改变用户的映射，操作前应先等待
 正在进行的 SSE 会话结束。
 
 查看运行状态和日志：
 
 ```bash
 docker compose ps
-docker compose logs -f lark-token-manager backend nginx feishu web_client
+docker compose logs -f lark-token-manager backend scheduler nginx feishu web_client
 ```
 
 持久化数据统一映射到宿主机
@@ -219,11 +223,26 @@ docker compose logs -f lark-token-manager backend nginx feishu web_client
 lark-cli-auth：
 
 ```bash
-docker compose up -d --force-recreate lark-token-manager backend nginx feishu web_client
+docker compose up -d --force-recreate lark-token-manager backend scheduler nginx feishu web_client
 
 # lark-cli 构建配置发生变化时
 docker compose up -d --build --force-recreate backend
 ```
+
+后台定时任务由单实例 `scheduler` 管理，backend 通过内部 HTTP 创建、查询和取消任务。
+到期后 scheduler 携带 JWT 和 `x-user-id` 请求 `http://nginx:7878/internal/scheduled-run`，
+由用户对应的 backend 使用 `background=True` 执行，结果返回 scheduler 供飞书轮询。
+`/background_message` 经 Nginx 到达任意 backend，再由 backend 向 scheduler 领取消息，
+不需要绑定特定实例。Nginx 对所有 API 使用同一条哈希转发规则。
+
+原有 `docker_data/session/schedule.db` 路径和持久化任务格式保持不变。升级时先停止旧 backend，
+确保旧调度器全部退出，再启动新服务；不要同时运行新旧调度器。scheduler 始终只运行一个副本。
+调度期间需保持 Nginx/backend 可用，执行 HTTP 请求失败时会发送失败提示，不自动重试；
+停机期间错过的任务仍按原规则跳过。待发送结果当前保存在 scheduler 内存中，重启会丢失未发送结果。
+
+本地运行 API 时，也需要在另一个终端执行 `uv run python -m xpeech scheduler`。
+通过 `[scheduler]` 的 `url`、`backend_url` 配置服务地址（默认分别为
+`http://127.0.0.1:8090` 和 `http://127.0.0.1:7878`）。
 
 ## 发送消息
 
@@ -344,7 +363,9 @@ curl -N -X POST "http://localhost:7878/chat" \
   包含 `*`，因此 `* * * * *`、`*/5 * * * *` 等表达式会被拒绝。
 - 空字符串和纯空白字段按未提供处理；如果两个字段都有有效值，或两个字段都没有有效值，任务创建失败。
 
-后台调度器启动时会读取 `[path].session_schedule_path` 指定的 SQLite 数据库。配置模板使用：
+独立的 scheduler 服务启动时会读取 `[path].session_schedule_path` 指定的 SQLite 数据库。
+backend 通过 `[scheduler].url` 管理任务，scheduler 通过 `[scheduler].backend_url` 触发执行；
+Compose 已将后者配置为 Nginx 地址。配置模板使用：
 
 ```toml
 [path]

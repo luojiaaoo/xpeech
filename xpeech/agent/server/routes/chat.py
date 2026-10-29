@@ -1,16 +1,18 @@
-import asyncio
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
+from ....scheduler_client import scheduler_request
 from ....utils.file_io import save_to_workspace
 from ....utils.ids import DEFAULT_SESSION_ID
 from ...background import (
-    BACKGROUND_MESSAGE_QUEUES,
     BackgroundMessageChannel,
     FeishuBackgroundMessage,
+    ScheduledExecution,
+    ScheduledExecutionResult,
+    execute_scheduled_task,
 )
 from ...loop import AgentLoop, QuestionEvent
 from ...runner import AgentRunner
@@ -26,28 +28,25 @@ from ..dependencies import (
 from ..schema import InboundMessage, InputContent
 
 router = APIRouter()
-BACKGROUND_MESSAGE_LONG_POLL_SECONDS = 50
 
 
-@router.get(
-    "/background_message",
-    response_model=FeishuBackgroundMessage,
-    responses={204: {"description": "No background message available"}},
-)
-async def poll_background_message(
-    channel: BackgroundMessageChannel,
-) -> FeishuBackgroundMessage | Response:
-    """Long-poll for the next background message for a delivery channel."""
-    queue = BACKGROUND_MESSAGE_QUEUES.get(channel)
-    if queue is None:
-        raise HTTPException(status_code=400, detail="Unsupported background message channel")
-    try:
-        return await asyncio.wait_for(
-            queue.get(),
-            timeout=BACKGROUND_MESSAGE_LONG_POLL_SECONDS,
-        )
-    except TimeoutError:
+@router.get("/background_message", response_model=FeishuBackgroundMessage)
+async def poll_background_message(channel: BackgroundMessageChannel) -> FeishuBackgroundMessage | Response:
+    """Any backend can long-poll the shared scheduler for a channel message."""
+    payload = await scheduler_request(
+        "GET", f"/background_message?channel={channel.value}", timeout=60,
+    )
+    if payload is None:
         return Response(status_code=204)
+    return FeishuBackgroundMessage.model_validate(payload)
+
+
+@router.post("/internal/scheduled-run", include_in_schema=False)
+async def scheduled_run(
+    request: ScheduledExecution,
+    user_id: Annotated[str, Depends(user_id_header)],
+) -> ScheduledExecutionResult:
+    return await execute_scheduled_task(user_id, request)
 
 
 @router.post("/answer_question")

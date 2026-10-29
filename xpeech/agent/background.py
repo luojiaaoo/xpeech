@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import random
-from threading import Lock
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 from uuid import uuid4
 
+import httpx
 from apscheduler.job import Job
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -18,6 +19,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..config.settings import settings
+from ..utils.jwt_auth import create_access_token
 from .server.schema import InboundMessage, InputText
 
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
@@ -84,6 +86,28 @@ class ScheduledTask(BaseModel):
     schedule_type: Literal["run_at", "cron"]
     schedule_value: str
     next_run_time: str | None
+
+
+class ScheduledExecution(BaseModel):
+    """A scheduled run sent to the backend through the user-affinity gateway."""
+
+    job_id: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    sender_name: str = Field(min_length=1)
+    session_metadata: dict[str, str]
+    schedule_type: Literal["run_at", "cron"]
+    schedule_value: str
+
+
+class ScheduledExecutionResult(BaseModel):
+    content: str = Field(min_length=1)
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Scheduled Agent task completed without model output")
+        return value
 
 
 BACKGROUND_MESSAGE_QUEUES: dict[
@@ -310,8 +334,12 @@ async def run_feishu_background_task(
     schedule_type: str,
     schedule_value: str,
 ) -> None:
-    """Run a scheduled Agent task and enqueue its user-facing Feishu result."""
-    
+    """Trigger the user-affine backend and enqueue its user-facing result.
+
+    Keep this function's import path and kwargs stable for persisted jobs.
+    HTTP calls are not retried: a lost response may follow a successful run.
+    """
+
     delay_seconds = random.uniform(0, MAX_BACKGROUND_TASK_DELAY_SECONDS)
     logger.info(
         "Feishu scheduled Agent task waiting job_id={} delay_seconds={:.2f}",
@@ -322,36 +350,26 @@ async def run_feishu_background_task(
 
     open_id = session_metadata["open_id"]
     try:
-        # Keep this import lazy so persisted jobs can import this module without a
-        # runner/background/registry import cycle.
-        from .runner import AgentRunner
-
-        metadata = dict(session_metadata)
-        metadata["source"] = "scheduled_task"
-        timestamp = datetime.now().astimezone()
-        message = InboundMessage(
-            user_id=user_id,
-            session_id=uuid4().hex,
+        request = ScheduledExecution(
+            job_id=job_id,
+            prompt=prompt,
             sender_name=sender_name,
-            session_metadata=metadata,
-            content=[
-                InputText(
-                    text=(
-                        f"{SCHEDULED_TASK_PROMPT_PREFIX}"
-                        f"调度类型：{schedule_type}\n"
-                        f"调度表达式：{schedule_value}\n\n"
-                        f"{prompt}"
-                    )
-                )
-            ],
-            timestamp=timestamp,
-            files=[],
+            session_metadata=session_metadata,
+            schedule_type=schedule_type,
+            schedule_value=schedule_value,
         )
-        runner = await AgentRunner.create(user_id)
-        content = await runner.run_once(message, background=True)
-        if not isinstance(content, str) or not content.strip():
-            raise RuntimeError("Scheduled Agent task completed without model output")
-    except Exception:
+        async with httpx.AsyncClient(timeout=settings.scheduler.execution_timeout_seconds) as client:
+            response = await client.post(
+                f"{settings.scheduler.backend_url}/internal/scheduled-run",
+                headers={
+                    "Authorization": f"Bearer {create_access_token()}",
+                    "x-user-id": user_id,
+                },
+                json=request.model_dump(mode="json"),
+            )
+            response.raise_for_status()
+            content = ScheduledExecutionResult.model_validate(response.json()).content
+    except (httpx.HTTPError, ValueError):
         logger.exception(
             "Scheduled Agent task failed job_id={} user_id={}",
             job_id,
@@ -362,3 +380,30 @@ async def run_feishu_background_task(
     await BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU].put(
         FeishuBackgroundMessage(open_id=open_id, content=content),
     )
+
+
+async def execute_scheduled_task(user_id: str, request: ScheduledExecution) -> ScheduledExecutionResult:
+    """Run inside a backend; no scheduler or process-local delivery queue needed."""
+    from .runner import AgentRunner
+
+    message = InboundMessage(
+        user_id=user_id,
+        session_id=uuid4().hex,
+        sender_name=request.sender_name,
+        session_metadata={**request.session_metadata, "source": "scheduled_task"},
+        content=[
+            InputText(
+                text=(
+                    f"{SCHEDULED_TASK_PROMPT_PREFIX}"
+                    f"调度类型：{request.schedule_type}\n"
+                    f"调度表达式：{request.schedule_value}\n\n"
+                    f"{request.prompt}"
+                ),
+            ),
+        ],
+        timestamp=datetime.now().astimezone(),
+        files=[],
+    )
+    runner = await AgentRunner.create(user_id)
+    content = await runner.run_once(message, background=True)
+    return ScheduledExecutionResult(content=content)
