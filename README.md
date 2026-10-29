@@ -107,7 +107,7 @@ uv run -m xpeech token_manager
 - Swagger UI：`http://localhost:7878/docs`
 - ReDoc：`http://localhost:7878/redoc`
 
-Swagger UI、ReDoc 及 `/openapi.json` 可直接访问，不再使用原来的文档账号密码。在
+Swagger UI、ReDoc 及 `/openapi.json` 可直接访问。在
 Swagger UI 右上角点击 `Authorize`：`username` 可填写任意标识（例如 `docs`），
 `password` 填写 `jwt.secret_key`。Swagger 会调用 `/token` 校验密钥并签发一个有效期
 60 秒的 JWT，后续调试请求会自动携带该令牌。部署时必须使用 HTTPS，避免共享密钥在
@@ -191,7 +191,7 @@ xpeech/
 
 依赖方向为 `subapp → 核心`；`agent`、`config`、`provider`、`utils` 等核心代码不导入
 `subapp`。调度工具、共享协议和 HTTP 客户端统一位于 `agent/tools/schedule/`，
-后台 Agent 执行仍位于 `agent/background.py`。
+后台 Agent 执行位于 `agent/background.py`。
 所有服务统一使用 `uv run -m xpeech <服务名>` 启动；不指定服务名时默认启动 API。
 Compose 已配置相同入口。
 
@@ -260,11 +260,9 @@ docker compose up -d --build --force-recreate backend
 `/background_message` 经 Nginx 到达任意 backend，再由 backend 向 scheduler 领取消息，
 不需要绑定特定实例。Nginx 对所有 API 使用同一条哈希转发规则。
 
-数据库仍使用 `docker_data/session/schedule.db`，不提供旧任务函数路径的兼容或自动迁移；
-旧版本创建的任务需重新创建。升级时先停止旧 backend，
-确保旧调度器全部退出，再启动新服务；不要同时运行新旧调度器。scheduler 始终只运行一个副本。
+数据库使用 `docker_data/session/schedule.db`。scheduler 以单实例运行，独占该数据库。
 调度期间需保持 Nginx/backend 可用，执行 HTTP 请求失败时会发送失败提示，不自动重试；
-停机期间错过的任务仍按原规则跳过。待发送结果当前保存在 scheduler 内存中，重启会丢失未发送结果。
+停机期间错过的任务会被跳过。待发送结果保存在 scheduler 内存中，重启会丢失未发送结果。
 
 本地运行 API 时，也需要在另一个终端执行 `uv run -m xpeech scheduler`。
 通过 `[scheduler]` 的 `url`、`backend_url` 配置服务地址（默认分别为
@@ -288,7 +286,6 @@ OAuth2 用户标识配置使用 `user_id_claim`。
 
 会话历史保存在 `session_history_path` 目录中，文件名固定为
 `[user_id]~session~[session_id].yaml`。
-读取 `default` 会话时，若新文件不存在，会将旧的 `[user_id].yaml` 自动迁移到 default 文件。
 后台任务每次运行的上下文也保存在该目录，文件名为
 `[user_id]~background~[session_id].yaml`。后台任务每次执行时生成
 `32 位 UUID` 格式的 `session_id`，保存历史时直接复用此 ID；执行时间以文件修改时间为准。
@@ -310,7 +307,7 @@ OAuth2 用户标识配置使用 `user_id_claim`。
 代码中单独调用 `LockedFile(path).read_text()`、`write_text()`、`append_text()` 等方法时会自动
 加锁。同一路径的不同对象共享同一把锁。需要保护多个步骤时，使用
 `async with file.transaction()`，块内通过同一个 `file` 操作，已有锁会复用。
-也可写成 `async with file.transaction() as locked`，其中 `locked` 就是原来的 `file` 对象。
+也可写成 `async with file.transaction() as locked`，其中 `locked` 就是传入的 `file` 对象。
 其他任务的独立调用或新建的 `LockedFile(path)` 仍需获取锁。事务内创建的工具子任务可以
 继承当前对象的事务，但应在退出上下文前等待其完成；此处的事务只提供互斥，不提供回滚。
 
@@ -379,7 +376,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 在飞书会话中可以直接用自然语言要求 Agent 创建、查看或取消定时任务，例如“明天上午 9 点提醒我
 提交周报”或“每天上午 9 点发送一份行业简报”。Agent 会分别调用 `feishu_schedule`、
 `feishu_schedule_list` 和 `feishu_schedule_cancel`。创建任务仅支持飞书会话；查看和取消操作只会
-作用于当前用户拥有的任务。每个用户最多同时保留 8 个定时任务。
+作用于当前用户拥有的任务。每个用户最多同时保留 4 个定时任务。
 
 创建任务时，`run_at` 和 `cron` 只能有一个有效值：
 

@@ -26,7 +26,7 @@ from ...utils.jwt_auth import create_access_token
 
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
 MAX_BACKGROUND_TASK_DELAY_SECONDS = 3 * 60
-MAX_SCHEDULED_TASKS_PER_USER = 8
+MAX_SCHEDULED_TASKS_PER_USER = 4
 
 
 class FeishuBackgroundMessageQueue(asyncio.Queue[FeishuBackgroundMessage]):
@@ -216,9 +216,9 @@ def schedule_feishu_task(
                 "schedule_type": schedule_type,
                 "schedule_value": schedule_value,
             },
-            coalesce=False,
+            coalesce=True,
             max_instances=1,
-            misfire_grace_time=1,
+            misfire_grace_time=10,
             replace_existing=False,
         )
 

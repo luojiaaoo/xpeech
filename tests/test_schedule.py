@@ -300,7 +300,7 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
 
 
 @pytest.mark.asyncio
-async def test_user_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
+async def test_user_can_have_at_most_four_scheduled_tasks(tmp_path: Path):
     scheduler = start_background_scheduler(tmp_path / "schedule.db")
     run_at = datetime.now(scheduler.timezone) + timedelta(hours=1)
     common = {
@@ -313,12 +313,12 @@ async def test_user_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
 
     jobs = [
         schedule_feishu_task(prompt=f"task-{index}", **common)
-        for index in range(8)
+        for index in range(4)
     ]
-    assert len(list_scheduled_tasks("session-1")) == 8
+    assert len(list_scheduled_tasks("session-1")) == 4
 
-    with pytest.raises(ValueError, match="maximum 8"):
-        schedule_feishu_task(prompt="task-9", **common)
+    with pytest.raises(ValueError, match="maximum 4"):
+        schedule_feishu_task(prompt="task-5", **common)
 
     schedule_feishu_task(prompt="other-user-task", **{**common, "user_id": "user-2"})
     assert len(list_scheduled_tasks("user-2")) == 1
@@ -326,7 +326,7 @@ async def test_user_can_have_at_most_eight_scheduled_tasks(tmp_path: Path):
     cancel_scheduled_task(user_id="session-1", job_id=jobs[0].id)
     replacement = schedule_feishu_task(prompt="replacement", **common)
     assert replacement.id
-    assert len(list_scheduled_tasks("session-1")) == 8
+    assert len(list_scheduled_tasks("session-1")) == 4
 
 
 @pytest.mark.asyncio
@@ -558,14 +558,14 @@ async def test_scheduler_api_validates_context_and_time(tmp_path, scheduler_http
 async def test_scheduler_api_limit_is_shared_across_http_clients(tmp_path, scheduler_http):
     start_background_scheduler(tmp_path / "schedule.db")
     args = FeishuScheduleArgs(prompt="task", cron="0 9 * * *")
-    for _ in range(8):
+    for _ in range(4):
         await feishu_schedule(
             args,
             session_metadata={"channel": "feishu", "open_id": "ou_1"},
             sender_name="Alice",
             user_id="alice",
         )
-    with pytest.raises(ValueError, match="maximum 8"):
+    with pytest.raises(ValueError, match="maximum 4"):
         await feishu_schedule(
             args,
             session_metadata={"channel": "feishu", "open_id": "ou_1"},
