@@ -169,10 +169,11 @@ Xpeech Deck 是自托管平台，需要与 Docker 和所有受管 Xpeech 实例�
 
 ## Docker Compose 部署
 
-Compose 会启动四个容器：
+Compose 会启动五类容器：
 
 - `lark-token-manager`：飞书用户令牌管理服务
-- `backend`：Xpeech API、Agent 和工具执行服务
+- `backend`：Xpeech API、Agent 和工具执行服务，默认启动 4 个副本
+- `nginx`：后端 API 入口，按 `x-user-id` 将同一用户稳定分配到同一 backend
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
 - `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
 
@@ -191,18 +192,23 @@ docker compose up -d --build
 ```
 
 后端默认暴露在 `http://localhost:7878`，Web 客户端默认暴露在
-`http://localhost:7939`。可通过环境变量 `BACKEND_PORT` 和 `WEB_CLIENT_PORT` 修改端口；
-lark-cli 使用设备授权流程，不依赖这两个端口：
+`http://localhost:7939`。可通过环境变量 `BACKEND_REPLICAS` 修改后端副本数，
+通过 `BACKEND_PORT` 和 `WEB_CLIENT_PORT` 修改对外端口；lark-cli 使用设备授权流程，
+不依赖这两个端口：
 
 ```bash
-BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
+BACKEND_REPLICAS=4 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 ```
+
+Nginx 使用一致性哈希按 `x-user-id` 分流。`/chat`、`/answer_question` 和文件请求都必须
+携带相同的 `x-user-id`；调整副本数或替换 backend 容器可能改变少量用户的映射，操作前应先等待
+正在进行的 SSE 会话结束。
 
 查看运行状态和日志：
 
 ```bash
 docker compose ps
-docker compose logs -f lark-token-manager backend feishu web_client
+docker compose logs -f lark-token-manager backend nginx feishu web_client
 ```
 
 持久化数据统一映射到宿主机
@@ -213,7 +219,7 @@ docker compose logs -f lark-token-manager backend feishu web_client
 lark-cli-auth：
 
 ```bash
-docker compose up -d --force-recreate lark-token-manager backend feishu web_client
+docker compose up -d --force-recreate lark-token-manager backend nginx feishu web_client
 
 # lark-cli 构建配置发生变化时
 docker compose up -d --build --force-recreate backend
