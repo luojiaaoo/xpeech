@@ -305,15 +305,24 @@ async def run_feishu_background_task(
                 json=request.model_dump(mode="json"),
             )
             response.raise_for_status()
-            content = ScheduledExecutionResult.model_validate(response.json()).content
+            result = ScheduledExecutionResult.model_validate(response.json())
     except (httpx.HTTPError, ValueError):
         logger.exception(
             "Scheduled Agent task failed job_id={} user_id={}",
             job_id,
             user_id,
         )
-        content = BACKGROUND_TASK_FAILURE_MESSAGE
+        result = ScheduledExecutionResult(
+            content=BACKGROUND_TASK_FAILURE_MESSAGE,
+            schedule_type=schedule_type,
+            schedule_value=schedule_value,
+        )
 
     await BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU].put(
-        FeishuBackgroundMessage(open_id=open_id, content=content),
+        FeishuBackgroundMessage(
+            open_id=open_id,
+            content=result.content,
+            schedule_type=result.schedule_type,
+            schedule_value=result.schedule_value,
+        ),
     )

@@ -29,6 +29,8 @@ class ScheduledExecution(BaseModel):
 
 class ScheduledExecutionResult(BaseModel):
     content: str = Field(min_length=1)
+    schedule_type: Literal["run_at", "cron"]
+    schedule_value: str
 
     @field_validator("content")
     @classmethod

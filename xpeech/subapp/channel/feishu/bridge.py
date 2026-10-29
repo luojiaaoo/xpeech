@@ -243,7 +243,13 @@ class FeishuBridge(
 
         result = await self.channel.send(
             to=background_message.open_id,
-            message={"card": build_feishu_background_task_card(background_message.content)},
+            message={
+                "card": build_feishu_background_task_card(
+                    background_message.content,
+                    schedule_type=background_message.schedule_type,
+                    schedule_value=background_message.schedule_value,
+                ),
+            },
         )
         self._ensure_send_success(result, operation="send background message")
         logger.info(

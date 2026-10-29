@@ -184,7 +184,11 @@ async def test_card_queue_override_preserves_parent_safety(monkeypatch, event_id
 
 
 def test_background_task_card_contains_result_content():
-    assert build_feishu_background_task_card("**scheduled result**") == {
+    assert build_feishu_background_task_card(
+        "**scheduled result**",
+        schedule_type="cron",
+        schedule_value="0 9 * * *",
+    ) == {
         "schema": "2.0",
         "header": {
             "title": {"tag": "plain_text", "content": "定时任务执行结果"},
@@ -195,11 +199,18 @@ def test_background_task_card_contains_result_content():
             "elements": [
                 {
                     "tag": "markdown",
+                    "content": "**调度类型**：cron\n**调度表达式**：`0 9 * * *`",
+                    "text_align": "left",
+                    "text_size": "normal",
+                    "margin": "0px 0px 0px 0px",
+                },
+                {
+                    "tag": "markdown",
                     "content": "**scheduled result**",
                     "text_align": "left",
                     "text_size": "normal",
                     "margin": "0px 0px 0px 0px",
-                }
+                },
             ]
         },
     }
@@ -215,6 +226,8 @@ async def test_background_poll_immediately_sends_markdown_card():
             "channel": "feishu",
             "open_id": "ou_receiver",
             "content": "**scheduled result**",
+            "schedule_type": "cron",
+            "schedule_value": "0 9 * * *",
         },
     )
     client = SimpleNamespace(get=AsyncMock(return_value=response))
@@ -229,7 +242,13 @@ async def test_background_poll_immediately_sends_markdown_card():
     assert client.get.await_args.kwargs["headers"]["authorization"].startswith("Bearer ")
     send.assert_awaited_once_with(
         to="ou_receiver",
-        message={"card": build_feishu_background_task_card("**scheduled result**")},
+        message={
+            "card": build_feishu_background_task_card(
+                "**scheduled result**",
+                schedule_type="cron",
+                schedule_value="0 9 * * *",
+            ),
+        },
     )
 
 

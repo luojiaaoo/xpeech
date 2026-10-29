@@ -34,7 +34,11 @@ def plain_text(content: str) -> dict[str, str]:
     return {"tag": "plain_text", "content": content}
 
 
-def build_feishu_background_task_card(content: str) -> dict[str, Any]:
+def build_feishu_background_task_card(
+    content: str,
+    schedule_type: str,
+    schedule_value: str,
+) -> dict[str, Any]:
     """Build a Feishu card for a background Agent task result."""
     return {
         "schema": "2.0",
@@ -47,11 +51,21 @@ def build_feishu_background_task_card(content: str) -> dict[str, Any]:
             "elements": [
                 {
                     "tag": "markdown",
+                    "content": (
+                        f"**调度类型**：{schedule_type}\n"
+                        f"**调度表达式**：`{schedule_value}`"
+                    ),
+                    "text_align": "left",
+                    "text_size": "normal",
+                    "margin": "0px 0px 0px 0px",
+                },
+                {
+                    "tag": "markdown",
                     "content": content,
                     "text_align": "left",
                     "text_size": "normal",
                     "margin": "0px 0px 0px 0px",
-                }
+                },
             ]
         },
     }

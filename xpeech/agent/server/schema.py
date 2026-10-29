@@ -48,6 +48,8 @@ class FeishuBackgroundMessage(BaseModel):
     channel: Literal[BackgroundMessageChannel.FEISHU] = BackgroundMessageChannel.FEISHU
     open_id: str = Field(min_length=1)
     content: str = Field(min_length=1)
+    schedule_type: Literal["run_at", "cron"]
+    schedule_value: str
 
     @field_validator("open_id", "content")
     @classmethod

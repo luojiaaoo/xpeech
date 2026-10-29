@@ -43,4 +43,8 @@ async def execute_scheduled_task(user_id: str, request: ScheduledExecution) -> S
     )
     runner = await AgentRunner.create(user_id)
     content = await runner.run_once(message, background=True)
-    return ScheduledExecutionResult(content=content)
+    return ScheduledExecutionResult(
+        content=content,
+        schedule_type=request.schedule_type,
+        schedule_value=request.schedule_value,
+    )

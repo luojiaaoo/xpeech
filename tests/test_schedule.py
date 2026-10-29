@@ -415,6 +415,8 @@ async def test_background_agent_queues_success_or_fixed_failure(
     ].get_nowait()
     assert queued.open_id == "ou_1"
     assert queued.content == expected
+    assert queued.schedule_type == "cron"
+    assert queued.schedule_value == "0 9 * * *"
     assert captured["user_id"] == "session-1"
     assert captured["background"] is True
     assert captured["message"].sender_name == "Alice"
@@ -466,10 +468,13 @@ async def test_background_agent_waits_for_random_delay(monkeypatch, backend_http
 
 def test_background_message_and_queue_are_strictly_typed():
     queue = FeishuBackgroundMessageQueue()
+    schedule = {"schedule_type": "cron", "schedule_value": "0 9 * * *"}
     with pytest.raises(ValidationError):
-        FeishuBackgroundMessage(open_id=" ", content="result")
+        FeishuBackgroundMessage(open_id=" ", content="result", **schedule)
     with pytest.raises(ValidationError):
-        FeishuBackgroundMessage(open_id="ou_1", content=" ")
+        FeishuBackgroundMessage(open_id="ou_1", content=" ", **schedule)
+    with pytest.raises(ValidationError):
+        FeishuBackgroundMessage(open_id="ou_1", content="result")
     with pytest.raises(TypeError):
         queue.put_nowait({"open_id": "ou_1", "content": "result"})
 
@@ -482,7 +487,10 @@ async def test_background_message_long_poll_returns_immediately(monkeypatch):
         "BACKGROUND_MESSAGE_QUEUES",
         {BackgroundMessageChannel.FEISHU: queue},
     )
-    message = FeishuBackgroundMessage(open_id="ou_1", content="result")
+    message = FeishuBackgroundMessage(
+        open_id="ou_1", content="result",
+        schedule_type="cron", schedule_value="0 9 * * *",
+    )
     queue.put_nowait(message)
     assert await scheduler_service.poll_background_message(BackgroundMessageChannel.FEISHU) == message
 
@@ -502,7 +510,12 @@ async def test_background_message_long_poll_times_out_with_204(monkeypatch):
 @pytest.mark.asyncio
 async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_http, monkeypatch):
     queue = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
-    queue.put_nowait(FeishuBackgroundMessage(open_id="ou_1", content="completed"))
+    queue.put_nowait(
+        FeishuBackgroundMessage(
+            open_id="ou_1", content="completed",
+            schedule_type="cron", schedule_value="0 9 * * *",
+        )
+    )
     monkeypatch.setattr(scheduler_service, "BACKGROUND_MESSAGE_LONG_POLL_SECONDS", 0.001)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=backend_app), base_url="http://test",
@@ -510,7 +523,10 @@ async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_htt
     ) as client:
         response = await client.get("/background_message?channel=feishu")
         assert response.status_code == 200
-        assert response.json() == {"channel": "feishu", "open_id": "ou_1", "content": "completed"}
+        assert response.json() == {
+            "channel": "feishu", "open_id": "ou_1", "content": "completed",
+            "schedule_type": "cron", "schedule_value": "0 9 * * *",
+        }
         response = await client.get("/background_message?channel=feishu")
         assert response.status_code == 204
 
