@@ -8,12 +8,6 @@ sandbox_home_path = "data/sandbox-home"
 cache_path = "data/cache"
 log_path = "data/logs"
 
-# 本地运行时需单独启动 `python -m xpeech.subapp scheduler`；Compose 自动设置内网地址。
-[scheduler]
-url = "http://127.0.0.1:8090"
-backend_url = "http://127.0.0.1:7878"
-execution_timeout_seconds = 3600
-
 [logging]
 retention_days = 7
 max_file_size_mb = 10
@@ -125,6 +119,4 @@ app_id = "cli_aa8fcbaccae41cba"
 app_secret = "xxxxxxx"
 
 [feishu.lark_cli]
-# Used at image build time to bake the manager endpoint into lark-cli binaries.
-manager_url = "http://lark-token-manager:7883"
 database_path = "data/lark-token-manager/tokens.db"

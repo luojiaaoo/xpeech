@@ -40,9 +40,14 @@ def test_core_does_not_import_subapps():
 @pytest.mark.parametrize(
     "entrypoint, arguments, target, expected",
     [
-        ("xpeech.__main__", [], "xpeech.agent.server.app", {"host": "0.0.0.0", "port": 7878}),
-        ("xpeech.__main__", ["api", "--port", "8080"], "xpeech.agent.server.app", {"host": "0.0.0.0", "port": 8080}),
-        ("xpeech.__main__", ["scheduler"], "xpeech.subapp.scheduler.app", {"host": "0.0.0.0", "port": 8090}),
+        ("xpeech.__main__", [], "xpeech.agent.server.app", {"host": "0.0.0.0", "port": 7878, "scheduler_url": "http://127.0.0.1:8090"}),
+        ("xpeech.__main__", ["api", "--port", "8080", "--scheduler-url", "http://scheduler:8090"], "xpeech.agent.server.app", {"host": "0.0.0.0", "port": 8080, "scheduler_url": "http://scheduler:8090"}),
+        (
+            "xpeech.__main__",
+            ["scheduler", "--backend-url", "http://nginx:7878"],
+            "xpeech.subapp.scheduler.app",
+            {"host": "0.0.0.0", "port": 8090, "backend_url": "http://nginx:7878"},
+        ),
         ("xpeech.__main__", ["token_manager"], "xpeech.subapp.lark_token_manager.app", {"host": "0.0.0.0", "port": 7883}),
         ("xpeech.__main__", ["feishu"], "xpeech.subapp.channel.feishu.bridge", {"chat_url": "http://127.0.0.1:7878"}),
         ("xpeech.__main__", ["web_client"], "xpeech.subapp.channel.web_client.app", {"host": "0.0.0.0", "port": 7939, "backend_url": "http://127.0.0.1:7878"}),

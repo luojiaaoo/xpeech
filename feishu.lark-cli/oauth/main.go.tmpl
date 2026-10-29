@@ -18,7 +18,7 @@ import (
     "github.com/larksuite/cli/shortcuts"
 )
 
-const managerURL = {{TOKEN_MANAGER_URL}}
+const tokenManagerURLEnv = "XPEECH_TOKEN_MANAGER_URL"
 
 type scopesFlag []string
 func (s *scopesFlag) String() string { return strings.Join(*s, " ") }
@@ -61,7 +61,8 @@ func run(args []string) int {
     }
     session := strings.TrimSpace(os.Getenv("SHELL_USER_ID"))
     if session == "" { fmt.Fprintln(os.Stderr, "lark-cli-auth: this command must run in an Xpeech managed session"); return 1 }
-    endpoint := strings.TrimRight(managerURL, "/")
+    endpoint := strings.TrimRight(strings.TrimSpace(os.Getenv(tokenManagerURLEnv)), "/")
+    if endpoint == "" { fmt.Fprintf(os.Stderr, "lark-cli-auth: %s must be configured\n", tokenManagerURLEnv); return 1 }
     switch command {
     case "login", "authorize":
         var result struct { AuthorizationURL string `json:"authorization_url"`; VerificationURI string `json:"verification_uri"`; UserCode string `json:"user_code"`; Scopes []string `json:"scopes"`; Status string `json:"status"` }

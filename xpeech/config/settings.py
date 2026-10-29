@@ -154,16 +154,7 @@ class LLMConfig(BaseModel):
 class LarkCLIConfig(BaseModel):
     """Configuration shared by the token manager and lark-cli clients."""
 
-    manager_url: str = "http://lark-token-manager:7883"
     database_path: Path = Path("data/lark-token-manager/tokens.db")
-
-    @field_validator("manager_url")
-    @classmethod
-    def validate_lark_http_url(cls, value: str) -> str:
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("lark-cli URLs must be absolute HTTP(S) URLs")
-        return value.rstrip("/")
 
 
 class FeishuConfig(BaseModel):
@@ -311,22 +302,6 @@ class WebClientConfig(BaseModel):
         return self
 
 
-class SchedulerConfig(BaseModel):
-    """Internal scheduler API and the backend gateway used for task execution."""
-
-    url: str = "http://127.0.0.1:8090"
-    backend_url: str = "http://127.0.0.1:7878"
-    execution_timeout_seconds: float = Field(default=3600, gt=0)
-
-    @field_validator("url", "backend_url")
-    @classmethod
-    def validate_url(cls, value: str) -> str:
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("scheduler URLs must be absolute HTTP(S) URLs")
-        return value.rstrip("/")
-
-
 class Settings(BaseSettings):
     path: PathConfig
     tool: ToolConfig = ToolConfig()
@@ -334,7 +309,6 @@ class Settings(BaseSettings):
     feishu: FeishuConfig
     logging: LoggingConfig = LoggingConfig()
     jwt: JWTConfig
-    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     web_client: WebClientConfig = Field(default_factory=WebClientConfig)
 
     @classmethod

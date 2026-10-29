@@ -25,6 +25,7 @@ from ...config.settings import settings
 from ...utils.jwt_auth import create_access_token
 
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
+EXECUTION_TIMEOUT_SECONDS = 3600.0
 MAX_BACKGROUND_TASK_DELAY_SECONDS = 3 * 60
 MAX_SCHEDULED_TASKS_PER_USER = 4
 
@@ -283,6 +284,8 @@ async def run_feishu_background_task(
     await asyncio.sleep(delay_seconds)
 
     open_id = session_metadata["open_id"]
+    from .app import app
+
     try:
         request = ScheduledExecution(
             job_id=job_id,
@@ -292,9 +295,9 @@ async def run_feishu_background_task(
             schedule_type=schedule_type,
             schedule_value=schedule_value,
         )
-        async with httpx.AsyncClient(timeout=settings.scheduler.execution_timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=EXECUTION_TIMEOUT_SECONDS) as client:
             response = await client.post(
-                f"{settings.scheduler.backend_url}/internal/scheduled-run",
+                f"{app.state.backend_url}/internal/scheduled-run",
                 headers={
                     "Authorization": f"Bearer {create_access_token()}",
                     "x-user-id": user_id,

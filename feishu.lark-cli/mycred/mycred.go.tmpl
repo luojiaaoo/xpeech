@@ -21,9 +21,9 @@ import (
 
 const (
     appID = {{APP_ID}}
-    managerURL = {{TOKEN_MANAGER_URL}}
     httpTimeout = 10 * time.Second
     directUserAccessTokenEnv = "LARKSUITE_CLI_USER_ACCESS_TOKEN"
+    tokenManagerURLEnv = "XPEECH_TOKEN_MANAGER_URL"
 )
 
 type Provider struct{}
@@ -47,7 +47,9 @@ func (p *Provider) ResolveToken(ctx context.Context, req credential.TokenSpec) (
     if req.Type == credential.TokenTypeTAT { tokenType = "tenant" }
     userID := strings.TrimSpace(os.Getenv("SHELL_USER_ID"))
     if userID == "" { return nil, fmt.Errorf("xpeech token manager requires a managed session") }
-    migrateLegacy(ctx, endpointForManager(), userID)
+    managerURL := tokenManagerURL()
+    if managerURL == "" { return nil, fmt.Errorf("%s must be configured", tokenManagerURLEnv) }
+    migrateLegacy(ctx, managerURL, userID)
     payload, _ := json.Marshal(map[string]any{"user_id": userID, "token_type": tokenType})
     endpoint := strings.TrimRight(managerURL, "/") + "/v1/token/resolve"
     request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
@@ -73,7 +75,7 @@ func directUserAccessToken() string {
     return strings.TrimSpace(os.Getenv(directUserAccessTokenEnv))
 }
 
-func endpointForManager() string { return strings.TrimRight(managerURL, "/") }
+func tokenManagerURL() string { return strings.TrimRight(strings.TrimSpace(os.Getenv(tokenManagerURLEnv)), "/") }
 
 func migrateLegacy(ctx context.Context, endpoint, userID string) {
     home, err := os.UserHomeDir(); if err != nil { return }
@@ -103,6 +105,8 @@ func (p *tokenInvalidationProvider) ResolveInterceptor(context.Context) exttrans
     if directUserAccessToken() != "" { return nil }
     userID := strings.TrimSpace(os.Getenv("SHELL_USER_ID"))
     if userID == "" { return nil }
+    managerURL := tokenManagerURL()
+    if managerURL == "" { return nil }
     return &tokenInvalidationInterceptor{userID: userID, managerURL: managerURL}
 }
 

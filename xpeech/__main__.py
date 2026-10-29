@@ -3,29 +3,44 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+from urllib.parse import urlsplit
 
 # 取消 litellm 的本地模型成本映射
 os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
 
 
+def _normalize_http_url(url: str) -> str:
+    normalized = url.rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise argparse.ArgumentTypeError("URL must be an absolute HTTP(S) URL")
+    return normalized
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run an Xpeech service.")
+    parser.set_defaults(
+        host="0.0.0.0",
+        port=7878,
+        scheduler_url="http://127.0.0.1:8090",
+    )
     subparsers = parser.add_subparsers(dest="service")
 
     api_parser = subparsers.add_parser("api", help="Run the Xpeech API service.")
     api_parser.add_argument("--host", default="0.0.0.0")
     api_parser.add_argument("--port", type=int, default=7878)
+    api_parser.add_argument("--scheduler-url", type=_normalize_http_url, default="http://127.0.0.1:8090")
     api_parser.set_defaults(service="api")
 
     feishu_parser = subparsers.add_parser("feishu", help="Run the Feishu bridge.")
-    feishu_parser.add_argument("--chat-url", default="http://127.0.0.1:7878")
+    feishu_parser.add_argument("--chat-url", type=_normalize_http_url, default="http://127.0.0.1:7878")
 
     web_client_parser = subparsers.add_parser(
         "web_client", help="Run the authenticated web client.",
     )
     web_client_parser.add_argument("--host", default="0.0.0.0")
     web_client_parser.add_argument("--port", type=int, default=7939)
-    web_client_parser.add_argument("--backend-url", default="http://127.0.0.1:7878")
+    web_client_parser.add_argument("--backend-url", type=_normalize_http_url, default="http://127.0.0.1:7878")
 
     token_parser = subparsers.add_parser(
         "token_manager", help="Run the Lark token manager.",
@@ -38,6 +53,7 @@ def main() -> None:
     )
     scheduler_parser.add_argument("--host", default="0.0.0.0")
     scheduler_parser.add_argument("--port", type=int, default=8090)
+    scheduler_parser.add_argument("--backend-url", type=_normalize_http_url, default="http://127.0.0.1:7878")
 
     args = parser.parse_args()
     service = args.service or "api"
@@ -47,7 +63,7 @@ def main() -> None:
 
         if platform.system() != "Linux":
             raise RuntimeError("Xpeech API is only supported on Linux.")
-        run(host=getattr(args, "host", "0.0.0.0"), port=getattr(args, "port", 7878))
+        run(host=args.host, port=args.port, scheduler_url=args.scheduler_url)
         return
 
     if service == "feishu":
@@ -71,7 +87,7 @@ def main() -> None:
     if service == "scheduler":
         from .subapp.scheduler.app import run
 
-        run(host=args.host, port=args.port)
+        run(host=args.host, port=args.port, backend_url=args.backend_url)
         return
 
     parser.error(f"Unknown service: {service}")

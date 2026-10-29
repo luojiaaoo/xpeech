@@ -8,7 +8,7 @@ from typing import Annotated
 
 import uvicorn
 from fastapi import Cookie, Depends, FastAPI, HTTPException, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .dao import User, WebClientDAO
@@ -67,6 +67,10 @@ def create_app(config: WebConfig) -> FastAPI:
         redoc_url=None,
         lifespan=lifespan,
     )
+
+    @app.get("/health", include_in_schema=False)
+    async def health():
+        return PlainTextResponse("ok")
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon():

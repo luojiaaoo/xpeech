@@ -39,6 +39,9 @@ from xpeech.subapp.scheduler.background import (
 )
 from xpeech.utils.jwt_auth import create_access_token, decode_access_token
 
+TEST_SCHEDULER_URL = "http://127.0.0.1:8090"
+TEST_BACKEND_URL = "http://127.0.0.1:7878"
+
 
 def drain_queue(queue: FeishuBackgroundMessageQueue) -> None:
     while not queue.empty():
@@ -47,6 +50,12 @@ def drain_queue(queue: FeishuBackgroundMessageQueue) -> None:
 
 @pytest.fixture
 def scheduler_http(monkeypatch):
+    monkeypatch.setattr(
+        backend_app.state,
+        "scheduler_url",
+        TEST_SCHEDULER_URL,
+        raising=False,
+    )
     client_class = httpx.AsyncClient
     transport = httpx.ASGITransport(app=scheduler_service.app)
     monkeypatch.setattr(
@@ -65,7 +74,7 @@ def backend_http(monkeypatch):
         requests.append(request)
         token = request.headers["authorization"].removeprefix("Bearer ")
         decode_access_token(token)
-        assert str(request.url) == f"{settings.scheduler.backend_url}/internal/scheduled-run"
+        assert str(request.url) == f"{TEST_BACKEND_URL}/internal/scheduled-run"
         assert request.headers["x-user-id"] == "session-1"
 
     monkeypatch.setattr(
@@ -78,7 +87,13 @@ def backend_http(monkeypatch):
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def clean_background_state():
+async def clean_background_state(monkeypatch):
+    monkeypatch.setattr(
+        scheduler_service.app.state,
+        "backend_url",
+        TEST_BACKEND_URL,
+        raising=False,
+    )
     stop_background_scheduler()
     drain_queue(
         background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]

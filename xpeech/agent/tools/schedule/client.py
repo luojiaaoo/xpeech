@@ -4,7 +4,6 @@ from typing import Any
 
 from httpx import AsyncClient
 
-from ....config.settings import settings
 from ....utils.jwt_auth import create_access_token
 
 
@@ -16,13 +15,16 @@ async def scheduler_request(
     payload: dict[str, Any] | None = None,
     timeout: float = 30,
 ) -> Any:
+    from ...server.server import app
+
+    scheduler_url = app.state.scheduler_url
     headers = {"Authorization": f"Bearer {create_access_token()}"}
     if user_id is not None:
         headers["x-user-id"] = user_id
     async with AsyncClient(timeout=timeout) as client:
         response = await client.request(
             method,
-            f"{settings.scheduler.url}{path}",
+            f"{scheduler_url}{path}",
             headers=headers,
             json=payload,
         )

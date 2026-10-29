@@ -122,6 +122,7 @@ Docker 镜像会从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签�
 `lark-cli` 和非阻塞的 `/usr/local/bin/lark-cli-auth`。独立的 `lark-token-manager` 服务负责设备授权、
 令牌加密存储和周期刷新；`lark-cli` 通过内部接口取得当前 Xpeech session 的短期令牌。
 `app_id`、`app_secret` 只由 lark-token-manager 在运行时读取，修改后重启服务即可。
+backend 通过环境变量 `XPEECH_TOKEN_MANAGER_URL` 获取 lark-token-manager 的内部地址。
 
 已有用户访问令牌时，通过环境变量 `LARKSUITE_CLI_USER_ACCESS_TOKEN` 注入即可，
 用户身份命令会直接使用该令牌，跳过 lark-token-manager 的令牌获取、迁移和失效通知。
@@ -265,8 +266,8 @@ docker compose up -d --build --force-recreate backend
 停机期间错过的任务会被跳过。待发送结果保存在 scheduler 内存中，重启会丢失未发送结果。
 
 本地运行 API 时，也需要在另一个终端执行 `uv run -m xpeech scheduler`。
-通过 `[scheduler]` 的 `url`、`backend_url` 配置服务地址（默认分别为
-`http://127.0.0.1:8090` 和 `http://127.0.0.1:7878`）。
+API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backend-url` 指定 backend
+网关地址；两者默认分别为 `http://127.0.0.1:8090` 和 `http://127.0.0.1:7878`。
 
 ## 发送消息
 
@@ -387,8 +388,8 @@ curl -N -X POST "http://localhost:7878/chat" \
 - 空字符串和纯空白字段按未提供处理；如果两个字段都有有效值，或两个字段都没有有效值，任务创建失败。
 
 独立的 scheduler 服务启动时会读取 `[path].session_schedule_path` 指定的 SQLite 数据库。
-backend 通过 `[scheduler].url` 管理任务，scheduler 通过 `[scheduler].backend_url` 触发执行；
-Compose 已将后者配置为 Nginx 地址。配置模板使用：
+backend 通过 `api --scheduler-url` 管理任务，scheduler 通过 `scheduler --backend-url` 触发执行；
+Compose 将后者设置为 Nginx 地址。配置模板使用：
 
 ```toml
 [path]

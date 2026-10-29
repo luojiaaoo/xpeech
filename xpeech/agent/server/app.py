@@ -4,7 +4,8 @@ from . import api # noqa
 import uvicorn
 
 
-def run(host="0.0.0.0", port=7878):
+def run(host="0.0.0.0", port=7878, *, scheduler_url: str):
+    app.state.scheduler_url = scheduler_url
     uvicorn.run(
         app=app,
         host=host,

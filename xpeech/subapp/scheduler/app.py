@@ -111,8 +111,9 @@ async def poll_background_message(
         return Response(status_code=204)
 
 
-def run(host: str = "0.0.0.0", port: int = 8090) -> None:
+def run(host: str = "0.0.0.0", port: int = 8090, *, backend_url: str) -> None:
     import uvicorn
 
     configure_logging()
+    app.state.backend_url = backend_url
     uvicorn.run(app, host=host, port=port, workers=1, lifespan="on")
