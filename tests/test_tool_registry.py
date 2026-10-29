@@ -49,7 +49,8 @@ async def test_registers_supported_default_and_mcp_tools(
     monkeypatch.setattr(registry, "build_file_tools", lambda **_kwargs: file_tools)
     monkeypatch.setattr(registry, "build_shell_tools", lambda **_kwargs: named_tool("shell"))
     monkeypatch.setattr(registry, "web_fetch", named_tool("web_fetch"))
-    monkeypatch.setattr(registry, "web_search", named_tool("web_search"))
+    for name in ("baidu_search", "bing_search", "news_search"):
+        monkeypatch.setattr(registry, name, named_tool(name))
     monkeypatch.setattr(registry, "build_browser_preview_tool", lambda **_kwargs: named_tool("browser_preview"))
     monkeypatch.setattr(registry, "build_file_message_tools", lambda **_kwargs: named_tool("send_file"))
     monkeypatch.setattr(registry, "ask_user_question", named_tool("ask_user_question"))
@@ -80,7 +81,9 @@ async def test_registers_supported_default_and_mcp_tools(
         "edit_file",
         "shell",
         "web_fetch",
-        "web_search",
+        "baidu_search",
+        "bing_search",
+        "news_search",
         "arxiv_search",
         "arxiv_download",
         "browser_preview",

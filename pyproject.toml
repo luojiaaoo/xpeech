@@ -13,7 +13,6 @@ dependencies = [
     "asyncer>=0.0.17",
     "baidusearch>=1.0.3",
     "charset-normalizer>=3.4.7",
-    "ddgs>=9.0.0",
     "fastapi>=0.136.1",
     "firecrawl-anydoc>=0.2.4",
     "httpx>=0.28.1",

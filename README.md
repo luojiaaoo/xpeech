@@ -504,7 +504,7 @@ tool_timeout = 120
 因此 MCP、内置文件工具和 Shell 的相对路径基准保持一致。远程 MCP 服务若需
 直接读写文件，必须能以相同绝对路径访问该目录。
 
-普通搜索和网页文本抓取使用 `web_search` 和 `web_fetch`。`browser_preview_base_url` 只负责生成
+普通搜索使用 `baidu_search`、`bing_search` 和 `news_search`，网页文本抓取使用 `web_fetch`。`browser_preview_base_url` 只负责生成
 用户可访问的 HTML 预览 URL 前缀，FastAPI 路由由该 URL 的 path 部分自动注册；
 `browser_preview_path` 只负责存放预览文件，两者没有
 路径推导关系。`create_browser_preview` 会把目录复制到 `<browser_preview_path>/<uuid>/`；
@@ -548,7 +548,9 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `list_dir` | 列出工作区或内置技能目录内容 |
 | `shell` | 执行 Bash 命令（带工作区路径限制和 bwrap 沙盒） |
 | `web_fetch` | 使用 requests 抓取网页、Trafilatura 提取正文和评论并输出 Markdown，保留链接和表格；模型可通过 include_images 选择保留图片信息；支持 HTTP 重定向，不启动浏览器、不执行 JavaScript |
-| `web_search` | 使用百度、DuckDuckGo 或聚合新闻源搜索，返回标题、链接、摘要；支持条数和时间范围过滤（百度不支持时间过滤） |
+| `baidu_search` | 使用百度搜索中文网页，返回标题、链接、摘要；支持条数限制，不支持时间过滤 |
+| `bing_search` | 使用必应 RSS 搜索网页，返回标题、链接、摘要；支持条数限制，不支持时间过滤 |
+| `news_search` | 直接读取 Bing 新闻 RSS，返回标题、链接、摘要、日期和媒体来源；按 RSS 发布时间过滤时间范围 |
 | `create_browser_preview` | 将工作区内目录或单个 HTML 复制到 UUID 预览目录，返回目录 URL 前缀或完整文件 URL |
 | `read_doc_file` | 使用 firecrawl-anydoc 读取 Word、PowerPoint、Excel（含旧版和宏格式）、OpenDocument、RTF、EPUB、CSV、PDF，输出 Markdown |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |

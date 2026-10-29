@@ -12,7 +12,7 @@ from .research import build_research_tools
 from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .sessions import build_session_tools
 from .shell import build_shell_tools
-from .web import web_fetch, web_search
+from .web import web_fetch, baidu_search, bing_search, news_search
 
 
 async def register_default_tools(
@@ -36,7 +36,8 @@ async def register_default_tools(
 
     provider.register_tool()(build_shell_tools(workspace=workspace))
     provider.register_tool()(web_fetch)
-    provider.register_tool()(web_search)
+    for tool in (baidu_search, bing_search, news_search):
+        provider.register_tool()(tool)
     for tool in build_research_tools(workspace=workspace):
         provider.register_tool()(tool)
 
