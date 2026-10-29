@@ -4,6 +4,7 @@ from xml.etree import ElementTree
 import pytest
 from pydantic import ValidationError
 
+from xpeech.agent.server.context import lark_user_access_token_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillInfo, SkillMetadata, SkillsLoader
 
@@ -42,6 +43,41 @@ def test_internal_builtin_skills_are_marked(skill_name: str):
 
     assert skill.metadata.internal is True
     assert skill.metadata.kwargs == {}
+
+
+@pytest.mark.parametrize(
+    ("skill_name", "short_description"),
+    [
+        ("algorithmic-poster-philosophy", "海报设计"),
+        ("chat2duckdb", "DuckDB 数据分析"),
+        ("lark-skills", "飞书全能力助手"),
+        ("markdown-formatter", "Markdown 格式化"),
+        ("presentation-generation", "演示文稿生成"),
+        ("weather", "天气查询与预报"),
+    ],
+)
+def test_builtin_short_descriptions_match_backend_server(
+    skill_name: str, short_description: str
+):
+    skill_file = skill_module.BUILTIN_SKILLS_DIR / skill_name / "SKILL.md"
+    skill = SkillInfo(source="builtin", path=str(skill_file), content=skill_file.read_text())
+
+    assert skill.metadata.kwargs["short_description"] == short_description
+
+
+@pytest.mark.asyncio
+async def test_injected_token_selects_dedicated_lark_skill(tmp_path: Path):
+    context = lark_user_access_token_var.set("u-request-token")
+    try:
+        skills = await SkillsLoader(tmp_path / "workspace").list_skill_info()
+    finally:
+        lark_user_access_token_var.reset(context)
+
+    lark_skills = [skill for skill in skills if skill.metadata.name == "lark-skills-token"]
+    assert len(lark_skills) == 1
+    assert "用户访问令牌由请求 JWT 注入" in lark_skills[0].body
+    assert lark_skills[0].path == str(tmp_path / "workspace/skills/lark-skills-token/SKILL.md")
+    assert all(skill.metadata.name not in {"lark-skills", "lark-cli-auth"} for skill in skills)
 
 
 @pytest.mark.parametrize("content", ["# Instructions", "---\nname: example\n# Missing closing delimiter"])

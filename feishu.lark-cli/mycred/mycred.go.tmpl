@@ -35,10 +35,13 @@ func (p *Provider) ResolveAccount(context.Context) (*credential.Account, error) 
 }
 
 func (p *Provider) ResolveToken(ctx context.Context, req credential.TokenSpec) (*credential.Token, error) {
-    if req.Type == credential.TokenTypeUAT {
-        if token := directUserAccessToken(); token != "" {
+    if token := directUserAccessToken(); token != "" {
+        if req.Type == credential.TokenTypeUAT {
             return &credential.Token{Value: token, Source: "env:" + directUserAccessTokenEnv}, nil
         }
+        // A request carrying an injected user token is deliberately isolated
+        // from the token-manager. Do not fall back to tenant/bot credentials.
+        return nil, &credential.BlockError{Provider: p.Name(), Reason: "an injected user token only supports user identity"}
     }
     tokenType := "user"
     if req.Type == credential.TokenTypeTAT { tokenType = "tenant" }
@@ -97,6 +100,7 @@ func (p *tokenInvalidationProvider) SupportsRequestClass(class exttransport.Requ
     return class == exttransport.RequestClassPlatform
 }
 func (p *tokenInvalidationProvider) ResolveInterceptor(context.Context) exttransport.Interceptor {
+    if directUserAccessToken() != "" { return nil }
     userID := strings.TrimSpace(os.Getenv("SHELL_USER_ID"))
     if userID == "" { return nil }
     return &tokenInvalidationInterceptor{userID: userID, managerURL: managerURL}

@@ -1,5 +1,6 @@
 ---
 name: chat2duckdb
+short_description: DuckDB 数据分析
 description: 基于 DuckDB 引擎的高效数据分析工具；当用户需要对 CSV/JSON/Parquet/Excel 等数据文件进行 SQL 查询、数据分析、数据抽样或需要自动纠错的查询执行时使用
 dependency:
   python:

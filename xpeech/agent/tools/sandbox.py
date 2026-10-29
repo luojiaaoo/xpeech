@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ...config.settings import settings
 from ...utils.file_io import ensure_path
-from ..server.context import get_user_id
+from ..server.context import get_lark_user_access_token, get_user_id
 from ..skills.skill import iter_builtin_skill_dirs
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -73,6 +73,12 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
         "SHELL_USER_ID": user_id, # 注入 user_id，给插件使用
     }
     sandbox_env.update(env or {})
+    lark_user_access_token = get_lark_user_access_token()
+    if lark_user_access_token:
+        sandbox_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = lark_user_access_token
+    else:
+        sandbox_env.pop("LARKSUITE_CLI_USER_ACCESS_TOKEN", None)
+        args.extend(["--unsetenv", "LARKSUITE_CLI_USER_ACCESS_TOKEN"])
     for key, value in sandbox_env.items():
         _add_setenv(args, key, value)
 

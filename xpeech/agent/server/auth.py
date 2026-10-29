@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from ...config.settings import settings
 from ...utils.jwt_auth import create_access_token, decode_access_token
+from .context import lark_user_access_token_var
 
 router = APIRouter(tags=["auth"])
 oauth2_scheme = OAuth2PasswordBearer(
@@ -55,7 +56,11 @@ def _authenticate_token(token: str | None) -> dict[str, Any]:
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        return decode_access_token(token)
+        claims = decode_access_token(token)
+        lark_user_access_token = claims.get("lark_user_access_token")
+        if lark_user_access_token is not None and not isinstance(lark_user_access_token, str):
+            raise jwt.InvalidTokenError("Invalid lark_user_access_token claim")
+        return claims
     except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -64,9 +69,11 @@ def _authenticate_token(token: str | None) -> dict[str, Any]:
         )
 
 
-def require_jwt(
+async def require_jwt(
     token: Annotated[str, Depends(oauth2_scheme)],
 ) -> dict[str, Any]:
     """Authenticate API callers with a Bearer token."""
 
-    return _authenticate_token(token)
+    claims = _authenticate_token(token)
+    lark_user_access_token_var.set(claims.get("lark_user_access_token"))
+    return claims

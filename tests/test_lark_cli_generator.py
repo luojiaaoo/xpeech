@@ -56,6 +56,20 @@ def test_render_mycred_source_delegates_user_auth_to_executable(tmp_path: Path):
     assert "XPEECH_TOKEN_MANAGER_URL" not in source
 
 
+def test_injected_user_token_never_falls_back_to_token_manager(tmp_path: Path):
+    config_path = tmp_path / "conf.toml"
+    _write_config(config_path)
+
+    source = lark_cli_generator.render_source(config_path, MYCRED_TEMPLATE_PATH)
+
+    injected_branch = source.index('if token := directUserAccessToken(); token != ""')
+    manager_request = source.index('endpoint := strings.TrimRight(managerURL, "/")')
+    assert injected_branch < manager_request
+    assert "credential.BlockError" in source[injected_branch:manager_request]
+    assert "an injected user token only supports user identity" in source
+    assert 'if directUserAccessToken() != "" { return nil }' in source
+
+
 def test_refresh_flow_requires_rotation_and_classifies_terminal_errors(
     tmp_path: Path,
 ):

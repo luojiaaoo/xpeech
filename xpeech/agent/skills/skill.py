@@ -11,9 +11,13 @@ from loguru import logger
 from pydantic import BaseModel, Field, computed_field
 
 from ...utils.file_io import LockedFile, ensure_path_async
+from ..server.context import get_lark_user_access_token
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent / "buildin"
+LARK_SKILLS_DIR_NAME = "lark-skills"
+LARK_TOKEN_SKILLS_DIR_NAME = "lark-skills-token"
+LARK_CLI_AUTH_SKILL_DIR_NAME = "lark-cli-auth"
 FRONTMATTER_PATTERN = re.compile(r"^---\r?\n(.*?)\r?\n---(?:\r?\n|$)", re.DOTALL)
 
 
@@ -84,11 +88,18 @@ class SkillInfo(BaseModel):
 
 def iter_builtin_skill_dirs() -> list[Path]:
     """Return valid built-in skill directories in a stable order."""
+    if get_lark_user_access_token():
+        excluded_skill_names = {LARK_SKILLS_DIR_NAME, LARK_CLI_AUTH_SKILL_DIR_NAME}
+    else:
+        excluded_skill_names = {LARK_TOKEN_SKILLS_DIR_NAME}
+
     return sorted(
         (
             skill_dir
             for skill_dir in BUILTIN_SKILLS_DIR.iterdir()
-            if skill_dir.is_dir() and (skill_dir / "SKILL.md").is_file()
+            if skill_dir.is_dir()
+            and (skill_dir / "SKILL.md").is_file()
+            and skill_dir.name not in excluded_skill_names
         ),
         key=lambda skill_dir: skill_dir.name,
     )

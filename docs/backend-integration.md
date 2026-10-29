@@ -58,16 +58,18 @@ def create_xpeech_token(secret: str) -> str:
     )
 ```
 
-如果本次 Agent 请求需要调用飞书用户身份命令，可以在 JWT 中额外放入字符串类型的 `user_access_token`：
+如果本次 Agent 请求需要调用飞书用户身份命令，可以在 JWT 中额外放入字符串类型的 `lark_user_access_token`：
 
 ```python
 claims = {
     "exp": datetime.now(UTC) + timedelta(seconds=60),
-    "user_access_token": "<feishu-user-access-token>",
+    "lark_user_access_token": "<feishu-user-access-token>",
 }
 ```
 
 该字段只在当前请求上下文中使用，不会保存到会话历史。后续请求需要重新携带。
+携带非空字段时，沙盒加载 `lark-skills-token`，使用 JWT 中的用户令牌，
+且 `lark-cli` 不会回退请求 `lark-token-manager`；未携带时加载 `lark-skills` 和 `lark-cli-auth`，使用令牌容器。
 
 `POST /token` 主要供 Swagger UI 调试：表单中的 `password` 为共享 JWT 密钥，`username` 可任意填写。业务系统应自行签发 JWT，不应在浏览器、移动端或其他不可信客户端中保存或传输共享密钥。
 

@@ -123,7 +123,7 @@ Docker 镜像会从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签�
 此时无需 `SHELL_USER_ID`，令牌过期后由调用方替换：
 
 ```bash
-LARKSUITE_CLI_USER_ACCESS_TOKEN="<user_access_token>" lark-cli docs +fetch --doc "<文档 URL 或 token>" --as user
+LARKSUITE_CLI_USER_ACCESS_TOKEN="<lark_user_access_token>" lark-cli docs +fetch --doc "<文档 URL 或 token>" --as user
 ```
 
 未提供令牌时使用下述托管认证流程。修改 CLI 后需重新构建 Docker 镜像才能生效。

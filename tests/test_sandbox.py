@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from xpeech.agent.server.context import user_id_var
+from xpeech.agent.server.context import lark_user_access_token_var, user_id_var
+from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR
 from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import safe_resolve_workspace_path
@@ -180,3 +181,32 @@ def test_wrap_command_uses_private_home_and_maps_mirror_configs(
     assert {
         (str(config_home / relative_path), str(home / relative_path)) for relative_path in config_files
     } <= read_only_binds
+
+
+def test_wrap_command_selects_lark_skills_by_injected_token(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def wrapped(token: str | None) -> tuple[dict[str, str], set[tuple[str, str]]]:
+        context = lark_user_access_token_var.set(token)
+        try:
+            args = shlex.split(sandbox.wrap_command("true", workspace))
+        finally:
+            lark_user_access_token_var.reset(context)
+        return dict(_option_pairs(args, "--setenv")), set(_option_pairs(args, "--ro-bind"))
+
+    plain_environment, plain_binds = wrapped(None)
+    token_environment, token_binds = wrapped("u-request-token")
+    skills_target = workspace / "skills"
+    builtin_root = BUILTIN_SKILLS_DIR.resolve()
+
+    assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in plain_environment
+    assert (str(builtin_root / "lark-skills"), str(skills_target / "lark-skills")) in plain_binds
+    assert (str(builtin_root / "lark-cli-auth"), str(skills_target / "lark-cli-auth")) in plain_binds
+
+    assert token_environment["LARKSUITE_CLI_USER_ACCESS_TOKEN"] == "u-request-token"
+    assert (
+        str(builtin_root / "lark-skills-token"),
+        str(skills_target / "lark-skills-token"),
+    ) in token_binds
+    assert not any(target == str(skills_target / "lark-cli-auth") for _, target in token_binds)
