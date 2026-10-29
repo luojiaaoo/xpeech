@@ -1,5 +1,7 @@
 import asyncio
+import threading
 from pathlib import Path
+from time import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -19,6 +21,7 @@ from lark_channel import (
     SendResult,
     TextContent,
 )
+from lark_channel.channel.safety.pipeline import SafetyPipeline
 
 import xpeech.channel.feishu.bridge as feishu_bridge
 import xpeech.channel.feishu.delivery as feishu_delivery
@@ -73,6 +76,77 @@ def test_channel_uses_expected_compatibility_configuration():
     assert bridge.channel.config.safety.dedup.ttl_seconds == 43_200
     assert bridge.channel.config.outbound.retry.max_attempts == 5
     assert bridge.channel.config.security.mode == "compat"
+
+
+@pytest.mark.parametrize(
+    ("kind", "contents"),
+    [
+        ("text", [TextContent(text="first"), TextContent(text="second")]),
+        ("text", [TextContent(text="a" * 1500), TextContent(text="b" * 1500)]),
+        ("image", [ImageContent(image_key="img_first"), ImageContent(image_key="img_second")]),
+        (
+            "file",
+            [
+                FileContent(file_key="file_first", file_name="first.txt"),
+                FileContent(file_key="file_second", file_name="second.txt"),
+            ],
+        ),
+        (
+            "video",
+            [
+                MediaContent(file_key="video_first", file_name="first.mp4"),
+                MediaContent(file_key="video_second", file_name="second.mp4"),
+            ],
+        ),
+    ],
+)
+@pytest.mark.parametrize("blocked", [False, True])
+@pytest.mark.asyncio
+async def test_sdk_dispatches_each_message_separately_even_while_busy(kind, contents, blocked):
+    bridge = FeishuBridge("http://backend.test", "cli_test", "secret")
+    safety = bridge.channel.config.safety
+    received = []
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def on_message(message):
+        received.append(message)
+        if len(received) == 1:
+            first_started.set()
+            await release_first.wait()
+
+    pipeline = SafetyPipeline(
+        loop=asyncio.get_running_loop(),
+        on_message=on_message,
+        policy=bridge.channel.config.policy,
+        dedup_config=safety.dedup,
+        batch_config=safety.text_batch,
+        media_batch_config=safety.media_batch,
+        queue_config=safety.chat_queue,
+    )
+    messages = [
+        _inbound_message(content, message_id=f"om_{index}")
+        for index, content in enumerate(contents)
+    ]
+    try:
+        if blocked:
+            pipeline.block_batch_scope("oc_chat")
+        for message in messages:
+            message.create_time = int(time() * 1000)
+            message.raw_content_type = kind
+            await pipeline.push_message(message)
+        if blocked:
+            pipeline.unblock_batch_scope("oc_chat")
+
+        await asyncio.wait_for(first_started.wait(), timeout=1)
+        assert [message.id for message in received] == [messages[0].id]
+    finally:
+        release_first.set()
+        await pipeline.dispose()
+
+    assert [message.id for message in received] == [message.id for message in messages]
+    assert [message.content for message in received] == contents
+    assert all(not message.batched_sources for message in received)
 
 
 def test_background_task_card_contains_result_content():
@@ -188,14 +262,91 @@ async def test_bridge_lifecycle_runs_background_poll_task():
         )
     )
     bridge.session_tasks = {}
-    bridge.poll_sessions = lambda: wait_until_cancelled("sessions")
     bridge.poll_background_messages = lambda: wait_until_cancelled("background")
 
     await bridge.start()
 
-    assert started == {"sessions", "background"}
-    assert cancelled == {"sessions", "background"}
+    assert started == {"background"}
+    assert cancelled == {"background"}
     bridge.channel.disconnect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sdk_thread_hands_queue_and_consumption_to_main_loop():
+    main_loop = asyncio.get_running_loop()
+    main_thread = threading.get_ident()
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+    second_cancelled = asyncio.Event()
+    consumed = []
+    callback_threads = []
+    messages = [
+        Message(
+            message_id=f"om_{index}",
+            chat_id="oc_chat",
+            user_id="E1001",
+            sender_name="Alice",
+            content=[TextData(text=str(index))],
+            timestamp=0,
+            session_metadata={},
+        )
+        for index in range(2)
+    ]
+    bridge = FeishuBridge("http://backend.test", "cli_test", "secret")
+    bridge._parse_msg = AsyncMock(side_effect=messages)
+
+    async def sdk_callbacks():
+        callback_threads.append(threading.get_ident())
+        for message in messages:
+            await bridge._on_message(
+                _inbound_message(TextContent(text="hello"), message_id=message.message_id)
+            )
+
+    async def consume(user_id):
+        message = bridge.receive_queues[user_id].get_nowait()
+        consumed.append(message)
+        assert asyncio.get_running_loop() is main_loop
+        assert threading.get_ident() == main_thread
+        assert asyncio.current_task().get_loop() is main_loop
+        if message is messages[0]:
+            first_started.set()
+            await release_first.wait()
+        else:
+            second_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                second_cancelled.set()
+
+    async def connect():
+        await asyncio.to_thread(asyncio.run, sdk_callbacks())
+        await first_started.wait()
+        assert consumed == [messages[0]]
+        assert bridge.receive_queues["E1001"].qsize() == 1
+        release_first.set()
+        await second_started.wait()
+
+    async def background_messages():
+        await asyncio.Event().wait()
+
+    async def disconnect():
+        assert second_cancelled.is_set()
+
+    bridge.channel = SimpleNamespace(connect=connect, disconnect=AsyncMock(side_effect=disconnect))
+    bridge.consume = consume
+    bridge.poll_background_messages = background_messages
+
+    await asyncio.wait_for(bridge.start(), timeout=2)
+
+    assert callback_threads[0] != main_thread
+    assert consumed == messages
+    assert bridge.session_tasks == {}
+    bridge.channel.disconnect.assert_awaited_once()
+    # A callback already queued during shutdown must not start a new consumer.
+    bridge._enqueue_message(messages[0])
+    assert bridge.receive_queues["E1001"].empty()
+    assert bridge.session_tasks == {}
 
 
 @pytest.mark.asyncio
@@ -316,14 +467,19 @@ async def test_on_message_logs_when_message_is_added(monkeypatch: pytest.MonkeyP
         session_metadata={},
     )
     bridge = object.__new__(FeishuBridge)
+    bridge._main_loop = asyncio.get_running_loop()
+    bridge._closing = False
     bridge.receive_queues = {}
+    bridge._start_session_task = MagicMock()
     bridge._parse_msg = AsyncMock(return_value=message)
     info = MagicMock()
     monkeypatch.setattr(feishu_bridge, "logger", SimpleNamespace(info=info))
 
     await bridge._on_message(_inbound_message(TextContent(text="hello")))
+    await asyncio.sleep(0)
 
     assert bridge.receive_queues["E1001"].get_nowait() == message
+    bridge._start_session_task.assert_called_once_with("E1001")
     info.assert_called_once_with(
         "Feishu message added user_id={} chat_id={} message_id={} sender_name={} queue_size={}",
         "E1001",
@@ -332,6 +488,82 @@ async def test_on_message_logs_when_message_is_added(monkeypatch: pytest.MonkeyP
         "Alice",
         1,
     )
+
+
+@pytest.mark.asyncio
+async def test_session_task_immediately_drains_messages_one_at_a_time():
+    messages = [
+        Message(
+            message_id=f"om_message_{index}",
+            chat_id="oc_chat",
+            user_id="E1001",
+            sender_name="Alice",
+            content=[TextData(text=text)],
+            timestamp=0,
+            session_metadata={},
+        )
+        for index, text in enumerate(("first", "second"), start=1)
+    ]
+    queue = asyncio.Queue()
+    for message in messages:
+        queue.put_nowait(message)
+
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    consumed = []
+
+    async def consume(user_id):
+        message = queue.get_nowait()
+        consumed.append((user_id, message.message_id))
+        if message is messages[0]:
+            first_started.set()
+            await release_first.wait()
+
+    bridge = object.__new__(FeishuBridge)
+    bridge.receive_queues = {"E1001": queue}
+    bridge.session_tasks = {}
+    bridge.session_update_message_id = {}
+    bridge.consume = consume
+
+    async with asyncio.TaskGroup() as task_group:
+        bridge._task_group = task_group
+        bridge._start_session_task("E1001")
+        await asyncio.wait_for(first_started.wait(), timeout=1)
+
+        assert consumed == [("E1001", "om_message_1")]
+        assert not bridge.session_tasks["E1001"].done()
+
+        release_first.set()
+
+    assert consumed == [
+        ("E1001", "om_message_1"),
+        ("E1001", "om_message_2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_failure_does_not_cancel_other_users():
+    bridge = FeishuBridge("http://backend.test", "cli_test", "secret")
+    bridge.receive_queues = {user_id: asyncio.Queue() for user_id in ("failing", "healthy")}
+    for queue in bridge.receive_queues.values():
+        queue.put_nowait("message")
+    consumed = []
+
+    async def consume(user_id):
+        bridge.receive_queues[user_id].get_nowait()
+        if user_id == "failing":
+            raise RuntimeError("Failed to deliver backend error")
+        await asyncio.sleep(0)
+        consumed.append(user_id)
+
+    bridge.consume = consume
+    async with asyncio.TaskGroup() as task_group:
+        bridge._task_group = task_group
+        bridge._start_session_task("failing")
+        bridge._start_session_task("healthy")
+
+    assert consumed == ["healthy"]
+    assert bridge.session_tasks == {}
 
 
 @pytest.mark.asyncio
@@ -602,6 +834,54 @@ async def test_streaming_thinking_uses_custom_card(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_consume_sends_each_queued_message_as_a_separate_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    messages = [
+        Message(
+            message_id=f"om_message_{index}",
+            chat_id="oc_chat",
+            user_id="E1001",
+            sender_name="Alice",
+            content=[TextData(text=text)],
+            timestamp=999_999_999_999,
+            session_metadata={},
+        )
+        for index, text in enumerate(("first", "second"), start=1)
+    ]
+    requests = []
+
+    async def chat_events(request_messages, chat_url):
+        requests.append((request_messages, chat_url))
+        if False:
+            yield
+
+    monkeypatch.setattr(feishu_bridge, "iter_chat_events", chat_events)
+    channel = SimpleNamespace(add_reaction=AsyncMock())
+    bridge = _bridge_with_channel(channel)
+    bridge.receive_queues = {"E1001": asyncio.Queue()}
+    for message in messages:
+        bridge.receive_queues["E1001"].put_nowait(message)
+
+    await bridge.consume("E1001")
+
+    assert requests == [([messages[0]], "http://backend.test/chat")]
+    assert bridge.receive_queues["E1001"].qsize() == 1
+
+    await bridge.consume("E1001")
+
+    assert requests == [
+        ([messages[0]], "http://backend.test/chat"),
+        ([messages[1]], "http://backend.test/chat"),
+    ]
+    assert bridge.receive_queues["E1001"].empty()
+    assert [await_call.args[0] for await_call in channel.add_reaction.await_args_list] == [
+        "om_message_1",
+        "om_message_2",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.MonkeyPatch):
     async def chunks():
         for chunk in ["hello", " ", "world"]:
@@ -638,7 +918,7 @@ async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.Mon
     )
     bridge.session_update_message_id["E1001"] = "om_progress"
 
-    await bridge.consume("E1001", idle_timeout=0)
+    await bridge.consume("E1001")
 
     created_card = create_card_instance.await_args.args[0]
     assert created_card["body"]["elements"][0]["icon"] == {
@@ -697,7 +977,7 @@ async def test_consume_returns_backend_http_error_to_user(
         )
     )
 
-    await bridge.consume("E1001", idle_timeout=0)
+    await bridge.consume("E1001")
 
     send.assert_awaited_once()
     assert send.await_args.kwargs["to"] == "oc_chat"

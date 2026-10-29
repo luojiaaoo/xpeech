@@ -171,7 +171,6 @@ class FeishuConfig(BaseModel):
 
     app_id: str
     app_secret: str
-    idle_timeout: int = 5
     lark_cli: LarkCLIConfig = Field(default_factory=LarkCLIConfig)
 
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import random
-from time import time
 
 import httpx
 from lark_channel import (
@@ -50,6 +49,9 @@ class FeishuBridge(
         self.chat_url = chat_url
         self.app_id = app_id
         self.app_secret = app_secret
+        self._main_loop: asyncio.AbstractEventLoop | None = None
+        self._task_group: asyncio.TaskGroup | None = None
+        self._closing = False
         self.receive_queues: dict[str, asyncio.Queue[Message]] = {}
         self.session_tasks: dict[str, asyncio.Task] = {}
         self.session_update_message_id: dict[str, str] = {}
@@ -76,6 +78,14 @@ class FeishuBridge(
         except UnsupportedFeishuMessageError as exc:
             logger.warning(str(exc))
             return
+        if self._main_loop is None:
+            raise RuntimeError("Feishu bridge has not been started")
+        self._main_loop.call_soon_threadsafe(self._enqueue_message, msg)
+
+    def _enqueue_message(self, msg: Message) -> None:
+        """Enqueue and start consumption on the bridge's main event loop."""
+        if self._closing:
+            return
         queue = self.receive_queues.setdefault(msg.user_id, asyncio.Queue())
         queue.put_nowait(msg)
         logger.info(
@@ -86,6 +96,7 @@ class FeishuBridge(
             msg.sender_name,
             queue.qsize(),
         )
+        self._start_session_task(msg.user_id)
 
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
         user_id, _ = await self.get_user_identity(card_action_event.operator.open_id)
@@ -100,39 +111,29 @@ class FeishuBridge(
             operation="update completed question card",
         )
 
-    async def consume(
-        self,
-        user_id: str,
-        idle_timeout: int | None = None,
-    ) -> None:
-        idle_timeout = settings.feishu.idle_timeout if idle_timeout is None else idle_timeout
+    async def consume(self, user_id: str) -> None:
         if user_id not in self.receive_queues:
             return
 
         queue = self.receive_queues[user_id]
-        qsize = queue.qsize()
-        if qsize == 0:
-            return
-        last_message: Message = queue._queue[qsize - 1]
-        if time() - last_message.timestamp < idle_timeout:
+        if queue.empty():
             return
 
-        messages = [queue.get_nowait() for _ in range(qsize)]
-        chat_id = messages[-1].chat_id
-        reply_to = messages[-1].message_id
-        sender_name = messages[-1].sender_name
-        for message in messages:
-            try:
-                await self.add_reaction(message)
-            except Exception:
-                logger.debug(
-                    "Failed to add Feishu reaction message_id={}",
-                    message.message_id,
-                )
+        message = queue.get_nowait()
+        chat_id = message.chat_id
+        reply_to = message.message_id
+        sender_name = message.sender_name
+        try:
+            await self.add_reaction(message)
+        except Exception:
+            logger.debug(
+                "Failed to add Feishu reaction message_id={}",
+                message.message_id,
+            )
 
         try:
             async for event in iter_chat_events(
-                messages,
+                [message],
                 str(URL(self.chat_url) / "chat"),
             ):
                 if event.event == ChatEventType.SEND_FILE:
@@ -240,35 +241,37 @@ class FeishuBridge(
             iter_content=iter_content,
         )
 
-    async def one_by_one_user_id(self) -> None:
-        for user_id, task in list(self.session_tasks.items()):
-            if not task.done():
-                continue
-            self.session_tasks.pop(user_id, None)
-            self.session_update_message_id.pop(user_id, None)
-            try:
-                task.result()
-            except Exception:
-                logger.exception(
-                    "Feishu session task failed user_id={}",
-                    user_id,
-                )
+    def _start_session_task(self, user_id: str) -> None:
+        if self._task_group is None:
+            raise RuntimeError("Feishu bridge task group is not running")
+        task = self.session_tasks.get(user_id)
+        if task is not None and not task.done():
+            return
+        if task is not None:
+            self._on_session_task_done(user_id, task)
 
-        for user_id in list(self.receive_queues):
-            if user_id in self.session_tasks:
-                continue
-            self.session_tasks[user_id] = asyncio.create_task(self.consume(user_id))
+        task = self._task_group.create_task(self._consume_user_queue(user_id))
+        self.session_tasks[user_id] = task
+        task.add_done_callback(
+            lambda completed_task: self._on_session_task_done(user_id, completed_task)
+        )
 
-    async def poll_sessions(self, interval: float = 2.0) -> None:
-        while True:
-            try:
-                await self.one_by_one_user_id()
-                await asyncio.sleep(interval)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                print(f"poll_sessions error: {exc}")
-                await asyncio.sleep(interval)
+    async def _consume_user_queue(self, user_id: str) -> None:
+        try:
+            queue = self.receive_queues[user_id]
+            while not queue.empty():
+                await self.consume(user_id)
+        except Exception:
+            logger.exception(
+                "Feishu session task failed user_id={}",
+                user_id,
+            )
+
+    def _on_session_task_done(self, user_id: str, task: asyncio.Task) -> None:
+        if self.session_tasks.get(user_id) is not task:
+            return
+        self.session_tasks.pop(user_id, None)
+        self.session_update_message_id.pop(user_id, None)
 
     async def poll_background_message_once(
         self,
@@ -313,22 +316,22 @@ class FeishuBridge(
                     await asyncio.sleep(BACKGROUND_MESSAGE_RETRY_SECONDS)
 
     async def start(self) -> None:
-        poll_task = asyncio.create_task(self.poll_sessions())
-        background_message_task = asyncio.create_task(self.poll_background_messages())
+        self._main_loop = asyncio.get_running_loop()
+        self._closing = False
         try:
-            await self.channel.connect()
+            async with asyncio.TaskGroup() as task_group:
+                self._task_group = task_group
+                background_message_task = task_group.create_task(self.poll_background_messages())
+                try:
+                    await self.channel.connect()
+                finally:
+                    self._closing = True
+                    background_message_task.cancel()
+                    for task in tuple(self.session_tasks.values()):
+                        task.cancel()
         finally:
+            self._task_group = None
             await self.channel.disconnect()
-            poll_task.cancel()
-            background_message_task.cancel()
-            for task in self.session_tasks.values():
-                task.cancel()
-            await asyncio.gather(
-                poll_task,
-                background_message_task,
-                *self.session_tasks.values(),
-                return_exceptions=True,
-            )
 
 
 def run(chat_url: str) -> None:

@@ -110,7 +110,6 @@ Swagger UI 右上角点击 `Authorize`：`username` 可填写任意标识（例�
 飞书桥接会从配置中读取：
 
 - `feishu.app_id`：飞书应用 ID
-- `feishu.idle_timeout`：同一会话消息合并等待时间，单位秒
 - `feishu.app_secret`：飞书应用密钥
 
 Docker 镜像会从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签编译
