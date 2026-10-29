@@ -21,7 +21,6 @@ async def register_default_tools(
     provider: Any,
     workspace: Path,
     config: ToolConfig,
-    include_background_tools: bool = True,
 ) -> None:
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
     read_image, read_video, read_file, write_file, edit_file = build_file_tools(
@@ -51,13 +50,11 @@ async def register_default_tools(
     )
     provider.register_tool()(build_document_tool(workspace=workspace))
     provider.register_tool()(build_file_message_tools(workspace=workspace))
-    provider.register_tool()(ask_user_question, is_blocking=True)
+    provider.register_tool()(ask_user_question, is_interactive=True)
     for tool in build_session_tools(user_id=user_id, history_path=settings.path.session_history_path):
         provider.register_tool()(tool)
-    if include_background_tools:
-        provider.register_tool()(feishu_schedule)
-        provider.register_tool()(feishu_schedule_list)
-        provider.register_tool()(feishu_schedule_cancel)
+    for tool in (feishu_schedule, feishu_schedule_list, feishu_schedule_cancel):
+        provider.register_tool()(tool, is_interactive=True)
 
     for server_name, server_config in config.mcp_servers.items():
         registration = await get_session_mcp_registration_from_config(

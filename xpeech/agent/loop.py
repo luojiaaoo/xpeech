@@ -210,14 +210,14 @@ class AgentLoop:
 
     # ----------------- agent loop run -----------------
 
-    async def run(self, message: InboundMessage, *, background: bool = False):
+    async def run(self, message: InboundMessage, *, not_interactive: bool = False):
         """运行一次Agent循环，处理一次用户消息。"""
         start_time = time.perf_counter()
         logger.info("Agent run started workspace={}", self.workspace)
 
         # 用户命令拦截器
         if (
-            not background
+            not not_interactive
             and len(message.content) == 1
             and isinstance(message.content[0], InputText)
             and (command := message.content[0].text.strip()).startswith("/")
@@ -252,7 +252,7 @@ class AgentLoop:
 
         messages_yaml: list[dict] = (
             []
-            if background
+            if not_interactive
             else await self.history.load(message.user_id, message.session_id)
         )
 
@@ -297,7 +297,7 @@ class AgentLoop:
                 response = await self.chat(
                     messages=messages_yaml,
                     tools=self.tools,
-                    remove_blocking_tool=background,
+                    remove_interactive_tool=not_interactive,
                     json_output=message.json_output,
                 )
 
@@ -332,7 +332,7 @@ class AgentLoop:
                     message.user_id,
                     message.session_id,
                     messages_yaml,
-                    background=background,
+                    not_interactive=not_interactive,
                 )
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -393,7 +393,7 @@ class AgentLoop:
             message.user_id,
             message.session_id,
             messages_yaml,
-            background=background,
+            not_interactive=not_interactive,
         )
 
         # 追加本轮对话记录

@@ -17,7 +17,7 @@ class RegisteredTool:
 
     func: ToolFunc
     tool_json: dict[str, Any]
-    is_blocking: bool
+    is_interactive: bool
 
 
 ToolRegistry: TypeAlias = dict[str, RegisteredTool]

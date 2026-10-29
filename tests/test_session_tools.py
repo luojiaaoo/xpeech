@@ -1,7 +1,10 @@
 import json
+import os
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from xpeech.agent.history import YamlHistoryRepository
 from xpeech.agent.prompt.helper import build_user_prompt
@@ -11,23 +14,32 @@ from xpeech.agent.tools.sessions import ListSessionsArgs, ReadSessionArgs, build
 
 
 @pytest.mark.asyncio
-async def test_lists_only_current_user_sessions_with_type_filters_and_pagination(tmp_path):
+async def test_lists_only_current_user_sessions_with_date_filters_and_pagination(tmp_path):
     repository = YamlHistoryRepository(tmp_path)
     history = [{"role": "user", "content": "hello"}]
     await repository.save("alice", "chat-a", history)
     await repository.save("alice", "chat~b", history)
-    await repository.save("alice", "run-1", history, background=True)
+    await repository.save("alice", "run-1", history, not_interactive=True)
     await repository.save("alice-other", "private", history)
     await repository.save("alice~session~other", "private", history)
+    dates = {
+        "alice~session~chat-a.yaml": "2026-10-27T23:59:59+00:00",
+        "alice~session~chat~b.yaml": "2026-10-28T00:00:00+00:00",
+        "alice~not_interactive~run-1.yaml": "2026-10-29T23:59:59+00:00",
+    }
+    for filename, timestamp in dates.items():
+        modified = datetime.fromisoformat(timestamp).timestamp()
+        os.utime(tmp_path / filename, (modified, modified))
     list_sessions, _ = build_session_tools(user_id="alice", history_path=tmp_path)
 
     all_sessions = json.loads(await list_sessions(ListSessionsArgs()))
     assert all_sessions["total"] == 3
     assert all_sessions["has_more"] is False
+    assert {session["session_id"] for session in all_sessions["sessions"]} == {"chat-a", "chat~b", "run-1"}
     assert {
-        (session["session_id"], session["background"])
+        session["session_id"]: session["not_interactive"]
         for session in all_sessions["sessions"]
-    } == {("chat-a", False), ("chat~b", False), ("run-1", True)}
+    } == {"chat-a": False, "chat~b": False, "run-1": True}
     updated = [datetime.fromisoformat(session["updated_at"]) for session in all_sessions["sessions"]]
     assert updated == sorted(updated, reverse=True)
 
@@ -35,11 +47,26 @@ async def test_lists_only_current_user_sessions_with_type_filters_and_pagination
     rest = json.loads(await list_sessions(ListSessionsArgs(offset=1)))
     assert first["has_more"] is True
     assert first["sessions"] + rest["sessions"] == all_sessions["sessions"]
-    background = json.loads(await list_sessions(ListSessionsArgs(background=True)))
-    assert background["total"] == 1
-    assert background["sessions"][0]["session_id"] == "run-1"
-    normal = json.loads(await list_sessions(ListSessionsArgs(background=False)))
-    assert normal["total"] == 2
+    filtered = json.loads(await list_sessions(ListSessionsArgs(start_date="2026-10-28", end_date="2026-10-29")))
+    assert [session["session_id"] for session in filtered["sessions"]] == ["run-1", "chat~b"]
+    assert filtered["total"] == 2
+    page = json.loads(await list_sessions(ListSessionsArgs(start_date="2026-10-28", limit=1)))
+    assert page["total"] == 2
+    assert page["has_more"] is True
+    assert page["sessions"] == filtered["sessions"][:1]
+    older = json.loads(await list_sessions(ListSessionsArgs(end_date="2026-10-27")))
+    assert [session["session_id"] for session in older["sessions"]] == ["chat-a"]
+    empty = json.loads(await list_sessions(ListSessionsArgs(start_date="2026-10-30")))
+    assert empty["total"] == 0
+    assert empty["sessions"] == []
+
+
+def test_session_date_range_validation():
+    ListSessionsArgs(start_date="2026-10-29", end_date="2026-10-29")
+    with pytest.raises(ValidationError, match="start_date must be on or before end_date"):
+        ListSessionsArgs(start_date="2026-10-30", end_date="2026-10-29")
+    with pytest.raises(ValidationError):
+        ListSessionsArgs(start_date="invalid-date")
 
 
 @pytest.mark.asyncio
@@ -53,14 +80,13 @@ async def test_reads_history_pages_without_system_prompts_or_changing_saved_hist
         {"role": "assistant", "content": "second answer"},
     ]
     await repository.save("alice", "chat-1", messages)
-    background = [{"role": "assistant", "content": "scheduled result"}]
-    await repository.save("alice", "chat-1", background, background=True)
-    _, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
+    list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
+    not_interactive = [{"role": "assistant", "content": "scheduled result"}]
+    await repository.save("alice", "task-1", not_interactive, not_interactive=True)
 
     page = json.loads(await read_session(ReadSessionArgs(session_id="chat-1", offset=1, limit=2)))
     assert page == {
         "session_id": "chat-1",
-        "background": False,
         "total_messages": 4,
         "offset": 1,
         "messages": messages[2:4],
@@ -69,41 +95,107 @@ async def test_reads_history_pages_without_system_prompts_or_changing_saved_hist
     last = json.loads(await read_session(ReadSessionArgs(session_id="chat-1", offset=3)))
     assert last["messages"] == messages[4:]
     assert last["has_more"] is False
-    run = json.loads(await read_session(ReadSessionArgs(session_id="chat-1", background=True)))
-    assert run["messages"] == background
+    run = json.loads(await read_session(ReadSessionArgs(session_id="task-1")))
+    assert run["messages"] == not_interactive
+    assert "not_interactive" not in run
     assert await repository.load("alice", "chat-1") == messages[1:]
 
 
 @pytest.mark.asyncio
-async def test_history_tools_cannot_read_another_user_or_follow_symlinks(tmp_path):
+async def test_reads_uuid_session_without_scanning_directory(tmp_path, monkeypatch):
+    repository = YamlHistoryRepository(tmp_path)
+    session_id = "0123456789abcdef0123456789abcdef"
+    messages = [{"role": "assistant", "content": "result"}]
+    await repository.save("alice", session_id, messages, not_interactive=True)
+    for index in range(2000):
+        (tmp_path / f"bob~session~{index}.yaml").touch()
+    _, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
+
+    def fail_scan(*args, **kwargs):
+        raise AssertionError("Reading a known session must not scan the directory")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "scandir", fail_scan)
+        patch.setattr(YamlHistoryRepository, "list_sessions", fail_scan)
+        result = json.loads(await read_session(ReadSessionArgs(session_id=session_id)))
+    assert result["messages"] == messages
+
+
+@pytest.mark.asyncio
+async def test_list_globs_escape_user_ids_and_skip_unrelated_file_metadata(tmp_path, monkeypatch):
+    repository = YamlHistoryRepository(tmp_path)
+    await repository.save("alice[1]", "chat-1", [])
+    await repository.save("alice1", "chat-1", [])
+    await repository.save("bob", "chat-1", [])
+    original_stat = Path.stat
+
+    def check_stat(path, *args, **kwargs):
+        if path.name.startswith(("alice1~", "bob~")):
+            raise AssertionError("Unrelated histories must not be statted")
+        return original_stat(path, *args, **kwargs)
+
+    list_sessions, read_session = build_session_tools(user_id="alice[1]", history_path=tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "stat", check_stat)
+        result = json.loads(await list_sessions(ListSessionsArgs()))
+    assert result["total"] == 1
+    assert result["sessions"][0]["session_id"] == "chat-1"
+    with pytest.raises(ValidationError):
+        ReadSessionArgs(session_id="*")
+
+
+@pytest.mark.asyncio
+async def test_history_tools_cannot_read_another_user(tmp_path):
     repository = YamlHistoryRepository(tmp_path)
     messages = [{"role": "user", "content": "private"}]
     await repository.save("bob", "secret", messages)
     await repository.save("alice~session~other", "private", messages)
-    (tmp_path / "alice~session~linked.yaml").symlink_to(tmp_path / "bob~session~secret.yaml")
     list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
+    list_bob_sessions, _ = build_session_tools(user_id="bob", history_path=tmp_path)
+    [bob_history] = json.loads(await list_bob_sessions(ListSessionsArgs()))["sessions"]
 
     assert json.loads(await list_sessions(ListSessionsArgs()))["total"] == 0
-    for session_id in ("secret", "linked", "other~session~private"):
-        with pytest.raises(FileNotFoundError):
-            await read_session(ReadSessionArgs(session_id=session_id, user_id="bob"))
     with pytest.raises(FileNotFoundError):
-        await read_session(ReadSessionArgs(session_id="../bob~session~secret"))
+        await read_session(ReadSessionArgs(session_id=bob_history["session_id"], user_id="bob"))
+    with pytest.raises(ValidationError):
+        ReadSessionArgs(session_id="../bob~session~secret")
 
 
 @pytest.mark.asyncio
-async def test_history_tools_find_and_read_legacy_default_history(tmp_path):
+async def test_history_tools_do_not_follow_symlinks(tmp_path):
+    repository = YamlHistoryRepository(tmp_path)
+    await repository.save("bob", "secret", [{"role": "user", "content": "private"}])
+    try:
+        (tmp_path / "alice~session~linked.yaml").symlink_to(tmp_path / "bob~session~secret.yaml")
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows requires permission to create symbolic links")
+        raise
+    list_sessions, _ = build_session_tools(user_id="alice", history_path=tmp_path)
+    assert json.loads(await list_sessions(ListSessionsArgs()))["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_history_tools_ignore_legacy_filename(tmp_path):
     legacy_path = tmp_path / "alice.yaml"
     legacy_path.write_text("- role: user\n  content: old question\n", encoding="utf-8")
     list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
 
+    assert json.loads(await list_sessions(ListSessionsArgs()))["sessions"] == []
+    with pytest.raises(FileNotFoundError):
+        await read_session(ReadSessionArgs(session_id="default"))
+    assert legacy_path.is_file()
+    assert not (tmp_path / "alice~session~default.yaml").exists()
+
+    repository = YamlHistoryRepository(tmp_path)
+    current_messages = [{"role": "user", "content": "current question"}]
+    await repository.save("alice", "default", current_messages)
     sessions = json.loads(await list_sessions(ListSessionsArgs()))
     assert sessions["total"] == 1
     assert sessions["sessions"][0]["session_id"] == "default"
-    result = json.loads(await read_session(ReadSessionArgs(session_id="default")))
-    assert result["messages"] == [{"role": "user", "content": "old question"}]
-    assert not legacy_path.exists()
-    assert (tmp_path / "alice~session~default.yaml").is_file()
+    result = json.loads(await read_session(ReadSessionArgs(session_id=sessions["sessions"][0]["session_id"])))
+    assert result["messages"] == current_messages
+    assert legacy_path.is_file()
 
 
 def test_session_tool_schemas_do_not_allow_selecting_a_user(tmp_path):
@@ -112,8 +204,14 @@ def test_session_tool_schemas_do_not_allow_selecting_a_user(tmp_path):
     for tool in tools:
         properties = as_tool(tool)["function"]["parameters"]["properties"]
         assert "user_id" not in properties
+        assert "not_interactive" not in properties
         assert "offset" in properties
         assert "limit" in properties
+    list_properties = as_tool(tools[0])["function"]["parameters"]["properties"]
+    assert {"start_date", "end_date"} <= list_properties.keys()
+    read_properties = as_tool(tools[1])["function"]["parameters"]["properties"]
+    assert "session_id" in read_properties
+    assert "history_id" not in read_properties
 
 
 @pytest.mark.asyncio

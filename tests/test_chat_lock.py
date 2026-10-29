@@ -45,18 +45,17 @@ def test_session_id_header_defaults_for_chat_and_answer():
 
 
 @pytest.mark.parametrize(
-    ("session_id", "include_background_tools"),
-    [(None, True), ("default", True), ("chat-1", False)],
+    "session_id",
+    [None, "default", "chat-1"],
 )
 @pytest.mark.parametrize("json_output", [None, False, True])
-def test_chat_background_tools_are_available_only_for_default_session(
+def test_chat_initializes_all_tools_for_every_session(
     tmp_path,
     monkeypatch,
     session_id,
-    include_background_tools,
     json_output,
 ):
-    from xpeech.agent.server.routes import chat as chat_routes
+    from xpeech.agent import execute as execute_module
 
     messages = []
 
@@ -65,7 +64,7 @@ def test_chat_background_tools_are_available_only_for_default_session(
         yield {"event": "assistant", "context": "ok"}
 
     create = AsyncMock(return_value=SimpleNamespace(workspace=tmp_path, run=run))
-    monkeypatch.setattr(chat_routes.AgentRunner, "create", create)
+    monkeypatch.setattr(execute_module.AgentRunner, "create", create)
     monkeypatch.setattr(settings.llm, "support_json_output", True)
     headers = {
         "Authorization": f"Bearer {create_access_token()}",
@@ -85,17 +84,17 @@ def test_chat_background_tools_are_available_only_for_default_session(
     )
 
     assert response.status_code == 200
-    create.assert_awaited_once_with("user", include_background_tools=include_background_tools)
+    create.assert_awaited_once_with("user")
     assert messages[0].session_id == (session_id or "default")
     assert messages[0].json_output is (json_output is True)
 
 
 def test_unsupported_json_output_returns_http_error_before_starting_stream(monkeypatch):
-    from xpeech.agent.server.routes import chat as chat_routes
+    from xpeech.agent import execute as execute_module
 
     monkeypatch.setattr(settings.llm, "support_json_output", False)
     create = AsyncMock()
-    monkeypatch.setattr(chat_routes.AgentRunner, "create", create)
+    monkeypatch.setattr(execute_module.AgentRunner, "create", create)
     response = TestClient(app).post(
         "/chat",
         headers={

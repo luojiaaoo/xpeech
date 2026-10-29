@@ -19,7 +19,7 @@ def make_response(content: str) -> LLMResponse:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("json_output", [False, True])
-async def test_background_run_saves_separate_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
+async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
     async def build_test_system_prompt(workspace: Path):
         assert workspace == tmp_path
         return {"role": "system", "content": "system"}
@@ -57,11 +57,11 @@ async def test_background_run_saves_separate_yaml_history(tmp_path: Path, monkey
         json_output=json_output,
     )
 
-    events = [event async for event in agent_loop.run(message, background=True)]
+    events = [event async for event in agent_loop.run(message, not_interactive=True)]
 
     agent_loop.history.load.assert_not_awaited()
     agent_loop.history.save.assert_awaited_once()
-    assert agent_loop.history.save.await_args.kwargs["background"] is True
+    assert agent_loop.history.save.await_args.kwargs["not_interactive"] is True
     saved_user_id, saved_session_id, saved_messages = agent_loop.history.save.await_args.args
     assert saved_user_id == message.user_id
     assert saved_session_id == message.session_id
@@ -76,18 +76,18 @@ async def test_background_run_saves_separate_yaml_history(tmp_path: Path, monkey
         if part.get("type") == "text"
     ]
     assert {"event": "assistant", "context": "scheduled result"} in events
-    assert agent_loop.chat.await_args.kwargs["remove_blocking_tool"] is True
+    assert agent_loop.chat.await_args.kwargs["remove_interactive_tool"] is True
     assert agent_loop.chat.await_args.kwargs["json_output"] is json_output
     assert messages[0] == {"role": "system", "content": "system"}
     assert all("valid JSON object" not in part["text"] for part in messages[1]["content"])
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("background", [False, True])
+@pytest.mark.parametrize("not_interactive", [False, True])
 async def test_provider_failure_persists_messages_and_raises_http_exception(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    background: bool,
+    not_interactive: bool,
 ):
     async def build_test_system_prompt(workspace: Path):
         assert workspace == tmp_path
@@ -125,13 +125,13 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     )
 
     with pytest.raises(loop_module.HTTPException) as exc_info:
-        _ = [event async for event in agent_loop.run(message, background=background)]
+        _ = [event async for event in agent_loop.run(message, not_interactive=not_interactive)]
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "provider unavailable"
     save = agent_loop.history.save
     save.assert_awaited_once()
-    assert save.await_args.kwargs["background"] is background
+    assert save.await_args.kwargs["not_interactive"] is not_interactive
     saved_user_id, saved_identifier, saved_messages = save.await_args.args
     assert saved_user_id == "session-1"
     assert saved_identifier == message.session_id

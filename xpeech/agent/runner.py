@@ -25,14 +25,13 @@ class AgentRunner:
         user_id: str,
         *,
         config: Settings = settings,
-        include_background_tools: bool = True,
     ) -> Self:
         """Create a fully initialized runner for one user."""
         runner = cls(user_id, config=config)
-        await runner._initialize(include_background_tools=include_background_tools)
+        await runner._initialize()
         return runner
 
-    async def _initialize(self, *, include_background_tools: bool = True) -> None:
+    async def _initialize(self) -> None:
         """Initialize the user workspace, provider, tools, and agent loop."""
         await create_workspace_templates(await ensure_path_async(self.workspace))
 
@@ -60,7 +59,6 @@ class AgentRunner:
             provider=provider,
             workspace=self.workspace,
             config=self.config.tool,
-            include_background_tools=include_background_tools,
         )
         self._agent_loop = agent_loop
 
@@ -68,7 +66,7 @@ class AgentRunner:
         self,
         message: InboundMessage,
         *,
-        background: bool = False,
+        not_interactive: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one inbound message and yield the agent's events."""
         if message.user_id != self.user_id:
@@ -79,21 +77,19 @@ class AgentRunner:
 
         async for event in self._agent_loop.run(
             message=message,
-            background=background,
+            not_interactive=not_interactive,
         ):
             yield event
 
-    async def run_once(
+    async def run_not_interactive(
         self,
         message: InboundMessage,
-        *,
-        background: bool = False,
     ) -> list[dict[str, Any]]:
-        """Collect events in order, joining text chunks and omitting stream-end markers."""
+        """Run without interactive tools and collect events, merging consecutive text chunks."""
         events: list[dict[str, Any]] = []
         text_chunks: list[str] = []
 
-        async for event in self.run(message, background=background):
+        async for event in self.run(message, not_interactive=True):
             context = event.get("context")
             is_text_chunk = event.get("event") in {"assistant", "thinking"} and isinstance(context, str)
             if text_chunks:

@@ -9,7 +9,7 @@ from xpeech.agent.history import YamlHistoryRepository
 
 class TestYamlHistoryRepository:
     @pytest.mark.asyncio
-    async def test_background_runs_save_separate_files_without_overwriting(
+    async def test_not_interactive_runs_save_separate_files_without_overwriting(
         self,
         tmp_path: Path,
     ):
@@ -21,25 +21,25 @@ class TestYamlHistoryRepository:
             "a1b2c3d4e5f60718293a4b5c6d7e8f90",
         ]
         histories = [
-            [{"role": "user", "content": "background a"}],
-            [{"role": "user", "content": "background b"}],
+            [{"role": "user", "content": "not_interactive a"}],
+            [{"role": "user", "content": "not_interactive b"}],
         ]
 
         await asyncio.gather(
             *(
-                repository.save("alice", session_id, history, background=True)
+                repository.save("alice", session_id, history, not_interactive=True)
                 for session_id, history in zip(session_ids, histories)
             )
         )
 
-        paths = sorted(tmp_path.glob("alice~background~*.yaml"))
+        paths = sorted(tmp_path.glob("alice~not_interactive~*.yaml"))
         assert [path.name for path in paths] == [
-            f"alice~background~{session_id}.yaml" for session_id in session_ids
+            f"alice~not_interactive~{session_id}.yaml" for session_id in session_ids
         ]
         assert {
             yaml.safe_load(path.read_text(encoding="utf-8"))[0]["content"]
             for path in paths
-        } == {"background a", "background b"}
+        } == {"not_interactive a", "not_interactive b"}
         assert await repository.load("alice", "default") == normal_history
         assert not list(tmp_path.glob("*.tmp"))
 
@@ -92,7 +92,7 @@ class TestYamlHistoryRepository:
 
         assert await repository.load("alice", "chat-1") == []
         assert legacy_path.is_file()
-        assert await repository.load("alice", "default", background=True) == []
+        assert await repository.load("alice", "default", not_interactive=True) == []
         assert legacy_path.is_file()
 
         histories = await asyncio.gather(

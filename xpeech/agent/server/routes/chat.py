@@ -4,11 +4,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
-from ....utils.file_io import save_to_workspace
-from ....utils.ids import DEFAULT_SESSION_ID
-from ...sync_call import execute_scheduled_chat, execute_chat
+from ...execute import execute_chat, execute_chat_stream, execute_scheduled_chat
 from ...loop import AgentLoop, QuestionEvent
-from ...runner import AgentRunner
 from ...tools.schedule.client import scheduler_request
 from ...tools.schedule.schema import (
     ScheduledExecution,
@@ -26,7 +23,6 @@ from ..dependencies import (
 from ..schema import (
     BackgroundMessageChannel,
     FeishuBackgroundMessage,
-    InboundMessage,
     InputContent,
 )
 
@@ -86,27 +82,16 @@ async def chat(
     json_output: Annotated[bool, Depends(json_output_enabled)],
 ):
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
-    runner = await AgentRunner.create(
+    async for event in execute_chat_stream(
         user_id,
-        include_background_tools=session_id == DEFAULT_SESSION_ID,
-    )
-
-    saved_files = []
-    for file in files:
-        saved_files.append(await save_to_workspace(file=file, workspace=runner.workspace))
-
-    message = InboundMessage(
-        user_id=user_id,
-        session_id=session_id,
-        sender_name=sender_name,
-        session_metadata=session_metadata,
         content=content,
+        sender_name=sender_name,
+        session_id=session_id,
+        session_metadata=session_metadata,
         timestamp=timestamp,
-        files=saved_files,
+        files=files,
         json_output=json_output,
-    )
-
-    async for event in runner.run(message=message):
+    ):
         yield event
 
 

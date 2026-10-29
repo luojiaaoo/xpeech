@@ -387,9 +387,8 @@ async def test_background_agent_queues_success_or_fixed_failure(
     monkeypatch.setattr(background.random, "uniform", lambda start, end: 0)
 
     class FakeRunner:
-        async def run_once(self, message, *, background=False):
+        async def run_not_interactive(self, message):
             captured["message"] = message
-            captured["background"] = background
             if isinstance(result, Exception):
                 raise result
             return [
@@ -423,7 +422,6 @@ async def test_background_agent_queues_success_or_fixed_failure(
     assert queued.schedule_type == "cron"
     assert queued.schedule_value == "0 9 * * *"
     assert captured["user_id"] == "session-1"
-    assert captured["background"] is True
     assert captured["message"].sender_name == "Alice"
     assert re.fullmatch(r"[0-9a-f]{32}", captured["message"].session_id)
     scheduled_prompt = captured["message"].content[0].text
@@ -450,7 +448,7 @@ async def test_background_agent_waits_for_random_delay(monkeypatch, backend_http
     monkeypatch.setattr(background.random, "uniform", uniform)
 
     class FakeRunner:
-        async def run_once(self, message, *, background=False):
+        async def run_not_interactive(self, message):
             return [{"event": "assistant", "context": "completed"}]
 
     async def create(cls, user_id, **kwargs):

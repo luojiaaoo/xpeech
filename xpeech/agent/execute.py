@@ -1,5 +1,6 @@
-"""Synchronous Agent invocations executed inside the backend."""
+"""Streaming and non-interactive Agent execution inside the backend."""
 
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
@@ -8,6 +9,7 @@ from fastapi import UploadFile
 
 from ..utils.file_io import save_to_workspace
 from ..utils.ids import DEFAULT_SESSION_ID
+from .runner import AgentRunner
 from .server.schema import InboundMessage, InputContent, InputText
 from .tools.schedule.schema import ScheduledExecution, ScheduledExecutionResult
 
@@ -24,7 +26,7 @@ SCHEDULED_TASK_PROMPT_PREFIX = (
 )
 
 
-async def execute_chat(
+async def _prepare_chat(
     user_id: str,
     *,
     content: InputContent,
@@ -34,14 +36,9 @@ async def execute_chat(
     timestamp: datetime | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
-) -> list[dict[str, Any]]:
-    """Run a synchronous Agent call and return all collected events."""
-    from .runner import AgentRunner
-
-    runner = await AgentRunner.create(
-        user_id,
-        include_background_tools=session_id == DEFAULT_SESSION_ID,
-    )
+) -> tuple[AgentRunner, InboundMessage]:
+    """Prepare a runner and inbound message, saving attachments in the workspace."""
+    runner = await AgentRunner.create(user_id)
     saved_files = []
     for file in files or []:
         saved_files.append(await save_to_workspace(file=file, workspace=runner.workspace))
@@ -56,13 +53,62 @@ async def execute_chat(
         files=saved_files,
         json_output=json_output,
     )
-    return await runner.run_once(message)
+    return runner, message
+
+
+async def execute_chat_stream(
+    user_id: str,
+    *,
+    content: InputContent,
+    sender_name: str,
+    session_id: str = DEFAULT_SESSION_ID,
+    session_metadata: dict[str, str] | None = None,
+    timestamp: datetime | None = None,
+    files: list[UploadFile] | None = None,
+    json_output: bool = False,
+) -> AsyncIterator[dict[str, Any]]:
+    """Run an interactive Agent call and yield its events."""
+    runner, message = await _prepare_chat(
+        user_id,
+        content=content,
+        sender_name=sender_name,
+        session_id=session_id,
+        session_metadata=session_metadata,
+        timestamp=timestamp,
+        files=files,
+        json_output=json_output,
+    )
+    async for event in runner.run(message=message):
+        yield event
+
+
+async def execute_chat(
+    user_id: str,
+    *,
+    content: InputContent,
+    sender_name: str,
+    session_id: str = DEFAULT_SESSION_ID,
+    session_metadata: dict[str, str] | None = None,
+    timestamp: datetime | None = None,
+    files: list[UploadFile] | None = None,
+    json_output: bool = False,
+) -> list[dict[str, Any]]:
+    """Run a non-interactive Agent call and return all collected events."""
+    runner, message = await _prepare_chat(
+        user_id,
+        content=content,
+        sender_name=sender_name,
+        session_id=session_id,
+        session_metadata=session_metadata,
+        timestamp=timestamp,
+        files=files,
+        json_output=json_output,
+    )
+    return await runner.run_not_interactive(message)
 
 
 async def execute_scheduled_chat(user_id: str, request: ScheduledExecution) -> ScheduledExecutionResult:
     """Run a scheduled synchronous Agent with isolated history and no interactive tools."""
-    from .runner import AgentRunner
-
     message = InboundMessage(
         user_id=user_id,
         session_id=uuid4().hex,
@@ -82,7 +128,7 @@ async def execute_scheduled_chat(user_id: str, request: ScheduledExecution) -> S
         files=[],
     )
     runner = await AgentRunner.create(user_id)
-    events = await runner.run_once(message, background=True)
+    events = await runner.run_not_interactive(message)
     content = next(
         (event["context"] for event in reversed(events) if event.get("event") == "assistant"),
         "",

@@ -26,11 +26,9 @@ class FakeRunner:
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.messages = []
-        self.background_values = []
 
-    async def run_once(self, message, *, background=False):
+    async def run_not_interactive(self, message):
         self.messages.append(message)
-        self.background_values.append(background)
         return [
             {"event": "assistant", "context": "final answer"},
             {"event": "token_usage", "context": "usage"},
@@ -69,9 +67,8 @@ def test_chat_sync_returns_collected_events(fake_runner):
     ]
     assert fake_runner.created == {
         "user_id": "user",
-        "kwargs": {"include_background_tools": False},
+        "kwargs": {},
     }
-    assert fake_runner.background_values == [False]
     [message] = fake_runner.messages
     assert message.session_id == "chat-1"
     assert message.sender_name == "Alice"
@@ -80,13 +77,12 @@ def test_chat_sync_returns_collected_events(fake_runner):
 
 
 @pytest.mark.parametrize(
-    ("session_id", "include_background_tools"),
-    [(None, True), ("default", True), ("chat-1", False)],
+    "session_id",
+    [None, "default", "chat-1"],
 )
-def test_chat_sync_background_tools_follow_session_rule(
+def test_chat_sync_initializes_all_tools_for_every_session(
     fake_runner,
     session_id,
-    include_background_tools,
 ):
     headers = chat_headers()
     if session_id is not None:
@@ -99,9 +95,7 @@ def test_chat_sync_background_tools_follow_session_rule(
     )
 
     assert response.status_code == 200
-    assert fake_runner.created["kwargs"] == {
-        "include_background_tools": include_background_tools,
-    }
+    assert fake_runner.created["kwargs"] == {}
 
 
 def test_chat_sync_passes_json_output_flag(monkeypatch, fake_runner):

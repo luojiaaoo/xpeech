@@ -20,12 +20,12 @@ class FakeAgentLoop:
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
         self.messages: list[InboundMessage] = []
-        self.background_values: list[bool] = []
+        self.not_interactive_values: list[bool] = []
         self.instances.append(self)
 
-    async def run(self, message: InboundMessage, *, background: bool = False):
+    async def run(self, message: InboundMessage, *, not_interactive: bool = False):
         self.messages.append(message)
-        self.background_values.append(background)
+        self.not_interactive_values.append(not_interactive)
         yield {"event": "assistant", "context": "hello"}
 
 
@@ -63,17 +63,13 @@ def runner_dependencies(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("include_background_tools", [True, False])
 async def test_runner_initializes_dependencies_once_and_yields_events(
     tmp_path: Path,
     runner_dependencies,
-    include_background_tools: bool,
 ):
     ensure_path, create_templates, register_tools = runner_dependencies
     config = make_config(tmp_path)
-    runner = await AgentRunner.create(
-        "session-1", config=config, include_background_tools=include_background_tools
-    )
+    runner = await AgentRunner.create("session-1", config=config)
     message = InboundMessage(
         user_id="session-1",
         session_id="chat-1",
@@ -91,10 +87,10 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     ensure_path.assert_awaited_once_with(runner.workspace)
     create_templates.assert_awaited_once_with(runner.workspace)
     register_tools.assert_awaited_once()
-    assert register_tools.await_args.kwargs["include_background_tools"] is include_background_tools
+    assert set(register_tools.await_args.kwargs) == {"user_id", "provider", "workspace", "config"}
     assert len(FakeAgentLoop.instances) == 1
     assert FakeAgentLoop.instances[0].messages == [message]
-    assert FakeAgentLoop.instances[0].background_values == [False]
+    assert FakeAgentLoop.instances[0].not_interactive_values == [False]
 
     provider = FakeAgentLoop.instances[0].kwargs["provider"]
     assert provider.kwargs["api_key"] == "test-key"
@@ -136,7 +132,7 @@ async def test_runner_requires_async_factory(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_runner_can_run_in_background(tmp_path: Path, runner_dependencies):
+async def test_runner_can_run_without_interaction(tmp_path: Path, runner_dependencies):
     runner = await AgentRunner.create("session-1", config=make_config(tmp_path))
     message = InboundMessage(
         user_id="session-1",
@@ -148,18 +144,18 @@ async def test_runner_can_run_in_background(tmp_path: Path, runner_dependencies)
         files=[],
     )
 
-    _ = [event async for event in runner.run(message, background=True)]
+    _ = [event async for event in runner.run(message, not_interactive=True)]
 
-    assert FakeAgentLoop.instances[0].background_values == [True]
+    assert FakeAgentLoop.instances[0].not_interactive_values == [True]
 
 
 @pytest.mark.asyncio
-async def test_run_once_preserves_events_and_merges_text_chunks(tmp_path: Path):
+async def test_run_not_interactive_preserves_events_and_merges_text_chunks(tmp_path: Path):
     runner = AgentRunner("session-1", config=make_config(tmp_path))
 
     class EventLoop:
-        async def run(self, message, *, background=False):
-            assert background is True
+        async def run(self, message, *, not_interactive=False):
+            assert not_interactive is True
             yield {"event": "assistant", "context": "draft"}
             yield {"event": "assistant_end", "context": ""}
             yield {"event": "tool_call", "context": "ignored"}
@@ -185,7 +181,7 @@ async def test_run_once_preserves_events_and_merges_text_chunks(tmp_path: Path):
         files=[],
     )
 
-    assert await runner.run_once(message, background=True) == [
+    assert await runner.run_not_interactive(message) == [
         {"event": "assistant", "context": "draft"},
         {"event": "tool_call", "context": "ignored"},
         {"event": "thinking", "context": "think more"},
@@ -231,11 +227,12 @@ async def test_run_once_preserves_events_and_merges_text_chunks(tmp_path: Path):
         ),
     ],
 )
-async def test_run_once_preserves_partial_and_non_assistant_output(tmp_path: Path, events, expected):
+async def test_run_not_interactive_preserves_partial_and_non_assistant_output(tmp_path: Path, events, expected):
     runner = AgentRunner("session-1", config=make_config(tmp_path))
 
     class EventLoop:
-        async def run(self, message, *, background=False):
+        async def run(self, message, *, not_interactive=False):
+            assert not_interactive is True
             for event in events:
                 yield event
 
@@ -251,5 +248,5 @@ async def test_run_once_preserves_partial_and_non_assistant_output(tmp_path: Pat
     )
 
     original_events = [event.copy() for event in events]
-    assert await runner.run_once(message) == expected
+    assert await runner.run_not_interactive(message) == expected
     assert events == original_events
