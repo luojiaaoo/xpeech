@@ -11,7 +11,7 @@ import httpx
 from httpx_sse import EventSource
 from yarl import URL
 
-from ..utils.jwt_auth import create_access_token
+from ...utils.jwt_auth import create_access_token
 from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 

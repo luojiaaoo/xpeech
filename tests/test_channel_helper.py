@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from xpeech.channel import helper
-from xpeech.channel.schema import ChatEventType, Message, TextData
+from xpeech.subapp.channel import helper
+from xpeech.subapp.channel.schema import ChatEventType, Message, TextData
 
 
 class _JsonErrorStream(httpx.AsyncByteStream):

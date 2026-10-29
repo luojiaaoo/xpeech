@@ -4,8 +4,8 @@ from typing import Any
 
 from httpx import AsyncClient
 
-from .config.settings import settings
-from .utils.jwt_auth import create_access_token
+from ....config.settings import settings
+from ....utils.jwt_auth import create_access_token
 
 
 async def scheduler_request(

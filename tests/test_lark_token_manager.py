@@ -7,7 +7,7 @@ import pytest
 
 
 def test_token_store_migrates_local_and_feishu_identities(tmp_path):
-    from xpeech.lark_token_manager import TokenStore
+    from xpeech.subapp.lark_token_manager.app import TokenStore
 
     path = tmp_path / "tokens.db"
     store = TokenStore(path)
@@ -47,7 +47,7 @@ def test_token_store_migrates_local_and_feishu_identities(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("open_id", ["ou_123", None])
 async def test_authorization_status_and_logout_use_open_id(tmp_path, monkeypatch, open_id):
-    import xpeech.lark_token_manager as manager
+    import xpeech.subapp.lark_token_manager.app as manager
 
     store = manager.TokenStore(tmp_path / "tokens.db")
     monkeypatch.setattr(manager, "store", store)
@@ -76,7 +76,7 @@ async def test_authorization_status_and_logout_use_open_id(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_token_manager_uses_device_flow_and_returns_nonblocking_url(monkeypatch):
-    import xpeech.lark_token_manager as manager
+    import xpeech.subapp.lark_token_manager.app as manager
     requested_scopes = []
 
     async def request_device_code(scopes):
@@ -137,7 +137,7 @@ def _insert_authorized_session(manager, user_id: str, *, access_token: str, refr
 
 @pytest.mark.asyncio
 async def test_refresh_marks_expired_refresh_token_without_calling_feishu(monkeypatch):
-    import xpeech.lark_token_manager as manager
+    import xpeech.subapp.lark_token_manager.app as manager
 
     session = "expired-refresh-" + uuid.uuid4().hex
     _insert_authorized_session(
@@ -162,7 +162,7 @@ async def test_refresh_marks_expired_refresh_token_without_calling_feishu(monkey
 
 @pytest.mark.asyncio
 async def test_refresh_handles_business_error_code_in_http_200(monkeypatch):
-    import xpeech.lark_token_manager as manager
+    import xpeech.subapp.lark_token_manager.app as manager
 
     session = "refresh-error-" + uuid.uuid4().hex
     _insert_authorized_session(
@@ -187,7 +187,7 @@ async def test_refresh_handles_business_error_code_in_http_200(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_refresh_rotates_both_tokens_and_uses_returned_ttls(monkeypatch):
-    import xpeech.lark_token_manager as manager
+    import xpeech.subapp.lark_token_manager.app as manager
 
     session = "refresh-success-" + uuid.uuid4().hex
     _insert_authorized_session(
@@ -220,7 +220,7 @@ async def test_refresh_rotates_both_tokens_and_uses_returned_ttls(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_token_invalidate_only_invalidates_matching_current_token():
-    import xpeech.lark_token_manager as manager
+    import xpeech.subapp.lark_token_manager.app as manager
 
     session = "invalidate-" + uuid.uuid4().hex
     access_token = "access-to-invalidate"

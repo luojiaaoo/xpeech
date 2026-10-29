@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-web_client_app = import_module("xpeech.channel.web_client.app")
+web_client_app = import_module("xpeech.subapp.channel.web_client.app")
 InjectPromptWebConfig = web_client_app.InjectPromptWebConfig
 WebConfig = web_client_app.WebConfig
 create_app = web_client_app.create_app

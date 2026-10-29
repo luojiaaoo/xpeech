@@ -9,7 +9,7 @@ os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Xpeech services.")
+    parser = argparse.ArgumentParser(description="Run an Xpeech service.")
     subparsers = parser.add_subparsers(dest="service")
 
     api_parser = subparsers.add_parser("api", help="Run the Xpeech API service.")
@@ -18,26 +18,24 @@ def main() -> None:
     api_parser.set_defaults(service="api")
 
     feishu_parser = subparsers.add_parser("feishu", help="Run the Feishu bridge.")
-    feishu_parser.add_argument("--chat-url", default="http://127.0.0.1:7878", help="Xpeech /chat endpoint.")
-    feishu_parser.set_defaults(service="feishu")
+    feishu_parser.add_argument("--chat-url", default="http://127.0.0.1:7878")
 
     web_client_parser = subparsers.add_parser(
-        "web_client",
-        help="Run the authenticated Xpeech web client.",
+        "web_client", help="Run the authenticated web client.",
     )
     web_client_parser.add_argument("--host", default="0.0.0.0")
     web_client_parser.add_argument("--port", type=int, default=7939)
     web_client_parser.add_argument("--backend-url", default="http://127.0.0.1:7878")
-    web_client_parser.set_defaults(service="web_client")
 
-    token_manager_parser = subparsers.add_parser(
-        "token_manager", help="Run the Feishu OAuth and token manager."
+    token_parser = subparsers.add_parser(
+        "token_manager", help="Run the Lark token manager.",
     )
-    token_manager_parser.add_argument("--host", default="0.0.0.0")
-    token_manager_parser.add_argument("--port", type=int, default=7883)
-    token_manager_parser.set_defaults(service="token_manager")
+    token_parser.add_argument("--host", default="0.0.0.0")
+    token_parser.add_argument("--port", type=int, default=7883)
 
-    scheduler_parser = subparsers.add_parser("scheduler", help="Run the single scheduler service.")
+    scheduler_parser = subparsers.add_parser(
+        "scheduler", help="Run the single scheduler service.",
+    )
     scheduler_parser.add_argument("--host", default="0.0.0.0")
     scheduler_parser.add_argument("--port", type=int, default=8090)
 
@@ -53,29 +51,25 @@ def main() -> None:
         return
 
     if service == "feishu":
-        from .channel.feishu.bridge import run
+        from .subapp.channel.feishu.bridge import run
 
         run(chat_url=args.chat_url)
         return
 
     if service == "web_client":
-        from .channel.web_client.app import run
+        from .subapp.channel.web_client.app import run
 
-        run(
-            host=args.host,
-            port=args.port,
-            backend_url=args.backend_url,
-        )
+        run(host=args.host, port=args.port, backend_url=args.backend_url)
         return
 
     if service == "token_manager":
-        from .lark_token_manager import run
+        from .subapp.lark_token_manager.app import run
 
         run(host=args.host, port=args.port)
         return
 
     if service == "scheduler":
-        from .scheduler import run
+        from .subapp.scheduler.app import run
 
         run(host=args.host, port=args.port)
         return

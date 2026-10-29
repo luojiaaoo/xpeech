@@ -50,3 +50,6 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "tomlkit>=0.15.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

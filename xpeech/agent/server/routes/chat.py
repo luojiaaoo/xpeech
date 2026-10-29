@@ -4,18 +4,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
-from ....scheduler_client import scheduler_request
 from ....utils.file_io import save_to_workspace
 from ....utils.ids import DEFAULT_SESSION_ID
-from ...background import (
-    BackgroundMessageChannel,
-    FeishuBackgroundMessage,
-    ScheduledExecution,
-    ScheduledExecutionResult,
-    execute_scheduled_task,
-)
+from ...background import execute_scheduled_task
 from ...loop import AgentLoop, QuestionEvent
 from ...runner import AgentRunner
+from ...tools.schedule.client import scheduler_request
+from ...tools.schedule.schema import (
+    ScheduledExecution,
+    ScheduledExecutionResult,
+)
 from ..dependencies import (
     acquire_chat_session,
     content,
@@ -25,7 +23,12 @@ from ..dependencies import (
     session_metadata,
     user_id_header,
 )
-from ..schema import InboundMessage, InputContent
+from ..schema import (
+    BackgroundMessageChannel,
+    FeishuBackgroundMessage,
+    InboundMessage,
+    InputContent,
+)
 
 router = APIRouter()
 

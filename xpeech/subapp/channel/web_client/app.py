@@ -22,11 +22,11 @@ from .routes.auth import create_auth_router
 from .routes.proxy import create_proxy_router
 
 PBKDF2_ITERATIONS = 600_000
-XPEECH_FAVICON = Path(__file__).resolve().parents[3] / "assets" / "favicon.ico"
+XPEECH_FAVICON = Path(__file__).resolve().parents[4] / "assets" / "favicon.ico"
 
 
 def _configured_system_name() -> str:
-    from ...config.settings import settings
+    from ....config.settings import settings
 
     return settings.llm.system_name.strip() or "AI 助手"
 
@@ -162,7 +162,7 @@ def run(
     backend_url: str = "http://127.0.0.1:7878",
     dev_frontend: bool = False,
 ) -> None:
-    from ...config.settings import settings
+    from ....config.settings import settings
 
     frontend = Path(__file__).parent / "frontend"
     static_dir = frontend / ("dist" if not dev_frontend else "dist")

@@ -8,10 +8,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from xpeech.channel.helper import ChatStream
+from xpeech.subapp.channel.helper import ChatStream
 
-web_client_app = import_module("xpeech.channel.web_client.app")
-proxy_routes = import_module("xpeech.channel.web_client.routes.proxy")
+web_client_app = import_module("xpeech.subapp.channel.web_client.app")
+proxy_routes = import_module("xpeech.subapp.channel.web_client.routes.proxy")
 WebConfig = web_client_app.WebConfig
 create_app = web_client_app.create_app
 

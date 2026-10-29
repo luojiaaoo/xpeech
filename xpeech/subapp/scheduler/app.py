@@ -8,22 +8,21 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import Field, model_validator
 
-from .agent.background import (
+from ...agent.server.auth import require_jwt
+from ...agent.server.dependencies import user_id_header
+from ...agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
+from ...agent.tools.schedule import FeishuScheduleArgs
+from ...agent.tools.schedule.schema import ScheduledTask
+from ...utils.helper import ensure_async
+from ...utils.logging import configure_logging
+from .background import (
     BACKGROUND_MESSAGE_QUEUES,
-    BackgroundMessageChannel,
-    FeishuBackgroundMessage,
-    ScheduledTask,
     cancel_scheduled_task,
     list_scheduled_tasks,
     schedule_feishu_task,
     start_background_scheduler,
     stop_background_scheduler,
 )
-from .agent.server.auth import require_jwt
-from .agent.server.dependencies import user_id_header
-from .agent.tools.schedule import FeishuScheduleArgs
-from .utils.helper import ensure_async
-from .utils.logging import configure_logging
 
 BACKGROUND_MESSAGE_LONG_POLL_SECONDS = 50
 

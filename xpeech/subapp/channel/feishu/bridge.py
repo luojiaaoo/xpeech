@@ -18,9 +18,9 @@ from lark_channel import (
 from loguru import logger
 from yarl import URL
 
-from ...agent.background import BackgroundMessageChannel, FeishuBackgroundMessage
-from ...config.settings import settings
-from ...utils.jwt_auth import create_access_token
+from ....agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
+from ....config.settings import settings
+from ....utils.jwt_auth import create_access_token
 from ..helper import download_file as download_channel_file
 from ..helper import iter_chat_events, notify_question
 from ..schema import ChatEvent, ChatEventType, Message

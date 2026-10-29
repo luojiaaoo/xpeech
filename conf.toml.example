@@ -8,7 +8,7 @@ sandbox_home_path = "data/sandbox-home"
 cache_path = "data/cache"
 log_path = "data/logs"
 
-# 本地运行时需单独启动 `python -m xpeech scheduler`；Compose 自动设置内网地址。
+# 本地运行时需单独启动 `python -m xpeech.subapp scheduler`；Compose 自动设置内网地址。
 [scheduler]
 url = "http://127.0.0.1:8090"
 backend_url = "http://127.0.0.1:7878"

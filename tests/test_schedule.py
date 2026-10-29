@@ -12,24 +12,12 @@ import pytest
 import pytest_asyncio
 from pydantic import ValidationError
 
-import xpeech.scheduler as scheduler_service
-from xpeech import scheduler_client
-from xpeech.agent import background
-from xpeech.agent.background import (
-    BACKGROUND_TASK_FAILURE_MESSAGE,
-    BackgroundMessageChannel,
-    FeishuBackgroundMessage,
-    FeishuBackgroundMessageQueue,
-    cancel_scheduled_task,
-    list_scheduled_tasks,
-    run_feishu_background_task,
-    schedule_feishu_task,
-    start_background_scheduler,
-    stop_background_scheduler,
-)
+import xpeech.subapp.scheduler.app as scheduler_service
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app as backend_app
+from xpeech.agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
 from xpeech.agent.tools.helper import as_tool
+from xpeech.agent.tools.schedule import client as scheduler_client
 from xpeech.agent.tools.schedule import (
     FeishuScheduleArgs,
     FeishuScheduleCancelArgs,
@@ -38,6 +26,17 @@ from xpeech.agent.tools.schedule import (
     feishu_schedule_list,
 )
 from xpeech.config.settings import settings
+from xpeech.subapp.scheduler import background
+from xpeech.subapp.scheduler.background import (
+    BACKGROUND_TASK_FAILURE_MESSAGE,
+    FeishuBackgroundMessageQueue,
+    cancel_scheduled_task,
+    list_scheduled_tasks,
+    run_feishu_background_task,
+    schedule_feishu_task,
+    start_background_scheduler,
+    stop_background_scheduler,
+)
 from xpeech.utils.jwt_auth import create_access_token, decode_access_token
 
 
@@ -247,6 +246,7 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
     assert restored.get_job(date_job.id) is None
     restored_cron = restored.get_job(cron_job.id)
     assert restored_cron is not None
+    assert restored_cron.func_ref == "xpeech.subapp.scheduler.background:run_feishu_background_task"
     assert restored_cron.next_run_time > future_now
 
 

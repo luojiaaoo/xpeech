@@ -8,8 +8,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
-web_client_app = import_module("xpeech.channel.web_client.app")
-oauth_routes = import_module("xpeech.channel.web_client.routes.auth")
+web_client_app = import_module("xpeech.subapp.channel.web_client.app")
+oauth_routes = import_module("xpeech.subapp.channel.web_client.routes.auth")
 settings_module = import_module("xpeech.config.settings")
 OAuth2WebConfig = web_client_app.OAuth2WebConfig
 InjectPromptWebConfig = web_client_app.InjectPromptWebConfig

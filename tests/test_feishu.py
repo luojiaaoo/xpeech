@@ -23,16 +23,16 @@ from lark_channel import (
 )
 from lark_channel.channel.safety.pipeline import SafetyPipeline
 
-import xpeech.channel.feishu.bridge as feishu_bridge
-import xpeech.channel.feishu.delivery as feishu_delivery
-import xpeech.channel.feishu.inbound as feishu_inbound
-from xpeech.channel.feishu.bridge import FeishuBridge
-from xpeech.channel.feishu.cards import (
+import xpeech.subapp.channel.feishu.bridge as feishu_bridge
+import xpeech.subapp.channel.feishu.delivery as feishu_delivery
+import xpeech.subapp.channel.feishu.inbound as feishu_inbound
+from xpeech.subapp.channel.feishu.bridge import FeishuBridge
+from xpeech.subapp.channel.feishu.cards import (
     FINISH_CARD_CONTENT,
     build_feishu_background_task_card,
 )
-from xpeech.channel.feishu.channel import XpeechFeishuChannel
-from xpeech.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
+from xpeech.subapp.channel.feishu.channel import XpeechFeishuChannel
+from xpeech.subapp.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
 def _inbound_message(

@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ...scheduler_client import scheduler_request
+from .client import scheduler_request
 
 
 def _require_text(value: object, name: str) -> str:

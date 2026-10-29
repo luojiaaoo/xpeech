@@ -89,7 +89,6 @@ services:
     expose:
       - "8090"
     volumes:
-      # 保留原路径，兼容已有 schedule.db；只有 scheduler 读写此文件
       - ./docker_data/session:/app/data/session
       - ./docker_data/logs/scheduler:/app/data/logs
     healthcheck:

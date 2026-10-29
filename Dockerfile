@@ -82,7 +82,7 @@ RUN uv sync --frozen --no-dev
 
 RUN npm config set registry https://registry.npmmirror.com/
 
-RUN cd xpeech/channel/web_client/frontend && \
+RUN cd xpeech/subapp/channel/web_client/frontend && \
     npm install --no-audit --no-fund && \
     npm run build && \
     rm -rf node_modules

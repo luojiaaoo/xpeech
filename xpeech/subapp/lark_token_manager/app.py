@@ -20,7 +20,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from .config.settings import settings
+from ...config.settings import settings
 
 DEVICE_AUTH_URL = "https://accounts.feishu.cn/oauth/v1/device_authorization"
 TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"

@@ -12,7 +12,6 @@ from ..dao import (
 )
 from ..models import UserBody, UserUpdateBody, public_user
 
-
 AdminUserDependency = Callable[..., Awaitable[User] | User]
 PasswordHash = Callable[[str], str]
 

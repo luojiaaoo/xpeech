@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from yarl import URL
 
-from ....utils.command_template import CommandTemplateError, execute_command_template
+from .....utils.command_template import CommandTemplateError, execute_command_template
 from ..dao import DuplicateUserIdError, User, WebClientDAO
 from ..models import (
     INJECT_PROMPT_STATE_MAX_LENGTH,

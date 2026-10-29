@@ -95,6 +95,9 @@ uv run -m xpeech web_client
 
 # 飞书桥接（依赖 API 服务）
 uv run -m xpeech feishu
+
+# Lark 令牌管理
+uv run -m xpeech token_manager
 ```
 
 默认访问地址：
@@ -170,6 +173,28 @@ lark-cli-auth login --domain calendar,task
 Xpeech Deck 是自托管平台，需要与 Docker 和所有受管 Xpeech 实例运行在同一台机器上。
 安装、配置和访问方式请参阅 [Xpeech Deck 使用说明](https://github.com/luojiaaoo/xpeech-deck#readme)。
 
+## 项目结构
+
+配套服务和接入渠道统一放在 `xpeech/subapp/`，Agent 核心仍位于 `xpeech/agent/`：
+
+```text
+xpeech/
+├── agent/                   # Agent、工具、后端 API 和共享 HTTP 协议/客户端
+├── subapp/
+│   ├── channel/             # 飞书、Web 客户端和共享通道逻辑
+│   ├── lark_token_manager/  # Lark 设备授权与令牌管理
+│   └── scheduler/           # 定时任务 API、后台调度和结果队列
+├── config/
+├── provider/
+└── utils/
+```
+
+依赖方向为 `subapp → 核心`；`agent`、`config`、`provider`、`utils` 等核心代码不导入
+`subapp`。调度工具、共享协议和 HTTP 客户端统一位于 `agent/tools/schedule/`，
+后台 Agent 执行仍位于 `agent/background.py`。
+所有服务统一使用 `uv run -m xpeech <服务名>` 启动；不指定服务名时默认启动 API。
+Compose 已配置相同入口。
+
 ## Docker Compose 部署
 
 Compose 会启动六类容器：
@@ -235,12 +260,13 @@ docker compose up -d --build --force-recreate backend
 `/background_message` 经 Nginx 到达任意 backend，再由 backend 向 scheduler 领取消息，
 不需要绑定特定实例。Nginx 对所有 API 使用同一条哈希转发规则。
 
-原有 `docker_data/session/schedule.db` 路径和持久化任务格式保持不变。升级时先停止旧 backend，
+数据库仍使用 `docker_data/session/schedule.db`，不提供旧任务函数路径的兼容或自动迁移；
+旧版本创建的任务需重新创建。升级时先停止旧 backend，
 确保旧调度器全部退出，再启动新服务；不要同时运行新旧调度器。scheduler 始终只运行一个副本。
 调度期间需保持 Nginx/backend 可用，执行 HTTP 请求失败时会发送失败提示，不自动重试；
 停机期间错过的任务仍按原规则跳过。待发送结果当前保存在 scheduler 内存中，重启会丢失未发送结果。
 
-本地运行 API 时，也需要在另一个终端执行 `uv run python -m xpeech scheduler`。
+本地运行 API 时，也需要在另一个终端执行 `uv run -m xpeech scheduler`。
 通过 `[scheduler]` 的 `url`、`backend_url` 配置服务地址（默认分别为
 `http://127.0.0.1:8090` 和 `http://127.0.0.1:7878`）。
 
@@ -602,7 +628,7 @@ Web 服务会签发短期后端 JWT，将请求及全部查询参数转发到后
 首次运行前构建前端：
 
 ```bash
-cd xpeech/channel/web_client/frontend
+cd xpeech/subapp/channel/web_client/frontend
 npm install
 npm run build
 ```

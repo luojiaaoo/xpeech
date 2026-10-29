@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from sqlmodel import SQLModel
 
-from xpeech.channel.web_client.dao import (
+from xpeech.subapp.channel.web_client.dao import (
     AuthenticationSession,
     DuplicateUserIdError,
     ProtectedAdminDeletionError,

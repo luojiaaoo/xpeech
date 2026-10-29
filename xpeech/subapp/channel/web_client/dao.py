@@ -9,7 +9,6 @@ from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-
 _web_client_registry = registry()
 
 
