@@ -34,7 +34,7 @@ def test_sender_name_header_is_required():
 
 
 def test_session_id_header_defaults_for_chat_and_answer():
-    for path in ("/chat", "/answer_question"):
+    for path in ("/chat", "/chat_sync", "/answer_question"):
         parameters = app.openapi()["paths"][path]["post"]["parameters"]
         session_id = next(
             parameter for parameter in parameters if parameter["name"] == "x-session-id"

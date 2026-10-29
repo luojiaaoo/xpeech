@@ -6,7 +6,7 @@ from fastapi.sse import EventSourceResponse
 
 from ....utils.file_io import save_to_workspace
 from ....utils.ids import DEFAULT_SESSION_ID
-from ...background import execute_scheduled_task
+from ...sync_call import execute_scheduled_chat, execute_chat
 from ...loop import AgentLoop, QuestionEvent
 from ...runner import AgentRunner
 from ...tools.schedule.client import scheduler_request
@@ -49,7 +49,7 @@ async def scheduled_run(
     request: ScheduledExecution,
     user_id: Annotated[str, Depends(user_id_header)],
 ) -> ScheduledExecutionResult:
-    return await execute_scheduled_task(user_id, request)
+    return await execute_scheduled_chat(user_id, request)
 
 
 @router.post("/answer_question")
@@ -108,3 +108,32 @@ async def chat(
 
     async for event in runner.run(message=message):
         yield event
+
+
+@router.post(
+    "/chat_sync",
+    responses={400: {"description": "The configured model does not support the requested JSON output mode"}},
+    dependencies=[Depends(acquire_chat_session, scope="request")],
+)
+async def chat_sync(
+    user_id: Annotated[str, Depends(user_id_header)],
+    session_id: Annotated[str, Depends(session_id_header)],
+    sender_name: Annotated[str, Depends(sender_name_header)],
+    session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
+    content: Annotated[InputContent, Depends(content)],
+    timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
+    files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
+    json_output: Annotated[bool, Depends(json_output_enabled)],
+) -> dict[str, str]:
+    """接收用户消息，阻塞运行 Agent，并一次性返回最终回复内容。"""
+    result = await execute_chat(
+        user_id,
+        content=content,
+        sender_name=sender_name,
+        session_id=session_id,
+        session_metadata=session_metadata,
+        timestamp=timestamp,
+        files=files,
+        json_output=json_output,
+    )
+    return result

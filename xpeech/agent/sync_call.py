@@ -1,9 +1,13 @@
-"""Execute scheduled Agent runs inside the backend."""
+"""Synchronous Agent invocations executed inside the backend."""
 
 from datetime import datetime
 from uuid import uuid4
 
-from .server.schema import InboundMessage, InputText
+from fastapi import UploadFile
+
+from ..utils.file_io import save_to_workspace
+from ..utils.ids import DEFAULT_SESSION_ID
+from .server.schema import InboundMessage, InputContent, InputText
 from .tools.schedule.schema import ScheduledExecution, ScheduledExecutionResult
 
 SCHEDULED_TASK_PROMPT_PREFIX = (
@@ -19,8 +23,43 @@ SCHEDULED_TASK_PROMPT_PREFIX = (
 )
 
 
-async def execute_scheduled_task(user_id: str, request: ScheduledExecution) -> ScheduledExecutionResult:
-    """Run a background Agent with isolated history and no interactive tools."""
+async def execute_chat(
+    user_id: str,
+    *,
+    content: InputContent,
+    sender_name: str,
+    session_id: str = DEFAULT_SESSION_ID,
+    session_metadata: dict[str, str] | None = None,
+    timestamp: datetime | None = None,
+    files: list[UploadFile] | None = None,
+    json_output: bool = False,
+) -> str:
+    """Run a plain synchronous Agent call and return only the final content."""
+    from .runner import AgentRunner
+
+    runner = await AgentRunner.create(
+        user_id,
+        include_background_tools=session_id == DEFAULT_SESSION_ID,
+    )
+    saved_files = []
+    for file in files or []:
+        saved_files.append(await save_to_workspace(file=file, workspace=runner.workspace))
+
+    message = InboundMessage(
+        user_id=user_id,
+        session_id=session_id,
+        sender_name=sender_name,
+        session_metadata=session_metadata or {},
+        content=content,
+        timestamp=timestamp or datetime.now().astimezone(),
+        files=saved_files,
+        json_output=json_output,
+    )
+    return await runner.run_once(message)
+
+
+async def execute_scheduled_chat(user_id: str, request: ScheduledExecution) -> ScheduledExecutionResult:
+    """Run a scheduled synchronous Agent with isolated history and no interactive tools."""
     from .runner import AgentRunner
 
     message = InboundMessage(

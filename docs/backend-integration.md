@@ -13,6 +13,8 @@ Xpeech API 默认监听 `http://localhost:7878`。一次完整的聊天交互如
 5. 收到 `send_file` 事件时，接入方通过 `GET /sessions/{user_id}/files` 下载文件。
 6. SSE 连接结束，代表本轮 Agent 运行完成。
 
+不需要流式返回时，可改用同步接口 `POST /chat_sync`：请求参数与 `POST /chat` 相同，阻塞到运行结束后一次性返回最终回复（见 5.3 节）。
+
 > Web 客户端的 `/api/chat`、`/api/answer_question` 和 `/api/files` 是基于登录 Cookie 的代理接口。服务到服务接入应直接调用本文介绍的 Xpeech API。
 
 ## 2. 基础约定
@@ -161,6 +163,39 @@ support_json_output = true
 ```
 
 如果服务端未启用而请求了该模式，接口会在 SSE 开始前返回 `400`。成功响应仍然是 SSE，需要拼接所有 `assistant` 分片，再对完整字符串执行一次 JSON 解析。
+
+### 5.3 同步接口
+
+如果不需要流式返回，可调用同步接口。请求头和表单字段与 `POST /chat` 完全相同，但不返回 SSE，而是在 Agent 运行结束后一次性返回最终回复内容：
+
+```http
+POST /chat_sync
+Content-Type: multipart/form-data
+```
+
+响应为 JSON：
+
+```json
+{"content": "你好！我是 Xpeech Agent。"}
+```
+
+最小请求：
+
+```bash
+curl -X POST "http://localhost:7878/chat_sync" \
+  -H "Authorization: Bearer <JWT>" \
+  -H "x-user-id: demo-user" \
+  -H "x-session-id: chat-001" \
+  -H "x-sender-name: demo-user" \
+  -F 'content=[{"text":"你好，请介绍一下自己"}]'
+```
+
+同步接口与 `POST /chat` 共享同一套会话语义：
+
+- 会话历史按 `user_id + session_id` 共享，使用相同 `session_id` 的多次调用构成同一段对话。
+- 同一 `user_id + session_id` 同时只能有一个进行中的请求，重复请求返回 `409 Conflict`。
+- `json_output=true` 时 `content` 是模型输出的 JSON 字符串，需要接入方自行解析。
+- 请求会阻塞到 Agent 输出最终回复。如果 Agent 运行中发起追问（见第 7 节），请求会一直等待 `POST /answer_question` 提交答案或约 5 分钟超时，因此同步接口更适合不需要追问交互的场景。
 
 ## 6. 解析 SSE 响应
 
