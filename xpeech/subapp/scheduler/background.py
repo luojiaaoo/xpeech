@@ -102,6 +102,28 @@ def _skip_jobs_missed_while_stopped(scheduler: AsyncIOScheduler, now: datetime) 
         )
 
 
+def _migrate_legacy_channel_kwargs(scheduler: AsyncIOScheduler) -> None:
+    """把旧任务 session_metadata 里的渠道名迁移到 job kwargs 的 channel 字段。
+
+    channel 成为独立字段之前创建的任务把渠道名放在 session_metadata["channel"]，
+    kwargs 里没有 channel，迁移后才能列出渠道并在触发时传给执行函数。
+    """
+    for job in scheduler.get_jobs():
+        kwargs = dict(job.kwargs)
+        metadata = dict(kwargs.get("session_metadata") or {})
+        legacy_channel = metadata.pop("channel", None)
+        if not legacy_channel:
+            continue
+        kwargs["channel"] = kwargs.get("channel") or legacy_channel
+        kwargs["session_metadata"] = metadata
+        scheduler.modify_job(job.id, kwargs=kwargs)
+        logger.info(
+            "Migrated legacy scheduled job job_id={} channel={}",
+            job.id,
+            kwargs["channel"],
+        )
+
+
 def start_background_scheduler(
     database_path: str | Path | None = None,
     *,
@@ -125,6 +147,9 @@ def start_background_scheduler(
             current_time = current_time.replace(tzinfo=timezone)
         else:
             current_time = current_time.astimezone(timezone)
+        # TODO: 所有环境的 schedule.db 都用新代码启动过一次（启动日志不再出现
+        #  "Migrated legacy scheduled job"）后，删除 _migrate_legacy_channel_kwargs 及此调用。
+        _migrate_legacy_channel_kwargs(scheduler)
         _skip_jobs_missed_while_stopped(scheduler, current_time)
         scheduler.resume()
     except Exception:

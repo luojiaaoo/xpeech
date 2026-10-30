@@ -270,6 +270,44 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_restart_migrates_legacy_channel_from_session_metadata(tmp_path: Path, monkeypatch):
+    database = tmp_path / "schedule.db"
+    scheduler = start_background_scheduler(database)
+    run_at = datetime.now(scheduler.timezone) + timedelta(hours=1)
+    # channel 独立成字段之前写入的任务 kwargs 里没有 channel，当时的函数签名允许；
+    # 绕过 add_job 对今日签名的校验来构造这样的旧行。
+    monkeypatch.setattr("apscheduler.job.check_callable_args", lambda *args, **kwargs: None)
+    scheduler.add_job(
+        run_feishu_background_task,
+        trigger="date",
+        run_date=run_at,
+        id="legacy-job",
+        kwargs={
+            "job_id": "legacy-job",
+            "prompt": "task",
+            "user_id": "session-1",
+            "sender_name": "Alice",
+            "session_metadata": {"channel": "feishu", "open_id": "ou_1", "custom": "kept"},
+            "schedule_type": "run_at",
+            "schedule_value": run_at.isoformat(),
+        },
+    )
+    stop_background_scheduler()
+    await asyncio.sleep(0)
+
+    restored = start_background_scheduler(database)
+    job = restored.get_job("legacy-job")
+    assert job.kwargs["channel"] == "feishu"
+    assert job.kwargs["session_metadata"] == {"open_id": "ou_1", "custom": "kept"}
+    assert list_scheduled_tasks("session-1")[0].channel == "feishu"
+
+    stop_background_scheduler()
+    await asyncio.sleep(0)
+    stable = start_background_scheduler(database)
+    assert stable.get_job("legacy-job").kwargs == job.kwargs
+
+
+@pytest.mark.asyncio
 async def test_tools_capture_context_list_across_channels_and_enforce_cancel_owner(tmp_path: Path, scheduler_http):
     scheduler = start_background_scheduler(tmp_path / "schedule.db")
     args = FeishuScheduleArgs(
