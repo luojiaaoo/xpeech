@@ -4,7 +4,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .loading-page { width: min(420px, calc(100% - 32px)); margin: 25vh auto; }
 .app-shell { height: 100vh; height: 100dvh; overflow: hidden; }
 .brand-mark, .header-brand-mark { display: grid; place-items: center; color: white; background: linear-gradient(145deg, #3370ff, #6957f5); font-weight: 800; box-shadow: 0 8px 24px #3370ff40; }
-.app-header { height: 64px; flex-shrink: 0; line-height: normal; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 24px; background: #fff; border-bottom: 1px solid #e5e6eb; }
+.app-header { height: 56px; flex-shrink: 0; line-height: normal; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 24px; background: #fff; border-bottom: 1px solid #e5e6eb; }
 .header-heading, .header-actions, .header-user { display: flex; align-items: center; }
 .header-heading { min-width: 0; gap: 12px; }
 .header-heading h4, .page-heading h3 { margin: 0 !important; }
@@ -24,8 +24,8 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .welcome-area { height: 100%; overflow: auto; text-align: center; padding: 24px; }
 .welcome-area > * { flex-shrink: 0; max-width: 100%; }
 .welcome-icon { width: 54px; height: 54px; display: grid; place-items: center; font-size: 26px; border-radius: 18px; color: #3370ff; background: #e8f0ff; }
-.bubble-list { height: 100%; padding: 32px clamp(24px, 3vw, 56px) 24px; }
-.bubble-list .ant-bubble { width: 100%; padding-block: 10px; }
+.bubble-list { height: 100%; padding: 18px clamp(24px, 3vw, 56px) 14px; }
+.bubble-list .ant-bubble { width: 100%; padding-block: 6px; }
 .bubble-list .ant-bubble-avatar { flex-shrink: 0; }
 .bubble-list .ant-bubble-body { min-width: 0; }
 .bubble-list .ant-bubble.ant-bubble-start:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-end: 0; }
@@ -33,7 +33,8 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .bubble-list .chat-user .ant-bubble-content {
   width: fit-content;
   max-width: 100%;
-  padding: 12px 16px;
+  min-height: 0;
+  padding: 8px 12px;
   border: 0;
   border-radius: 10px;
   color: #394454;
@@ -49,18 +50,38 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .chat-thinking .ant-bubble-content,
 .chat-tool .ant-bubble-content,
 .chat-summary .ant-bubble-content { width: 100%; max-width: 100%; padding: 0; }
-.markdown-content { width: auto; min-width: 0; max-width: 100%; overflow-wrap: anywhere; line-height: 1.75; }
+.markdown-content {
+  --margin-block: 0 0 10px;
+  --margin-ul-ol: 0 0 10px 18px;
+  --margin-pre: 0 0 10px;
+  --table-margin: 0 0 12px;
+  --hr-margin: 16px 0;
+  --padding-code: 12px;
+  --td-th-padding: 6px 8px;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.markdown-content h1, .markdown-content h2, .markdown-content h3, .markdown-content h4 { margin: 12px 0 8px; line-height: 1.5; }
+.markdown-content h1 { font-size: 22px; }
+.markdown-content h2 { font-size: 18px; }
+.markdown-content h3 { font-size: 16px; }
+.markdown-content h4 { font-size: 14px; }
+.markdown-content > :first-child { margin-top: 0; }
+.markdown-content li { margin-bottom: 4px; }
 .markdown-content > :last-child { margin-bottom: 0; }
 .markdown-content pre, .markdown-content table { max-width: 100%; overflow-x: auto; }
 .markdown-content table { display: block; }
 .markdown-content img { height: auto; }
-.chat-thinking { padding-block: 5px !important; }
+.chat-thinking { padding-block: 3px !important; }
 .thinking-panel { width: 100%; color: #8993a1; font-size: 13px; }
 .thinking-panel summary {
   display: inline-flex;
-  min-height: 26px;
+  min-height: 22px;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   color: #8993a1;
   cursor: pointer;
   list-style: none;
@@ -73,8 +94,8 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .thinking-chevron { font-size: 10px; transition: transform .2s; }
 .thinking-panel[open] .thinking-chevron { transform: rotate(180deg); }
 .thinking-content {
-  margin: 8px 0 6px 6px;
-  padding: 0 0 0 17px;
+  margin: 5px 0 4px 6px;
+  padding: 0 0 0 12px;
   border-inline-start: 2px solid #e8ecf2;
   color: #8a94a3;
   font-size: 13px;
@@ -83,26 +104,26 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .thinking-content .markdown-content p { color: inherit; }
 .chat-tool .ant-bubble-body { flex: 0 1 640px; max-width: 100%; }
 .tool-execution { width: 100%; min-width: 0; }
-.tool-execution-label { margin: 0 0 8px 2px; color: #8b9aaf; font-size: 12px; font-weight: 600; }
+.tool-execution-label { margin: 0 0 4px 2px; color: #8b9aaf; font-size: 12px; font-weight: 600; }
 .tool-card { width: 100%; border: 1px solid #dfe5ed; border-radius: 9px; background: #f4f7fb; }
-.tool-card summary { display: flex; align-items: center; gap: 9px; padding: 12px 11px; cursor: pointer; list-style: none; }
+.tool-card summary { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; list-style: none; }
 .tool-card summary:focus-visible, .thinking-panel summary:focus-visible { outline: 2px solid #3370ff; outline-offset: 3px; border-radius: 5px; }
 .tool-status-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: #28a56b; }
 .tool-card-interrupted .tool-status-dot { background: #d49626; }
 .tool-status-icon { flex: 0 0 auto; color: #3370ff; font-size: 12px; }
-.tool-card-heading { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.tool-card-heading { display: flex; min-width: 0; flex: 1; align-items: baseline; flex-wrap: wrap; gap: 0 10px; }
 .tool-card-name { color: #3d4654; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .tool-card-status { color: #96a3b5; font-size: 11px; line-height: 18px; }
 .tool-card-chevron { flex: 0 0 auto; color: #96a3b5; font-size: 10px; transition: transform .2s; }
 .tool-card[open] .tool-card-chevron { transform: rotate(180deg); }
-.tool-card-details { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding: 0 10px 10px 27px; }
-.tool-card-section { min-width: 0; padding: 10px; border-radius: 6px; background: #fff; }
-.tool-card-section-label { margin-bottom: 7px; color: #8b9aaf; font-size: 12px; font-weight: 600; }
-.tool-card-section pre { max-height: 320px; margin: 0; overflow: auto; color: #45505f; font: 12px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-card-details { display: flex; min-width: 0; flex-direction: column; gap: 6px; padding: 0 8px 8px 22px; }
+.tool-card-section { min-width: 0; padding: 8px; border-radius: 6px; background: #fff; }
+.tool-card-section-label { margin-bottom: 4px; color: #8b9aaf; font-size: 12px; font-weight: 600; }
+.tool-card-section pre { max-height: 260px; margin: 0; overflow: auto; color: #45505f; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tool-card-placeholder { color: #96a3b5; font-size: 12px; }
 .chat-status-text { display: flex; align-items: center; gap: 7px; color: #8a94a3; font-size: 13px; overflow-wrap: anywhere; }
 .chat-file-button { max-width: 100%; height: auto; min-height: 32px; white-space: normal; overflow-wrap: anywhere; text-align: start; }
-.chat-summary { padding-block: 4px 12px !important; }
+.chat-summary { padding-block: 2px 8px !important; }
 .bubble-footer { display: flex; width: 100%; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px; }
 .bubble-copy-button { margin-inline-start: auto; flex: 0 0 auto; }
 .token-usage { display: inline-flex; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px 6px; color: #646b78; }
@@ -122,7 +143,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 }
 .token-usage-label { color: #8a919f; }
 .token-usage-value { color: #4b5260; font-weight: 500; }
-.sender-wrap { flex-shrink: 0; min-width: 0; width: min(1328px, calc(100% - 48px)); margin: 0 auto 18px; padding-bottom: env(safe-area-inset-bottom, 0px); text-align: center; }
+.sender-wrap { flex-shrink: 0; min-width: 0; width: min(1328px, calc(100% - 48px)); margin: 0 auto 10px; padding-bottom: env(safe-area-inset-bottom, 0px); text-align: center; }
 .pending-user-prefix { margin-bottom: 10px; text-align: left; }
 .pending-user-prefix-content {
   overflow-wrap: anywhere;
@@ -133,7 +154,8 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .pending-user-prefix-content.expanded { max-height: min(40vh, 320px); overflow: auto; }
 .pending-user-prefix-toggle { height: auto; margin-top: 4px; padding: 0; }
 .sender-wrap .ant-sender { text-align: left; box-shadow: 0 8px 32px #1f23291a; border-color: #d9dce3; }
-.sender-tip { display: inline-block; margin-top: 8px; font-size: 11px; }
+.sender-wrap .ant-sender-content { padding: 8px 10px; }
+.sender-tip { display: inline-block; margin-top: 4px; font-size: 11px; }
 .question-form { width: 500px; max-width: 100%; padding: 16px; background: #f7f9fc; border-radius: 12px; }
 .full-width { width: 100%; }
 .admin-page { height: 100%; overflow: auto; padding: 32px; background: #f7f8fa; }
@@ -1218,10 +1240,10 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .app-header { padding: 0 14px; gap: 12px; }
   .header-brand-name, .header-divider, .header-user-copy { display: none; }
   .settings-button > span:not(.ant-btn-icon) { display: none; }
-  .bubble-list { padding: 22px 14px 18px; }
+  .bubble-list { padding: 14px 14px 12px; }
   .bubble-list .ant-bubble.ant-bubble-start:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-end: 0; }
   .bubble-list .ant-bubble.ant-bubble-end:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-start: 0; }
-  .sender-wrap { width: calc(100% - 28px); margin-bottom: 12px; }
+  .sender-wrap { width: calc(100% - 28px); margin-bottom: 8px; }
   .admin-page { padding: 18px; }
   .statistics-dashboard { padding: 12px; }
   .statistics-toolbar { align-items: flex-start; flex-direction: column; }
