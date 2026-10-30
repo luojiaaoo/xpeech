@@ -34,7 +34,6 @@ database_path = "data/web_client/users.db"
 cookie_name = "xpeech_session"
 
 [web_client.embed]
-# 业务网站动态 import embed.js 后调用 setUserId()，按实际 user_id 建立会话。
 allowed_origins = ["https://portal.example.com"]
 session_seconds = 3600
 
