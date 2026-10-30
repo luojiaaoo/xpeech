@@ -1,16 +1,14 @@
+"""Channel-facing chat, question-answer, and background-message endpoints."""
+
 from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
-from ...execute import execute_chat, execute_chat_stream, execute_scheduled_chat
+from ...execute import execute_chat, execute_chat_stream
 from ...loop import AgentLoop, QuestionEvent
 from ...tools.schedule.client import scheduler_request
-from ...tools.schedule.schema import (
-    ScheduledExecution,
-    ScheduledExecutionResult,
-)
 from ..dependencies import (
     acquire_chat_session,
     content,
@@ -38,14 +36,6 @@ async def poll_background_message(channel: BackgroundMessageChannel) -> FeishuBa
     if payload is None:
         return Response(status_code=204)
     return FeishuBackgroundMessage.model_validate(payload)
-
-
-@router.post("/internal/scheduled-run", include_in_schema=False)
-async def scheduled_run(
-    request: ScheduledExecution,
-    user_id: Annotated[str, Depends(user_id_header)],
-) -> ScheduledExecutionResult:
-    return await execute_scheduled_chat(user_id, request)
 
 
 @router.post("/answer_question")

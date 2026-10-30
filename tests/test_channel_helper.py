@@ -7,6 +7,12 @@ import pytest
 
 from xpeech.subapp.channel import helper
 from xpeech.subapp.channel.schema import ChatEventType, Message, TextData
+from xpeech.utils.channel_jwt import ChannelJWTAuth
+
+TEST_AUTH = ChannelJWTAuth(
+    "test",
+    "test-channel-key-that-is-at-least-32-bytes",
+)
 
 
 class _JsonErrorStream(httpx.AsyncByteStream):
@@ -32,7 +38,14 @@ async def test_iter_chat_events_reads_streaming_error_response(monkeypatch: pyte
     )
 
     with pytest.raises(httpx.HTTPStatusError) as exc_info:
-        _ = [event async for event in helper.iter_chat_events([message], "http://backend.test/chat")]
+        _ = [
+            event
+            async for event in helper.iter_chat_events(
+                [message],
+                "http://backend.test/chat",
+                TEST_AUTH,
+            )
+        ]
 
     assert exc_info.value.response.json() == {"detail": "Session already has an active chat request"}
     assert response.is_closed
@@ -71,7 +84,11 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
         session_metadata={},
     )
 
-    events = helper.iter_chat_events([message], "http://backend.test/chat")
+    events = helper.iter_chat_events(
+        [message],
+        "http://backend.test/chat",
+        TEST_AUTH,
+    )
     thinking = await anext(events)
     assert thinking.event == ChatEventType.THINKING
     assert not isinstance(thinking.context, str)

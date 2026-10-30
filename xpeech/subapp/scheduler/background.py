@@ -22,7 +22,7 @@ from ...agent.tools.schedule.schema import (
     ScheduledTask,
 )
 from ...config.settings import settings
-from ...utils.jwt_auth import create_access_token
+from ...utils.internal_jwt import create_internal_access_token
 
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
 EXECUTION_TIMEOUT_SECONDS = 3600.0
@@ -299,7 +299,7 @@ async def run_feishu_background_task(
             response = await client.post(
                 f"{app.state.backend_url}/internal/scheduled-run",
                 headers={
-                    "Authorization": f"Bearer {create_access_token()}",
+                    "Authorization": f"Bearer {create_internal_access_token()}",
                     "x-user-id": user_id,
                 },
                 json=request.model_dump(mode="json"),

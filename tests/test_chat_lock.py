@@ -16,7 +16,7 @@ from xpeech.agent.server.dependencies import (
     settings,
 )
 from xpeech.agent.server.routes.chat import answer_question
-from xpeech.utils.jwt_auth import create_access_token
+from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
 
 
 def test_content_dependency_returns_parsed_list():
@@ -66,8 +66,11 @@ def test_chat_initializes_all_tools_for_every_session(
     create = AsyncMock(return_value=SimpleNamespace(workspace=tmp_path, run=run))
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
     monkeypatch.setattr(settings.llm, "support_json_output", True)
+    token = create_channel_access_token(
+        ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key)
+    )
     headers = {
-        "Authorization": f"Bearer {create_access_token()}",
+        "Authorization": f"Bearer {token}",
         "x-user-id": "user",
         "x-sender-name": "Alice",
     }
@@ -95,10 +98,13 @@ def test_unsupported_json_output_returns_http_error_before_starting_stream(monke
     monkeypatch.setattr(settings.llm, "support_json_output", False)
     create = AsyncMock()
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
+    token = create_channel_access_token(
+        ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key)
+    )
     response = TestClient(app).post(
         "/chat",
         headers={
-            "Authorization": f"Bearer {create_access_token()}",
+            "Authorization": f"Bearer {token}",
             "x-user-id": "user",
             "x-sender-name": "Alice",
         },

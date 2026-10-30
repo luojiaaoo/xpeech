@@ -13,8 +13,13 @@ retention_days = 7
 max_file_size_mb = 10
 
 [jwt]
-# Generate a dedicated value with: python -c "import secrets; print(secrets.token_hex(32))"
+# Generate three distinct keys with: python -c "import secrets; print(secrets.token_hex(32))"
+# Internal service-to-service trust.
 secret_key = "replace-with-a-random-secret-of-at-least-32-characters"
+# Each channel uses its own key.
+web_client_secret_key = "replace-with-a-different-web-channel-secret-key"
+feishu_secret_key = "replace-with-a-different-feishu-channel-secret"
+# Shared by internal services and all channels.
 algorithm = "HS256"
 access_token_expire_seconds = 60
 

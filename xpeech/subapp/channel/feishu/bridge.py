@@ -20,7 +20,7 @@ from yarl import URL
 
 from ....agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
 from ....config.settings import settings
-from ....utils.jwt_auth import create_access_token
+from ....utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
 from ..helper import download_file as download_channel_file
 from ..helper import iter_chat_events, notify_question
 from ..schema import ChatEvent, ChatEventType, Message
@@ -45,10 +45,22 @@ class FeishuBridge(
 ):
     """将标准化后的飞书消息桥接到 Xpeech 的 ``/chat`` 接口。"""
 
-    def __init__(self, chat_url: str, app_id: str, app_secret: str):
+    def __init__(
+        self,
+        chat_url: str,
+        app_id: str,
+        app_secret: str,
+        jwt_secret_key: str | None = None,
+    ):
         self.chat_url = chat_url
         self.app_id = app_id
         self.app_secret = app_secret
+        self.backend_auth = ChannelJWTAuth(
+            "feishu",
+            jwt_secret_key
+            if jwt_secret_key is not None
+            else settings.jwt.feishu_secret_key,
+        )
         self.session_update_message_id: dict[str, str] = {}
         self.channel = XpeechFeishuChannel(
             app_id=self.app_id,
@@ -87,7 +99,12 @@ class FeishuBridge(
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
         user_id, _ = await self.get_user_identity(card_action_event.operator.open_id)
         form_data = card_action_event.action.form_value
-        await notify_question(user_id, form_data, self.chat_url)
+        await notify_question(
+            user_id,
+            form_data,
+            self.chat_url,
+            self.backend_auth,
+        )
         result = await self.channel.update_card(
             card_action_event.message_id,
             FINISH_CARD_CONTENT,
@@ -116,12 +133,14 @@ class FeishuBridge(
             async for event in iter_chat_events(
                 messages,
                 str(URL(self.chat_url) / "chat"),
+                self.backend_auth,
             ):
                 if event.event == ChatEventType.SEND_FILE:
                     downloaded_file = await download_channel_file(
                         user_id,
                         event.context,
                         self.chat_url,
+                        self.backend_auth,
                     )
                     result = await self.channel.send(
                         chat_id,
@@ -229,7 +248,11 @@ class FeishuBridge(
         """Poll once and immediately deliver an available background message."""
         response = await client.get(
             str(URL(self.chat_url) / "background_message"),
-            headers={"authorization": f"Bearer {create_access_token()}"},
+            headers={
+                "authorization": (
+                    f"Bearer {create_channel_access_token(self.backend_auth)}"
+                )
+            },
             params={"channel": BackgroundMessageChannel.FEISHU.value},
         )
         if response.status_code == 204:
@@ -289,6 +312,7 @@ def run(chat_url: str) -> None:
                 chat_url=chat_url,
                 app_id=settings.feishu.app_id,
                 app_secret=settings.feishu.app_secret,
+                jwt_secret_key=settings.jwt.feishu_secret_key,
             ).start()
         )
     except KeyboardInterrupt:

@@ -26,6 +26,7 @@ from lark_channel.channel.safety.pipeline import SafetyPipeline
 import xpeech.subapp.channel.feishu.bridge as feishu_bridge
 import xpeech.subapp.channel.feishu.delivery as feishu_delivery
 import xpeech.subapp.channel.feishu.inbound as feishu_inbound
+from xpeech.config.settings import settings
 from xpeech.subapp.channel.feishu.bridge import FeishuBridge
 from xpeech.subapp.channel.feishu.cards import (
     FINISH_CARD_CONTENT,
@@ -33,6 +34,7 @@ from xpeech.subapp.channel.feishu.cards import (
 )
 from xpeech.subapp.channel.feishu.channel import XpeechFeishuChannel
 from xpeech.subapp.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
+from xpeech.utils.channel_jwt import ChannelJWTAuth
 
 
 def _inbound_message(
@@ -58,6 +60,7 @@ def _bridge_with_channel(
 ) -> FeishuBridge:
     bridge = object.__new__(FeishuBridge)
     bridge.chat_url = "http://backend.test"
+    bridge.backend_auth = ChannelJWTAuth("feishu", settings.jwt.feishu_secret_key)
     bridge.channel = channel
     channel.block_batch_scope = MagicMock()
     channel.unblock_batch_scope = MagicMock()
@@ -155,7 +158,12 @@ async def test_sdk_batches_busy_messages_and_card_answer_unblocks_agent(tmp_path
     assert batches[1][0].content == [TextData(text="second" * 1000)]
     assert batches[1][1].content == [FileData(file=tmp_path / "report.txt")]
     assert batches[1][2].content == [TextData(text="third")]
-    notify_question.assert_awaited_once_with("E1001", {"answer": "yes"}, bridge.chat_url)
+    notify_question.assert_awaited_once_with(
+        "E1001",
+        {"answer": "yes"},
+        bridge.chat_url,
+        bridge.backend_auth,
+    )
     channel.update_card.assert_awaited_once_with("om_question", FINISH_CARD_CONTENT)
 
 
@@ -611,6 +619,7 @@ async def test_card_action_uses_typed_form_value(monkeypatch: pytest.MonkeyPatch
         "E1001",
         {"answer": "typed"},
         "http://backend.test",
+        bridge.backend_auth,
     )
     bridge.get_user_identity.assert_awaited_once_with("ou_sender")
     update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
@@ -752,8 +761,8 @@ async def test_consume_sends_one_sdk_batch_as_one_prompt(monkeypatch):
     ]
     requests = []
 
-    async def chat_events(request_messages, chat_url):
-        requests.append((request_messages, chat_url))
+    async def chat_events(request_messages, chat_url, auth):
+        requests.append((request_messages, chat_url, auth))
         if False:
             yield
 
@@ -763,7 +772,9 @@ async def test_consume_sends_one_sdk_batch_as_one_prompt(monkeypatch):
 
     await bridge.consume(messages)
 
-    assert requests == [(messages, "http://backend.test/chat")]
+    assert requests == [
+        (messages, "http://backend.test/chat", bridge.backend_auth)
+    ]
     assert [call.args[0] for call in channel.add_reaction.await_args_list] == [
         "om_message_1",
         "om_message_2",

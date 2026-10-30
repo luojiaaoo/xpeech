@@ -60,21 +60,30 @@ cp conf.toml.example conf.toml
 
 进程环境变量写在 `.env`。模板中包含 Compose 项目名和可选的服务端口配置。
 
-API 与各通道通过短期 JWT 认证。请在 `conf.toml` 中配置一个独立的共享密钥：
+内部服务互信与各通道认证使用彼此隔离的短期 JWT。先分别生成三个不同的密钥：
 
 ```bash
+# 连续运行三次，分别保存输出
 uv run python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 ```toml
 [jwt]
-secret_key = "replace-with-the-random-value-generated-above"
+# 仅供 backend、scheduler 等内部服务互信
+secret_key = "replace-with-an-internal-random-value"
+web_client_secret_key = "replace-with-a-different-web-random-value"
+feishu_secret_key = "replace-with-a-different-feishu-random-value"
 algorithm = "HS256"
 access_token_expire_seconds = 60
 ```
 
-`secret_key` 至少 32 个字符；访问令牌最长有效 60 秒。Compose 中的 backend、feishu
-和 web_client 会读取同一份 `conf.toml`，无需分别配置。
+三组密钥至少 32 个字符、必须互不相同；算法和有效期在 `[jwt]` 下统一配置，
+默认 HS256、60 秒，有效期最长 60 秒。Compose 中的服务读取同一份 `conf.toml`，使用各自的密钥。
+内部 token 不携带 `kid`，直接使用 `secret_key` 验签。channel token 的 header
+使用 `kid` 选择密钥：`web_client` 对应 `web_client_secret_key`，`feishu` 对应
+`feishu_secret_key`。聊天、追问、后台消息、文件、技能接口必须使用带 `kid` 的 channel JWT；
+`/statistics` 及其子接口只接受 `kid=web_client`。`/internal/scheduled-run` 和 scheduler
+服务的接口只使用内部密钥验签，不要求 `kid`。
 
 ## 启动
 
@@ -108,9 +117,10 @@ uv run -m xpeech token_manager
 - ReDoc：`http://localhost:7878/redoc`
 
 Swagger UI、ReDoc 及 `/openapi.json` 可直接访问。在
-Swagger UI 右上角点击 `Authorize`：`username` 可填写任意标识（例如 `docs`），
-`password` 填写 `jwt.secret_key`。Swagger 会调用 `/token` 校验密钥并签发一个有效期
-60 秒的 JWT，后续调试请求会自动携带该令牌。部署时必须使用 HTTPS，避免共享密钥在
+Swagger UI 右上角点击 `Authorize`：`username` 填写 `web_client` 或 `feishu`，
+`password` 填写对应的 `jwt.web_client_secret_key` 或 `jwt.feishu_secret_key`。
+Swagger 会调用 `/token` 校验密钥并签发带 channel `kid`、有效期
+由 `jwt.access_token_expire_seconds` 决定的 JWT，后续调试请求会自动携带该令牌。部署时必须使用 HTTPS，避免共享密钥在
 传输过程中泄露。
 
 飞书桥接会从配置中读取：
@@ -214,7 +224,7 @@ cp conf.toml.example conf.toml
 cp .env.example .env
 ```
 
-填写 `conf.toml` 中的 `llm.api_key`、`jwt.secret_key` 和 `feishu.app_secret`，
+填写 `conf.toml` 中的 `llm.api_key`、三组 JWT 密钥和 `feishu.app_secret`，
 并确认 `feishu.app_id` 等普通配置正确，然后构建并启动：
 
 ```bash

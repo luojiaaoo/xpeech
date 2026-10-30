@@ -4,11 +4,11 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import Field, model_validator
 
-from ...agent.server.auth import require_jwt
+from ...agent.server.auth import require_internal_jwt
 from ...agent.server.dependencies import user_id_header
 from ...agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
 from ...agent.tools.schedule import FeishuScheduleArgs
@@ -52,6 +52,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+router = APIRouter(dependencies=[Depends(require_internal_jwt)])
 
 
 @app.get("/health", include_in_schema=False)
@@ -59,7 +60,7 @@ async def health():
     return PlainTextResponse("ok")
 
 
-@app.post("/schedules", dependencies=[Depends(require_jwt)])
+@router.post("/schedules")
 async def create_schedule(
     request: ScheduleCreateRequest,
     user_id: Annotated[str, Depends(user_id_header)],
@@ -76,14 +77,14 @@ async def create_schedule(
     }
 
 
-@app.get("/schedules", dependencies=[Depends(require_jwt)])
+@router.get("/schedules")
 async def list_schedules(
     user_id: Annotated[str, Depends(user_id_header)],
 ) -> list[ScheduledTask]:
     return await ensure_async(list_scheduled_tasks)(user_id)
 
 
-@app.delete("/schedules/{job_id}", dependencies=[Depends(require_jwt)], status_code=204)
+@router.delete("/schedules/{job_id}", status_code=204)
 async def delete_schedule(
     job_id: str,
     user_id: Annotated[str, Depends(user_id_header)],
@@ -95,9 +96,8 @@ async def delete_schedule(
     return Response(status_code=204)
 
 
-@app.get(
+@router.get(
     "/background_message",
-    dependencies=[Depends(require_jwt)],
     response_model=FeishuBackgroundMessage,
     responses={204: {"description": "No background message available"}},
 )
@@ -109,6 +109,9 @@ async def poll_background_message(
         return await asyncio.wait_for(queue.get(), timeout=BACKGROUND_MESSAGE_LONG_POLL_SECONDS)
     except TimeoutError:
         return Response(status_code=204)
+
+
+app.include_router(router)
 
 
 def run(host: str = "0.0.0.0", port: int = 8090, *, backend_url: str) -> None:

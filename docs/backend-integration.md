@@ -6,7 +6,7 @@
 
 Xpeech API 默认监听 `http://localhost:7878`。一次完整的聊天交互如下：
 
-1. 接入方后端使用双方共享的 JWT 密钥签发短期 Bearer Token。
+1. 接入方后端使用分配给自身认证域的 JWT 密钥签发短期 Bearer Token。
 2. 接入方以表单请求调用 `POST /chat`；携带附件时使用 `multipart/form-data`。
 3. Xpeech 通过 SSE 持续返回思考、正文、工具调用、文件和追问等事件。
 4. 收到 `question` 事件时，接入方展示表单，并通过 `POST /answer_question` 提交答案；原 `/chat` SSE 连接继续保持。
@@ -38,16 +38,28 @@ Compose 部署默认由 Nginx 对外提供该 Base URL，并按 `x-user-id` 做�
 
 ## 3. JWT 鉴权
 
-除健康检查、API 文档和浏览器预览外，本文涉及的 API 都需要短期 JWT。JWT 使用 `conf.toml` 中的配置签名：
+除健康检查、API 文档和浏览器预览外，本文涉及的 API 都需要短期 JWT。
+`[jwt]` 集中配置三组独立密钥：`secret_key` 用于 backend、scheduler 之间的内部互信，
+channel 分别使用 `feishu_secret_key` 和 `web_client_secret_key`。
+三把密钥必须互不相同：
 
 ```toml
 [jwt]
 secret_key = "replace-with-a-random-secret-of-at-least-32-characters"
+feishu_secret_key = "replace-with-a-different-feishu-channel-secret"
+web_client_secret_key = "replace-with-a-different-web-channel-secret"
 algorithm = "HS256"
 access_token_expire_seconds = 60
 ```
 
-Token 至少需要包含 `exp`，签名算法必须与配置一致。建议接入方在每次请求前签发新 Token，不要缓存到过期边界。
+Token 至少需要包含 `exp`；所有 JWT 共用 `[jwt]` 中的 `algorithm` 和
+`access_token_expire_seconds`，默认 HS256、60 秒。签发方应与这两项配置保持一致。
+内部 JWT 不携带 `kid`，直接使用 `secret_key` 验签。channel JWT 的 header 必须
+携带 `kid`：`feishu` 对应 `feishu_secret_key`，`web_client` 对应
+`web_client_secret_key`。本文介绍的聊天、追问、后台消息、文件、技能接口都必须使用
+带有效 channel `kid` 的 JWT，不接受内部 JWT；`/statistics` 及其子接口只接受
+`kid=web_client`。`/internal/scheduled-run` 和 scheduler 服务的接口只使用内部密钥验签。
+建议接入方在每次请求前签发新 Token，不要缓存到过期边界。
 
 Python 签发示例：
 
@@ -57,15 +69,17 @@ from datetime import UTC, datetime, timedelta
 import jwt
 
 
-def create_xpeech_token(secret: str) -> str:
+def create_xpeech_token(secret: str, kid: str = "web_client") -> str:
     return jwt.encode(
         {"exp": datetime.now(UTC) + timedelta(seconds=60)},
         secret,
         algorithm="HS256",
+        headers={"kid": kid},
     )
 ```
 
-如果本次 Agent 请求需要调用飞书用户身份命令，可以在 JWT 中额外放入字符串类型的 `lark_user_access_token`：
+`lark_user_access_token` 是飞书 channel 请求声明，不属于内部 JWT。飞书 channel
+需要以用户身份调用命令时，会在其 channel JWT 中额外放入该字符串声明：
 
 ```python
 claims = {
@@ -74,11 +88,15 @@ claims = {
 }
 ```
 
-该字段只在当前请求上下文中使用，不会保存到会话历史。后续请求需要重新携带。
+该字段只在当前请求上下文中使用，不会保存到会话历史。后续请求需要重新携带；
+使用 `jwt.secret_key` 签发的 internal token 不接受这一声明。
+飞书 token 应使用 `jwt.feishu_secret_key` 签名，并在 header 中设置 `kid="feishu"`。
 携带非空字段时，沙盒加载 `lark-skills-token`，使用 JWT 中的用户令牌，
 且 `lark-cli` 不会回退请求 `lark-token-manager`；未携带时加载 `lark-skills` 和 `lark-cli-auth`，使用令牌容器。
 
-`POST /token` 主要供 Swagger UI 调试：表单中的 `password` 为共享 JWT 密钥，`username` 可任意填写。业务系统应自行签发 JWT，不应在浏览器、移动端或其他不可信客户端中保存或传输共享密钥。
+`POST /token` 主要供 Swagger UI 调试：`username` 填写 `web_client` 或 `feishu`，
+`password` 填写对应的 channel JWT 密钥，返回带该 channel `kid` 的 token。
+业务系统应自行签发 JWT，不应在浏览器、移动端或其他不可信客户端中保存或传输共享密钥。
 
 ## 4. 会话和用户标识
 
@@ -420,6 +438,7 @@ from httpx_sse import aconnect_sse
 
 BASE_URL = os.getenv("XPEECH_BASE_URL", "http://localhost:7878").rstrip("/")
 JWT_SECRET = os.environ["XPEECH_JWT_SECRET"]
+JWT_KID = os.getenv("XPEECH_JWT_KID", "web_client")
 USER_ID = "demo-user"
 SESSION_ID = "chat-001"
 SENDER_NAME = "张三"
@@ -431,6 +450,7 @@ def create_token() -> str:
         {"exp": datetime.now(UTC) + timedelta(seconds=60)},
         JWT_SECRET,
         algorithm="HS256",
+        headers={"kid": JWT_KID},
     )
 
 
@@ -583,7 +603,8 @@ if __name__ == "__main__":
 
 ```bash
 export XPEECH_BASE_URL="http://localhost:7878"
-export XPEECH_JWT_SECRET="<conf.toml 中的 jwt.secret_key>"
+export XPEECH_JWT_SECRET="<conf.toml 中的 jwt.web_client_secret_key>"
+export XPEECH_JWT_KID="web_client"
 python xpeech_question_demo.py
 ```
 

@@ -157,6 +157,30 @@ class LarkCLIConfig(BaseModel):
     database_path: Path = Path("data/lark-token-manager/tokens.db")
 
 
+class JWTConfig(BaseModel):
+    """Separate signing keys for internal services and each channel."""
+
+    secret_key: str = Field(min_length=32, repr=False)
+    web_client_secret_key: str = Field(min_length=32, repr=False)
+    feishu_secret_key: str = Field(min_length=32, repr=False)
+    algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
+    access_token_expire_seconds: int = Field(default=60, ge=1, le=60)
+
+    @model_validator(mode="after")
+    def validate_distinct_secrets(self) -> "JWTConfig":
+        secrets = {
+            self.secret_key,
+            self.web_client_secret_key,
+            self.feishu_secret_key,
+        }
+        if len(secrets) != 3:
+            raise ValueError(
+                "JWT secret_key, web_client_secret_key, and feishu_secret_key "
+                "must use distinct values"
+            )
+        return self
+
+
 class FeishuConfig(BaseModel):
     """Feishu channel configuration settings."""
 
@@ -170,14 +194,6 @@ class LoggingConfig(BaseModel):
 
     retention_days: int = Field(default=7, ge=1)
     max_file_size_mb: int = Field(default=10, ge=1)
-
-
-class JWTConfig(BaseModel):
-    """Shared JWT settings for channel-to-API authentication."""
-
-    secret_key: str = Field(min_length=32, repr=False)
-    algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
-    access_token_expire_seconds: int = Field(default=60, ge=1, le=60)
 
 
 class OAuth2Config(BaseModel):

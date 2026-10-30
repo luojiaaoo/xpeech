@@ -9,12 +9,15 @@ from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app
 from xpeech.agent.server.dependencies import CHAT_GUARD, settings
 from xpeech.agent.server.schema import InputText
-from xpeech.utils.jwt_auth import create_access_token
+from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
 
 
 def chat_headers(**extra):
+    token = create_channel_access_token(
+        ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key)
+    )
     headers = {
-        "Authorization": f"Bearer {create_access_token()}",
+        "Authorization": f"Bearer {token}",
         "x-user-id": "user",
         "x-sender-name": "Alice",
     }

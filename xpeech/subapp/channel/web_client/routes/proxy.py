@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import Response, StreamingResponse
 from yarl import URL
 
+from .....utils.channel_jwt import ChannelJWTAuth
 from ...helper import _backend_headers, fetch_file, open_chat_stream, submit_question
 from ..dao import User
 
@@ -15,6 +16,7 @@ UserDependency = Callable[..., Awaitable[User] | User]
 
 def create_proxy_router(
     backend_url: str,
+    backend_auth: ChannelJWTAuth,
     current_user_dependency: UserDependency,
     admin_user_dependency: UserDependency,
 ) -> APIRouter:
@@ -70,6 +72,7 @@ def create_proxy_router(
             content,
             json.dumps(metadata, ensure_ascii=False),
             str(URL(backend_url) / "chat"),
+            backend_auth,
             timestamp=timestamp,
             files=upload_data,
             json_output=json_output,
@@ -104,7 +107,12 @@ def create_proxy_router(
         answer: Annotated[str, Form()],
         user: CurrentUser,
     ):
-        upstream = await submit_question(user.user_id, answer, backend_url)
+        upstream = await submit_question(
+            user.user_id,
+            answer,
+            backend_url,
+            backend_auth,
+        )
         return Response(
             upstream.content,
             status_code=upstream.status_code,
@@ -116,7 +124,12 @@ def create_proxy_router(
         path: str,
         user: CurrentUser,
     ):
-        upstream = await fetch_file(user.user_id, path, backend_url)
+        upstream = await fetch_file(
+            user.user_id,
+            path,
+            backend_url,
+            backend_auth,
+        )
         headers = {}
         if disposition := upstream.headers.get("content-disposition"):
             headers["Content-Disposition"] = disposition
@@ -141,7 +154,7 @@ def create_proxy_router(
         async with httpx.AsyncClient(timeout=30) as client:
             upstream = await client.get(
                 upstream_url,
-                headers=_backend_headers(user.user_id),
+                headers=_backend_headers(user.user_id, backend_auth),
                 params=request.query_params.multi_items(),
             )
 

@@ -81,7 +81,9 @@ def test_oauth2_filter_allows_when_any_output_is_produced():
 
 
 def test_oauth2_jq_expression_settings_are_validated_at_startup(tmp_path: Path):
-    WebClientSettingsConfig(database_path=tmp_path / "users.db")
+    WebClientSettingsConfig(
+        database_path=tmp_path / "users.db",
+    )
 
     with pytest.raises(ValueError, match="jq 表达式"):
         OAuth2SettingsConfig(provider_name="XX", userinfo_filter="department == 1")
@@ -106,7 +108,9 @@ def test_oauth2_jq_expression_settings_are_validated_at_startup(tmp_path: Path):
 def test_web_client_oauth2_settings_are_a_list_with_unique_provider_names(
     tmp_path: Path,
 ):
-    config = WebClientSettingsConfig(database_path=tmp_path / "users.db")
+    config = WebClientSettingsConfig(
+        database_path=tmp_path / "users.db",
+    )
     assert config.oauth2 == []
 
     with pytest.raises(ValueError, match="provider_name must be unique"):

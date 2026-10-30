@@ -17,7 +17,6 @@ from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app as backend_app
 from xpeech.agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
 from xpeech.agent.tools.helper import as_tool
-from xpeech.agent.tools.schedule import client as scheduler_client
 from xpeech.agent.tools.schedule import (
     FeishuScheduleArgs,
     FeishuScheduleCancelArgs,
@@ -25,6 +24,7 @@ from xpeech.agent.tools.schedule import (
     feishu_schedule_cancel,
     feishu_schedule_list,
 )
+from xpeech.agent.tools.schedule import client as scheduler_client
 from xpeech.config.settings import settings
 from xpeech.subapp.scheduler import background
 from xpeech.subapp.scheduler.background import (
@@ -37,7 +37,11 @@ from xpeech.subapp.scheduler.background import (
     start_background_scheduler,
     stop_background_scheduler,
 )
-from xpeech.utils.jwt_auth import create_access_token, decode_access_token
+from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
+from xpeech.utils.internal_jwt import (
+    create_internal_access_token,
+    decode_internal_access_token,
+)
 
 TEST_SCHEDULER_URL = "http://127.0.0.1:8090"
 TEST_BACKEND_URL = "http://127.0.0.1:7878"
@@ -73,7 +77,7 @@ def backend_http(monkeypatch):
     async def record_request(request):
         requests.append(request)
         token = request.headers["authorization"].removeprefix("Bearer ")
-        decode_access_token(token)
+        decode_internal_access_token(token)
         assert str(request.url) == f"{TEST_BACKEND_URL}/internal/scheduled-run"
         assert request.headers["x-user-id"] == "session-1"
 
@@ -512,6 +516,7 @@ async def test_background_message_long_poll_times_out_with_204(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_http, monkeypatch):
+    token = create_channel_access_token(ChannelJWTAuth("feishu", settings.jwt.feishu_secret_key))
     queue = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
     queue.put_nowait(
         FeishuBackgroundMessage(
@@ -522,7 +527,7 @@ async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_htt
     monkeypatch.setattr(scheduler_service, "BACKGROUND_MESSAGE_LONG_POLL_SECONDS", 0.001)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=backend_app), base_url="http://test",
-        headers={"Authorization": f"Bearer {create_access_token()}"},
+        headers={"Authorization": f"Bearer {token}"},
     ) as client:
         response = await client.get("/background_message?channel=feishu")
         assert response.status_code == 200
@@ -565,6 +570,39 @@ async def test_only_scheduler_lifespan_starts_scheduling(tmp_path, monkeypatch):
 async def test_scheduler_and_execution_endpoints_require_jwt(app, method, path):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.request(method, path, headers={"x-user-id": "alice"})
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "app, method, path",
+    [
+        (scheduler_service.app, "GET", "/schedules"),
+        (backend_app, "POST", "/internal/scheduled-run"),
+    ],
+)
+@pytest.mark.parametrize("channel", ["feishu", "web_client"])
+async def test_channel_jwt_cannot_access_internal_endpoints(app, method, path, channel):
+    keys = {
+        "feishu": settings.jwt.feishu_secret_key,
+        "web_client": settings.jwt.web_client_secret_key,
+    }
+    token = create_channel_access_token(
+        ChannelJWTAuth(channel, keys[channel])
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.request(
+            method,
+            path,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "x-user-id": "alice",
+            },
+        )
+
     assert response.status_code == 401
 
 
@@ -616,7 +654,7 @@ async def test_execution_rejects_invalid_user_id_before_running(monkeypatch):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
             "/internal/scheduled-run",
-            headers={"Authorization": f"Bearer {create_access_token()}", "x-user-id": "../escape"},
+            headers={"Authorization": f"Bearer {create_internal_access_token()}", "x-user-id": "../escape"},
             json={
                 "job_id": "job-1", "prompt": "task", "sender_name": "Alice",
                 "session_metadata": {}, "schedule_type": "cron", "schedule_value": "0 9 * * *",

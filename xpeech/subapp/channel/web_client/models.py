@@ -3,6 +3,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from ....config.settings import settings
+from ....utils.channel_jwt import ChannelJWTAuth
 from .dao import User
 
 USER_ID_PATTERN = r"^[\w@+-][\w.@+-]*$"
@@ -43,9 +45,17 @@ class WebConfig:
     database_path: Path
     static_dir: Path
     system_name: str
+    jwt_secret_key: str = field(
+        default_factory=lambda: settings.jwt.web_client_secret_key,
+        repr=False,
+    )
     cookie_name: str = "xpeech_session"
     oauth2: tuple[OAuth2WebConfig, ...] = field(default_factory=tuple)
     inject_prompt: InjectPromptWebConfig = field(default_factory=InjectPromptWebConfig)
+
+    @property
+    def backend_auth(self) -> ChannelJWTAuth:
+        return ChannelJWTAuth("web_client", self.jwt_secret_key)
 
 
 class LoginBody(BaseModel):

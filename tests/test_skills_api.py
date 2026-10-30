@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from xpeech.agent.server.api import app
 from xpeech.config.settings import settings
-from xpeech.utils.jwt_auth import create_access_token
+from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
 
 
 @pytest.fixture
@@ -13,7 +13,8 @@ def skill_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClie
     workspace_root = tmp_path / "workspaces"
     workspace_root.mkdir()
     monkeypatch.setattr(settings.path, "workspace_base_path", workspace_root)
-    headers = {"Authorization": f"Bearer {create_access_token()}"}
+    token = create_channel_access_token(ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key))
+    headers = {"Authorization": f"Bearer {token}"}
     return TestClient(app), workspace_root, headers
 
 
