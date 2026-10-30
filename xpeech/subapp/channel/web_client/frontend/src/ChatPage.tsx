@@ -2,21 +2,21 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import { Attachments, Bubble, Prompts, Sender, Welcome } from '@ant-design/x';
 import type { AttachmentsProps } from '@ant-design/x';
-import { Alert, Avatar, Button, Flex, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Flex, Tooltip, Typography, message } from 'antd';
 import {
-  BulbOutlined,
+  CheckCircleOutlined,
   CloudUploadOutlined,
   CopyOutlined,
   DashboardOutlined,
   DownloadOutlined,
   LoadingOutlined,
   PaperClipOutlined,
-  RightOutlined,
+  DownOutlined,
   RobotOutlined,
-  ToolOutlined,
-  UserOutlined,
 } from '@ant-design/icons';
 import { streamChat } from './api';
+import { appendChatEvent, finishChatTurn, startChatTurn } from './chatState';
+import ToolCallCard from './ToolCallCard';
 import {
   readPendingUserPrefix,
   subscribePendingUserPrefix,
@@ -29,37 +29,28 @@ const QuestionForm = lazy(() => import('./QuestionForm'));
 
 const roles: ComponentProps<typeof Bubble.List>['role'] = {
   user: {
-    placement: 'start',
+    placement: 'end',
     variant: 'filled',
-    shape: 'corner',
     rootClassName: 'chat-user',
-    avatar: <Avatar icon={<UserOutlined />} className="chat-avatar user-avatar" />,
-    styles: { content: { color: '#fff', background: '#1677ff', border: 0 } },
   },
   assistant: {
     placement: 'start',
-    variant: 'outlined',
-    shape: 'corner',
+    variant: 'borderless',
     rootClassName: 'chat-assistant',
-    avatar: <Avatar icon={<RobotOutlined />} className="chat-avatar assistant-avatar" />,
-    styles: { content: { background: '#fff', borderColor: '#e1e5eb' } },
   },
   thinking: { placement: 'start', variant: 'borderless', rootClassName: 'chat-thinking' },
-  status: { placement: 'start', variant: 'borderless' },
-  file: { placement: 'start' },
-  question: { placement: 'start' },
+  tool: { placement: 'start', variant: 'borderless', rootClassName: 'chat-tool' },
+  status: { placement: 'start', variant: 'borderless', rootClassName: 'chat-status' },
+  file: { placement: 'start', variant: 'borderless' },
+  question: { placement: 'start', variant: 'borderless' },
+  summary: { placement: 'start', variant: 'borderless', rootClassName: 'chat-summary' },
+  error: { placement: 'start', variant: 'borderless' },
 };
 
 const tokenUsageLabels: Record<string, string> = {
   上下文使用率: '上下文',
   会话时长: '耗时',
-  大模型请求次数: '请求',
-};
-
-const privateStatusMessages: Record<string, string> = {
-  thinking: '我正在思考，稍等一下。',
-  tool_call: '我需要调用工具处理一下。',
-  tool_call_result: '工具处理完成，我继续整理结果。',
+  大模型请求次数: '次数',
 };
 
 async function copyText(text: string) {
@@ -87,10 +78,6 @@ async function copyMessage(text: string) {
   } catch (error) {
     message.error(`复制失败：${String(error)}`);
   }
-}
-
-function renderStatus(content: string) {
-  return <Tag icon={<ToolOutlined />} bordered={false}>{content}</Tag>;
 }
 
 function renderTokenUsage(tokenUsage: string) {
@@ -137,116 +124,15 @@ function renderStreamContent(type: StreamEventType, content: string, streaming: 
     return (
       <details className="thinking-panel">
         <summary>
-          {streaming ? <LoadingOutlined spin /> : <BulbOutlined />}
-          <span>{streaming ? '正在思考' : '思考过程'}</span>
-          <RightOutlined className="thinking-chevron" />
+          {streaming ? <LoadingOutlined spin /> : <CheckCircleOutlined />}
+          <span>{streaming ? '正在思考' : '思考已完成'}</span>
+          <DownOutlined className="thinking-chevron" />
         </summary>
         <div className="thinking-content">{markdown}</div>
       </details>
     );
   }
   return markdown;
-}
-
-function appendStreamChunk(
-  current: ChatMessage[],
-  type: StreamEventType,
-  chunk: string,
-): ChatMessage[] {
-  const next = [...current];
-  const activeIndex = next.findLastIndex(
-    (item) => item.streamType === type && item.streaming,
-  );
-  if (activeIndex >= 0) {
-    const active = next[activeIndex];
-    const rawText = `${active.rawText || ''}${chunk}`;
-    next[activeIndex] = {
-      ...active,
-      rawText,
-      content: renderStreamContent(type, rawText, true),
-    };
-    return next;
-  }
-
-  const lastUserIndex = next.findLastIndex((item) => item.role === 'user');
-  const previousIndex = next.findLastIndex(
-    (item, index) => index > lastUserIndex && item.streamType === type,
-  );
-  if (previousIndex >= 0) {
-    const [previous] = next.splice(previousIndex, 1);
-    const rawText = `${previous.rawText || ''}${previous.rawText ? '\n\n' : ''}${chunk}`;
-    return [
-      ...next.filter((item) => !item.transient),
-      {
-        ...previous,
-        rawText,
-        content: renderStreamContent(type, rawText, true),
-        streaming: true,
-      },
-    ];
-  }
-
-  const rawText = chunk;
-  return [
-    ...next.filter((item) => !item.transient),
-    {
-      key: `${type}_${Date.now()}_${Math.random()}`,
-      role: type,
-      content: renderStreamContent(type, rawText, true),
-      rawText,
-      streamType: type,
-      streaming: true,
-    },
-  ];
-}
-
-function finishStream(current: ChatMessage[], type: StreamEventType): ChatMessage[] {
-  const next = [...current];
-  const activeIndex = next.findLastIndex(
-    (item) => item.streamType === type && item.streaming,
-  );
-  if (activeIndex < 0) return current;
-
-  const active = next[activeIndex];
-  const rawText = active.rawText || '';
-  next[activeIndex] = {
-    ...active,
-    content: renderStreamContent(type, rawText, false),
-    streaming: false,
-  };
-  return next;
-}
-
-function eventMessage(event: ChatEvent): ChatMessage | null {
-  const key = `${event.event}_${Date.now()}_${Math.random()}`;
-  if (event.event === 'question') {
-    return {
-      key,
-      role: 'question',
-      content: (
-        <Suspense fallback={<div>正在加载表单…</div>}>
-          <QuestionForm context={event.context} />
-        </Suspense>
-      ),
-    };
-  }
-  if (event.event === 'send_file') {
-    const name = event.context.split(/[\\/]/).pop() || '文件';
-    return {
-      key,
-      role: 'file',
-      content: <Button icon={<DownloadOutlined />} href={`/api/files?path=${encodeURIComponent(event.context)}`}>{name}</Button>,
-    };
-  }
-  if (event.event === 'token_usage') return null;
-  const content = privateStatusMessages[event.event]
-    || (event.event === 'command' ? `执行命令 · ${event.context}` : `${event.event} · ${event.context}`);
-  return {
-    key,
-    role: 'status',
-    content: renderStatus(content),
-    transient: event.event !== 'command',
-  };
 }
 
 export default function ChatPage({ systemName }: { systemName: string }) {
@@ -273,38 +159,14 @@ export default function ChatPage({ systemName }: { systemName: string }) {
   }, [loading, messages]);
 
   function appendEvent(event: ChatEvent) {
-    setMessages((current) => {
-      if (event.event === 'assistant' || event.event === 'thinking') {
-        return appendStreamChunk(current, event.event, event.context);
-      }
-      if (event.event === 'assistant_end') return finishStream(current, 'assistant');
-      if (event.event === 'thinking_end') return finishStream(current, 'thinking');
-      if (event.event === 'token_usage') {
-        const next = [...current.filter((item) => !item.transient)];
-        const index = next.findLastIndex((item) => item.role === 'assistant');
-        if (index >= 0) next[index] = { ...next[index], tokenUsage: event.context };
-        return next;
-      }
-      const item = eventMessage(event);
-      return item ? [...current.filter((messageItem) => !messageItem.transient), item] : current;
-    });
+    setMessages((current) => appendChatEvent(current, event));
   }
 
   async function send(text: string) {
-    if (!text.trim() && files.length === 0) return;
+    if (loading || (!text.trim() && files.length === 0)) return;
     const sentFiles = files;
     const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
-    const thinkingKey = `thinking_${Date.now()}`;
-    setMessages((current) => [
-      ...current.filter((item) => !item.transient),
-      { key: `user_${Date.now()}`, role: 'user', content: display },
-      {
-        key: thinkingKey,
-        role: 'status',
-        content: renderStatus(privateStatusMessages.thinking),
-        transient: true,
-      },
-    ]);
+    setMessages((current) => startChatTurn(current, display));
     setValue('');
     setFiles([]);
     setAttachmentsOpen(false);
@@ -314,37 +176,48 @@ export default function ChatPage({ systemName }: { systemName: string }) {
       const requestText = pendingUserPrefix ? `${pendingUserPrefix}\n\n===\n\n${text}` : text;
       await streamChat(requestText, sentFiles, appendEvent);
     } catch (error) {
+      setMessages((current) => appendChatEvent(current, { event: 'error', context: String(error) }));
       message.error(String(error));
     } finally {
-      setMessages((current) => {
-        const persistent = current.filter((item) => !item.transient);
-        return finishStream(finishStream(persistent, 'thinking'), 'assistant');
-      });
+      setMessages(finishChatTurn);
       setLoading(false);
     }
   }
 
-  const items = useMemo(() => messages.map((item) => ({
-    key: item.key,
-    role: item.role,
-    content: item.content,
-    loading: item.loading,
-    footer: item.role === 'assistant' && item.rawText && !item.streaming ? (
-      <div className="bubble-footer">
-        {item.tokenUsage ? renderTokenUsage(item.tokenUsage) : null}
-        <Tooltip title="复制">
-          <Button
-            type="text"
-            size="small"
-            className="bubble-copy-button"
-            aria-label="复制消息"
-            icon={<CopyOutlined />}
-            onClick={() => void copyMessage(item.rawText!)}
-          />
-        </Tooltip>
-      </div>
-    ) : undefined,
-  })), [messages]);
+  const items = useMemo(() => messages.map((item) => {
+    let content: React.ReactNode = item.content;
+    if (item.role === 'assistant' || item.role === 'thinking') {
+      content = renderStreamContent(item.role, item.content, !!item.streaming);
+    } else if (item.role === 'tool' && item.toolCall) {
+      content = <ToolCallCard tool={item.toolCall} />;
+    } else if (item.role === 'question') {
+      content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} /></Suspense>;
+    } else if (item.role === 'file') {
+      const name = item.content.split(/[\\/]/).pop() || '文件';
+      content = <Button className="chat-file-button" icon={<DownloadOutlined />} href={`/api/files?path=${encodeURIComponent(item.content)}`}>{name}</Button>;
+    } else if (item.role === 'status') {
+      content = <div className="chat-status-text">{item.transient ? <LoadingOutlined spin /> : null}{item.content}</div>;
+    } else if (item.role === 'error') {
+      content = <Alert type="error" showIcon message="本次回复未能完成" description={item.content} />;
+    } else if (item.role === 'summary') {
+      content = (
+        <div className="bubble-footer">
+          {item.tokenUsage ? renderTokenUsage(item.tokenUsage) : null}
+          {item.content ? (
+            <Tooltip title="复制">
+              <Button type="text" size="small" className="bubble-copy-button" aria-label="复制消息"
+                icon={<CopyOutlined />} onClick={() => void copyMessage(item.content)} />
+            </Tooltip>
+          ) : null}
+        </div>
+      );
+    }
+    return {
+      key: item.key,
+      role: item.role,
+      content,
+    };
+  }), [messages]);
 
   const attachmentItems: AttachmentsProps['items'] = files.map((file, index) => ({
     uid: `${index}-${file.name}-${file.lastModified}`,

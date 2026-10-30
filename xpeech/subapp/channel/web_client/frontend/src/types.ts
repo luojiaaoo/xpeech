@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react';
-
 export interface User {
   id: number;
   user_id: string;
@@ -149,21 +147,29 @@ export type ChatEventType =
   | 'command'
   | 'send_file'
   | 'question'
-  | 'token_usage';
+  | 'token_usage'
+  | 'error';
 
 export interface ChatEvent {
   event: ChatEventType;
   context: string;
 }
 
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  input?: unknown;
+  output?: unknown;
+  status: 'running' | 'completed' | 'interrupted';
+  durationSeconds?: number;
+}
+
 export interface ChatMessage {
   key: string;
-  role: 'user' | 'assistant' | 'thinking' | 'status' | 'file' | 'question';
-  content: ReactNode;
-  rawText?: string;
-  loading?: boolean;
-  streamType?: 'assistant' | 'thinking';
+  role: 'user' | 'assistant' | 'thinking' | 'tool' | 'status' | 'file' | 'question' | 'summary' | 'error';
+  content: string;
   streaming?: boolean;
   transient?: boolean;
   tokenUsage?: string;
+  toolCall?: ToolCallInfo;
 }
