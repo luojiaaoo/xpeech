@@ -35,7 +35,6 @@ cookie_name = "xpeech_session"
 
 [web_client.embed]
 allowed_origins = ["https://portal.example.com"]
-session_seconds = 3600
 
 [web_client.inject_prompt]
 enabled = false

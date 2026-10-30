@@ -333,10 +333,9 @@ class InjectPromptConfig(BaseModel):
 
 
 class EmbedConfig(BaseModel):
-    """Embedding-session configuration using user IDs supplied by business websites."""
+    """Allowed origins for embedding with signed business-server JWTs."""
 
     allowed_origins: list[str] = Field(default_factory=list)
-    session_seconds: int = Field(default=3600, ge=60, le=86400)
 
     @field_validator("allowed_origins")
     @classmethod

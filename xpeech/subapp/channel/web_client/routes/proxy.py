@@ -1,3 +1,4 @@
+import hashlib
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
@@ -11,7 +12,7 @@ from .....exceptions import PathProtectionError
 from .....utils.channel_jwt import ChannelJWTAuth
 from .....utils.ids import DEFAULT_SESSION_ID, validate_session_id
 from ...helper import _backend_headers, fetch_file, open_chat_stream, submit_question
-from ..dao import User
+from ..dao import User, WebClientDAO
 from ..session import EMBED_TOKEN_PREFIX, embedded_channel_auth, session_token
 
 UserDependency = Callable[..., Awaitable[User] | User]
@@ -22,6 +23,7 @@ def create_proxy_router(
     backend_auth: ChannelJWTAuth,
     current_user_dependency: UserDependency,
     admin_user_dependency: UserDependency,
+    dao: WebClientDAO,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
     CurrentUser = Annotated[User, Depends(current_user_dependency)]
@@ -45,13 +47,16 @@ def create_proxy_router(
 
     ChatSessionId = Annotated[str | None, Depends(chat_session_id)]
 
-    def request_backend_auth(
+    async def request_backend_auth(
         request: Request,
         channel_name: Annotated[str | None, Header(alias="x-channel-name")] = None,
     ) -> ChannelJWTAuth:
         token = session_token(None, request.headers.get("authorization"))
         if token and token.startswith(EMBED_TOKEN_PREFIX):
-            return embedded_channel_auth(channel_name)
+            bound_channel = await dao.get_session_channel(hashlib.sha256(token.encode()).hexdigest())
+            if bound_channel is None or (channel_name is not None and channel_name != bound_channel):
+                raise HTTPException(403, "嵌入请求的通道与已验证的 JWT 不一致")
+            return embedded_channel_auth(bound_channel)
         if channel_name is not None:
             raise HTTPException(403, "仅嵌入会话可以指定 channel_name")
         return backend_auth

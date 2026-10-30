@@ -2,7 +2,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Column, ForeignKey, Index, Integer, String, event
+from sqlalchemy import Column, ForeignKey, Index, Integer, String, event, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import registry
@@ -50,6 +50,7 @@ class AuthenticationSession(_WebClientSQLModel, table=True):
     )
     expires_at: datetime
     created_at: datetime = Field(default_factory=_now)
+    channel_name: str | None = Field(default=None)
 
 
 class DuplicateUserIdError(Exception):
@@ -87,6 +88,9 @@ async def create_db_and_tables(engine: AsyncEngine) -> None:
     """创建 Web 客户端认证表。"""
     async with engine.begin() as connection:
         await connection.run_sync(_WebClientSQLModel.metadata.create_all)
+        columns = await connection.run_sync(lambda conn: inspect(conn).get_columns("sessions"))
+        if "channel_name" not in {column["name"] for column in columns}:
+            await connection.execute(text("ALTER TABLE sessions ADD COLUMN channel_name VARCHAR"))
 
 
 class WebClientDAO:
@@ -143,6 +147,7 @@ class WebClientDAO:
         token_hash: str,
         *,
         now: datetime | None = None,
+        require_embed_channel: bool = False,
     ) -> User | None:
         """读取有效会话对应的启用用户。"""
         statement = (
@@ -157,8 +162,19 @@ class WebClientDAO:
                 User.is_active.is_(True),
             )
         )
+        if require_embed_channel:
+            statement = statement.where(AuthenticationSession.channel_name.is_not(None))
         async with AsyncSession(self._engine) as session:
             return (await session.exec(statement)).one_or_none()
+
+    async def get_session_channel(self, token_hash: str) -> str | None:
+        async with AsyncSession(self._engine) as session:
+            return (await session.exec(
+                select(AuthenticationSession.channel_name).where(
+                    AuthenticationSession.token_hash == token_hash,
+                    AuthenticationSession.expires_at > _now(),
+                )
+            )).one_or_none()
 
     async def get_user_by_user_id(self, user_id: str) -> User | None:
         """按唯一用户 ID 读取用户。"""
@@ -173,6 +189,7 @@ class WebClientDAO:
         token_hash: str,
         user_id: int,
         expires_at: datetime,
+        channel_name: str | None = None,
     ) -> None:
         async with AsyncSession(self._engine) as session:
             session.add(
@@ -180,6 +197,7 @@ class WebClientDAO:
                     token_hash=token_hash,
                     user_id=user_id,
                     expires_at=expires_at,
+                    channel_name=channel_name,
                 )
             )
             await session.commit()

@@ -1,3 +1,8 @@
+import base64
+import hashlib
+import json
+import sqlite3
+from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +28,7 @@ SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 def client(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(web, "PBKDF2_ITERATIONS", 1)
     monkeypatch.setattr(settings.jwt, "channels", {
-        "crm": JWTChannelConfig(secret_key="crm-test-channel-key-at-least-32-characters"),
+        "crm": JWTChannelConfig(secret_key="crm-test-channel-key-at-least-64-characters-for-sha512-signing-tests"),
     })
     app = web.create_app(web.WebConfig(
         backend_url="http://backend.test", database_path=tmp_path / "users.db",
@@ -34,11 +39,25 @@ def client(tmp_path: Path, monkeypatch):
         yield client
 
 
-def login_embedded(client, user_id="alice", origin=ORIGIN, token=None):
+def signed_identity(user_id="alice", channel_name="crm", *, secret=None, claims=None, algorithm=None):
+    if secret is None:
+        channel = settings.jwt.channels.get(channel_name)
+        secret = channel.secret_key if channel is not None else "unconfigured-channel-key-at-least-32-characters"
+    payload = {
+        "sub": user_id,
+        "exp": datetime.now(UTC) + timedelta(seconds=settings.jwt.access_token_expire_seconds),
+    }
+    if claims is not None:
+        payload = claims
+    headers = {"kid": channel_name} if channel_name is not None else {}
+    return jwt.encode(payload, secret, algorithm=algorithm or settings.jwt.algorithm, headers=headers)
+
+
+def login_embedded(client, user_id="alice", origin=ORIGIN, token=None, channel_name="crm"):
     headers = {"Origin": origin}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    return client.post("/api/auth/embed/session", json={"user_id": user_id, "channel_name": "crm"}, headers=headers)
+    return client.post("/api/auth/embed/session", json={"jwt": signed_identity(user_id, channel_name)}, headers=headers)
 
 
 def test_existing_account_is_used_without_admin_cookie_privileges(client):
@@ -85,7 +104,7 @@ def test_actual_user_id_is_shared_across_allowed_origins_and_refresh_revokes_old
     }).status_code == 204
     assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {again['token']}"}).status_code == 401
     for headers in ({}, {"Origin": "https://attacker.test"}):
-        response = client.post("/api/auth/embed/session", json={"user_id": "alice", "channel_name": "crm"}, headers=headers)
+        response = client.post("/api/auth/embed/session", json={"jwt": signed_identity()}, headers=headers)
         assert response.status_code == 403
         assert "access-control-allow-origin" not in response.headers
 
@@ -118,7 +137,7 @@ def test_cors_is_limited_to_embed_session_routes(client):
 
 @pytest.mark.parametrize("user_id", ["", "  ", "x" * 129, "a\nb", "../admin", "user/name"])
 def test_rejects_invalid_identity(client, user_id):
-    assert login_embedded(client, user_id).status_code == 422
+    assert login_embedded(client, user_id).status_code == 401
 
 
 def test_default_embed_requires_an_allowed_origin(tmp_path):
@@ -233,9 +252,7 @@ def test_embedded_channel_signs_all_backend_requests_with_its_own_key(client, mo
     name = "crm.portal-v2"
     secret = "custom-crm-portal-key-at-least-32-characters"
     monkeypatch.setattr(settings.jwt, "channels", {name: JWTChannelConfig(secret_key=secret)})
-    response = client.post("/api/auth/embed/session", json={
-        "user_id": user_id, "channel_name": name,
-    }, headers={"Origin": ORIGIN})
+    response = login_embedded(client, user_id, channel_name=name)
     assert response.status_code == 200
     headers = {
         "Authorization": f"Bearer {response.json()['token']}",
@@ -267,24 +284,22 @@ def test_embedded_channel_signs_all_backend_requests_with_its_own_key(client, mo
 
 
 @pytest.mark.parametrize("name", [None, "unknown", "internal", "feishu", "web_client", "", "bad name"])
-def test_unconfigured_embed_channels_are_rejected_before_forwarding(client, monkeypatch, name):
-    if name is None:
-        assert client.post("/api/auth/embed/session", json={"user_id": "alice"}, headers={"Origin": ORIGIN}).status_code == 422
-    assert client.post("/api/auth/embed/session", json={
-        "user_id": "alice", "channel_name": name,
-    }, headers={"Origin": ORIGIN}).status_code == 422
+def test_unconfigured_embed_channels_are_rejected(client, name):
+    assert login_embedded(client, channel_name=name).status_code == 401
+
+
+@pytest.mark.parametrize("name", ["unknown", "internal", "feishu", "web_client", "", "bad name"])
+def test_embed_channel_cannot_be_changed_after_verification(client, monkeypatch, name):
     account = login_embedded(client).json()
     stream = AsyncMock()
     monkeypatch.setattr(proxy, "open_chat_stream", stream)
-    headers = {"Authorization": f"Bearer {account['token']}", "x-session-id": SESSION_ID}
-    if name is not None:
-        headers["x-channel-name"] = name
-    assert client.post("/api/chat", headers=headers, data={"content": "[]"}).status_code == 422
+    headers = {"Authorization": f"Bearer {account['token']}", "x-session-id": SESSION_ID, "x-channel-name": name}
+    assert client.post("/api/chat", headers=headers, data={"content": "[]"}).status_code == 403
     stream.assert_not_awaited()
 
 
 @pytest.mark.parametrize("path", ["/api/answer_question", "/api/files", "/api/statistics"])
-@pytest.mark.parametrize("name", [None, "web_client", "feishu"])
+@pytest.mark.parametrize("name", ["web_client", "feishu"])
 def test_other_embedded_proxies_never_fall_back_to_builtin_channels(client, monkeypatch, path, name):
     account = login_embedded(client, "admin").json()
     headers = {"Authorization": f"Bearer {account['token']}", "x-session-id": SESSION_ID}
@@ -298,7 +313,7 @@ def test_other_embedded_proxies_never_fall_back_to_builtin_channels(client, monk
     response = client.post(path, headers=headers, data={"answer": "yes"}) if path == "/api/answer_question" else client.get(
         path, headers=headers, params={"path": "report.txt"},
     )
-    assert response.status_code == 422
+    assert response.status_code == 403
     answer.assert_not_awaited()
     file.assert_not_awaited()
 
@@ -309,3 +324,113 @@ def test_cookie_login_cannot_override_backend_channel(client, monkeypatch):
     monkeypatch.setattr(proxy, "open_chat_stream", stream)
     assert client.post("/api/chat", headers={"x-channel-name": "web_client"}, data={"content": "[]"}).status_code == 403
     stream.assert_not_awaited()
+
+
+@pytest.mark.parametrize("body", [
+    {"user_id": "admin", "channel_name": "crm"},
+    {"jwt": "invalid", "user_id": "admin"},
+    {"jwt": "invalid", "channel_name": "crm"},
+])
+def test_plain_user_ids_and_independent_channels_are_no_longer_accepted(client, body):
+    assert client.post("/api/auth/embed/session", json=body, headers={"Origin": ORIGIN}).status_code == 422
+
+
+@pytest.mark.parametrize("claims", [
+    {"sub": "alice"},
+    {"exp": 9999999999},
+    {"sub": 0, "exp": 9999999999},
+    {"sub": "alice", "exp": 1},
+    {"sub": "alice", "exp": True},
+    {"sub": "alice", "exp": "9999999999"},
+    {"sub": "alice", "exp": float("inf")},
+    {"sub": "alice", "exp": float("nan")},
+    {"sub": "alice", "exp": 1e100},
+    {"sub": "alice", "exp": 9999999999, "nbf": 9999999998},
+])
+def test_invalid_or_expired_claims_cannot_create_sessions(client, claims):
+    token = signed_identity(claims=claims)
+    assert client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN}).status_code == 401
+
+
+def test_signature_tampering_and_algorithm_substitution_cannot_impersonate_admin(client):
+    valid = signed_identity()
+    parts = valid.split(".")
+    claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=="))
+    claims["sub"] = "admin"
+    parts[1] = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    for token in (
+        ".".join(parts),
+        signed_identity("admin", secret="wrong-signing-key-at-least-32-characters"),
+        signed_identity("admin", algorithm="HS512"),
+        jwt.encode({"sub": "admin", "exp": 9999999999}, "", algorithm="none", headers={"kid": "crm"}),
+        "not.a.jwt",
+    ):
+        assert client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN}).status_code == 401
+
+
+def test_global_jwt_algorithm_and_lifetime_are_used_without_audience_validation(client, monkeypatch):
+    monkeypatch.setattr(settings.jwt, "algorithm", "HS512")
+    monkeypatch.setattr(settings.jwt, "access_token_expire_seconds", 45)
+    token = signed_identity(claims={"sub": "alice", "exp": 9999999999, "aud": "business"})
+    result = client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN})
+    assert result.status_code == 200
+    assert 0 < result.json()["expires_in"] <= 45
+    assert result.json()["channel_name"] == "crm"
+    assert result.json()["user"]["is_admin"] is False
+
+
+def test_session_never_outlives_jwt_and_invalid_refresh_keeps_existing_session(client, tmp_path):
+    expires_at = int((datetime.now(UTC) + timedelta(seconds=15)).timestamp())
+    token = signed_identity(claims={"sub": "alice", "exp": expires_at, "is_admin": True})
+    result = client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN}).json()
+    assert 0 < result["expires_in"] <= 15
+    assert result["user"]["is_admin"] is False
+    headers = {"Origin": ORIGIN, "Authorization": f"Bearer {result['token']}"}
+    assert client.post("/api/auth/embed/session", json={"jwt": "invalid"}, headers=headers).status_code == 401
+    assert client.get("/api/auth/me", headers=headers).status_code == 200
+    with sqlite3.connect(tmp_path / "users.db") as database:
+        expiry, channel = database.execute(
+            "SELECT expires_at, channel_name FROM sessions WHERE token_hash = ?",
+            (hashlib.sha256(result["token"].encode()).hexdigest(),),
+        ).fetchone()
+        assert datetime.fromisoformat(expiry).replace(tzinfo=UTC).timestamp() <= expires_at
+        assert channel == "crm"
+        database.execute("UPDATE sessions SET expires_at = '2000-01-01 00:00:00'")
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+
+
+def test_channel_is_inferred_and_other_configured_channels_cannot_be_selected(client, monkeypatch):
+    account = login_embedded(client).json()
+    monkeypatch.setitem(settings.jwt.channels, "private", JWTChannelConfig(secret_key="private-channel-key-at-least-32-characters"))
+    file = AsyncMock(return_value=httpx.Response(200, content=b"file"))
+    monkeypatch.setattr(proxy, "fetch_file", file)
+    headers = {"Authorization": f"Bearer {account['token']}"}
+    assert client.get("/api/files", headers=headers, params={"path": "a.txt"}).status_code == 200
+    assert file.await_args.args[3].channel == "crm"
+    headers["x-channel-name"] = "private"
+    assert client.get("/api/files", headers=headers, params={"path": "a.txt"}).status_code == 403
+    assert file.await_count == 1
+
+
+def test_legacy_unverified_embed_sessions_are_rejected_but_cookie_sessions_remain_valid(client, tmp_path):
+    assert client.post("/api/auth/login", json={"user_id": "admin", "password": "admin123456"}).status_code == 200
+    legacy = "embed_legacy-unverified-session"
+    with sqlite3.connect(tmp_path / "users.db") as database:
+        database.execute(
+            "INSERT INTO sessions (token_hash, user_id, expires_at, created_at) "
+            "SELECT ?, id, '2999-01-01 00:00:00', '2026-01-01 00:00:00' FROM users WHERE user_id = 'admin'",
+            (hashlib.sha256(legacy.encode()).hexdigest(),),
+        )
+    assert client.get("/api/admin/users", headers={"Authorization": f"Bearer {legacy}"}).status_code == 401
+    assert client.get("/api/admin/users").status_code == 200
+
+
+def test_embed_tokens_cannot_use_cookie_transport_to_bypass_the_bound_channel(client, monkeypatch):
+    account = login_embedded(client, "admin").json()
+    client.cookies.set("xpeech_session", account["token"])
+    monkeypatch.setattr(proxy.httpx, "AsyncClient", Mock(side_effect=AssertionError("Must not contact backend")))
+    assert client.get("/api/auth/me").status_code == 401
+    assert client.get("/api/statistics").status_code == 401
+    assert client.get("/api/files", params={"path": "a.txt"}).status_code == 401
+    assert client.post("/api/chat", data={"content": "[]"}).status_code == 401
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {account['token']}"}).status_code == 200

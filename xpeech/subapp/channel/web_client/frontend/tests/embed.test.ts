@@ -5,8 +5,13 @@ import vm from 'node:vm';
 
 const sdk = readFileSync(new URL('../../embed.js', import.meta.url), 'utf8');
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+const jwtFor = (sub = 'alice', kid = 'crm', signature = 'signature') =>
+  [Buffer.from(JSON.stringify({ alg: 'HS256', kid })).toString('base64url'),
+    Buffer.from(JSON.stringify({ sub, exp: 9999999999 })).toString('base64url'), signature].join('.');
+const resultFor = (token: string, sub = 'alice', channel = 'crm') =>
+  ({ token, expires_in: 60, channel_name: channel, user: { user_id: sub } });
 
-async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Response>, channelName: string | null = 'crm') {
+async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Response>) {
   const sent: { data: any; origin: string }[] = [];
   const calls: { url: string; init: RequestInit }[] = [];
   const frames: Element[] = [];
@@ -47,7 +52,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   };
   let sequence = 0;
   const context = vm.createContext({
-    window, URL, Error, CustomEvent, AbortController,
+    window, URL, Error, CustomEvent, AbortController, atob, TextDecoder,
     document: {
       body: { appendChild(host: Element) { hosts.push(host); } },
       createElement(tag: string) {
@@ -59,7 +64,11 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
     fetch: async (url: string, init: RequestInit) => {
       calls.push({ url, init });
       if (fetcher) return fetcher(url, init);
-      return new Response(JSON.stringify({ token: `embed_${++sequence}`, expires_in: 3600 }));
+      if (init.method === 'DELETE') return new Response(null, { status: 204 });
+      const parts = JSON.parse(init.body as string).jwt.split('.');
+      const { sub } = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+      const { kid } = JSON.parse(Buffer.from(parts[0], 'base64url').toString());
+      return new Response(JSON.stringify(resultFor(`embed_${++sequence}`, sub, kid)));
     },
     setInterval: () => assert.fail('The SDK must not poll website globals'),
     setTimeout: () => 1, clearTimeout() {},
@@ -73,12 +82,11 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { setChannelName: Function; setUserId: Function; hideButton: Function; showButton: Function; open: Function; close: Function; destroy: Function };
-  if (channelName !== null) api.setChannelName(channelName);
+  const api = module.namespace as { setJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; destroy: Function };
   return { window, context, frames, calls, hosts, sent, message, listeners, api };
 }
 
-test('loading the SDK creates no UI or session until setUserId and leaves website globals alone', async () => {
+test('loading the SDK creates no UI or session until setJWT and leaves website globals alone', async () => {
   const app = await runtime();
   app.api.open();
   app.api.close();
@@ -90,65 +98,17 @@ test('loading the SDK creates no UI or session until setUserId and leaves websit
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['close', 'destroy', 'hideButton', 'open', 'setChannelName', 'setUserId', 'showButton']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['close', 'destroy', 'hideButton', 'open', 'setJWT', 'showButton']);
 });
 
-test('channel is set once before login, passed to iframe, and retained across destroy and relogin', async () => {
-  const app = await runtime(undefined, null);
-  app.api.setChannelName(' crm.portal-v2 ');
-  assert.equal(app.calls.length, 0);
-  assert.equal(app.hosts.length, 0);
-  assert.throws(() => app.api.setChannelName('crm.portal-v2'), /setChannelName/);
-  app.api.setUserId('alice');
-  await tick();
-  app.message({ type: 'xpeech:ready' });
-  assert.equal(JSON.parse(app.calls[0].init.body as string).channel_name, 'crm.portal-v2');
-  assert.equal(app.sent[0].data.channel_name, 'crm.portal-v2');
-  assert.throws(() => app.api.setChannelName('other'), /setChannelName/);
-  app.message({ type: 'xpeech:expired' });
-  await tick();
-  assert.equal(JSON.parse(app.calls.at(-1)!.init.body as string).channel_name, 'crm.portal-v2');
-  app.api.destroy();
-  assert.throws(() => app.api.setChannelName('other'), /setChannelName/);
-  app.api.setUserId('bob');
-  await tick();
-  assert.equal(JSON.parse(app.calls.at(-1)!.init.body as string).channel_name, 'crm.portal-v2');
-});
-
-test('invalid channel settings do not consume the one allowed setting or change existing identity', async () => {
-  const app = await runtime(undefined, null);
-  for (const value of [null, 0, {}, '', ' ', 'a b', '../crm', 'x'.repeat(65), '_crm', 'web_client', ' feishu ', 'internal']) {
-    assert.throws(() => app.api.setChannelName(value));
-  }
-  assert.throws(() => app.api.setUserId(null));
-  app.api.setChannelName('crm');
-  app.api.setUserId('alice');
-  await tick();
-  assert.throws(() => app.api.setChannelName('erp'));
-  assert.equal(app.frames[0].removed, false);
-});
-
-test('login without a channel fails without creating UI or requesting a default session', async () => {
-  const app = await runtime(undefined, null);
-  assert.throws(() => app.api.setUserId('alice'), /setChannelName/);
-  assert.equal(app.calls.length, 0);
-  assert.equal(app.hosts.length, 0);
-  app.api.destroy();
-  app.api.setChannelName('crm');
-  app.api.setUserId('alice');
-  await tick();
-  assert.equal(app.calls.length, 1);
-  assert.equal(JSON.parse(app.calls[0].init.body as string).channel_name, 'crm');
-});
-
-test('setUserId initializes once, authenticates without cookies, and waits for the correct iframe', async () => {
+test('setJWT initializes once, authenticates without cookies, and waits for the correct iframe', async () => {
   const app = await runtime();
-  app.api.setUserId('alice');
-  app.api.setUserId('alice');
+  app.api.setJWT(jwtFor('alice'));
+  assert.throws(() => app.api.setJWT(jwtFor('alice')), /destroy/);
   await tick();
   assert.equal(app.calls.length, 1);
   assert.equal(app.calls[0].init.credentials, 'omit');
-  assert.deepEqual(JSON.parse(app.calls[0].init.body as string), { user_id: 'alice', channel_name: 'crm' });
+  assert.deepEqual(JSON.parse(app.calls[0].init.body as string), { jwt: jwtFor('alice') });
   assert.equal(app.frames.length, 1);
   assert.equal(new URL(app.frames[0].src).searchParams.get('parent_origin'), 'https://portal.test');
   assert.equal(app.sent.length, 0);
@@ -164,7 +124,7 @@ test('setUserId initializes once, authenticates without cookies, and waits for t
 
 test('button visibility and panel visibility are independent and closing preserves the iframe', async () => {
   const app = await runtime();
-  app.api.setUserId('alice');
+  app.api.setJWT(jwtFor('alice'));
   await tick();
   const launcher = app.hosts[0].ids.get('launcher')!;
   const panel = app.hosts[0].ids.get('panel')!;
@@ -185,13 +145,16 @@ test('button visibility and panel visibility are independent and closing preserv
   assert.equal(app.calls.length, 1);
 });
 
-test('switching identity clears the iframe; logout destroys the widget; next login can initialize again', async () => {
+test('switching identity requires destroy before another JWT can initialize the widget', async () => {
   const app = await runtime();
   const api = app.api;
-  api.setUserId('alice');
+  api.setJWT(jwtFor('alice'));
   await tick();
   const firstFrame = app.frames[0];
-  api.setUserId('bob');
+  assert.throws(() => api.setJWT(jwtFor('bob')), /destroy/);
+  assert.equal(firstFrame.removed, false);
+  api.destroy();
+  api.setJWT(jwtFor('bob'));
   assert.equal(firstFrame.removed, true);
   assert.equal(app.calls.filter((call) => call.init.method === 'DELETE').length, 1);
   await tick();
@@ -199,18 +162,18 @@ test('switching identity clears the iframe; logout destroys the widget; next log
   api.destroy();
   assert.equal(app.frames[1].removed, true);
   assert.equal(app.calls.filter((call) => call.init.method === 'DELETE').length, 2);
-  assert.equal(app.hosts[0].removed, true);
+  assert.equal(app.hosts[1].removed, true);
   assert.equal(app.listeners.get('message')?.length, 0);
   assert.equal(app.api, api);
   api.destroy();
   api.showButton();
   api.open();
-  assert.equal(app.hosts.length, 1);
-  assert.equal(app.calls.length, 4);
-  api.setUserId('carol');
-  await tick();
   assert.equal(app.hosts.length, 2);
-  assert.equal(app.hosts[1].removed, false);
+  assert.equal(app.calls.length, 4);
+  api.setJWT(jwtFor('carol'));
+  await tick();
+  assert.equal(app.hosts.length, 3);
+  assert.equal(app.hosts[2].removed, false);
   assert.equal(app.frames.length, 3);
   assert.equal(app.listeners.get('message')?.length, 1);
 });
@@ -219,16 +182,17 @@ test('late response for an old identity is revoked and never delivered', async (
   let resolveOld!: (response: Response) => void;
   const app = await runtime(async (_url, init) => {
     if (init.method === 'DELETE') return new Response(null, { status: 204 });
-    if (JSON.parse(init.body as string).user_id === 'alice') {
+    if (JSON.parse(init.body as string).jwt === jwtFor('alice')) {
       return new Promise((resolve) => { resolveOld = resolve; });
     }
-    return new Response(JSON.stringify({ token: 'embed_bob', expires_in: 3600 }));
+    return new Response(JSON.stringify(resultFor('embed_bob', 'bob')));
   });
-  app.api.setUserId('alice');
-  app.api.setUserId('bob');
+  app.api.setJWT(jwtFor('alice'));
+  app.api.destroy();
+  app.api.setJWT(jwtFor('bob'));
   await tick();
   app.message({ type: 'xpeech:ready' });
-  resolveOld(new Response(JSON.stringify({ token: 'embed_alice', expires_in: 3600 })));
+  resolveOld(new Response(JSON.stringify(resultFor('embed_alice', 'alice'))));
   await tick();
   assert.deepEqual(app.sent.map((item) => item.data.token), ['embed_bob']);
   assert.ok(app.calls.some((call) => call.init.method === 'DELETE'
@@ -239,9 +203,9 @@ test('failed connections can retry on opening and never put tokens in the iframe
   let fail = true;
   const app = await runtime(async () => {
     if (fail) return new Response(JSON.stringify({ detail: 'denied' }), { status: 403 });
-    return new Response(JSON.stringify({ token: 'embed_secret', expires_in: 3600 }));
+    return new Response(JSON.stringify(resultFor('embed_secret', 'alice')));
   });
-  app.api.setUserId('alice');
+  app.api.setJWT(jwtFor('alice'));
   await tick();
   assert.equal(app.frames.length, 0);
   fail = false;
@@ -258,9 +222,9 @@ test('destroy prevents pending login from recreating a widget after logout', asy
     if (init.method === 'DELETE') return new Response(null, { status: 204 });
     return new Promise((resolve) => { resolveLogin = resolve; });
   });
-  app.api.setUserId('alice');
+  app.api.setJWT(jwtFor('alice'));
   app.api.destroy();
-  resolveLogin(new Response(JSON.stringify({ token: 'embed_abandoned', expires_in: 3600 })));
+  resolveLogin(new Response(JSON.stringify(resultFor('embed_abandoned', 'alice'))));
   await tick();
   assert.equal(app.hosts[0].removed, true);
   assert.equal(app.frames.length, 0);
@@ -268,16 +232,100 @@ test('destroy prevents pending login from recreating a widget after logout', asy
   assert.ok(app.calls.some((call) => call.init.method === 'DELETE'));
 });
 
-test('invalid user IDs do not initialize or replace an existing session; numeric zero is supported', async () => {
+test('invalid JWT values do not initialize or replace an existing session; unsigned user IDs are not exported', async () => {
   const app = await runtime();
-  for (const value of [null, undefined, '', '  ', {}, NaN, Infinity, 'a\nb', 'x'.repeat(129)]) {
-    assert.throws(() => app.api.setUserId(value));
+  for (const value of [null, undefined, '', '  ', {}, 0, NaN, Infinity, 'alice', 'a.b.c', 'x'.repeat(16385), jwtFor('alice', 'web_client')]) {
+    assert.throws(() => app.api.setJWT(value));
   }
   assert.equal(app.hosts.length, 0);
-  app.api.setUserId(0);
+  app.api.setJWT(jwtFor('0'));
   await tick();
-  assert.deepEqual(JSON.parse(app.calls[0].init.body as string), { user_id: '0', channel_name: 'crm' });
-  assert.throws(() => app.api.setUserId(null));
+  assert.deepEqual(JSON.parse(app.calls[0].init.body as string), { jwt: jwtFor('0') });
+  assert.throws(() => app.api.setJWT(null));
   assert.equal(app.frames[0].removed, false);
   assert.equal(app.calls.length, 1);
+  assert.equal((app.api as any).setUserId, undefined);
+  assert.equal((app.api as any).setChannelName, undefined);
+});
+
+test('even another JWT for the same user requires destroy first', async () => {
+  const app = await runtime();
+  app.api.setJWT(jwtFor('alice'));
+  await tick();
+  const frame = app.frames[0];
+  assert.throws(() => app.api.setJWT(jwtFor('alice', 'crm', 'rotated')), /destroy/);
+  await tick();
+  assert.equal(app.frames.length, 1);
+  assert.equal(frame.removed, false);
+  assert.equal(app.calls.length, 1);
+});
+
+test('changing the channel requires destroy even for the same user', async () => {
+  const app = await runtime();
+  app.api.setJWT(jwtFor('alice'));
+  await tick();
+  const frame = app.frames[0];
+  assert.throws(() => app.api.setJWT(jwtFor('alice', 'erp')), /destroy/);
+  assert.equal(frame.removed, false);
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  assert.equal(app.frames.length, 1);
+  assert.equal(app.sent[0].data.channel_name, 'crm');
+});
+
+test('automatic session renewal resubmits the JWT and leaves it out of iframe messages', async () => {
+  const app = await runtime();
+  app.api.setJWT(jwtFor('alice'));
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:expired' });
+  await tick();
+  assert.equal(app.calls.length, 2);
+  assert.equal(JSON.parse(app.calls[1].init.body as string).jwt, jwtFor('alice'));
+  assert.equal(app.frames.length, 1);
+  assert.ok(app.sent.every(({ data }) => !('jwt' in data)));
+});
+
+test('a JWT provider obtains fresh credentials for renewal while preserving the conversation', async () => {
+  const app = await runtime();
+  let sequence = 0;
+  const provider = async () => jwtFor('alice', 'crm', `signature${++sequence}`);
+  app.api.setJWT(provider);
+  assert.throws(() => app.api.setJWT(provider), /destroy/);
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:expired' });
+  await tick();
+  assert.equal(sequence, 2);
+  assert.equal(app.calls.length, 2);
+  assert.equal(app.frames.length, 1);
+  assert.equal(app.frames[0].removed, false);
+  assert.notEqual(JSON.parse(app.calls[0].init.body as string).jwt, JSON.parse(app.calls[1].init.body as string).jwt);
+});
+
+test('renewal providers cannot switch the user or channel of an initialized widget', async () => {
+  for (const replacement of [jwtFor('bob'), jwtFor('alice', 'erp')]) {
+    const app = await runtime();
+    let token = jwtFor('alice');
+    app.api.setJWT(() => token);
+    await tick();
+    token = replacement;
+    app.message({ type: 'xpeech:expired' });
+    await tick();
+    assert.equal(app.calls.length, 1);
+    assert.equal(app.frames.length, 1);
+    assert.equal(app.frames[0].removed, false);
+    assert.match(app.hosts[0].ids.get('status')!.textContent, /destroy/);
+  }
+});
+
+test('destroy discards a pending JWT provider result without sending a login request', async () => {
+  const app = await runtime();
+  let resolveJWT!: (token: string) => void;
+  app.api.setJWT(() => new Promise<string>((resolve) => { resolveJWT = resolve; }));
+  app.api.destroy();
+  resolveJWT(jwtFor('alice'));
+  await tick();
+  assert.equal(app.calls.length, 0);
+  assert.equal(app.frames.length, 0);
 });

@@ -13,7 +13,9 @@ var frame = null;
 var frameReady = false;
 var currentId = null;
 var channelName = null;
-var userIdWasSet = false;
+var currentJWT = null;
+var jwtProvider = null;
+var identityConfigured = false;
 var session = null;
 var version = 0;
 var controller = null;
@@ -135,16 +137,26 @@ function onMessage(event) {
   }
 }
 async function connect(expectedVersion) {
-  if (controller || !currentId || !host) return;
+  if (controller || (!currentJWT && !jwtProvider) || !host) return;
   var pending = new AbortController();
   controller = pending;
-  var previous = session;
   try {
+    if (jwtProvider) {
+      var next = normalize(await jwtProvider());
+      if (expectedVersion !== version || !host) return;
+      if (currentId !== null && (next.userId !== currentId || next.channelName !== channelName)) {
+        throw new Error("续期 JWT 不能切换用户或通道，请先调用 destroy()");
+      }
+      currentId = next.userId;
+      channelName = next.channelName;
+      currentJWT = next.token;
+    }
+    var previous = session;
     var headers = { "Content-Type": "application/json" };
     if (previous) headers.Authorization = "Bearer " + previous.token;
     var response = await fetch(endpoint, {
       method: "POST", credentials: "omit", headers: headers,
-      body: JSON.stringify({ user_id: currentId, channel_name: channelName }),
+      body: JSON.stringify({ jwt: currentJWT }),
       signal: pending.signal
     });
     var result = await response.json();
@@ -156,6 +168,10 @@ async function connect(expectedVersion) {
     if (expectedVersion !== version || !host) {
       revoke(result.token);
       return;
+    }
+    if (result.channel_name !== channelName || !result.user || result.user.user_id !== currentId) {
+      revoke(result.token);
+      throw new Error("会话身份与 JWT 不一致");
     }
     session = result;
     needsRetry = false;
@@ -170,56 +186,61 @@ async function connect(expectedVersion) {
   }
 }
 function refresh() {
-  if (currentId && host) connect(version);
+  if ((currentJWT || jwtProvider) && host) connect(version);
 }
 function normalize(value) {
-  if ((typeof value !== "string" && typeof value !== "number") ||
-      (typeof value === "number" && !Number.isFinite(value))) {
-    throw new TypeError("setUserId 需要非空字符串或有效数字");
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 16384) {
+    throw new TypeError("setJWT 需要有效的 JWT 字符串");
   }
-  var id = String(value).trim();
-  if (!id || /[\u0000-\u001f]/.test(id)) {
-    throw new TypeError("user_id 不能为空或包含控制字符");
+  var token = value.trim();
+  try {
+    var parts = token.split(".");
+    if (parts.length !== 3 || parts.some(function (part) { return !/^[A-Za-z0-9_-]+$/.test(part); })) {
+      throw new Error("invalid JWT");
+    }
+    function decode(part) {
+      var encoded = part.replace(/-/g, "+").replace(/_/g, "/");
+      var bytes = Uint8Array.from(atob(encoded), function (char) { return char.charCodeAt(0); });
+      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    }
+    var header = decode(parts[0]);
+    var claims = decode(parts[1]);
+    if (!header || typeof header.kid !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(header.kid) ||
+        ["internal", "feishu", "web_client"].includes(header.kid) ||
+        !claims || typeof claims.sub !== "string" || !claims.sub.trim()) throw new Error("invalid JWT identity");
+    // These unverified fields only enforce the SDK lifecycle. The server verifies all claims.
+    return { token: token, userId: claims.sub, channelName: header.kid };
+  } catch (_) {
+    throw new TypeError("JWT 格式无效，必须包含自定义通道 kid 和用户 sub");
   }
-  if (Array.from(id).length > 128) throw new RangeError("user_id 最多 128 个字符");
-  return id;
 }
 function ensureConnected() {
-  if (host && currentId && (!session || !frame || needsRetry) && !controller) {
+  if (host && (currentJWT || jwtProvider) && (!session || !frame || needsRetry) && !controller) {
     showStatus("正在连接…");
     if (session && !needsRetry) { createFrame(); deliver(); } else connect(version);
   }
 }
-function setChannelName(value) {
-  if (channelName !== null || userIdWasSet) {
-    throw new Error("setChannelName 只能设置一次，且必须在首次 setUserId 之前调用");
-  }
-  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(value.trim())) {
-    throw new TypeError("channel_name 需要 1–64 个字符，仅支持字母、数字、点、下划线、冒号和连字符");
-  }
-  if (["internal", "feishu", "web_client"].includes(value.trim())) {
-    throw new TypeError("嵌入组件必须使用自定义通道，不能使用内置通道");
-  }
-  channelName = value.trim();
-}
-function setUserId(value) {
-  var next = normalize(value);
-  if (channelName === null) throw new Error("必须先调用 setChannelName 设置嵌入通道");
-  userIdWasSet = true;
-  if (host && next === currentId) {
-    ensureConnected();
+function setJWT(value) {
+  if (identityConfigured) throw new Error("setJWT 只能初始化一次，请先调用 destroy() 再设置 JWT");
+  if (typeof value === "function") {
+    identityConfigured = true;
+    jwtProvider = value;
+    initialize();
+    showStatus("正在连接…");
+    connect(version);
     return;
   }
+  var next = normalize(value);
+  identityConfigured = true;
   initialize();
-  currentId = next;
+  currentId = next.userId;
+  channelName = next.channelName;
+  currentJWT = next.token;
+  jwtProvider = null;
   version += 1;
   clearTimeout(refreshTimer);
   if (controller) controller.abort();
   controller = null;
-  var old = session;
-  session = null;
-  removeFrame();
-  if (old) revoke(old.token);
   needsRetry = false;
   showButton();
   showStatus("正在连接…");
@@ -233,6 +254,10 @@ function destroy() {
   if (session) revoke(session.token);
   session = null;
   currentId = null;
+  currentJWT = null;
+  jwtProvider = null;
+  identityConfigured = false;
+  channelName = null;
   needsRetry = false;
   removeFrame();
   window.removeEventListener("message", onMessage);
@@ -240,4 +265,4 @@ function destroy() {
   host = root = panel = launcher = closeButton = body = status = null;
 }
 
-export { setChannelName, setUserId, hideButton, showButton, open, close, destroy };
+export { setJWT, hideButton, showButton, open, close, destroy };

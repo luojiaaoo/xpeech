@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -127,3 +128,24 @@ async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
     assert database_path.is_file()
     assert User.metadata is not SQLModel.metadata
     assert AuthenticationSession.metadata is User.metadata
+
+
+@pytest.mark.asyncio
+async def test_existing_session_schema_is_migrated_without_removing_password_sessions(tmp_path):
+    path = tmp_path / "old-users.db"
+    with sqlite3.connect(path) as database:
+        database.execute(
+            "CREATE TABLE sessions (token_hash VARCHAR PRIMARY KEY, user_id INTEGER NOT NULL, "
+            "expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL)"
+        )
+        database.execute("INSERT INTO sessions VALUES ('old-password-session', 1, '2999-01-01', '2026-01-01')")
+    dao = WebClientDAO(path)
+    try:
+        await dao.initialize(lambda: "test-admin-hash")
+        assert (await dao.get_user_for_session("old-password-session")).user_id == "admin"
+        assert await dao.get_user_for_session("old-password-session", require_embed_channel=True) is None
+        assert await dao.get_session_channel("old-password-session") is None
+        await dao.initialize(lambda: "unused")
+        assert (await dao.get_user_for_session("old-password-session")).user_id == "admin"
+    finally:
+        await dao.close()

@@ -23,7 +23,7 @@ from .routes.admin import create_admin_router
 from .routes.auth import create_auth_router
 from .routes.embed import create_embed_router
 from .routes.proxy import create_proxy_router
-from .session import session_token
+from .session import EMBED_TOKEN_PREFIX, session_token
 
 PBKDF2_ITERATIONS = 600_000
 XPEECH_FAVICON = Path(__file__).resolve().parents[4] / "assets" / "favicon.ico"
@@ -145,10 +145,10 @@ def create_app(config: WebConfig) -> FastAPI:
         authorization: Annotated[str | None, Header()] = None,
     ) -> User:
         token = session_token(token, authorization)
-        if not token:
+        if not token or (authorization is None and token.startswith(EMBED_TOKEN_PREFIX)):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "请先登录")
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        user = await dao.get_user_for_session(token_hash)
+        user = await dao.get_user_for_session(token_hash, require_embed_channel=token.startswith(EMBED_TOKEN_PREFIX))
         if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
         return user
@@ -176,6 +176,7 @@ def create_app(config: WebConfig) -> FastAPI:
             config.backend_auth,
             current_user,
             admin_user,
+            dao,
         )
     )
 
