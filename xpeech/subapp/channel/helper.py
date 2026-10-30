@@ -37,6 +37,8 @@ def _backend_headers(
     user_id: str,
     auth: ChannelJWTAuth,
     sender_name: str | None = None,
+    *,
+    session_id: str | None = None,
 ) -> dict[str, str]:
     headers = {
         "authorization": f"Bearer {create_channel_access_token(auth)}",
@@ -44,6 +46,8 @@ def _backend_headers(
     }
     if sender_name is not None:
         headers["x-sender-name"] = quote(sender_name, safe="")
+    if session_id is not None:
+        headers["x-session-id"] = session_id
     return headers
 
 
@@ -57,6 +61,7 @@ async def open_chat_stream(
     *,
     files: Any = None,
     json_output: bool = False,
+    session_id: str | None = None,
 ) -> ChatStream:
     """Open a streaming request to the backend chat endpoint."""
 
@@ -69,7 +74,7 @@ async def open_chat_stream(
 
     client = httpx.AsyncClient(timeout=None)
     try:
-        headers = _backend_headers(user_id, auth, sender_name)
+        headers = _backend_headers(user_id, auth, sender_name, session_id=session_id)
         headers.update({"Accept": "text/event-stream", "Cache-Control": "no-store"})
         response = await client.send(
             client.build_request(
@@ -177,6 +182,8 @@ async def submit_question(
     result: Any,
     chat_url: str,
     auth: ChannelJWTAuth,
+    *,
+    session_id: str | None = None,
 ) -> httpx.Response:
     """Submit a question answer and return the backend response without changing its status."""
 
@@ -185,7 +192,7 @@ async def submit_question(
     async with httpx.AsyncClient(timeout=30) as client:
         return await client.post(
             answer_url,
-            headers=_backend_headers(user_id, auth),
+            headers=_backend_headers(user_id, auth, session_id=session_id),
             data={"answer": answer},
         )
 

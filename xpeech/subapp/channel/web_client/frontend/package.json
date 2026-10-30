@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test": "node --experimental-vm-modules --experimental-strip-types --test tests/*.test.ts",
     "build": "tsc --noEmit && vite build",
     "lint:antd": "antd lint ./src --format json"
   },

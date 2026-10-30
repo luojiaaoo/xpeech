@@ -15,6 +15,30 @@ TEST_AUTH = ChannelJWTAuth(
 )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_id", [None, "018f0000-0000-7000-8000-000000000001"])
+async def test_chat_and_question_forward_session_header(monkeypatch, session_id):
+    requests = []
+    real_client = httpx.AsyncClient
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, content=b"ok")
+
+    monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: real_client(
+        transport=httpx.MockTransport(respond), **kwargs,
+    ))
+    stream = await helper.open_chat_stream(
+        "alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_AUTH, session_id=session_id,
+    )
+    await stream.aclose()
+    await helper.submit_question("alice", "yes", "http://backend.test", TEST_AUTH, session_id=session_id)
+    assert [request.url.path for request in requests] == ["/chat", "/answer_question"]
+    for request in requests:
+        assert request.headers.get("x-session-id") == session_id
+        assert request.headers["x-user-id"] == "alice"
+
+
 class _JsonErrorStream(httpx.AsyncByteStream):
     async def __aiter__(self):
         yield b'{"detail":"Session already has an active chat request"}'

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from ....config.settings import settings
+from ....config.settings import EmbedConfig, settings
 from ....utils.channel_jwt import ChannelJWTAuth
 from .dao import User
 
@@ -52,6 +52,7 @@ class WebConfig:
     cookie_name: str = "xpeech_session"
     oauth2: tuple[OAuth2WebConfig, ...] = field(default_factory=tuple)
     inject_prompt: InjectPromptWebConfig = field(default_factory=InjectPromptWebConfig)
+    embed: EmbedConfig = field(default_factory=EmbedConfig)
 
     @property
     def backend_auth(self) -> ChannelJWTAuth:

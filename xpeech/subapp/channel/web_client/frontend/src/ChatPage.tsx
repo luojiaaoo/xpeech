@@ -14,7 +14,7 @@ import {
   DownOutlined,
   RobotOutlined,
 } from '@ant-design/icons';
-import { streamChat } from './api';
+import { downloadFile, streamChat } from './api';
 import { appendChatEvent, finishChatTurn, startChatTurn } from './chatState';
 import ToolCallCard from './ToolCallCard';
 import {
@@ -135,7 +135,7 @@ function renderStreamContent(type: StreamEventType, content: string, streaming: 
   return markdown;
 }
 
-export default function ChatPage({ systemName }: { systemName: string }) {
+export default function ChatPage({ systemName, sessionId }: { systemName: string; sessionId?: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [value, setValue] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -145,6 +145,9 @@ export default function ChatPage({ systemName }: { systemName: string }) {
   const [userPrefixExpanded, setUserPrefixExpanded] = useState(false);
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
   const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
+  const requestRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => requestRef.current?.abort(), []);
 
   useEffect(() => subscribePendingUserPrefix((userPrefix) => {
     setPendingUserPrefix(userPrefix);
@@ -163,7 +166,9 @@ export default function ChatPage({ systemName }: { systemName: string }) {
   }
 
   async function send(text: string) {
-    if (loading || (!text.trim() && files.length === 0)) return;
+    if (loading || requestRef.current || (!text.trim() && files.length === 0)) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
     const sentFiles = files;
     const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
     setMessages((current) => startChatTurn(current, display));
@@ -174,13 +179,20 @@ export default function ChatPage({ systemName }: { systemName: string }) {
     try {
       const pendingUserPrefix = takePendingUserPrefix();
       const requestText = pendingUserPrefix ? `${pendingUserPrefix}\n\n===\n\n${text}` : text;
-      await streamChat(requestText, sentFiles, appendEvent);
+      await streamChat(requestText, sentFiles, (event) => {
+        if (!controller.signal.aborted) appendEvent(event);
+      }, { sessionId, signal: controller.signal });
     } catch (error) {
-      setMessages((current) => appendChatEvent(current, { event: 'error', context: String(error) }));
-      message.error(String(error));
+      if (!controller.signal.aborted) {
+        setMessages((current) => appendChatEvent(current, { event: 'error', context: String(error) }));
+        message.error(String(error));
+      }
     } finally {
-      setMessages(finishChatTurn);
-      setLoading(false);
+      if (!controller.signal.aborted) {
+        setMessages(finishChatTurn);
+        setLoading(false);
+      }
+      if (requestRef.current === controller) requestRef.current = null;
     }
   }
 
@@ -191,10 +203,12 @@ export default function ChatPage({ systemName }: { systemName: string }) {
     } else if (item.role === 'tool' && item.toolCall) {
       content = <ToolCallCard tool={item.toolCall} />;
     } else if (item.role === 'question') {
-      content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} /></Suspense>;
+      content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} /></Suspense>;
     } else if (item.role === 'file') {
       const name = item.content.split(/[\\/]/).pop() || '文件';
-      content = <Button className="chat-file-button" icon={<DownloadOutlined />} href={`/api/files?path=${encodeURIComponent(item.content)}`}>{name}</Button>;
+      content = <Button className="chat-file-button" icon={<DownloadOutlined />} onClick={() => {
+        downloadFile(item.content).catch((error) => message.error(String(error)));
+      }}>{name}</Button>;
     } else if (item.role === 'status') {
       content = <div className="chat-status-text">{item.transient ? <LoadingOutlined spin /> : null}{item.content}</div>;
     } else if (item.role === 'error') {
@@ -217,7 +231,7 @@ export default function ChatPage({ systemName }: { systemName: string }) {
       role: item.role,
       content,
     };
-  }), [messages]);
+  }), [messages, sessionId]);
 
   const attachmentItems: AttachmentsProps['items'] = files.map((file, index) => ({
     uid: `${index}-${file.name}-${file.lastModified}`,

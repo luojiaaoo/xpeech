@@ -33,6 +33,11 @@ access_token_expire_seconds = 60
 database_path = "data/web_client/users.db"
 cookie_name = "xpeech_session"
 
+[web_client.embed]
+# 业务网站动态 import embed.js 后调用 setUserId()，按实际 user_id 建立会话。
+allowed_origins = ["https://portal.example.com"]
+session_seconds = 3600
+
 [web_client.inject_prompt]
 enabled = false
 # ${state} 或 $state 会替换为入口随机码；命令的 stdout 将作为下一条用户消息的前缀。

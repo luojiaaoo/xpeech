@@ -12,7 +12,7 @@ from typing import Annotated
 
 import httpx
 import jq
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from yarl import URL
@@ -33,6 +33,7 @@ from ..models import (
     WebConfig,
     public_user,
 )
+from ..session import EMBED_TOKEN_PREFIX, session_token
 
 SESSION_DAYS = 7
 OAUTH2_LOGIN_MINUTES = 5
@@ -465,10 +466,13 @@ def create_auth_router(
     async def logout(
         response: Response,
         token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
     ):
+        token = session_token(token, authorization)
         if token:
             await dao.delete_session(hashlib.sha256(token.encode()).hexdigest())
-        response.delete_cookie(config.cookie_name, path="/")
+        if authorization is None:
+            response.delete_cookie(config.cookie_name, path="/")
 
     @router.get("/me")
     async def me(user: CurrentUser):
@@ -479,7 +483,11 @@ def create_auth_router(
         body: PasswordChangeBody,
         user: CurrentUser,
         token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
     ):
+        token = session_token(token, authorization)
+        if token and token.startswith(EMBED_TOKEN_PREFIX):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "嵌入会话不支持修改密码")
         if user.id is None or token is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
         changed = await dao.change_password(

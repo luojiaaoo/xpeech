@@ -17,12 +17,20 @@ const ChatPage = lazy(() => import('./ChatPage'));
 const LoginPage = lazy(() => import('./LoginPage'));
 const StatisticsDashboard = lazy(() => import('./StatisticsDashboard'));
 const UserManagement = lazy(() => import('./UserManagement'));
+const EmbeddedApp = lazy(() => import('./EmbeddedApp'));
 
 function PageFallback() {
   return <div className="loading-page"><Skeleton active /></div>;
 }
 
 export default function App() {
+  if (new URLSearchParams(window.location.search).get('embed') === '1') {
+    return <Suspense fallback={<PageFallback />}><EmbeddedApp /></Suspense>;
+  }
+  return <StandaloneApp />;
+}
+
+function StandaloneApp() {
   const [appConfig, setAppConfig] = useState<AppConfig>();
   const [user, setUser] = useState<User | null>();
   const [userManagementOpen, setUserManagementOpen] = useState(false);

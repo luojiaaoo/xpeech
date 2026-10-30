@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from threading import Lock
 from typing import Literal
@@ -331,6 +332,29 @@ class InjectPromptConfig(BaseModel):
         return self
 
 
+class EmbedConfig(BaseModel):
+    """Embedding-session configuration using user IDs supplied by business websites."""
+
+    allowed_origins: list[str] = Field(default_factory=list)
+    session_seconds: int = Field(default=3600, ge=60, le=86400)
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def validate_origins(cls, origins: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for origin in origins:
+            origin = origin.strip().lower().rstrip("/")
+            if not re.fullmatch(r"https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?::[0-9]+)?", origin):
+                raise ValueError("embed.allowed_origins must contain exact HTTP(S) origins, without paths or wildcards")
+            parsed = urlsplit(origin)
+            port = parsed.port
+            if port == (443 if parsed.scheme == "https" else 80):
+                origin = origin.rsplit(":", 1)[0]
+            if origin not in normalized:
+                normalized.append(origin)
+        return normalized
+
+
 class WebClientConfig(BaseModel):
     """Web client storage settings."""
 
@@ -342,6 +366,7 @@ class WebClientConfig(BaseModel):
     )
     oauth2: list[OAuth2Config] = Field(default_factory=list)
     inject_prompt: InjectPromptConfig = Field(default_factory=InjectPromptConfig)
+    embed: EmbedConfig = Field(default_factory=EmbedConfig)
 
     @model_validator(mode="after")
     def validate_oauth2_provider_names(self) -> "WebClientConfig":

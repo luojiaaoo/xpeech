@@ -13,13 +13,37 @@ import type {
   User,
 } from './types';
 
+let memoryToken: string | null = null;
+let memoryChannelName: string | null = null;
+
+export function setSessionToken(token: string | null, channelName: string | null = null) {
+  memoryToken = token;
+  memoryChannelName = token ? channelName : null;
+}
+
+function authHeaders(initial?: HeadersInit): Headers {
+  const headers = new Headers(initial);
+  if (memoryToken) headers.set('Authorization', `Bearer ${memoryToken}`);
+  if (memoryToken && memoryChannelName) headers.set('x-channel-name', memoryChannelName);
+  return headers;
+}
+
+function sessionExpired() {
+  if (memoryToken) window.dispatchEvent(new Event('xpeech:session-expired'));
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers = authHeaders(init?.headers);
+  if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   const response = await fetch(url, {
-    credentials: 'same-origin',
-    headers: init?.body instanceof FormData ? undefined : { 'Content-Type': 'application/json' },
     ...init,
+    credentials: memoryToken ? 'omit' : 'same-origin',
+    headers,
   });
   if (!response.ok) {
+    if (response.status === 401) sessionExpired();
     let detail = `${response.status} ${response.statusText}`;
     try {
       detail = (await response.json()).detail || detail;
@@ -84,6 +108,25 @@ export const authApi = {
 export const appApi = {
   config: () => request<AppConfig>('/api/config'),
 };
+
+export async function downloadFile(path: string) {
+  const response = await fetch(`/api/files?${new URLSearchParams({ path })}`, {
+    credentials: memoryToken ? 'omit' : 'same-origin',
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    if (response.status === 401) sessionExpired();
+    throw new Error('文件下载失败');
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = path.split(/[\\/]/).pop() || 'download';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export const userApi = {
   list: () => request<User[]>('/api/admin/users'),
@@ -153,14 +196,24 @@ function parseEventBlock(block: string): ChatEvent | null {
   }
 }
 
-export async function streamChat(text: string, files: File[], onEvent: (event: ChatEvent) => void) {
+export async function streamChat(
+  text: string, files: File[], onEvent: (event: ChatEvent) => void,
+  options: { sessionId?: string; signal?: AbortSignal } = {},
+) {
   const form = new FormData();
   form.set('content', JSON.stringify(text.trim() ? [{ text: text.trim() }] : []));
   form.set('session_metadata', JSON.stringify({ channel: 'web' }));
   files.forEach((file) => form.append('files', file, file.name));
-  const response = await fetch('/api/chat', { method: 'POST', body: form, credentials: 'same-origin' });
+  const headers = authHeaders();
+  if (options.sessionId) headers.set('x-session-id', options.sessionId);
+  const response = await fetch('/api/chat', {
+    method: 'POST', body: form,
+    credentials: memoryToken ? 'omit' : 'same-origin', headers, signal: options.signal,
+  });
   if (!response.ok || !response.body) {
-    if (response.status === 401) window.location.reload();
+    if (response.status === 401) {
+      if (memoryToken) sessionExpired(); else window.location.reload();
+    }
     throw new Error((await response.text()) || '消息发送失败');
   }
   const reader = response.body.getReader();
@@ -181,9 +234,15 @@ export async function streamChat(text: string, files: File[], onEvent: (event: C
   if (last) onEvent(last);
 }
 
-export async function answerQuestion(answer: unknown) {
+export async function answerQuestion(answer: unknown, sessionId?: string) {
   const form = new FormData();
   form.set('answer', typeof answer === 'string' ? answer : JSON.stringify(answer));
-  const response = await fetch('/api/answer_question', { method: 'POST', body: form });
+  const headers = authHeaders();
+  if (sessionId) headers.set('x-session-id', sessionId);
+  const response = await fetch('/api/answer_question', {
+    method: 'POST', body: form,
+    credentials: memoryToken ? 'omit' : 'same-origin', headers,
+  });
+  if (response.status === 401) sessionExpired();
   if (!response.ok) throw new Error(await response.text());
 }

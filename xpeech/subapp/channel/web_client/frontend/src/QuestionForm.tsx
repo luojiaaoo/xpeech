@@ -19,7 +19,7 @@ interface Question {
   fields: Field[];
 }
 
-export default function QuestionForm({ context }: { context: string }) {
+export default function QuestionForm({ context, sessionId }: { context: string; sessionId?: string }) {
   const [answered, setAnswered] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   let question: Question | null = null;
@@ -41,7 +41,7 @@ export default function QuestionForm({ context }: { context: string }) {
             : value,
         ]),
       );
-      await answerQuestion(normalized);
+      await answerQuestion(normalized, sessionId);
       setAnswered(true);
       message.success('答案已提交');
     } finally {
