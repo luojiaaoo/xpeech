@@ -28,6 +28,9 @@ export interface OAuth2QrLogin {
   expires_in: number;
 }
 
+// iframe_mode 下浏览器可能禁用第三方 cookie，token 不写 cookie，随响应体交给前端临时保存
+export type LoginResult = User & { token?: string };
+
 export type OAuth2PollResult =
   | { status: 'pending' }
   | { status: 'approved'; user: User };

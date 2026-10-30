@@ -1,6 +1,7 @@
 import type {
   AppConfig,
   ChatEvent,
+  LoginResult,
   StatisticsLatestRecords,
   StatisticsOverview,
   StatisticsRecords,
@@ -13,11 +14,26 @@ import type {
   User,
 } from './types';
 
+// iframe_mode 下浏览器可能禁用第三方 cookie：token 只保存在这个临时变量里，
+// 随请求通过 Authorization: Bearer 头发送，不做任何持久化（iframe 不需要）。
+let memoryToken: string | null = null;
+
+export function setSessionToken(token: string | null) {
+  memoryToken = token;
+}
+
+function authHeaders(base: Record<string, string> = {}): Record<string, string> {
+  return memoryToken ? { ...base, Authorization: `Bearer ${memoryToken}` } : base;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers = authHeaders(
+    init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' },
+  );
   const response = await fetch(url, {
     credentials: 'same-origin',
-    headers: init?.body instanceof FormData ? undefined : { 'Content-Type': 'application/json' },
     ...init,
+    headers,
   });
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
@@ -48,12 +64,16 @@ function injectPrompt(state: string) {
   return pending;
 }
 
-function createOAuth2Qr(providerName: string, state?: string) {
+function createOAuth2Qr(providerName: string, state?: string, iframeMode = false) {
   const create = () => request<OAuth2QrLogin>('/api/auth/oauth2/qr', {
     method: 'POST',
-    body: JSON.stringify({ provider_name: providerName, ...(state ? { state } : {}) }),
+    body: JSON.stringify({
+      provider_name: providerName,
+      ...(state ? { state } : {}),
+      iframe_mode: iframeMode,
+    }),
   });
-  const requestKey = JSON.stringify([providerName, state ?? null]);
+  const requestKey = JSON.stringify([providerName, state ?? null, iframeMode]);
 
   const existing = oauth2CreateRequests.get(requestKey);
   if (existing) return existing;
@@ -66,8 +86,11 @@ function createOAuth2Qr(providerName: string, state?: string) {
 
 export const authApi = {
   me: () => request<User>('/api/auth/me'),
-  login: (userId: string, password: string) =>
-    request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ user_id: userId, password }) }),
+  login: (userId: string, password: string, iframeMode = false) =>
+    request<LoginResult>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, password, iframe_mode: iframeMode }),
+    }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
   changePassword: (newPassword: string) => request<void>('/api/auth/password', {
     method: 'PATCH',
@@ -158,7 +181,12 @@ export async function streamChat(text: string, files: File[], onEvent: (event: C
   form.set('content', JSON.stringify(text.trim() ? [{ text: text.trim() }] : []));
   form.set('session_metadata', JSON.stringify({ channel: 'web' }));
   files.forEach((file) => form.append('files', file, file.name));
-  const response = await fetch('/api/chat', { method: 'POST', body: form, credentials: 'same-origin' });
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    body: form,
+    credentials: 'same-origin',
+    headers: authHeaders(),
+  });
   if (!response.ok || !response.body) {
     if (response.status === 401) window.location.reload();
     throw new Error((await response.text()) || '消息发送失败');
@@ -184,6 +212,10 @@ export async function streamChat(text: string, files: File[], onEvent: (event: C
 export async function answerQuestion(answer: unknown) {
   const form = new FormData();
   form.set('answer', typeof answer === 'string' ? answer : JSON.stringify(answer));
-  const response = await fetch('/api/answer_question', { method: 'POST', body: form });
+  const response = await fetch('/api/answer_question', {
+    method: 'POST',
+    body: form,
+    headers: authHeaders(),
+  });
   if (!response.ok) throw new Error(await response.text());
 }

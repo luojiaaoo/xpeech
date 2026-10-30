@@ -12,7 +12,7 @@ from typing import Annotated
 
 import httpx
 import jq
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from yarl import URL
@@ -43,6 +43,20 @@ PasswordMatches = Callable[[str, str], bool]
 CurrentUserDependency = Callable[..., Awaitable[User]]
 
 
+def extract_session_token(
+    cookie_token: str | None,
+    authorization: str | None = None,
+) -> str | None:
+    """取会话 token：优先 cookie，其次 Authorization: Bearer 头（iframe 模式不依赖 cookie）。"""
+    if cookie_token:
+        return cookie_token
+    if authorization:
+        scheme, _, credentials = authorization.partition(" ")
+        if scheme.lower() == "bearer" and credentials:
+            return credentials
+    return None
+
+
 @dataclass
 class OAuth2LoginAttempt:
     oauth2: OAuth2WebConfig
@@ -54,6 +68,7 @@ class OAuth2LoginAttempt:
     inject_prompt_state: str | None = None
     user_id: str | None = None
     error: str | None = None
+    iframe_mode: bool = False
 
 
 class OAuth2ClaimError(Exception):
@@ -164,6 +179,28 @@ h1{{font-size:24px;margin:0 0 12px}}p{{margin:0;color:#646b78;line-height:1.7}}#
     )
 
 
+def _oauth2_iframe_redirect(
+    attempt: OAuth2LoginAttempt,
+    token: str | None = None,
+) -> RedirectResponse:
+    """iframe 模式下不依赖 cookie：成功时把 token 放进 hash，失败时把错误带回 SPA 重试。"""
+    query = {
+        "iframe_mode": "1",
+        "oauth2provider": attempt.oauth2.provider_name,
+    }
+    if attempt.inject_prompt_state is not None:
+        query["state"] = attempt.inject_prompt_state
+    fragment = ""
+    if token is not None:
+        fragment = f"#token={token}"
+    else:
+        query["auth_error"] = attempt.error or "OAuth2 授权失败"
+    return RedirectResponse(
+        url=str(URL("/").update_query(query)) + fragment,
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 def create_auth_router(
     config: WebConfig,
     dao: WebClientDAO,
@@ -175,6 +212,12 @@ def create_auth_router(
     oauth2_attempts: dict[str, OAuth2LoginAttempt] = {}
     oauth2_state_index: dict[str, str] = {}
     CurrentUser = Annotated[User, Depends(current_user_dependency)]
+
+    def oauth2_error_response(attempt: OAuth2LoginAttempt, detail: str):
+        attempt.error = detail
+        if attempt.iframe_mode:
+            return _oauth2_iframe_redirect(attempt)
+        return _oauth2_result_page(False, detail)
 
     def discard_oauth2_attempt(login_id: str) -> None:
         attempt = oauth2_attempts.pop(login_id, None)
@@ -199,7 +242,7 @@ def create_auth_router(
             "OAuth2 登录服务商不存在",
         )
 
-    async def create_login_session(user: User, response: Response) -> None:
+    async def issue_session_token(user: User) -> str:
         if user.id is None:
             raise RuntimeError("数据库用户缺少主键")
         token = secrets.token_urlsafe(32)
@@ -208,6 +251,10 @@ def create_auth_router(
             user_id=user.id,
             expires_at=datetime.now(UTC) + timedelta(days=SESSION_DAYS),
         )
+        return token
+
+    async def create_login_session(user: User, response: Response) -> str:
+        token = await issue_session_token(user)
         response.set_cookie(
             config.cookie_name,
             token,
@@ -217,12 +264,15 @@ def create_auth_router(
             samesite="lax",
             path="/",
         )
+        return token
 
     @router.post("/login")
     async def login(body: LoginBody, response: Response):
         user = await dao.get_user_by_user_id(body.user_id)
         if user is None or not user.is_active or not password_matches(body.password, user.password_hash):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户 ID 或密码错误")
+        if body.iframe_mode:
+            return {**public_user(user), "token": await issue_session_token(user)}
         await create_login_session(user, response)
         return public_user(user)
 
@@ -292,6 +342,9 @@ def create_auth_router(
             challenge = hashlib.sha256(code_verifier.encode()).digest()
             params["code_challenge"] = base64.urlsafe_b64encode(challenge).rstrip(b"=").decode()
             params["code_challenge_method"] = "S256"
+        if body.iframe_mode:
+            # iframe 静默授权：覆盖服务商配置的交互式 prompt，复用 IdP 会话
+            params["prompt"] = "none"
 
         authorization_url = str(URL(oauth2.authorization_url).update_query(params))
         oauth2_attempts[login_id] = OAuth2LoginAttempt(
@@ -302,6 +355,7 @@ def create_auth_router(
             code_verifier=code_verifier,
             expires_at=datetime.now(UTC) + timedelta(minutes=OAUTH2_LOGIN_MINUTES),
             inject_prompt_state=inject_prompt_state,
+            iframe_mode=body.iframe_mode,
         )
         oauth2_state_index[state_value] = login_id
 
@@ -331,10 +385,11 @@ def create_auth_router(
         if attempt.user_id is not None:
             return _oauth2_result_page(True, "授权已完成，请返回原设备。")
         if attempt.error is not None:
-            return _oauth2_result_page(False, attempt.error)
+            return oauth2_error_response(attempt, attempt.error)
         if error or not code:
-            attempt.error = error_description or error or "OAuth2 授权未完成"
-            return _oauth2_result_page(False, attempt.error)
+            return oauth2_error_response(
+                attempt, error_description or error or "OAuth2 授权未完成"
+            )
 
         token_data = {
             "grant_type": "authorization_code",
@@ -384,17 +439,16 @@ def create_auth_router(
                     json.dumps(userinfo, ensure_ascii=False),
                 )
         except (httpx.HTTPError, TypeError, ValueError):
-            attempt.error = "OAuth2 服务请求失败，请返回登录页重试。"
-            return _oauth2_result_page(False, attempt.error)
+            return oauth2_error_response(attempt, "OAuth2 服务请求失败，请返回登录页重试。")
 
         if oauth2.userinfo_filter and not oauth2_filter(userinfo, oauth2.userinfo_filter):
-            attempt.error = "OAuth2 用户信息未通过登录校验"
-            return _oauth2_result_page(False, attempt.error)
+            return oauth2_error_response(attempt, "OAuth2 用户信息未通过登录校验")
 
         user_id = oauth2_claim(userinfo, oauth2.user_id_claim)
         if re.fullmatch(USER_ID_PATTERN, user_id) is None:
-            attempt.error = f"OAuth2 用户信息缺少有效的 {oauth2.user_id_claim}"
-            return _oauth2_result_page(False, attempt.error)
+            return oauth2_error_response(
+                attempt, f"OAuth2 用户信息缺少有效的 {oauth2.user_id_claim}"
+            )
 
         user = await dao.get_user_by_user_id(user_id)
         if user is None and oauth2.auto_create_users:
@@ -409,11 +463,15 @@ def create_auth_router(
             except DuplicateUserIdError:
                 user = await dao.get_user_by_user_id(user_id)
         if user is None:
-            attempt.error = "OAuth2 账号未绑定本地账号"
-            return _oauth2_result_page(False, attempt.error)
+            return oauth2_error_response(attempt, "OAuth2 账号未绑定本地账号")
         if not user.is_active:
-            attempt.error = "账号已停用"
-            return _oauth2_result_page(False, attempt.error)
+            return oauth2_error_response(attempt, "账号已停用")
+
+        if attempt.iframe_mode:
+            # iframe 场景可能禁用第三方 cookie：token 通过 hash 交给前端临时变量保存
+            token = await issue_session_token(user)
+            discard_oauth2_attempt(login_id or "")
+            return _oauth2_iframe_redirect(attempt, token)
 
         if oauth2.display_type == "link":
             target_url = (
@@ -465,7 +523,9 @@ def create_auth_router(
     async def logout(
         response: Response,
         token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
     ):
+        token = extract_session_token(token, authorization)
         if token:
             await dao.delete_session(hashlib.sha256(token.encode()).hexdigest())
         response.delete_cookie(config.cookie_name, path="/")
@@ -479,7 +539,9 @@ def create_auth_router(
         body: PasswordChangeBody,
         user: CurrentUser,
         token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
     ):
+        token = extract_session_token(token, authorization)
         if user.id is None or token is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
         changed = await dao.change_password(
