@@ -71,6 +71,7 @@ async def feishu_schedule(
     session_metadata: dict[str, str] | None,
     sender_name: str | None,
     user_id: str | None,
+    channel: str | None,
 ) -> str:
     """创建飞书后台定时 Agent 任务。
 
@@ -105,10 +106,10 @@ async def feishu_schedule(
     Note:
         run_at 和 cron 只能有一个有效值。
     """
-    if not session_metadata or session_metadata.get("channel") != "feishu":
+    if channel != "feishu":
         raise ValueError("feishu_schedule is only available for Feishu sessions")
 
-    open_id = session_metadata.get("open_id")
+    open_id = (session_metadata or {}).get("open_id")
     _require_text(open_id, "session_metadata.open_id")
     validated_user_id = _require_text(user_id, "user_id")
     validated_sender_name = _require_text(sender_name, "sender_name")
@@ -120,6 +121,7 @@ async def feishu_schedule(
         payload={
             **args.model_dump(mode="json"),
             "sender_name": validated_sender_name,
+            "channel": channel,
             "session_metadata": session_metadata,
         },
     )

@@ -55,7 +55,6 @@ async def open_chat_stream(
     chat_url: str,
     auth: ChannelJWTAuth,
     *,
-    timestamp: str | None = None,
     files: Any = None,
     json_output: bool = False,
 ) -> ChatStream:
@@ -65,8 +64,6 @@ async def open_chat_stream(
         "session_metadata": session_metadata,
         "content": content,
     }
-    if timestamp is not None:
-        data["timestamp"] = timestamp
     if json_output:
         data["json_output"] = "true"
 

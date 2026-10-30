@@ -88,15 +88,21 @@ def session_metadata(
     session_metadata: Annotated[
         str,
         Form(
-            description='会话的元数据，JSON 格式字符串，如：{"sender_id": "xxxx","channel": "feishu"}',
+            description='会话的元数据，JSON 格式字符串，如：{"sender_id": "xxxx"}；'
+            "渠道名由服务端根据 JWT kid 识别，不需要也不应出现在元数据中",
         ),
     ] = "{}",
 ):
-    """将会话元数据的 JSON 字符串解析为字典。"""
+    """将会话元数据的 JSON 字符串解析为字典，并移除其中的 channel 键。"""
     try:
-        return json.loads(session_metadata)
+        metadata = json.loads(session_metadata)
     except json.JSONDecodeError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid JSON format")
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_metadata must be a JSON object")
+    # channel 是服务端按 JWT kid 识别的独立字段，不接受调用方通过元数据传入。
+    metadata.pop("channel", None)
+    return metadata
 
 
 def content(

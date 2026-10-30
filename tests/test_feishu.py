@@ -418,7 +418,6 @@ async def test_parse_text_message_uses_employee_number_and_feishu_user_metadata(
     assert message.timestamp == 123
     assert message.content == [TextData(text="hello")]
     assert message.session_metadata == {
-        "channel": "feishu",
         "open_id": "ou_sender",
         "email": "alice@example.com",
     }
@@ -432,7 +431,6 @@ async def test_parse_text_message_allows_missing_email():
 
     assert message.user_id == "E1001"
     assert message.session_metadata == {
-        "channel": "feishu",
         "open_id": "ou_sender",
     }
 

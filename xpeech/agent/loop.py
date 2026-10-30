@@ -92,6 +92,7 @@ class AgentLoop:
         session_id: str,
         sender_name: str,
         session_metadata: dict[str, str] | None = None,
+        channel: str | None = None,
     ):
         """执行模型发起的工具调用，并逐步产生工具相关事件。"""
         logger.info(
@@ -132,6 +133,7 @@ class AgentLoop:
             session_metadata=session_metadata,
             user_id=user_id,
             sender_name=sender_name,
+            channel=channel,
         )
         for execution in execution_results:
             tool_call = execution.call
@@ -356,6 +358,7 @@ class AgentLoop:
                     message.session_id,
                     message.sender_name,
                     session_metadata=message.session_metadata,
+                    channel=message.channel,
                 ):
                     yield i
             else:

@@ -23,9 +23,13 @@ class InboundMessage(BaseModel):
     user_id: Annotated[str, Field(description="用户 ID")]
     session_id: Annotated[str, Field(description="会话 ID")]
     sender_name: Annotated[str, Field(description="发送者用户名")]
+    channel: Annotated[str, Field(description="渠道名称，取自 channel JWT 的 kid")]
     session_metadata: Annotated[dict[str, str], Field(description="会话元数据")]
     content: Annotated[list[InputText], Field(description="消息内容")]
-    timestamp: Annotated[datetime, Field(description="消息时间戳")]
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now().astimezone(),
+        description="消息时间戳，服务端收到消息时的当前时间",
+    )
     files: Annotated[list[Path], Field(description="消息附件")]
     json_output: bool = Field(
         default=False,

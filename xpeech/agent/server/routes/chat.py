@@ -1,6 +1,5 @@
 """Channel-facing chat, question-answer, and background-message endpoints."""
 
-from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
@@ -69,7 +68,6 @@ async def chat(
     sender_name: Annotated[str, Depends(sender_name_header)],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],
-    timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
     json_output: Annotated[bool, Depends(json_output_enabled)],
 ):
@@ -79,9 +77,9 @@ async def chat(
         channel_tags=channel.channel_tags,
         content=content,
         sender_name=sender_name,
+        channel=channel.name,
         session_id=session_id,
         session_metadata=session_metadata,
-        timestamp=timestamp,
         files=files,
         json_output=json_output,
     ):
@@ -100,7 +98,6 @@ async def chat_sync(
     sender_name: Annotated[str, Depends(sender_name_header)],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],
-    timestamp: Annotated[datetime, Form(default_factory=datetime.now, description="消息的时间戳")],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
     json_output: Annotated[bool, Depends(json_output_enabled)],
 ) -> list[dict[str, Any]]:
@@ -110,9 +107,9 @@ async def chat_sync(
         channel_tags=channel.channel_tags,
         content=content,
         sender_name=sender_name,
+        channel=channel.name,
         session_id=session_id,
         session_metadata=session_metadata,
-        timestamp=timestamp,
         files=files,
         json_output=json_output,
     )

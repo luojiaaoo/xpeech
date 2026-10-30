@@ -66,6 +66,7 @@ class ToolExecutor:
         session_metadata: dict[str, str] | None = None,
         user_id: str | None = None,
         sender_name: str | None = None,
+        channel: str | None = None,
     ) -> list[ToolExecutionResult]:
         """并发执行全部工具调用，并按原始顺序返回结构化结果。"""
 
@@ -91,6 +92,8 @@ class ToolExecutor:
                     kwargs["user_id"] = user_id
                 if model_info.has_sender_name:
                     kwargs["sender_name"] = sender_name
+                if model_info.has_channel:
+                    kwargs["channel"] = channel
                 async with timeout_scope:
                     if not model_info.has_pydantic_param:
                         value = await tool_call_func(**kwargs)

@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import PlainTextResponse
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from ...agent.server.auth import require_internal_jwt
 from ...agent.server.dependencies import user_id_header
@@ -27,18 +27,27 @@ from .background import (
 BACKGROUND_MESSAGE_LONG_POLL_SECONDS = 50
 
 
-class ScheduleCreateRequest(FeishuScheduleArgs):
+class ScheduleCreateRequest(BaseModel):
+    """定时任务创建请求的基础字段，各渠道通用。"""
+
     sender_name: str = Field(min_length=1)
+    channel: str = Field(min_length=1)
     session_metadata: dict[str, str]
 
     @model_validator(mode="after")
-    def validate_delivery_context(self):
-        if self.session_metadata.get("channel") != "feishu":
-            raise ValueError("feishu_schedule is only available for Feishu sessions")
-        if not self.session_metadata.get("open_id", "").strip():
-            raise ValueError("session_metadata.open_id must be a non-empty string")
+    def validate_sender_name(self):
         if not self.sender_name.strip():
             raise ValueError("sender_name must be a non-empty string")
+        return self
+
+
+class FeishuScheduleCreateRequest(ScheduleCreateRequest, FeishuScheduleArgs):
+    """飞书定时任务创建请求：基础字段加飞书任务参数。"""
+
+    @model_validator(mode="after")
+    def validate_delivery_context(self):
+        if not self.session_metadata.get("open_id", "").strip():
+            raise ValueError("session_metadata.open_id must be a non-empty string")
         return self
 
 
@@ -62,9 +71,14 @@ async def health():
 
 @router.post("/schedules")
 async def create_schedule(
-    request: ScheduleCreateRequest,
+    request: FeishuScheduleCreateRequest,
     user_id: Annotated[str, Depends(user_id_header)],
 ) -> dict[str, str | None]:
+    if request.channel != "feishu":
+        raise HTTPException(
+            status_code=422,
+            detail="feishu_schedule is only available for Feishu sessions",
+        )
     try:
         job = await ensure_async(schedule_feishu_task)(
             user_id=user_id, **request.model_dump(),

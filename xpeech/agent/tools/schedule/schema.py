@@ -22,6 +22,7 @@ class ScheduledExecution(BaseModel):
     job_id: str = Field(min_length=1)
     prompt: str = Field(min_length=1)
     sender_name: str = Field(min_length=1)
+    channel: str = Field(min_length=1)
     session_metadata: dict[str, str]
     schedule_type: Literal["run_at", "cron"]
     schedule_value: str

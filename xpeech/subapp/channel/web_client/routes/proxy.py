@@ -30,7 +30,6 @@ def create_proxy_router(
         content: Annotated[str, Form()],
         user: CurrentUser,
         session_metadata: Annotated[str, Form()] = "{}",
-        timestamp: Annotated[str | None, Form()] = None,
         files: Annotated[list[UploadFile] | None, File()] = None,
         json_output: Annotated[
             bool,
@@ -52,7 +51,6 @@ def create_proxy_router(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="session_metadata must be a JSON object",
             )
-        metadata["channel"] = "web_client"
 
         upload_data = []
         for file in files or ():
@@ -73,7 +71,6 @@ def create_proxy_router(
             json.dumps(metadata, ensure_ascii=False),
             str(URL(backend_url) / "chat"),
             backend_auth,
-            timestamp=timestamp,
             files=upload_data,
             json_output=json_output,
         )

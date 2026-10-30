@@ -17,7 +17,7 @@ create_app = web_client_app.create_app
 
 
 @pytest.mark.parametrize("json_output", [False, True])
-def test_web_client_adds_channel_to_chat_metadata(tmp_path: Path, monkeypatch, json_output):
+def test_web_client_forwards_chat_metadata_without_channel_injection(tmp_path: Path, monkeypatch, json_output):
     response = httpx.Response(
         200,
         content=b'data: {"event":"command","context":"/new"}\n\n',
@@ -54,6 +54,6 @@ def test_web_client_adds_channel_to_chat_metadata(tmp_path: Path, monkeypatch, j
     assert proxied.status_code == 200
     assert open_chat_stream.await_args.kwargs["json_output"] is json_output
     assert json.loads(open_chat_stream.await_args.args[3]) == {
-        "channel": "web_client",
+        "channel": "spoofed",
         "source": "browser",
     }

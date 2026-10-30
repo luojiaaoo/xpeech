@@ -221,7 +221,8 @@ async def test_current_session_metadata_cannot_be_overridden_by_channel_metadata
         user_id="alice",
         session_id="current-chat",
         sender_name="Alice",
-        session_metadata={"channel": "feishu", "user_id": "other", "session_id": "other-chat"},
+        channel="feishu",
+        session_metadata={"channel": "spoofed", "user_id": "other", "session_id": "other-chat"},
         content=[InputText(text="continue our previous discussion")],
         timestamp=datetime(2026, 10, 27, 10, 20, 30, tzinfo=UTC),
         files=[tmp_path / "example.csv"],
@@ -235,6 +236,7 @@ async def test_current_session_metadata_cannot_be_overridden_by_channel_metadata
     assert "session_id: current-chat\n" in metadata
     assert "other-chat" not in metadata
     assert "channel: feishu\n" in metadata
+    assert "spoofed" not in metadata
     parts = prompt["content"]
     assert parts[1]["text"] == "continue our previous discussion"
     assert "example.csv" in parts[2]["text"]

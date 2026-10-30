@@ -59,7 +59,7 @@ def test_chat_sync_returns_collected_events(fake_runner):
         headers=chat_headers(**{"x-session-id": "chat-1"}),
         data={
             "content": '[{"text":"hello"}]',
-            "session_metadata": '{"channel":"api"}',
+            "session_metadata": '{"channel":"api","trace":"t1"}',
         },
     )
 
@@ -75,8 +75,40 @@ def test_chat_sync_returns_collected_events(fake_runner):
     [message] = fake_runner.messages
     assert message.session_id == "chat-1"
     assert message.sender_name == "Alice"
-    assert message.session_metadata == {"channel": "api"}
+    assert message.channel == "web_client"
+    assert message.session_metadata == {"trace": "t1"}
     assert message.content == [InputText(text="hello")]
+
+
+def test_channel_comes_only_from_jwt_kid_and_ignores_request_input(fake_runner):
+    response = TestClient(app).post(
+        "/chat_sync?channel=feishu",
+        headers=chat_headers(),
+        data={
+            "content": '[{"text":"hello"}]',
+            "session_metadata": '{"channel":"feishu"}',
+        },
+    )
+
+    assert response.status_code == 200
+    [message] = fake_runner.messages
+    assert message.channel == "web_client"
+    assert message.session_metadata == {}
+
+
+def test_channel_jwt_signed_with_another_channels_key_is_rejected(fake_runner):
+    forged = create_channel_access_token(
+        ChannelJWTAuth("feishu", settings.jwt.web_client_secret_key)
+    )
+
+    response = TestClient(app).post(
+        "/chat_sync",
+        headers={"Authorization": f"Bearer {forged}", "x-user-id": "user", "x-sender-name": "Alice"},
+        data={"content": '[{"text":"hello"}]'},
+    )
+
+    assert response.status_code == 401
+    assert fake_runner.messages == []
 
 
 @pytest.mark.parametrize(

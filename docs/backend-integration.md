@@ -145,8 +145,7 @@ Accept: text/event-stream
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
 | `content` | JSON 字符串 | 是 | - | 文本块数组，例如 `[{"text":"你好"}]` |
-| `session_metadata` | JSON 字符串 | 否 | `{}` | 会话元数据对象，值建议统一使用字符串 |
-| `timestamp` | ISO 8601 日期时间 | 否 | 服务端当前时间 | 原始消息时间，例如 `2026-10-28T10:30:00+08:00` |
+| `session_metadata` | JSON 字符串 | 否 | `{}` | 会话元数据对象，值建议统一使用字符串；渠道名由服务端根据 JWT `kid` 识别，不需要也不应放在元数据中（传入的 `channel` 键会被丢弃） |
 | `files` | 文件，可重复 | 否 | 空 | 消息附件列表 |
 | `json_output` | 布尔值 | 否 | `false` | 请求模型输出 JSON 对象；服务端必须启用相应能力 |
 
@@ -161,7 +160,6 @@ curl -N -X POST "http://localhost:7878/chat" \
   -H "x-session-id: chat-001" \
   -H "x-sender-name: demo-user" \
   -H "Accept: text/event-stream" \
-  -F 'session_metadata={"channel":"my_backend"}' \
   -F 'content=[{"text":"你好，请介绍一下自己"}]'
 ```
 
@@ -293,9 +291,6 @@ async def chat_events(
     }
     data = {
         "content": json.dumps([{"text": text}], ensure_ascii=False),
-        "session_metadata": json.dumps(
-            {"channel": "my_backend"}, ensure_ascii=False
-        ),
     }
 
     async with httpx.AsyncClient(timeout=None) as client:
@@ -558,9 +553,6 @@ async def run_chat(text: str) -> str:
     }
     data = {
         "content": json.dumps([{"text": text}], ensure_ascii=False),
-        "session_metadata": json.dumps(
-            {"channel": "python_demo"}, ensure_ascii=False
-        ),
     }
     assistant_chunks: list[str] = []
 

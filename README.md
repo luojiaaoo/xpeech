@@ -367,7 +367,6 @@ curl -N -X POST "http://localhost:7878/chat" \
   -H "x-user-id: demo-user" \
   -H "x-session-id: chat-001" \
   -H "x-sender-name: demo-user" \
-  -F 'session_metadata={"channel":"curl"}' \
   -F 'content=[{"text":"你好，介绍一下你自己"}]'
 ```
 
@@ -379,7 +378,6 @@ curl -N -X POST "http://localhost:7878/chat" \
   -H "x-user-id: demo-user" \
   -H "x-session-id: chat-001" \
   -H "x-sender-name: demo-user" \
-  -F 'session_metadata={"channel":"curl"}' \
   -F 'content=[{"text":"帮我看看这个文件"}]' \
   -F "files=@example.txt"
 ```

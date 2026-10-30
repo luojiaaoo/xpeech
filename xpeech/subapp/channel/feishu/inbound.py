@@ -74,7 +74,6 @@ class FeishuInboundMixin:
             user_id, email = await self.get_user_identity(inbound_msg.sender_id)
             resource_dest_dir = FEISHU_CACHE_DIR / user_id
             session_metadata = {
-                "channel": "feishu",
                 "open_id": inbound_msg.sender_id,
             }
             if email:

@@ -165,6 +165,7 @@ def schedule_feishu_task(
     cron: str | None,
     user_id: str,
     sender_name: str,
+    channel: str,
     session_metadata: dict[str, str],
 ) -> Job:
     """Register a persistent Feishu Agent task and return its APScheduler job."""
@@ -213,6 +214,7 @@ def schedule_feishu_task(
                 "prompt": prompt,
                 "user_id": user_id,
                 "sender_name": sender_name,
+                "channel": channel,
                 "session_metadata": dict(session_metadata),
                 "schedule_type": schedule_type,
                 "schedule_value": schedule_value,
@@ -230,11 +232,10 @@ def list_scheduled_tasks(user_id: str) -> list[ScheduledTask]:
     for job in get_background_scheduler().get_jobs():
         if job.kwargs.get("user_id") != user_id:
             continue
-        metadata = job.kwargs.get("session_metadata") or {}
         tasks.append(
             ScheduledTask(
                 job_id=job.id,
-                channel=str(metadata.get("channel", "unknown")),
+                channel=str(job.kwargs.get("channel", "unknown")),
                 prompt=str(job.kwargs.get("prompt", "")),
                 schedule_type=job.kwargs["schedule_type"],
                 schedule_value=job.kwargs["schedule_value"],
@@ -266,6 +267,7 @@ async def run_feishu_background_task(
     prompt: str,
     user_id: str,
     sender_name: str,
+    channel: str,
     session_metadata: dict[str, str],
     schedule_type: str,
     schedule_value: str,
@@ -291,6 +293,7 @@ async def run_feishu_background_task(
             job_id=job_id,
             prompt=prompt,
             sender_name=sender_name,
+            channel=channel,
             session_metadata=session_metadata,
             schedule_type=schedule_type,
             schedule_value=schedule_value,

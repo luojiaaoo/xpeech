@@ -115,9 +115,10 @@ class ToolModelInfo:
     has_session_metadata: bool
     has_user_id: bool
     has_sender_name: bool
+    has_channel: bool
 
 
-INJECTED_TOOL_PARAMETERS = frozenset({"session_metadata", "user_id", "sender_name"})
+INJECTED_TOOL_PARAMETERS = frozenset({"session_metadata", "user_id", "sender_name", "channel"})
 
 
 def get_tool_model_cls(func: Callable) -> ToolModelInfo:
@@ -127,6 +128,7 @@ def get_tool_model_cls(func: Callable) -> ToolModelInfo:
     has_session_metadata = "session_metadata" in sig.parameters
     has_user_id = "user_id" in sig.parameters
     has_sender_name = "sender_name" in sig.parameters
+    has_channel = "channel" in sig.parameters
     params = [
         param
         for param in sig.parameters.values()
@@ -150,6 +152,7 @@ def get_tool_model_cls(func: Callable) -> ToolModelInfo:
             has_session_metadata,
             has_user_id,
             has_sender_name,
+            has_channel,
         )
     elif len(params) == 0:
         return ToolModelInfo(
@@ -158,11 +161,12 @@ def get_tool_model_cls(func: Callable) -> ToolModelInfo:
             has_session_metadata,
             has_user_id,
             has_sender_name,
+            has_channel,
         )
     raise ValueError(
         f"Function '{func.__name__}' must accept either 0 parameters "
         f"or exactly 1 parameter annotated with a BaseModel subclass, "
-        f"optionally with session_metadata, user_id, and sender_name"
+        f"optionally with session_metadata, user_id, sender_name, and channel"
     )
 
 
@@ -171,7 +175,7 @@ def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str
     将函数转换为 OpenAI Tool Schema。
 
     支持无参数函数或一个 BaseModel 参数，两者均可额外声明
-    session_metadata、user_id 和 sender_name。这些参数由运行时注入，
+    session_metadata、user_id、sender_name 和 channel。这些参数由运行时注入，
     不包含在工具 schema 中。
     """
     # 名称：函数名 + 后缀

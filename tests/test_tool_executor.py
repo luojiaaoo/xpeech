@@ -56,6 +56,7 @@ def test_tool_model_info(has_model, has_metadata):
     assert info.has_session_metadata is has_metadata
     assert info.has_user_id is False
     assert info.has_sender_name is False
+    assert info.has_channel is False
     if has_model:
         assert info.model_cls is EchoArgs
     else:
@@ -319,20 +320,45 @@ class TestToolExecutor:
             session_metadata,
             user_id,
             sender_name,
+            channel,
         ) -> str:
             """Return all runtime context."""
-            return f"{args.text}:{user_id}:{sender_name}:{session_metadata['channel']}"
+            return f"{args.text}:{user_id}:{sender_name}:{channel}:{session_metadata['source']}"
 
         schema = as_tool(context)["function"]["parameters"]
         assert set(schema["properties"]) == {"text"}
         [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
             [ToolCallRequest(id="1", name="context", arguments={"text": "ok"})],
             {"context": context},
-            session_metadata={"channel": "feishu"},
+            session_metadata={"source": "test"},
             user_id="session-1",
             sender_name="Alice",
+            channel="feishu",
         )
-        assert result.value == "ok:session-1:Alice:feishu"
+        assert result.value == "ok:session-1:Alice:feishu:test"
+
+    @pytest.mark.asyncio
+    async def test_injects_channel_only_when_declared(self, tmp_path: Path):
+        async def with_channel(args: EchoArgs, channel: str | None) -> str:
+            """Echo with channel context."""
+            assert channel == "feishu"
+            return args.text
+
+        async def without_channel(args: EchoArgs) -> str:
+            return args.text
+
+        schema = as_tool(with_channel)["function"]["parameters"]
+        assert set(schema["properties"]) == {"text"}
+        results = await ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+            [
+                ToolCallRequest(id="1", name="with_channel", arguments={"text": "a"}),
+                ToolCallRequest(id="2", name="without_channel", arguments={"text": "b"}),
+            ],
+            {"with_channel": with_channel, "without_channel": without_channel},
+            channel="feishu",
+        )
+        assert all(result.succeeded for result in results)
+        assert [result.value for result in results] == ["a", "b"]
 
     @pytest.mark.asyncio
     async def test_returns_failure_for_unregistered_tool(self, tmp_path: Path):

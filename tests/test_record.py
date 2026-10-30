@@ -207,6 +207,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         user_id="session",
         session_id="chat-1",
         sender_name="alice",
+        channel="test",
         session_metadata={},
         content=[InputText(text="first question"), InputText(text="second line")],
         timestamp=datetime.now(UTC),

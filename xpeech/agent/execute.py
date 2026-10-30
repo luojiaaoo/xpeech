@@ -1,7 +1,6 @@
 """Streaming and non-interactive Agent execution inside the backend."""
 
 from collections.abc import AsyncIterator
-from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -31,9 +30,9 @@ async def _prepare_chat(
     *,
     content: InputContent,
     sender_name: str,
+    channel: str,
     session_id: str = DEFAULT_SESSION_ID,
     session_metadata: dict[str, str] | None = None,
-    timestamp: datetime | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
     not_interactive: bool = False,
@@ -49,9 +48,9 @@ async def _prepare_chat(
         user_id=user_id,
         session_id=session_id,
         sender_name=sender_name,
+        channel=channel,
         session_metadata=session_metadata or {},
         content=content,
-        timestamp=timestamp or datetime.now().astimezone(),
         files=saved_files,
         json_output=json_output,
     )
@@ -63,9 +62,9 @@ async def execute_chat_stream(
     *,
     content: InputContent,
     sender_name: str,
+    channel: str,
     session_id: str = DEFAULT_SESSION_ID,
     session_metadata: dict[str, str] | None = None,
-    timestamp: datetime | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
     channel_tags: list[str] | None = None,
@@ -75,9 +74,9 @@ async def execute_chat_stream(
         user_id,
         content=content,
         sender_name=sender_name,
+        channel=channel,
         session_id=session_id,
         session_metadata=session_metadata,
-        timestamp=timestamp,
         files=files,
         json_output=json_output,
         channel_tags=channel_tags,
@@ -91,9 +90,9 @@ async def execute_chat(
     *,
     content: InputContent,
     sender_name: str,
+    channel: str,
     session_id: str = DEFAULT_SESSION_ID,
     session_metadata: dict[str, str] | None = None,
-    timestamp: datetime | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
     channel_tags: list[str] | None = None,
@@ -103,9 +102,9 @@ async def execute_chat(
         user_id,
         content=content,
         sender_name=sender_name,
+        channel=channel,
         session_id=session_id,
         session_metadata=session_metadata,
-        timestamp=timestamp,
         files=files,
         json_output=json_output,
         not_interactive=True,
@@ -120,6 +119,7 @@ async def execute_scheduled_chat(user_id: str, request: ScheduledExecution) -> S
         user_id=user_id,
         session_id=uuid4().hex,
         sender_name=request.sender_name,
+        channel=request.channel,
         session_metadata={**request.session_metadata, "source": "scheduled_task"},
         content=[
             InputText(
@@ -131,7 +131,6 @@ async def execute_scheduled_chat(user_id: str, request: ScheduledExecution) -> S
                 ),
             ),
         ],
-        timestamp=datetime.now().astimezone(),
         files=[],
     )
     runner = await AgentRunner.create(user_id, not_interactive=True)

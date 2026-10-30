@@ -70,6 +70,7 @@ async def test_context_commands_continue_with_trailing_prompt(
         user_id="session-1",
         session_id="chat-1",
         sender_name="Alice",
+        channel="test",
         session_metadata={},
         content=[InputText(text=command)],
         timestamp="2026-09-06T10:00:00",
