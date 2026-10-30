@@ -61,8 +61,6 @@ class WebConfig:
 class LoginBody(BaseModel):
     user_id: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=256)
-    # iframe 模式下浏览器可能禁用第三方 cookie：不写 Set-Cookie，token 随响应体交给前端临时保存
-    iframe_mode: bool = False
 
 
 class PasswordChangeBody(BaseModel):
@@ -77,9 +75,6 @@ class OAuth2CreateBody(BaseModel):
         max_length=INJECT_PROMPT_STATE_MAX_LENGTH,
         pattern=INJECT_PROMPT_STATE_PATTERN,
     )
-    # iframe 静默免登录：以 prompt=none 发起跳转授权（复用 IdP 会话，无 UI），
-    # 回调不写 Set-Cookie，token 经 URL hash 交给前端临时变量保存
-    iframe_mode: bool = False
 
 
 class OAuth2PollBody(BaseModel):

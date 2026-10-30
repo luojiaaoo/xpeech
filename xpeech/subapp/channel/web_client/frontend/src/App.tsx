@@ -9,8 +9,7 @@ import {
   SettingOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
-import { appApi, authApi, setSessionToken } from './api';
-import { consumeHashToken, startIframeAuth } from './iframeAuth';
+import { appApi, authApi } from './api';
 import { savePendingUserPrefix } from './pendingUserPrefix';
 import type { AppConfig, User } from './types';
 
@@ -36,23 +35,8 @@ export default function App() {
       setAppConfig(config);
       document.title = config.system_name;
     });
+    authApi.me().then(setUser).catch(() => setUser(null));
   }, []);
-
-  useEffect(() => {
-    if (appConfig === undefined) return;
-    // iframe_mode：把 OAuth2 回调放进 hash 的 token 存入内存变量（不依赖 cookie）
-    consumeHashToken();
-    authApi.me().then(setUser).catch(async () => {
-      // 未登录：iframe 模式下自动发起静默/交互式 OAuth2 授权，失败才退回登录页
-      const auth = await startIframeAuth(appConfig);
-      if (auth.action === 'redirect') {
-        window.location.replace(auth.url);
-        return;
-      }
-      if (auth.error) message.error(`授权失败：${auth.error}`);
-      setUser(null);
-    });
-  }, [appConfig]);
 
   useEffect(() => {
     if (!user || !appConfig?.inject_prompt.enabled) return;
@@ -101,7 +85,6 @@ export default function App() {
     setStatisticsOpen(false);
     setPasswordOpen(false);
     await authApi.logout();
-    setSessionToken(null);
     setUser(null);
   }
 

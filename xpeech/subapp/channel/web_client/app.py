@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 import uvicorn
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, status
+from fastapi import Cookie, Depends, FastAPI, HTTPException, status
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -18,7 +18,7 @@ from .models import (
     WebConfig,
 )
 from .routes.admin import create_admin_router
-from .routes.auth import create_auth_router, extract_session_token
+from .routes.auth import create_auth_router
 from .routes.proxy import create_proxy_router
 
 PBKDF2_ITERATIONS = 600_000
@@ -97,9 +97,7 @@ def create_app(config: WebConfig) -> FastAPI:
 
     async def current_user(
         token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
-        authorization: Annotated[str | None, Header()] = None,
     ) -> User:
-        token = extract_session_token(token, authorization)
         if not token:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "请先登录")
         token_hash = hashlib.sha256(token.encode()).hexdigest()

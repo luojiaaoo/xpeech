@@ -812,25 +812,3 @@ userinfo_filter = 'select(.data.department == "R&D")'
 
 启动命令统一见[启动](#启动)章节。打开 `http://127.0.0.1:7939` 即可访问。
 新数据库的初始管理员为 `admin` / `admin123456`；
-
-### iframe 静默免登录
-
-把 Web 客户端嵌入宿主页面（如企业门户）时，在 iframe 地址上加 `iframe_mode=1` 和
-`oauth2provider=<服务商名>` 参数即可静默免登录：
-
-```html
-<iframe src="https://assistant.example.com/?iframe_mode=1&oauth2provider=XX"></iframe>
-```
-
-`oauth2provider` 不能省略，取值为 `[[web_client.oauth2]]` 的 `provider_name`。页面加载后
-自动发起 OAuth2 静默授权（`prompt=none`，复用 IdP 会话，全程无 UI，等同于 oidc-client 的
-silent renew）。由于浏览器可能禁止 iframe 保存第三方 cookie，授权成功后 session token
-不写 cookie：回调把它放进 URL hash（`#token=...`），前端取走保存在内存临时变量里，之后
-所有请求通过 `Authorization: Bearer <token>` 头携带。iframe 不需要持久化，重新加载时再走
-一遍静默授权即可。
-
-- `iframe_mode` 下授权统一走跳转流程，即使服务商配置为 qrcode 也不走扫码轮询。
-- 静默授权失败（如 IdP 会话过期）会退回登录页；此时密码登录在 `iframe_mode` 下从响应体
-  返回 token，同样不写 cookie。
-- token 只存在于内存，页面刷新即重新授权；服务端集成也可用 `Authorization: Bearer` 头
-  直接携带会话 token 调用受认证接口。

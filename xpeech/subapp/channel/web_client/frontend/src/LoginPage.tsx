@@ -7,8 +7,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { Alert, Button, Form, Input, QRCode, Skeleton, Spin, Tabs, Typography, message } from 'antd';
-import { authApi, setSessionToken } from './api';
-import { isIframeMode } from './iframeAuth';
+import { authApi } from './api';
 import type { AppConfig, OAuth2Provider, OAuth2QrLogin, User } from './types';
 
 function oauth2LoginKey(providerName: string) {
@@ -33,9 +32,7 @@ export default function LoginPage({
   const [qrRefreshKey, setQrRefreshKey] = useState(0);
 
   const searchParams = new URLSearchParams(window.location.search);
-  const iframeMode = isIframeMode();
-  const requestedOAuth2Provider = (searchParams.get('oauth2provider') ?? searchParams.get('provider_name'))
-    ?.trim().toLowerCase();
+  const requestedOAuth2Provider = searchParams.get('oauth2provider')?.trim().toLowerCase();
   const stateParam = searchParams.get('state');
   const injectPromptState = injectPromptEnabled && stateParam?.trim() ? stateParam : undefined;
   const oauth2Providers = oauth2.filter((provider) => provider.enabled);
@@ -54,23 +51,17 @@ export default function LoginPage({
     if (!autoRedirectProvider) return;
     setQrError(undefined);
     try {
-      const qr = await authApi.createOAuth2Qr(
-        autoRedirectProvider.provider_name,
-        injectPromptState,
-        iframeMode,
-      );
+      const qr = await authApi.createOAuth2Qr(autoRedirectProvider.provider_name, injectPromptState);
       window.location.replace(qr.authorization_url);
     } catch (error) {
       setQrError(String(error));
     }
-  }, [autoRedirectProvider, iframeMode, injectPromptState]);
+  }, [autoRedirectProvider, injectPromptState]);
 
   async function submit(values: { user_id: string; password: string }) {
     setSubmitting(true);
     try {
-      const { token, ...user } = await authApi.login(values.user_id, values.password, iframeMode);
-      if (token) setSessionToken(token);
-      onLogin(user);
+      onLogin(await authApi.login(values.user_id, values.password));
     } catch (error) {
       message.error(String(error));
     } finally {
@@ -92,14 +83,8 @@ export default function LoginPage({
         const qr = await authApi.createOAuth2Qr(
           selectedProviderName,
           injectPromptState,
-          iframeMode,
         );
         if (cancelled) return;
-        if (iframeMode) {
-          // iframe_mode 下授权统一走跳转（静默），不展示二维码、不轮询
-          window.location.replace(qr.authorization_url);
-          return;
-        }
         setQrLogin(qr);
 
         async function poll() {
@@ -127,7 +112,7 @@ export default function LoginPage({
       cancelled = true;
       if (pollTimer !== undefined) window.clearTimeout(pollTimer);
     };
-  }, [autoRedirectProvider, iframeMode, injectPromptState, onLogin, qrRefreshKey, selectedOAuth2Provider]);
+  }, [autoRedirectProvider, injectPromptState, onLogin, qrRefreshKey, selectedOAuth2Provider]);
 
   useEffect(() => {
     if (!autoRedirectProvider) return;
