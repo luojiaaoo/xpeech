@@ -181,7 +181,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         async def chat(self, **_kwargs):
             return next(responses)
 
-    async def build_test_system_prompt(workspace: Path):
+    async def build_test_system_prompt(workspace: Path, *, channel_tags):
         assert workspace == tmp_path / "workspace"
         return {"role": "system", "content": "system"}
 

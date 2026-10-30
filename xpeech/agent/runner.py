@@ -7,15 +7,24 @@ from ..utils.file_io import ensure_path_async
 from ..utils.session import create_workspace_templates
 from .loop import AgentLoop
 from .server.schema import InboundMessage
-from .tools.registry import register_default_tools
+from .tools.registry import register_tools
 
 
 class AgentRunner:
     """Prepare and run an agent in one user's workspace."""
 
-    def __init__(self, user_id: str, *, config: Settings) -> None:
+    def __init__(
+        self,
+        user_id: str,
+        *,
+        config: Settings,
+        not_interactive: bool = False,
+        channel_tags: list[str] | None = None,
+    ) -> None:
         self.user_id = user_id
         self.config = config
+        self.not_interactive = not_interactive
+        self.channel_tags = channel_tags if channel_tags is not None else []
         self.workspace = (config.path.workspace_base_path / self.user_id).resolve()
         self._agent_loop: AgentLoop | None = None
 
@@ -25,9 +34,11 @@ class AgentRunner:
         user_id: str,
         *,
         config: Settings = settings,
+        not_interactive: bool = False,
+        channel_tags: list[str] | None = None,
     ) -> Self:
         """Create a fully initialized runner for one user."""
-        runner = cls(user_id, config=config)
+        runner = cls(user_id, config=config, not_interactive=not_interactive, channel_tags=channel_tags)
         await runner._initialize()
         return runner
 
@@ -53,20 +64,21 @@ class AgentRunner:
             tools=llm_config.default_tools,
             summary_tokens=llm_config.summary_tokens,
             max_iterations=llm_config.max_iterations,
+            channel_tags=self.channel_tags,
         )
-        await register_default_tools(
+        await register_tools(
             user_id=self.user_id,
             provider=provider,
             workspace=self.workspace,
             config=self.config.tool,
+            not_interactive=self.not_interactive,
+            channel_tags=self.channel_tags,
         )
         self._agent_loop = agent_loop
 
     async def run(
         self,
         message: InboundMessage,
-        *,
-        not_interactive: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one inbound message and yield the agent's events."""
         if message.user_id != self.user_id:
@@ -77,7 +89,7 @@ class AgentRunner:
 
         async for event in self._agent_loop.run(
             message=message,
-            not_interactive=not_interactive,
+            not_interactive=self.not_interactive,
         ):
             yield event
 
@@ -85,11 +97,11 @@ class AgentRunner:
         self,
         message: InboundMessage,
     ) -> list[dict[str, Any]]:
-        """Run without interactive tools and collect events, merging consecutive text chunks."""
+        """Collect a non-interactive runner's events, merging consecutive text chunks."""
         events: list[dict[str, Any]] = []
         text_chunks: list[str] = []
 
-        async for event in self.run(message, not_interactive=True):
+        async for event in self.run(message):
             context = event.get("context")
             is_text_chunk = event.get("event") in {"assistant", "thinking"} and isinstance(context, str)
             if text_chunks:

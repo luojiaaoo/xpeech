@@ -52,6 +52,21 @@ algorithm = "HS256"
 access_token_expire_seconds = 60
 ```
 
+自定义系统可配置独立 JWT 通道：
+
+```toml
+[jwt.channels.crm]
+secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
+channel_tags = ["crm"]
+```
+
+请求使用该密钥签名并设置 JWT header `kid="crm"`，或在 `/token` 使用
+`username=crm`、对应密钥作为 `password` 获取令牌。所有内部及通道密钥必须互不相同。
+通道名不能使用 `internal`、`feishu`、`web_client`。后端按验签后的 `kid` 从配置读取标签，
+忽略 payload、请求头或会话元数据中自带的标签。没有标签的内建技能/MCP 为公共资源；
+有标签的内建技能/MCP 仅在与通道标签存在交集时展示或注册。
+用户工作区里的技能不受标签匹配限制，全部加载。自定义通道不具备统计或内部接口权限。
+
 Token 至少需要包含 `exp`；所有 JWT 共用 `[jwt]` 中的 `algorithm` 和
 `access_token_expire_seconds`，默认 HS256、60 秒。签发方应与这两项配置保持一致。
 内部 JWT 不携带 `kid`，直接使用 `secret_key` 验签。channel JWT 的 header 必须
@@ -216,7 +231,7 @@ curl -X POST "http://localhost:7878/chat_sync" \
 - 会话历史按 `user_id + session_id` 共享，使用相同 `session_id` 的多次调用构成同一段对话。
 - 同一 `user_id + session_id` 同时只能有一个进行中的请求，重复请求返回 `409 Conflict`。
 - `json_output=true` 时 `assistant` 事件的 `context` 是模型输出的 JSON 字符串，需要接入方自行解析。
-- 请求会阻塞到 Agent 输出最终回复。如果 Agent 运行中发起追问（见第 7 节），请求会一直等待 `POST /answer_question` 提交答案或约 5 分钟超时，因此同步接口更适合不需要追问交互的场景。
+- 请求会阻塞到 Agent 输出最终回复。同步模式在工具注册阶段跳过追问和创建/查看/取消调度工具，适合不需要交互的场景。
 
 ## 6. 解析 SSE 响应
 

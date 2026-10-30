@@ -21,6 +21,7 @@ from pydantic_settings import (
 )
 
 from ..provider.schema import LLMParameters
+from ..utils.channel_tags import normalize_channel_tags
 from ..utils.file_io import ensure_path
 
 if Path(".env").exists():
@@ -108,6 +109,12 @@ class MCPServerSettings(BaseModel):
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")
     tool_timeout: float = Field(default=30.0, validation_alias="tool_timeout")
     connect_timeout: float = Field(default=30.0, gt=0, validation_alias="connect_timeout")
+    channel_tags: list[str] = Field(default_factory=list)
+
+    @field_validator("channel_tags")
+    @classmethod
+    def validate_channel_tags(cls, value: list[str]) -> list[str]:
+        return normalize_channel_tags(value)
 
 
 class LLMConfig(BaseModel):
@@ -157,27 +164,57 @@ class LarkCLIConfig(BaseModel):
     database_path: Path = Path("data/lark-token-manager/tokens.db")
 
 
+class JWTChannelConfig(BaseModel):
+    """A custom JWT channel and the resource channel tags it grants."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    secret_key: str = Field(min_length=32, repr=False)
+    channel_tags: list[str] = Field(default_factory=list)
+
+    @field_validator("channel_tags")
+    @classmethod
+    def validate_channel_tags(cls, value: list[str]) -> list[str]:
+        return normalize_channel_tags(value)
+
+
 class JWTConfig(BaseModel):
     """Separate signing keys for internal services and each channel."""
 
     secret_key: str = Field(min_length=32, repr=False)
     web_client_secret_key: str = Field(min_length=32, repr=False)
     feishu_secret_key: str = Field(min_length=32, repr=False)
+    channels: dict[str, JWTChannelConfig] = Field(default_factory=dict)
     algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
     access_token_expire_seconds: int = Field(default=60, ge=1, le=60)
 
     @model_validator(mode="after")
     def validate_distinct_secrets(self) -> "JWTConfig":
-        secrets = {
+        channel_names = set(self.channels)
+        reserved_names = {"internal", "feishu", "web_client"}
+        invalid_names: list[str] = []
+        for name in channel_names:
+            try:
+                normalize_channel_tags([name])
+            except ValueError:
+                invalid_names.append(name)
+            else:
+                if name in reserved_names:
+                    invalid_names.append(name)
+        if invalid_names:
+            raise ValueError(
+                "Custom JWT channel names must be valid channel tags and cannot use reserved names: "
+                + ", ".join(sorted(invalid_names))
+            )
+
+        all_secrets = [
             self.secret_key,
             self.web_client_secret_key,
             self.feishu_secret_key,
-        }
-        if len(secrets) != 3:
-            raise ValueError(
-                "JWT secret_key, web_client_secret_key, and feishu_secret_key "
-                "must use distinct values"
-            )
+            *(channel.secret_key for channel in self.channels.values()),
+        ]
+        if len(set(all_secrets)) != len(all_secrets):
+            raise ValueError("JWT internal and channel keys must use distinct values")
         return self
 
 

@@ -1,4 +1,5 @@
 import secrets
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 import jwt
@@ -30,11 +31,26 @@ class TokenResponse(BaseModel):
     token_type: str
 
 
+@dataclass(frozen=True)
+class AuthenticatedChannel:
+    """Verified channel identity and its server-configured channel tags."""
+
+    name: str
+    channel_tags: list[str]
+
+
 def _channel_keys() -> dict[str, str]:
-    return {
+    keys = {
         "feishu": settings.jwt.feishu_secret_key,
         "web_client": settings.jwt.web_client_secret_key,
     }
+    keys.update(
+        {
+            channel_name: channel.secret_key
+            for channel_name, channel in settings.jwt.channels.items()
+        }
+    )
+    return keys
 
 
 @router.post("/token", response_model=TokenResponse, include_in_schema=False)
@@ -109,12 +125,16 @@ def _authenticate_channel_token(
 
 async def require_channel_jwt(
     token: Annotated[str, Depends(oauth2_scheme)],
-) -> dict[str, Any]:
+) -> AuthenticatedChannel:
     """Authenticate business API callers using a channel JWT with kid."""
 
     claims = _authenticate_channel_token(token)
     lark_user_access_token_var.set(claims.get("lark_user_access_token"))
-    return claims
+    kid = jwt.get_unverified_header(token)["kid"]
+    channel = settings.jwt.channels.get(kid)
+    return AuthenticatedChannel(
+        name=kid, channel_tags=channel.channel_tags if channel is not None else [],
+    )
 
 
 async def require_web_client_jwt(

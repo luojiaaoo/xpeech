@@ -27,6 +27,7 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
+from ...config.settings import MCPServerSettings
 from ...utils.command_template import execute_command_template
 
 
@@ -402,6 +403,7 @@ class MCPServerConfig:
     enabled_tools: tuple[str, ...] = ("*",)
     tool_timeout: float = 30.0
     connect_timeout: float = MCP_CONNECT_TIMEOUT_SECONDS
+    channel_tags: list[str] = dataclass_field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.command and not self.url:
@@ -778,6 +780,7 @@ def create_mcp_registration(
     enabled_tools: Sequence[str] | None = None,
     tool_timeout: float = 30.0,
     connect_timeout: float | None = None,
+    channel_tags: list[str] | None = None,
 ) -> MCPServerRegistration:
     """Create an MCP server registration from configuration."""
 
@@ -802,46 +805,31 @@ def create_mcp_registration(
             connect_timeout=(
                 MCP_CONNECT_TIMEOUT_SECONDS if connect_timeout is None else connect_timeout
             ),
+            channel_tags=channel_tags if channel_tags is not None else [],
         )
     )
 
 
-def _get_mcp_config_value(config: Any, name: str, default: Any = None, attr_name: str | None = None) -> Any:
-    if isinstance(config, Mapping):
-        return config.get(name, default)
-    return getattr(config, attr_name or name, default)
-
-
 def create_mcp_registration_from_config(
     server_name: str,
-    config: Any,
+    config: MCPServerSettings,
     workspace: str | Path | None = None,
 ) -> MCPServerRegistration:
-    env = _get_mcp_config_value(config, "env")
-    headers = _get_mcp_config_value(config, "headers")
     return create_mcp_registration(
         server_name=server_name,
         workspace=workspace,
-        command=_get_mcp_config_value(config, "command"),
-        args=_get_mcp_config_value(config, "args", []),
-        env=dict(env) if env is not None else None,
-        url=_get_mcp_config_value(config, "url"),
-        transport=_get_mcp_config_value(config, "transport"),
-        command_authorization_token=_get_mcp_config_value(
-            config,
-            "command_authorization_token",
-            attr_name="command_authorization_token",
-        ),
-        headers=dict(headers) if headers is not None else None,
-        verify_tls=_get_mcp_config_value(config, "verify_tls", True),
-        enabled_tools=_get_mcp_config_value(config, "enabled_tools", ["*"], attr_name="enabled_tools"),
-        tool_timeout=_get_mcp_config_value(config, "tool_timeout", 30.0, attr_name="tool_timeout"),
-        connect_timeout=_get_mcp_config_value(
-            config,
-            "connect_timeout",
-            None,
-            attr_name="connect_timeout",
-        ),
+        command=config.command,
+        args=config.args,
+        env=config.env,
+        url=config.url,
+        transport=config.transport,
+        command_authorization_token=config.command_authorization_token,
+        headers=config.headers,
+        verify_tls=config.verify_tls,
+        enabled_tools=config.enabled_tools,
+        tool_timeout=config.tool_timeout,
+        connect_timeout=config.connect_timeout,
+        channel_tags=config.channel_tags,
     )
 
 
@@ -866,13 +854,14 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         config.enabled_tools,
         float(config.tool_timeout),
         float(config.connect_timeout),
+        tuple(config.channel_tags),
     )
 
 
 async def get_session_mcp_registration_from_config(
     user_id: str,
     server_name: str,
-    config: Any,
+    config: MCPServerSettings,
     workspace: str | Path | None = None,
 ) -> MCPServerRegistration:
     """Return a reusable MCP connection owned by one conversation session."""

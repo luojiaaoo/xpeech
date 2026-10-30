@@ -8,8 +8,9 @@ from typing import Annotated, Any, Literal
 import aiofiles.os
 import yaml
 from loguru import logger
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, field_validator
 
+from ...utils.channel_tags import channel_tags_allow_access, normalize_channel_tags
 from ...utils.file_io import LockedFile, ensure_path_async
 from ..server.context import get_lark_user_access_token
 
@@ -28,7 +29,13 @@ class SkillMetadata(BaseModel):
     description: str
     always: bool = False
     internal: bool = False
+    channel_tags: list[str] = Field(default_factory=list)
     kwargs: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("channel_tags")
+    @classmethod
+    def validate_channel_tags(cls, value: list[str]) -> list[str]:
+        return normalize_channel_tags(value)
 
 
 class SkillInfo(BaseModel):
@@ -60,13 +67,14 @@ class SkillInfo(BaseModel):
             kwargs = {
                 key: value
                 for key, value in frontmatter.items()
-                if key not in {"name", "description", "always", "internal"}
+                if key not in {"name", "description", "always", "internal", "channel_tags"}
             }
             return SkillMetadata(
                 name=name,
                 description=description.strip() if isinstance(description, str) and description.strip() else name,
                 always=always if isinstance(always, bool) else False,
                 internal=internal if isinstance(internal, bool) else False,
+                channel_tags=frontmatter.get("channel_tags", []),
                 kwargs=kwargs,
             )
 
@@ -113,9 +121,10 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
 
-    def __init__(self, workspace: Path | None):
+    def __init__(self, workspace: Path | None, *, channel_tags: list[str] | None = None):
         self.workspace_skills = workspace / "skills" if workspace is not None else None
         self.builtin_skills = BUILTIN_SKILLS_DIR
+        self.channel_tags = channel_tags if channel_tags is not None else []
 
     async def _skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
         """Return skill documents, with built-ins taking precedence."""
@@ -159,6 +168,8 @@ class SkillsLoader:
             except ValueError as exc:
                 logger.warning("Skipping invalid skill '{}': {}", skill_file, exc)
                 continue
+            if source == "builtin" and not channel_tags_allow_access(metadata.channel_tags, self.channel_tags):
+                continue
             if metadata.name in seen_names:
                 logger.warning("Skipping duplicate skill '{}' at '{}'", metadata.name, skill_file)
                 continue
@@ -179,9 +190,13 @@ class SkillsLoader:
 
             lines = ["<skills>"]
             for skill in skills:
+                channel_tags_attribute = (
+                    f" channel_tags='{escape_xml(','.join(skill.metadata.channel_tags))}'"
+                    if skill.metadata.channel_tags else ""
+                )
                 lines.append(
                     f"  <skill source='{skill.source}' "
-                    f"internal='{str(skill.metadata.internal).lower()}'>"
+                    f"internal='{str(skill.metadata.internal).lower()}'{channel_tags_attribute}>"
                 )
                 lines.append(f"    <name>{escape_xml(skill.metadata.name)}</name>")
                 lines.append(f"    <description>{escape_xml(skill.metadata.description)}</description>")
@@ -213,7 +228,9 @@ class SkillsLoader:
                 "read its SKILL.md file using the read_file tool.\n"
                 "`builtin` means a shared skill built into the sandbox, `workspace` means a skill "
                 "placed in the workspace by the user, and `internal` marks a skill related to the "
-                "agent's runtime mechanics.\n\n"
+                "agent's runtime mechanics. `channel_tags` restricts built-in skills to matching JWT "
+                "channels; built-in skills without channel_tags are public. Workspace skills are "
+                "always available regardless of their channel_tags.\n\n"
                 f"{skills_summary}\n"
             )
 

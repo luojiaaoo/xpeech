@@ -50,6 +50,7 @@ class AgentLoop:
         tools: list[str],
         summary_tokens: int,
         max_iterations: int,
+        channel_tags: list[str] | None = None,
     ):
         """初始化模型提供方、会话组件和循环配置。"""
         self.provider = provider
@@ -57,6 +58,7 @@ class AgentLoop:
         self.tools = tools
         self.summary_tokens = summary_tokens
         self.max_iterations = max_iterations
+        self.channel_tags = channel_tags if channel_tags is not None else []
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
         self.history = YamlHistoryRepository(settings.path.session_history_path)
         self.records = SqliteConversationRecordRepository()
@@ -259,7 +261,7 @@ class AgentLoop:
         # 拼接系统提示词
         messages_yaml = set_system_prompt(
             messages_yaml,
-            await build_system_prompt(workspace=self.workspace),
+            await build_system_prompt(workspace=self.workspace, channel_tags=self.channel_tags),
         )
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(
@@ -297,7 +299,6 @@ class AgentLoop:
                 response = await self.chat(
                     messages=messages_yaml,
                     tools=self.tools,
-                    remove_interactive_tool=not_interactive,
                     json_output=message.json_output,
                 )
 

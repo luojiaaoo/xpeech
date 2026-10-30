@@ -32,7 +32,7 @@ async def test_context_commands_continue_with_trailing_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def build_test_system_prompt(workspace: Path):
+    async def build_test_system_prompt(workspace: Path, *, channel_tags):
         assert workspace == tmp_path
         return {"role": "system", "content": "system"}
 
@@ -41,6 +41,7 @@ async def test_context_commands_continue_with_trailing_prompt(
 
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
+    agent_loop.channel_tags = []
     load_results = (
         [[{"role": "user", "content": "old context"}], []]
         if consolidates_memory

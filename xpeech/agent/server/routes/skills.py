@@ -1,13 +1,14 @@
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from ....config.settings import settings
 from ....exceptions import PathProtectionError
 from ....utils.file_io import is_relative_path
 from ....utils.ids import MAX_ID_LENGTH, validate_user_id
 from ...skills.skill import SkillInfo, SkillsLoader
+from ..auth import AuthenticatedChannel, require_channel_jwt
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -67,6 +68,7 @@ def _import_skill_file(data: bytes, workspace: Path) -> SkillInfo:
 
 @router.get("", response_model=list[SkillInfo])
 async def list_skills(
+    channel: Annotated[AuthenticatedChannel, Depends(require_channel_jwt)],
     user_id: Annotated[
         str | None,
         Query(max_length=MAX_ID_LENGTH, description="用户 ID；为空时仅返回内置技能"),
@@ -74,7 +76,7 @@ async def list_skills(
 ) -> list[SkillInfo]:
     """返回内置技能，以及指定用户可用的 SKILL 列表。"""
     workspace = _user_workspace(user_id) if user_id else None
-    return await SkillsLoader(workspace).list_skill_info()
+    return await SkillsLoader(workspace, channel_tags=channel.channel_tags).list_skill_info()
 
 
 @router.post("/import", response_model=SkillInfo, status_code=status.HTTP_201_CREATED)

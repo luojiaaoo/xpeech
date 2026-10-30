@@ -25,10 +25,13 @@ def test_chat_exposes_llm_parameter_overrides_as_one_object():
     assert "max_tokens" not in parameters
     assert "top_p" not in parameters
     assert "reasoning_effort" not in parameters
+    assert "remove_interactive_tool" not in parameters
+    assert "is_interactive" not in inspect.signature(LiteLLMProvider._register_function_tool).parameters
+    assert "is_interactive" not in inspect.signature(LiteLLMProvider._register_mcp_tools).parameters
 
 
 @pytest.mark.asyncio
-async def test_registered_tools_keep_schema_callable_and_interactive_metadata():
+async def test_registered_tools_keep_schema_and_callable():
     provider = LiteLLMProvider(
         api_key="test",
         api_base="https://example.test",
@@ -49,23 +52,20 @@ async def test_registered_tools_keep_schema_callable_and_interactive_metadata():
         """Return the event-loop thread identifier."""
         return str(threading.get_ident())
 
-    assert provider.register_tool()(interactive_tool, is_interactive=True) is None
+    assert provider.register_tool()(interactive_tool) is None
     assert provider.register_tool()(non_interactive_tool) is None
     assert provider.register_tool()(async_tool) is None
 
     assert set(provider.default_tools) == {"interactive_tool", "non_interactive_tool", "async_tool"}
     assert all(isinstance(tool, RegisteredTool) for tool in provider.default_tools.values())
     assert provider.default_tools["interactive_tool"].tool_json["function"]["name"] == "interactive_tool"
-    assert provider.default_tools["interactive_tool"].is_interactive is True
-    assert provider.default_tools["non_interactive_tool"].is_interactive is False
-    assert provider.default_tools["async_tool"].is_interactive is False
     assert await provider.default_tools["interactive_tool"].func() != str(event_loop_thread)
     assert await provider.default_tools["non_interactive_tool"].func() != str(event_loop_thread)
     assert await provider.default_tools["async_tool"].func() == str(event_loop_thread)
 
 
 @pytest.mark.asyncio
-async def test_mcp_tools_keep_explicit_interactive_metadata(monkeypatch: pytest.MonkeyPatch):
+async def test_mcp_tools_keep_schema_and_callable(monkeypatch: pytest.MonkeyPatch):
     async def mcp_tool() -> str:
         return "ok"
 
@@ -84,15 +84,15 @@ async def test_mcp_tools_keep_explicit_interactive_metadata(monkeypatch: pytest.
         parameters=LLMParameters(),
     )
 
-    result = await provider.register_tool("mcp")(object(), is_interactive=True)
+    result = await provider.register_tool("mcp")(object())
 
     assert result is None
     assert provider.default_tools["mcp_tool"].func is mcp_tool
-    assert provider.default_tools["mcp_tool"].is_interactive is True
+    assert provider.default_tools["mcp_tool"].tool_json["function"]["name"] == "mcp_tool"
 
 
 @pytest.mark.asyncio
-async def test_chat_can_remove_interactive_tools():
+async def test_chat_uses_all_registered_tools():
     captured_kwargs = None
 
     async def upstream():
@@ -122,17 +122,16 @@ async def test_chat_can_remove_interactive_tools():
         parameters=LLMParameters(),
     )
     provider._retry_client = RetryClient()
-    provider.register_tool()(interactive_tool, is_interactive=True)
+    provider.register_tool()(interactive_tool)
     provider.register_tool()(regular_tool)
 
     response = await provider.chat(
         messages=[{"role": "user", "content": "hello"}],
-        remove_interactive_tool=True,
     )
 
     assert captured_kwargs is not None
-    assert [tool["function"]["name"] for tool in captured_kwargs["tools"]] == ["regular_tool"]
-    assert set(response.mapping_tool_call_funcs) == {"regular_tool"}
+    assert [tool["function"]["name"] for tool in captured_kwargs["tools"]] == ["interactive_tool", "regular_tool"]
+    assert set(response.mapping_tool_call_funcs) == {"interactive_tool", "regular_tool"}
     assert set(provider.default_tools) == {"interactive_tool", "regular_tool"}
 
     interactive_response = await provider.chat(messages=[{"role": "user", "content": "hello"}])

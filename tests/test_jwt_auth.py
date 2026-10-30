@@ -45,7 +45,7 @@ def test_example_jwt_config_has_three_flat_signing_keys():
         "algorithm",
         "access_token_expire_seconds",
     }
-    assert jwt_config.model_dump() == config["jwt"]
+    assert jwt_config.model_dump() == {**config["jwt"], "channels": {}}
     assert "jwt" not in config["web_client"]
     assert "jwt" not in config["feishu"]
 
@@ -163,7 +163,7 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
         assert "lark_user_access_token" not in message.model_dump_json()
         yield {"event": "assistant", "context": "ok"}
 
-    async def create(_user_id):
+    async def create(_user_id, **_kwargs):
         return SimpleNamespace(workspace=tmp_path, run=run)
 
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)

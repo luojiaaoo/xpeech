@@ -58,7 +58,7 @@ def runner_dependencies(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(runner_module, "create_workspace_templates", create_templates)
     monkeypatch.setattr(runner_module, "LiteLLMProvider", FakeProvider)
     monkeypatch.setattr(runner_module, "AgentLoop", FakeAgentLoop)
-    monkeypatch.setattr(runner_module, "register_default_tools", register_tools)
+    monkeypatch.setattr(runner_module, "register_tools", register_tools)
     return ensure_path, create_templates, register_tools
 
 
@@ -87,7 +87,11 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     ensure_path.assert_awaited_once_with(runner.workspace)
     create_templates.assert_awaited_once_with(runner.workspace)
     register_tools.assert_awaited_once()
-    assert set(register_tools.await_args.kwargs) == {"user_id", "provider", "workspace", "config"}
+    assert set(register_tools.await_args.kwargs) == {
+        "user_id", "provider", "workspace", "config", "not_interactive", "channel_tags",
+    }
+    assert register_tools.await_args.kwargs["not_interactive"] is False
+    assert register_tools.await_args.kwargs["channel_tags"] == []
     assert len(FakeAgentLoop.instances) == 1
     assert FakeAgentLoop.instances[0].messages == [message]
     assert FakeAgentLoop.instances[0].not_interactive_values == [False]
@@ -133,7 +137,9 @@ async def test_runner_requires_async_factory(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_runner_can_run_without_interaction(tmp_path: Path, runner_dependencies):
-    runner = await AgentRunner.create("session-1", config=make_config(tmp_path))
+    runner = await AgentRunner.create(
+        "session-1", config=make_config(tmp_path), not_interactive=True, channel_tags=["crm"],
+    )
     message = InboundMessage(
         user_id="session-1",
         session_id="chat-1",
@@ -144,14 +150,18 @@ async def test_runner_can_run_without_interaction(tmp_path: Path, runner_depende
         files=[],
     )
 
-    _ = [event async for event in runner.run(message, not_interactive=True)]
+    _ = [event async for event in runner.run(message)]
 
     assert FakeAgentLoop.instances[0].not_interactive_values == [True]
+    register_tools = runner_dependencies[2]
+    assert register_tools.await_args.kwargs["not_interactive"] is True
+    assert register_tools.await_args.kwargs["channel_tags"] == ["crm"]
+    assert FakeAgentLoop.instances[0].kwargs["channel_tags"] == ["crm"]
 
 
 @pytest.mark.asyncio
 async def test_run_not_interactive_preserves_events_and_merges_text_chunks(tmp_path: Path):
-    runner = AgentRunner("session-1", config=make_config(tmp_path))
+    runner = AgentRunner("session-1", config=make_config(tmp_path), not_interactive=True)
 
     class EventLoop:
         async def run(self, message, *, not_interactive=False):
@@ -228,7 +238,7 @@ async def test_run_not_interactive_preserves_events_and_merges_text_chunks(tmp_p
     ],
 )
 async def test_run_not_interactive_preserves_partial_and_non_assistant_output(tmp_path: Path, events, expected):
-    runner = AgentRunner("session-1", config=make_config(tmp_path))
+    runner = AgentRunner("session-1", config=make_config(tmp_path), not_interactive=True)
 
     class EventLoop:
         async def run(self, message, *, not_interactive=False):

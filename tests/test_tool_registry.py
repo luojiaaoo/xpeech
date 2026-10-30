@@ -20,27 +20,27 @@ class FakeProvider:
         self.support_image = False
         self.support_video = True
         self.registered: list[str] = []
-        self.interactive: dict[str, bool] = {}
         self.mcp_registrations: list[Any] = []
 
     def register_tool(self, tool_type: str = "function"):
         if tool_type == "mcp":
-            async def register_mcp(registration, *, is_interactive: bool = False):
+            async def register_mcp(registration):
                 self.mcp_registrations.append(registration)
 
             return register_mcp
 
-        def register_function(tool, *, is_interactive: bool = False):
+        def register_function(tool):
             self.registered.append(tool.__name__)
-            self.interactive[tool.__name__] = is_interactive
 
         return register_function
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("not_interactive", [False, True])
 async def test_registers_supported_default_and_mcp_tools(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    not_interactive: bool,
 ):
     file_tools = tuple(
         named_tool(name)
@@ -66,11 +66,12 @@ async def test_registers_supported_default_and_mcp_tools(
     provider = FakeProvider()
     config = ToolConfig.model_validate({"mcpServers": {"demo": {"command": "demo"}}})
 
-    await registry.register_default_tools(
+    await registry.register_tools(
         user_id="session-1",
         provider=provider,
         workspace=tmp_path,
         config=config,
+        not_interactive=not_interactive,
     )
 
     assert "read_image" not in provider.registered
@@ -96,13 +97,10 @@ async def test_registers_supported_default_and_mcp_tools(
         "feishu_schedule_list",
         "feishu_schedule_cancel",
     ]
+    if not_interactive:
+        interactive_names = {"ask_user_question", "feishu_schedule", "feishu_schedule_list", "feishu_schedule_cancel"}
+        expected_tools = [name for name in expected_tools if name not in interactive_names]
     assert provider.registered == expected_tools
-    assert provider.interactive == {
-        tool_name: tool_name in {
-            "ask_user_question", "feishu_schedule", "feishu_schedule_list", "feishu_schedule_cancel"
-        }
-        for tool_name in provider.registered
-    }
     assert provider.mcp_registrations == [registration]
     assert registration_calls == [
         (("session-1", "demo", config.mcp_servers["demo"]), {"workspace": tmp_path})

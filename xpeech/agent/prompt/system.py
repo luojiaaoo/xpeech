@@ -129,7 +129,7 @@ def _get_ethical_guidelines() -> str:
     ).lstrip()
 
 
-async def build_system_prompt(workspace: Path) -> dict[str, Any]:
+async def build_system_prompt(workspace: Path, *, channel_tags: list[str] | None = None) -> dict[str, Any]:
     """组合身份、安全、记忆和技能信息，生成系统消息。"""
     parts = []
 
@@ -145,7 +145,7 @@ async def build_system_prompt(workspace: Path) -> dict[str, Any]:
     # 长期记忆
     parts.append(await MemoryStore(workspace).get_memory_context())
 
-    skills_prompt = await SkillsLoader(workspace).build_skills_prompt()
+    skills_prompt = await SkillsLoader(workspace, channel_tags=channel_tags).build_skills_prompt()
     if skills_prompt:
         parts.append(skills_prompt)
 

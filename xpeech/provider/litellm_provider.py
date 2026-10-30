@@ -75,7 +75,6 @@ class LiteLLMProvider:
     def _build_function_tool(
         self,
         func_: Callable[[type[BaseModel] | None], str | list],
-        is_interactive: bool,
     ) -> RegisteredTool:
         def format_result(rt) -> str | list:
             if isinstance(rt, str) or (isinstance(rt, list) and all("type" in item for item in rt)):  # 必须是合法的消息
@@ -93,27 +92,23 @@ class LiteLLMProvider:
         return RegisteredTool(
             func=wrapper,
             tool_json=as_tool(func_),
-            is_interactive=is_interactive,
         )
 
     def _register_function_tool(
         self,
         func_: Callable[[type[BaseModel] | None], str | list],
-        is_interactive: bool = False,
     ) -> None:
-        registered_tool = self._build_function_tool(func_, is_interactive=is_interactive)
+        registered_tool = self._build_function_tool(func_)
         self.default_tools[func_.__name__] = registered_tool
 
     async def _register_mcp_tools(
         self,
         registration: MCPServerRegistration,
-        is_interactive: bool = False,
     ) -> None:
         async for tool_json, tool_func, tool_func_name in collect_mcp_tool(registration):
             self.default_tools[tool_func_name] = RegisteredTool(
                 func=tool_func,
                 tool_json=tool_json,
-                is_interactive=is_interactive,
             )
 
     def register_tool(
@@ -134,7 +129,7 @@ class LiteLLMProvider:
         tools: ToolRegistry = {}
         for func in funcs:
             # 解析工具函数
-            tools[func.__name__] = self._build_function_tool(func, is_interactive=False)
+            tools[func.__name__] = self._build_function_tool(func)
         return tools
 
     async def chat(
@@ -144,7 +139,6 @@ class LiteLLMProvider:
         parameters: LLMParameters | None = None,
         remove_all_tools: bool = False,
         remove_default_tools: bool = False,
-        remove_interactive_tool: bool = False,
         json_output: bool = False,
     ) -> LLMResponse:
         """调用模型；启用 JSON 输出且模型支持时，仅添加 response_format，不修改提示词。"""
@@ -167,13 +161,6 @@ class LiteLLMProvider:
                 registered_tools = parsed_tools
             else:
                 registered_tools = self.default_tools | parsed_tools
-
-        if remove_interactive_tool:
-            registered_tools = {
-                tool_name: tool
-                for tool_name, tool in registered_tools.items()
-                if not tool.is_interactive
-            }
 
         tool_jsons = [tool.tool_json for tool in registered_tools.values()]
         mapping_tool_call_funcs = {tool_name: tool.func for tool_name, tool in registered_tools.items()}

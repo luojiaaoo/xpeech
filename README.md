@@ -85,6 +85,45 @@ access_token_expire_seconds = 60
 `/statistics` 及其子接口只接受 `kid=web_client`。`/internal/scheduled-run` 和 scheduler
 服务的接口只使用内部密钥验签，不要求 `kid`。
 
+自定义系统接入可在 `jwt.channels` 下配置独立通道，通道名就是 JWT header 的 `kid`：
+
+```toml
+[jwt.channels.crm]
+secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
+channel_tags = ["crm", "sales"]
+```
+
+自定义通道密钥至少 32 个字符，必须与内部密钥及其他通道密钥互不相同；通道名不能使用
+`internal`、`feishu`、`web_client`。自定义通道使用统一的 JWT 算法和有效期，支持业务接口，
+也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口仍仅接受 `web_client`，内部接口仍使用内部密钥。
+通道的 `channel_tags` 由服务端配置确定，JWT payload 或会话元数据中的 `channel_tags` 不授予任何权限。
+省略通道 `channel_tags` 或配置 `[]` 时，该通道加载公共内建技能、公共 MCP，以及用户自己的全部技能。
+
+Skill 的 YAML frontmatter 和 MCP 配置都支持 `channel_tags`。标签筛选仅作用于内建技能和 MCP，
+用户工作区里的技能不受标签匹配限制，全部加载。内建技能和 MCP 省略 `channel_tags` 或配置 `[]` 表示公共资源；
+非空表示专属资源，仅向至少命中一个标签的 JWT 通道展示或注册。标签区分大小写，
+长度为 1–64 个字符，以英文字母或数字开头，可包含字母、数字、`.`、`_`、`:`、`-`。
+无需给 Skill 名称增加特殊前缀。例如：
+
+```yaml
+---
+name: crm-report
+description: CRM 报表助手
+channel_tags: [crm]
+---
+```
+
+```toml
+[tool.mcpServers.crm-api]
+url = "https://crm.example.com/mcp"
+channel_tags = ["crm"]
+```
+
+标签筛选作用于内建技能的列表、系统提示词（含 `always` 技能）和 MCP 工具注册；
+它不是工作区文件的访问控制。同一 `user_id` 的工作区和历史仍然共享；需要系统间数据隔离时应使用独立的用户 ID。
+鉴权后的通道标签通过参数显式传递。MCP 在注册阶段按标签筛选，不匹配时不会建立连接；
+同步聊天和定时任务也在注册阶段跳过追问、创建/查看/取消调度等交互式工具。
+
 ## 启动
 
 按需在独立终端启动各服务：
@@ -531,6 +570,7 @@ tool_timeout = 120
 - `headers`：远程 MCP Server 的请求头，支持按用户替换占位符。
 - `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
 - `enabled_tools`：允许注册的 MCP 工具名，`["*"]` 表示全部注册。
+- `channel_tags`：专属系统标签，省略或 `[]` 表示公共 MCP；命中当前 JWT 通道任一标签才连接并注册。
 - `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
 
 `command` 和 `url` 只能二选一。`command_authorization_token` 仅适用于远程 MCP，每次

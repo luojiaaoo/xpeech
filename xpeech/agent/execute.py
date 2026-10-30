@@ -36,9 +36,11 @@ async def _prepare_chat(
     timestamp: datetime | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
+    not_interactive: bool = False,
+    channel_tags: list[str] | None = None,
 ) -> tuple[AgentRunner, InboundMessage]:
     """Prepare a runner and inbound message, saving attachments in the workspace."""
-    runner = await AgentRunner.create(user_id)
+    runner = await AgentRunner.create(user_id, not_interactive=not_interactive, channel_tags=channel_tags)
     saved_files = []
     for file in files or []:
         saved_files.append(await save_to_workspace(file=file, workspace=runner.workspace))
@@ -66,6 +68,7 @@ async def execute_chat_stream(
     timestamp: datetime | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
+    channel_tags: list[str] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run an interactive Agent call and yield its events."""
     runner, message = await _prepare_chat(
@@ -77,6 +80,7 @@ async def execute_chat_stream(
         timestamp=timestamp,
         files=files,
         json_output=json_output,
+        channel_tags=channel_tags,
     )
     async for event in runner.run(message=message):
         yield event
@@ -92,6 +96,7 @@ async def execute_chat(
     timestamp: datetime | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
+    channel_tags: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Run a non-interactive Agent call and return all collected events."""
     runner, message = await _prepare_chat(
@@ -103,6 +108,8 @@ async def execute_chat(
         timestamp=timestamp,
         files=files,
         json_output=json_output,
+        not_interactive=True,
+        channel_tags=channel_tags,
     )
     return await runner.run_not_interactive(message)
 
@@ -127,7 +134,7 @@ async def execute_scheduled_chat(user_id: str, request: ScheduledExecution) -> S
         timestamp=datetime.now().astimezone(),
         files=[],
     )
-    runner = await AgentRunner.create(user_id)
+    runner = await AgentRunner.create(user_id, not_interactive=True)
     events = await runner.run_not_interactive(message)
     content = next(
         (event["context"] for event in reversed(events) if event.get("event") == "assistant"),

@@ -2,7 +2,7 @@ import sys
 
 from loguru import logger
 
-from ..agent.server.context import get_request_id, get_user_id
+from ..agent.server.context import get_request_id, get_session_id, get_user_id
 from ..config.settings import settings
 
 _FORMAT = (
@@ -10,6 +10,7 @@ _FORMAT = (
     "<level>{level: <8}</level> | "
     "<yellow>{extra[request_id]}</yellow> | "
     "<magenta>{extra[user_id]}</magenta> | "
+    "<blue>{extra[session_id]}</blue> | "
     "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
     "<level>{message}</level>"
 )
@@ -20,6 +21,7 @@ def _inject_context(record):
     # 可能logger.bind(user_id="manual-session").info("hello")，所以用setdefault
     extra.setdefault("request_id", get_request_id())
     extra.setdefault("user_id", get_user_id())
+    extra.setdefault("session_id", get_session_id())
 
 
 def configure_logging():

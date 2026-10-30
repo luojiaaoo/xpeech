@@ -9,6 +9,7 @@ from fastapi.sse import EventSourceResponse
 from ...execute import execute_chat, execute_chat_stream
 from ...loop import AgentLoop, QuestionEvent
 from ...tools.schedule.client import scheduler_request
+from ..auth import AuthenticatedChannel, require_channel_jwt
 from ..dependencies import (
     acquire_chat_session,
     content,
@@ -62,6 +63,7 @@ async def answer_question(
     dependencies=[Depends(acquire_chat_session, scope="request")],
 )
 async def chat(
+    channel: Annotated[AuthenticatedChannel, Depends(require_channel_jwt)],
     user_id: Annotated[str, Depends(user_id_header)],
     session_id: Annotated[str, Depends(session_id_header)],
     sender_name: Annotated[str, Depends(sender_name_header)],
@@ -74,6 +76,7 @@ async def chat(
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
     async for event in execute_chat_stream(
         user_id,
+        channel_tags=channel.channel_tags,
         content=content,
         sender_name=sender_name,
         session_id=session_id,
@@ -91,6 +94,7 @@ async def chat(
     dependencies=[Depends(acquire_chat_session, scope="request")],
 )
 async def chat_sync(
+    channel: Annotated[AuthenticatedChannel, Depends(require_channel_jwt)],
     user_id: Annotated[str, Depends(user_id_header)],
     session_id: Annotated[str, Depends(session_id_header)],
     sender_name: Annotated[str, Depends(sender_name_header)],
@@ -103,6 +107,7 @@ async def chat_sync(
     """接收用户消息，阻塞运行 Agent，并一次性返回合并后的全部事件。"""
     result = await execute_chat(
         user_id,
+        channel_tags=channel.channel_tags,
         content=content,
         sender_name=sender_name,
         session_id=session_id,

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from xpeech.agent.tools import mcp_client
-from xpeech.config.settings import ToolConfig
+from xpeech.config.settings import MCPServerSettings, ToolConfig
 
 
 def test_supports_the_three_mcp_transports():
@@ -328,7 +328,7 @@ async def test_connections_are_reused_per_session_and_expire(monkeypatch: pytest
         "_run_connection",
         run_fake_connection,
     )
-    config = {"command": "fake-server"}
+    config = MCPServerSettings(command="fake-server")
 
     first = await mcp_client.get_session_mcp_registration_from_config("session-1", "demo", config)
     reused = await mcp_client.get_session_mcp_registration_from_config("session-1", "demo", config)
@@ -354,7 +354,6 @@ async def test_connections_are_reused_per_session_and_expire(monkeypatch: pytest
 @pytest.mark.asyncio
 async def test_failed_connection_is_skipped_during_cooldown_then_retried(monkeypatch: pytest.MonkeyPatch):
     await mcp_client.close_all_mcp_connections()
-    monkeypatch.setattr(mcp_client, "MCP_CONNECT_TIMEOUT_SECONDS", 0.02)
     monkeypatch.setattr(mcp_client, "MCP_CONNECTION_TTL_SECONDS", 0.2)
     monkeypatch.setattr(mcp_client, "MCP_RECONNECT_DELAY_SECONDS", 0.06)
     attempts = 0
@@ -369,7 +368,7 @@ async def test_failed_connection_is_skipped_during_cooldown_then_retried(monkeyp
         "_run_connection",
         run_slow_connection,
     )
-    config = {"url": "https://example.test/mcp"}
+    config = MCPServerSettings(url="https://example.test/mcp", connect_timeout=0.02)
     registration = await mcp_client.get_session_mcp_registration_from_config(
         "session-1",
         "unreachable",
