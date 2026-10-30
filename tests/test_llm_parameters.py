@@ -68,6 +68,12 @@ def test_example_uses_nested_llm_parameters():
     }
     assert config.summary_tokens == 32768
     assert config.max_iterations == 40
+    assert config.max_history_files_per_user == 100
+
+
+def test_llm_config_rejects_invalid_history_file_limit():
+    with pytest.raises(ValidationError):
+        LLMConfig.model_validate(base_llm_config(max_history_files_per_user=0))
 
 
 def test_llm_parameters_reject_aliases():

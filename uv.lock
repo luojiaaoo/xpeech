@@ -3719,6 +3719,15 @@ wheels = [
 ]
 
 [[package]]
+name = "uuid6"
+version = "2025.0.1"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple/" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ca/b7/4c0f736ca824b3a25b15e8213d1bcfc15f8ac2ae48d1b445b310892dc4da/uuid6-2025.0.1.tar.gz", hash = "sha256:cd0af94fa428675a44e32c5319ec5a3485225ba2179eefcf4c3f205ae30a81bd", size = 13932, upload-time = "2025-07-04T18:30:35.186Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/3d/b2/93faaab7962e2aa8d6e174afb6f76be2ca0ce89fde14d3af835acebcaa59/uuid6-2025.0.1-py3-none-any.whl", hash = "sha256:80530ce4d02a93cdf82e7122ca0da3ebbbc269790ec1cb902481fa3e9cc9ff99", size = 6979, upload-time = "2025-07-04T18:30:34.001Z" },
+]
+
+[[package]]
 name = "uvicorn"
 version = "0.46.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple/" }
@@ -3989,6 +3998,7 @@ dependencies = [
     { name = "sqlmodel" },
     { name = "trafilatura" },
     { name = "tzdata" },
+    { name = "uuid6" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "yarl" },
 ]
@@ -4032,6 +4042,7 @@ requires-dist = [
     { name = "sqlmodel", specifier = ">=0.0.39" },
     { name = "trafilatura", specifier = ">=2.3.1" },
     { name = "tzdata", specifier = ">=2026.2" },
+    { name = "uuid6", specifier = ">=2025.0.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.46.0" },
     { name = "yarl", specifier = ">=1.23.0" },
 ]

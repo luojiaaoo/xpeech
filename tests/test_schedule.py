@@ -63,7 +63,8 @@ def scheduler_http(monkeypatch):
     client_class = httpx.AsyncClient
     transport = httpx.ASGITransport(app=scheduler_service.app)
     monkeypatch.setattr(
-        scheduler_client, "AsyncClient",
+        scheduler_client,
+        "AsyncClient",
         lambda **kwargs: client_class(transport=transport, **kwargs),
     )
 
@@ -82,9 +83,12 @@ def backend_http(monkeypatch):
         assert request.headers["x-user-id"] == "session-1"
 
     monkeypatch.setattr(
-        background.httpx, "AsyncClient",
+        background.httpx,
+        "AsyncClient",
         lambda **kwargs: client_class(
-            transport=transport, event_hooks={"request": [record_request]}, **kwargs,
+            transport=transport,
+            event_hooks={"request": [record_request]},
+            **kwargs,
         ),
     )
     return requests
@@ -99,15 +103,11 @@ async def clean_background_state(monkeypatch):
         raising=False,
     )
     stop_background_scheduler()
-    drain_queue(
-        background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
-    )
+    drain_queue(background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU])
     yield
     stop_background_scheduler()
     await asyncio.sleep(0)
-    drain_queue(
-        background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
-    )
+    drain_queue(background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU])
 
 
 @pytest.mark.parametrize(
@@ -144,9 +144,7 @@ def test_schedule_treats_blank_time_fields_as_missing():
 def test_schedule_tool_explains_mutually_exclusive_time_fields():
     function_schema = as_tool(feishu_schedule)["function"]
     description = function_schema["description"]
-    run_at_description = function_schema["parameters"]["properties"]["run_at"][
-        "description"
-    ]
+    run_at_description = function_schema["parameters"]["properties"]["run_at"]["description"]
 
     assert "run_at 和 cron 只能有一个有效值" in description
     assert "可以不带时区" in description
@@ -177,7 +175,8 @@ async def test_schedule_api_offloads_database_calls(monkeypatch, scheduler_http)
 
     await feishu_schedule(
         FeishuScheduleArgs(prompt="task", run_at="2099-01-01T00:00:00+08:00"),
-        channel="feishu", session_metadata={"open_id": "ou_1"},
+        channel="feishu",
+        session_metadata={"open_id": "ou_1"},
         sender_name="Alice",
         user_id="session-1",
     )
@@ -202,7 +201,8 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
         cron=None,
         user_id="session-1",
         sender_name="Alice",
-        channel="feishu", session_metadata={"open_id": "ou_1"},
+        channel="feishu",
+        session_metadata={"open_id": "ou_1"},
     )
     assert job.next_run_time.tzinfo == scheduler.timezone
 
@@ -213,7 +213,8 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
             cron=None,
             user_id="session-1",
             sender_name="Alice",
-            channel="feishu", session_metadata={"open_id": "ou_1"},
+            channel="feishu",
+            session_metadata={"open_id": "ou_1"},
         )
     with pytest.raises(ValueError):
         schedule_feishu_task(
@@ -222,7 +223,8 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
             cron="not a cron",
             user_id="session-1",
             sender_name="Alice",
-            channel="feishu", session_metadata={"open_id": "ou_1"},
+            channel="feishu",
+            session_metadata={"open_id": "ou_1"},
         )
     for cron in ("* * * * *", "*/5 * * * *", "1,* * * * *"):
         with pytest.raises(ValueError, match="minute field must not contain"):
@@ -232,7 +234,8 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
                 cron=cron,
                 user_id="session-1",
                 sender_name="Alice",
-                channel="feishu", session_metadata={"open_id": "ou_1"},
+                channel="feishu",
+                session_metadata={"open_id": "ou_1"},
             )
 
 
@@ -247,7 +250,8 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
         cron=None,
         user_id="session-1",
         sender_name="Alice",
-        channel="feishu", session_metadata={"open_id": "ou_1"},
+        channel="feishu",
+        session_metadata={"open_id": "ou_1"},
     )
     cron_job = schedule_feishu_task(
         prompt="repeat",
@@ -255,7 +259,8 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
         cron="0 * * * *",
         user_id="session-1",
         sender_name="Alice",
-        channel="feishu", session_metadata={"open_id": "ou_1"},
+        channel="feishu",
+        session_metadata={"open_id": "ou_1"},
     )
     stop_background_scheduler()
     await asyncio.sleep(0)
@@ -347,7 +352,8 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
 
     with pytest.raises(ValueError, match="not available"):
         await feishu_schedule_cancel(
-            FeishuScheduleCancelArgs(job_id=result["job_id"]), user_id="another-user",
+            FeishuScheduleCancelArgs(job_id=result["job_id"]),
+            user_id="another-user",
         )
     with pytest.raises(ValueError, match="not available"):
         cancel_scheduled_task(user_id="session-1", job_id="missing")
@@ -371,10 +377,7 @@ async def test_user_can_have_at_most_four_scheduled_tasks(tmp_path: Path):
         "session_metadata": {"open_id": "ou_1"},
     }
 
-    jobs = [
-        schedule_feishu_task(prompt=f"task-{index}", **common)
-        for index in range(4)
-    ]
+    jobs = [schedule_feishu_task(prompt=f"task-{index}", **common) for index in range(4)]
     assert len(list_scheduled_tasks("session-1")) == 4
 
     with pytest.raises(ValueError, match="maximum 4"):
@@ -461,16 +464,17 @@ async def test_background_agent_queues_success_or_fixed_failure(
         schedule_value="0 9 * * *",
     )
 
-    queued = background.BACKGROUND_MESSAGE_QUEUES[
-        BackgroundMessageChannel.FEISHU
-    ].get_nowait()
+    queued = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU].get_nowait()
     assert queued.open_id == "ou_1"
     assert queued.content == expected
     assert queued.schedule_type == "cron"
     assert queued.schedule_value == "0 9 * * *"
     assert captured["user_id"] == "session-1"
     assert captured["message"].sender_name == "Alice"
-    assert re.fullmatch(r"[0-9a-f]{32}", captured["message"].session_id)
+    assert re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        captured["message"].session_id,
+    )
     scheduled_prompt = captured["message"].content[0].text
     assert scheduled_prompt.startswith("## 定时任务运行说明")
     assert "本次运行由后台定时任务触发" in scheduled_prompt
@@ -508,7 +512,8 @@ async def test_background_agent_waits_for_random_delay(monkeypatch, backend_http
         prompt="scheduled prompt",
         user_id="session-1",
         sender_name="Alice",
-        channel="feishu", session_metadata={"open_id": "ou_1"},
+        channel="feishu",
+        session_metadata={"open_id": "ou_1"},
         schedule_type="run_at",
         schedule_value="2099-01-01T00:00:00+08:00",
     )
@@ -539,8 +544,10 @@ async def test_background_message_long_poll_returns_immediately(monkeypatch):
         {BackgroundMessageChannel.FEISHU: queue},
     )
     message = FeishuBackgroundMessage(
-        open_id="ou_1", content="result",
-        schedule_type="cron", schedule_value="0 9 * * *",
+        open_id="ou_1",
+        content="result",
+        schedule_type="cron",
+        schedule_value="0 9 * * *",
     )
     queue.put_nowait(message)
     assert await scheduler_service.poll_background_message(BackgroundMessageChannel.FEISHU) == message
@@ -564,20 +571,26 @@ async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_htt
     queue = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
     queue.put_nowait(
         FeishuBackgroundMessage(
-            open_id="ou_1", content="completed",
-            schedule_type="cron", schedule_value="0 9 * * *",
+            open_id="ou_1",
+            content="completed",
+            schedule_type="cron",
+            schedule_value="0 9 * * *",
         )
     )
     monkeypatch.setattr(scheduler_service, "BACKGROUND_MESSAGE_LONG_POLL_SECONDS", 0.001)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=backend_app), base_url="http://test",
+        transport=httpx.ASGITransport(app=backend_app),
+        base_url="http://test",
         headers={"Authorization": f"Bearer {token}"},
     ) as client:
         response = await client.get("/background_message?channel=feishu")
         assert response.status_code == 200
         assert response.json() == {
-            "channel": "feishu", "open_id": "ou_1", "content": "completed",
-            "schedule_type": "cron", "schedule_value": "0 9 * * *",
+            "channel": "feishu",
+            "open_id": "ou_1",
+            "content": "completed",
+            "schedule_type": "cron",
+            "schedule_value": "0 9 * * *",
         }
         response = await client.get("/background_message?channel=feishu")
         assert response.status_code == 204
@@ -631,9 +644,7 @@ async def test_channel_jwt_cannot_access_internal_endpoints(app, method, path, c
         "feishu": settings.jwt.feishu_secret_key,
         "web_client": settings.jwt.web_client_secret_key,
     }
-    token = create_channel_access_token(
-        ChannelJWTAuth(channel, keys[channel])
-    )
+    token = create_channel_access_token(ChannelJWTAuth(channel, keys[channel]))
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
@@ -678,14 +689,16 @@ async def test_scheduler_api_limit_is_shared_across_http_clients(tmp_path, sched
     for _ in range(4):
         await feishu_schedule(
             args,
-            channel="feishu", session_metadata={"open_id": "ou_1"},
+            channel="feishu",
+            session_metadata={"open_id": "ou_1"},
             sender_name="Alice",
             user_id="alice",
         )
     with pytest.raises(ValueError, match="maximum 4"):
         await feishu_schedule(
             args,
-            channel="feishu", session_metadata={"open_id": "ou_1"},
+            channel="feishu",
+            session_metadata={"open_id": "ou_1"},
             sender_name="Alice",
             user_id="alice",
         )
@@ -701,9 +714,13 @@ async def test_execution_rejects_invalid_user_id_before_running(monkeypatch):
             "/internal/scheduled-run",
             headers={"Authorization": f"Bearer {create_internal_access_token()}", "x-user-id": "../escape"},
             json={
-                "job_id": "job-1", "prompt": "task", "sender_name": "Alice",
-                "channel": "feishu", "session_metadata": {},
-                "schedule_type": "cron", "schedule_value": "0 9 * * *",
+                "job_id": "job-1",
+                "prompt": "task",
+                "sender_name": "Alice",
+                "channel": "feishu",
+                "session_metadata": {},
+                "schedule_type": "cron",
+                "schedule_value": "0 9 * * *",
             },
         )
     assert response.status_code == 422
@@ -725,14 +742,20 @@ async def test_dispatch_failures_queue_one_failure_message_without_retry(monkeyp
 
     client_class = httpx.AsyncClient
     monkeypatch.setattr(
-        background.httpx, "AsyncClient",
+        background.httpx,
+        "AsyncClient",
         lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs),
     )
     monkeypatch.setattr(background.random, "uniform", lambda *_: 0)
     await run_feishu_background_task(
-        job_id="job-1", prompt="task", user_id="alice", sender_name="Alice",
-        channel="feishu", session_metadata={"open_id": "ou_1"},
-        schedule_type="cron", schedule_value="0 9 * * *",
+        job_id="job-1",
+        prompt="task",
+        user_id="alice",
+        sender_name="Alice",
+        channel="feishu",
+        session_metadata={"open_id": "ou_1"},
+        schedule_type="cron",
+        schedule_value="0 9 * * *",
     )
     queue = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
     assert queue.get_nowait().content == BACKGROUND_TASK_FAILURE_MESSAGE

@@ -80,6 +80,8 @@ support_json_output = true
 parallel = 4
 summary_tokens = 32768
 max_iterations = 40
+# 每个 user_id 最多保留的会话历史文件数；load 时清理旧文件和非法文件名。
+max_history_files_per_user = 100
 
 [llm.parameters]
 max_tokens = 32768

@@ -1,5 +1,4 @@
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -11,11 +10,12 @@ from xpeech.agent.server.dependencies import CHAT_GUARD, settings
 from xpeech.agent.server.schema import InputText
 from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
 
+UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
+BUSY_UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000002"
+
 
 def chat_headers(**extra):
-    token = create_channel_access_token(
-        ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key)
-    )
+    token = create_channel_access_token(ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key))
     headers = {
         "Authorization": f"Bearer {token}",
         "x-user-id": "user",
@@ -56,7 +56,7 @@ def fake_runner(monkeypatch, tmp_path):
 def test_chat_sync_returns_collected_events(fake_runner):
     response = TestClient(app).post(
         "/chat_sync",
-        headers=chat_headers(**{"x-session-id": "chat-1"}),
+        headers=chat_headers(**{"x-session-id": UUID7_SESSION_ID}),
         data={
             "content": '[{"text":"hello"}]',
             "session_metadata": '{"channel":"api","trace":"t1"}',
@@ -73,7 +73,7 @@ def test_chat_sync_returns_collected_events(fake_runner):
         "kwargs": {"not_interactive": True, "channel_tags": []},
     }
     [message] = fake_runner.messages
-    assert message.session_id == "chat-1"
+    assert message.session_id == UUID7_SESSION_ID
     assert message.sender_name == "Alice"
     assert message.channel == "web_client"
     assert message.session_metadata == {"trace": "t1"}
@@ -97,9 +97,7 @@ def test_channel_comes_only_from_jwt_kid_and_ignores_request_input(fake_runner):
 
 
 def test_channel_jwt_signed_with_another_channels_key_is_rejected(fake_runner):
-    forged = create_channel_access_token(
-        ChannelJWTAuth("feishu", settings.jwt.web_client_secret_key)
-    )
+    forged = create_channel_access_token(ChannelJWTAuth("feishu", settings.jwt.web_client_secret_key))
 
     response = TestClient(app).post(
         "/chat_sync",
@@ -113,7 +111,7 @@ def test_channel_jwt_signed_with_another_channels_key_is_rejected(fake_runner):
 
 @pytest.mark.parametrize(
     "session_id",
-    [None, "default", "chat-1"],
+    [None, UUID7_SESSION_ID],
 )
 def test_chat_sync_initializes_non_interactive_tools_for_every_session(
     fake_runner,
@@ -179,18 +177,19 @@ def test_chat_sync_saves_attachments_to_workspace(fake_runner, tmp_path):
 
 @pytest.mark.asyncio
 async def test_chat_sync_conflicts_with_active_session(fake_runner):
-    assert await CHAT_GUARD.try_acquire("user", "busy-session")
+    assert await CHAT_GUARD.try_acquire("user", BUSY_UUID7_SESSION_ID)
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test",
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
         ) as client:
             response = await client.post(
                 "/chat_sync",
-                headers=chat_headers(**{"x-session-id": "busy-session"}),
+                headers=chat_headers(**{"x-session-id": BUSY_UUID7_SESSION_ID}),
                 data={"content": '[{"text":"hello"}]'},
             )
     finally:
-        await CHAT_GUARD.release("user", "busy-session")
+        await CHAT_GUARD.release("user", BUSY_UUID7_SESSION_ID)
 
     assert response.status_code == 409
     assert fake_runner.messages == []

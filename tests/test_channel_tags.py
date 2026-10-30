@@ -16,6 +16,7 @@ from xpeech.config.settings import JWTChannelConfig, JWTConfig, MCPServerSetting
 
 CRM_KEY = "crm-channel-key-that-is-at-least-32-characters"
 ERP_KEY = "erp-channel-key-that-is-at-least-32-characters"
+UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 
 
 @pytest.fixture
@@ -69,7 +70,11 @@ def test_custom_channel_can_get_token_and_use_business_endpoints(channels):
     assert response.status_code == 200
     token = response.json()["access_token"]
     assert jwt.get_unverified_header(token)["kid"] == "crm"
-    headers = {"Authorization": f"Bearer {token}", "x-user-id": "tag-test"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "x-user-id": "tag-test",
+        "x-session-id": UUID7_SESSION_ID,
+    }
     assert client.post("/answer_question", data={"answer": "ok"}, headers=headers).status_code == 200
     assert client.get("/statistics", headers=headers).status_code == 403
     assert client.post("/internal/scheduled-run", headers=headers).status_code == 401
@@ -181,7 +186,12 @@ def test_chat_passes_verified_channel_tags_to_registration(
     )
     response = TestClient(app).post(
         path,
-        headers={"Authorization": f"Bearer {token}", "x-user-id": "tag-user", "x-sender-name": "test"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "x-user-id": "tag-user",
+            "x-session-id": UUID7_SESSION_ID,
+            "x-sender-name": "test",
+        },
         data={"content": '[{"text":"hello"}]', "session_metadata": '{"channel":"erp","channel_tags":"erp"}'},
     )
     assert response.status_code == 200

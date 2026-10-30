@@ -31,11 +31,14 @@ def make_response(
         if content is not None:
             yield "content", content
         for index, tool_call in enumerate(tool_calls or []):
-            yield "tool_calls", ToolCallChunk(
-                index=index,
-                id=tool_call.id,
-                name=tool_call.name,
-                arguments=json.dumps(tool_call.arguments, ensure_ascii=False),
+            yield (
+                "tool_calls",
+                ToolCallChunk(
+                    index=index,
+                    id=tool_call.id,
+                    name=tool_call.name,
+                    arguments=json.dumps(tool_call.arguments, ensure_ascii=False),
+                ),
             )
 
     response = LLMResponse(
@@ -205,7 +208,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     agent_loop.records = SqliteConversationRecordRepository(engine)
     message = InboundMessage(
         user_id="session",
-        session_id="chat-1",
+        session_id="018f0000-0000-7000-8000-000000000001",
         sender_name="alice",
         channel="test",
         session_metadata={},

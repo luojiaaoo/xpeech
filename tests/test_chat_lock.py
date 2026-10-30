@@ -8,15 +8,19 @@ from fastapi.testclient import TestClient
 
 from xpeech.agent.loop import AgentLoop, QuestionEvent
 from xpeech.agent.server.api import app
+from xpeech.agent.server.auth import AuthenticatedChannel
 from xpeech.agent.server.dependencies import (
     CHAT_GUARD,
     acquire_chat_session,
     content,
     sender_name_header,
+    session_id_header,
     settings,
 )
 from xpeech.agent.server.routes.chat import answer_question
 from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
+
+UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 
 
 def test_content_dependency_returns_parsed_list():
@@ -33,20 +37,30 @@ def test_sender_name_header_is_required():
     assert sender_name["required"] is True
 
 
-def test_session_id_header_defaults_for_chat_and_answer():
+def test_session_id_header_is_optional_without_exposing_default_value():
     for path in ("/chat", "/chat_sync", "/answer_question"):
         parameters = app.openapi()["paths"][path]["post"]["parameters"]
-        session_id = next(
-            parameter for parameter in parameters if parameter["name"] == "x-session-id"
-        )
+        session_id = next(parameter for parameter in parameters if parameter["name"] == "x-session-id")
         assert session_id["in"] == "header"
         assert session_id["required"] is False
-        assert session_id["schema"]["default"] == "default"
+        assert "default" not in session_id["schema"]
+
+
+def test_only_builtin_main_session_channels_may_omit_session_id():
+    assert session_id_header(AuthenticatedChannel("web_client", []), None) == "default"
+    assert session_id_header(AuthenticatedChannel("feishu", []), None) == "default"
+
+    with pytest.raises(HTTPException) as error:
+        session_id_header(AuthenticatedChannel("crm", []), None)
+    assert error.value.status_code == 422
+    assert error.value.detail == "x-session-id is required for this channel"
+
+    assert session_id_header(AuthenticatedChannel("crm", []), UUID7_SESSION_ID) == UUID7_SESSION_ID
 
 
 @pytest.mark.parametrize(
     "session_id",
-    [None, "default", "chat-1"],
+    [None, UUID7_SESSION_ID],
 )
 @pytest.mark.parametrize("json_output", [None, False, True])
 def test_chat_initializes_all_tools_for_every_session(
@@ -66,9 +80,7 @@ def test_chat_initializes_all_tools_for_every_session(
     create = AsyncMock(return_value=SimpleNamespace(workspace=tmp_path, run=run))
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
     monkeypatch.setattr(settings.llm, "support_json_output", True)
-    token = create_channel_access_token(
-        ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key)
-    )
+    token = create_channel_access_token(ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key))
     headers = {
         "Authorization": f"Bearer {token}",
         "x-user-id": "user",
@@ -92,15 +104,34 @@ def test_chat_initializes_all_tools_for_every_session(
     assert messages[0].json_output is (json_output is True)
 
 
+@pytest.mark.parametrize(
+    "session_id",
+    ["default", "chat-1", "01234567-89ab-4def-8123-456789abcdef"],
+)
+def test_chat_rejects_non_uuidv7_session_ids(session_id):
+    token = create_channel_access_token(ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key))
+    response = TestClient(app).post(
+        "/chat",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "x-user-id": "user",
+            "x-session-id": session_id,
+            "x-sender-name": "Alice",
+        },
+        data={"content": '[{"text":"hello"}]'},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Invalid session_id"}
+
+
 def test_unsupported_json_output_returns_http_error_before_starting_stream(monkeypatch):
     from xpeech.agent import execute as execute_module
 
     monkeypatch.setattr(settings.llm, "support_json_output", False)
     create = AsyncMock()
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
-    token = create_channel_access_token(
-        ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key)
-    )
+    token = create_channel_access_token(ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key))
     response = TestClient(app).post(
         "/chat",
         headers={

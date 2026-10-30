@@ -1,4 +1,7 @@
 import re
+from uuid import UUID
+
+from uuid6 import uuid7
 
 from ..exceptions import PathProtectionError
 
@@ -22,5 +25,21 @@ def validate_user_id(user_id: str) -> str:
 
 
 def validate_session_id(session_id: str) -> str:
-    """Validate a session ID before using it in a filesystem path."""
-    return _validate_id(session_id, "session")
+    """Validate the default main session or a canonical lowercase UUIDv7."""
+    if session_id == DEFAULT_SESSION_ID:
+        return session_id
+    if not isinstance(session_id, str):
+        raise PathProtectionError("Session ID must be 'default' or a canonical UUIDv7")
+    try:
+        parsed = UUID(session_id)
+    except (ValueError, AttributeError, TypeError):
+        raise PathProtectionError("Session ID must be 'default' or a canonical UUIDv7") from None
+    canonical = str(parsed)
+    if parsed.version != 7 or session_id != canonical:
+        raise PathProtectionError("Session ID must be 'default' or a canonical UUIDv7")
+    return canonical
+
+
+def generate_session_id() -> str:
+    """Generate a canonical UUIDv7 session ID as defined by RFC 9562."""
+    return str(uuid7())

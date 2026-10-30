@@ -56,7 +56,11 @@ async def register_tools(
     provider.register_tool()(build_file_message_tools(workspace=workspace))
     if not not_interactive:
         provider.register_tool()(ask_user_question)
-    for tool in build_session_tools(user_id=user_id, history_path=settings.path.session_history_path):
+    for tool in build_session_tools(
+        user_id=user_id,
+        history_path=settings.path.session_history_path,
+        max_files_per_user=settings.llm.max_history_files_per_user,
+    ):
         provider.register_tool()(tool)
     if not not_interactive:
         for tool in (feishu_schedule, feishu_schedule_list, feishu_schedule_cancel):

@@ -64,6 +64,7 @@ async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, m
     agent_loop.history.load.assert_not_awaited()
     agent_loop.history.save.assert_awaited_once()
     assert agent_loop.history.save.await_args.kwargs["not_interactive"] is True
+    assert agent_loop.history.save.await_args.kwargs["channel"] == message.channel
     saved_user_id, saved_session_id, saved_messages = agent_loop.history.save.await_args.args
     assert saved_user_id == message.user_id
     assert saved_session_id == message.session_id
@@ -136,6 +137,7 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     save = agent_loop.history.save
     save.assert_awaited_once()
     assert save.await_args.kwargs["not_interactive"] is not_interactive
+    assert save.await_args.kwargs["channel"] == message.channel
     saved_user_id, saved_identifier, saved_messages = save.await_args.args
     assert saved_user_id == "session-1"
     assert saved_identifier == message.session_id

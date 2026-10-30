@@ -60,7 +60,10 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.channel_tags = channel_tags if channel_tags is not None else []
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
-        self.history = YamlHistoryRepository(settings.path.session_history_path)
+        self.history = YamlHistoryRepository(
+            settings.path.session_history_path,
+            max_files_per_user=settings.llm.max_history_files_per_user,
+        )
         self.records = SqliteConversationRecordRepository()
         self._model_call_count = 0
         self._input_tokens = 0
@@ -233,14 +236,14 @@ class AgentLoop:
                 yield {"event": "command", "context": "/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）"}
                 return
             elif command_name == "/new":
-                history = await self.history.load(message.user_id, message.session_id)
+                history = await self.history.load(message.user_id, message.session_id, channel=message.channel)
                 result = await self.memory_consolidator.consolidate(history)
-                await self.history.delete(message.user_id, message.session_id)
+                await self.history.delete(message.user_id, message.session_id, channel=message.channel)
                 yield {"event": "command", "context": f"新会话, {result.message}"}
                 if not continuation:
                     return
             elif command_name == "/clear":
-                await self.history.delete(message.user_id, message.session_id)
+                await self.history.delete(message.user_id, message.session_id, channel=message.channel)
                 yield {"event": "command", "context": "上下文已清空"}
                 if not continuation:
                     return
@@ -257,7 +260,7 @@ class AgentLoop:
         messages_yaml: list[dict] = (
             []
             if not_interactive
-            else await self.history.load(message.user_id, message.session_id)
+            else await self.history.load(message.user_id, message.session_id, channel=message.channel)
         )
 
         # 拼接系统提示词
@@ -335,6 +338,7 @@ class AgentLoop:
                     message.user_id,
                     message.session_id,
                     messages_yaml,
+                    channel=message.channel,
                     not_interactive=not_interactive,
                 )
                 raise HTTPException(
@@ -397,6 +401,7 @@ class AgentLoop:
             message.user_id,
             message.session_id,
             messages_yaml,
+            channel=message.channel,
             not_interactive=not_interactive,
         )
 

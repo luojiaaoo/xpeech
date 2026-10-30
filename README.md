@@ -328,17 +328,20 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 
 `user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、技能和 MCP 连接；`session_id`
 标识该用户的一次会话，用于隔离上下文、并发聊天和提问回答。同一个用户可以同时拥有多个会话。
-请求头 `x-session-id` 为可选项，不传时使用 `default`。
+`web_client` 和 `feishu` 渠道可省略请求头 `x-session-id`，此时使用内部 `default` 主会话上下文；
+其他渠道必须传入。所有渠道都不能显式传 `default`，传入值必须是规范的小写连字符 UUIDv7。
 仅 `session_id` 为 `default` 时，向模型提供后台任务工具
 `feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`。
 请求头使用 `x-user-id`，接口字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
 OAuth2 用户标识配置使用 `user_id_claim`。
 
 会话历史保存在 `session_history_path` 目录中，文件名固定为
-`[user_id]~session~[session_id].yaml`。
+`user_id=[user_id]&channel=[channel]&type=session&session_id=[session_id].yaml`（各值使用 URL 编码）。
 后台任务每次运行的上下文也保存在该目录，文件名为
-`[user_id]~background~[session_id].yaml`。后台任务每次执行时生成
-`32 位 UUID` 格式的 `session_id`，保存历史时直接复用此 ID；执行时间以文件修改时间为准。
+`user_id=[user_id]&channel=[channel]&type=not_interactive&session_id=[session_id].yaml`。后台任务每次执行时生成
+UUIDv7 格式的 `session_id`，保存历史时直接复用此 ID；执行时间以文件修改时间为准。
+`llm.max_history_files_per_user` 控制每个用户最多保留的历史文件数。加载历史时会按修改时间清理超额文件，
+并删除历史目录中不符合上述命名格式的文件。
 模型可感知当前 `session_id`，并通过 `list_sessions` 和 `read_session` 分页查看当前用户已保存的
 普通会话及后台执行历史。历史查询只读，不会切换当前会话或自动合并其他会话的上下文。
 
@@ -365,7 +368,7 @@ OAuth2 用户标识配置使用 `user_id_claim`。
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
   -H "x-user-id: demo-user" \
-  -H "x-session-id: chat-001" \
+  -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"你好，介绍一下你自己"}]'
 ```
@@ -376,7 +379,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
   -H "x-user-id: demo-user" \
-  -H "x-session-id: chat-001" \
+  -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"帮我看看这个文件"}]' \
   -F "files=@example.txt"
@@ -603,8 +606,8 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `read_doc_file` | 使用 firecrawl-anydoc 读取 Word、PowerPoint、Excel（含旧版和宏格式）、OpenDocument、RTF、EPUB、CSV、PDF，输出 Markdown |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |
 | `ask_user_question` | 向用户发送表单提问 |
-| `list_sessions` | 分页查看当前用户的普通会话和后台执行历史 |
-| `read_session` | 按会话 ID 和类型分页读取历史消息 |
+| `list_sessions` | 分页查看当前用户的普通会话和后台执行历史，包含各自的渠道名 |
+| `read_session` | 按会话 ID 分页读取历史消息 |
 | `feishu_schedule` | 为当前飞书会话创建单次或周期后台定时任务 |
 | `feishu_schedule_list` | 查看当前用户的定时任务 |
 | `feishu_schedule_cancel` | 取消当前用户拥有的定时任务 |

@@ -8,6 +8,7 @@ from fastapi import Depends, Form, Header, HTTPException, status
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
 from ...utils.ids import DEFAULT_SESSION_ID, validate_session_id, validate_user_id
+from .auth import AuthenticatedChannel, require_channel_jwt
 from .schema import InputContent
 from .session_guard import SessionChatGuard
 
@@ -46,10 +47,26 @@ def user_id_header(
 
 
 def session_id_header(
-    session_id: Annotated[str, Header(description="会话 ID", alias="x-session-id")] = DEFAULT_SESSION_ID,
+    channel: Annotated[AuthenticatedChannel, Depends(require_channel_jwt)],
+    session_id: Annotated[
+        str | None,
+        Header(
+            description="UUIDv7 会话 ID；仅 web_client 和 feishu 可省略并使用主会话",
+            alias="x-session-id",
+        ),
+    ] = None,
 ) -> str:
     """Validate the session ID from the request header."""
+    if session_id is None:
+        if channel.name in {"web_client", "feishu"}:
+            return DEFAULT_SESSION_ID
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="x-session-id is required for this channel",
+        )
     try:
+        if session_id == DEFAULT_SESSION_ID:
+            raise PathProtectionError("The default session ID cannot be passed explicitly")
         return validate_session_id(session_id)
     except PathProtectionError:
         raise HTTPException(
@@ -99,7 +116,9 @@ def session_metadata(
     except json.JSONDecodeError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid JSON format")
     if not isinstance(metadata, dict):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_metadata must be a JSON object")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="session_metadata must be a JSON object"
+        )
     # channel 是服务端按 JWT kid 识别的独立字段，不接受调用方通过元数据传入。
     metadata.pop("channel", None)
     return metadata

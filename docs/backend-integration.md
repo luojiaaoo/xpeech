@@ -121,10 +121,11 @@ claims = {
 | --- | --- | --- |
 | `Authorization` | 是 | 短期 Bearer JWT |
 | `x-user-id` | 是 | 业务侧稳定用户 ID，用于隔离工作区、技能和 MCP 连接 |
-| `x-session-id` | 否 | 会话 ID，默认 `default`，用于隔离上下文和并发请求 |
+| `x-session-id` | 视渠道而定 | `web_client` 和 `feishu` 可缺省并使用主会话；其他渠道必填。显式传入时必须是规范的小写连字符 UUIDv7，不能传 `default` |
 | `x-sender-name` | `/chat` 必填 | 展示用用户名；非 ASCII 字符必须做 UTF-8 URL 编码 |
 
-`user_id` 和 `session_id` 长度为 1～128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_`。
+`user_id` 长度为 1～128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_`。
+服务端内部使用特殊值 `default` 表示主会话；调用方传入的 `session_id` 只允许规范的小写连字符 UUIDv7。
 
 同一用户可同时使用多个不同的 `session_id`。会话历史按 `user_id + session_id` 隔离，但同一用户的文件工作区是共享的。只有 `default` 会话会加载后台任务工具。
 
@@ -157,7 +158,7 @@ Accept: text/event-stream
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
   -H "x-user-id: demo-user" \
-  -H "x-session-id: chat-001" \
+  -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -H "Accept: text/event-stream" \
   -F 'content=[{"text":"你好，请介绍一下自己"}]'
@@ -169,7 +170,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
   -H "x-user-id: demo-user" \
-  -H "x-session-id: chat-001" \
+  -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"请分析这些附件"}]' \
   -F 'files=@report.pdf' \
@@ -219,7 +220,7 @@ Content-Type: multipart/form-data
 curl -X POST "http://localhost:7878/chat_sync" \
   -H "Authorization: Bearer <JWT>" \
   -H "x-user-id: demo-user" \
-  -H "x-session-id: chat-001" \
+  -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"你好，请介绍一下自己"}]'
 ```
@@ -398,7 +399,7 @@ Content-Type: application/x-www-form-urlencoded
 curl -X POST "http://localhost:7878/answer_question" \
   -H "Authorization: Bearer <JWT>" \
   -H "x-user-id: demo-user" \
-  -H "x-session-id: chat-001" \
+  -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -F 'answer={"service_name":"order-api","environment":"prod","regions":["cn-shanghai","cn-beijing"],"release_date":"2026-10-29","change_window":"2026-10-29 22:00:00"}'
 ```
 
@@ -450,7 +451,7 @@ BASE_URL = os.getenv("XPEECH_BASE_URL", "http://localhost:7878").rstrip("/")
 JWT_SECRET = os.environ["XPEECH_JWT_SECRET"]
 JWT_KID = os.getenv("XPEECH_JWT_KID", "web_client")
 USER_ID = "demo-user"
-SESSION_ID = "chat-001"
+SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 SENDER_NAME = "张三"
 
 

@@ -2,12 +2,11 @@
 
 from collections.abc import AsyncIterator
 from typing import Any
-from uuid import uuid4
 
 from fastapi import UploadFile
 
 from ..utils.file_io import save_to_workspace
-from ..utils.ids import DEFAULT_SESSION_ID
+from ..utils.ids import DEFAULT_SESSION_ID, generate_session_id, validate_session_id
 from .runner import AgentRunner
 from .server.schema import InboundMessage, InputContent, InputText
 from .tools.schedule.schema import ScheduledExecution, ScheduledExecutionResult
@@ -46,7 +45,7 @@ async def _prepare_chat(
 
     message = InboundMessage(
         user_id=user_id,
-        session_id=session_id,
+        session_id=validate_session_id(session_id),
         sender_name=sender_name,
         channel=channel,
         session_metadata=session_metadata or {},
@@ -117,7 +116,7 @@ async def execute_scheduled_chat(user_id: str, request: ScheduledExecution) -> S
     """Run a scheduled synchronous Agent with isolated history and no interactive tools."""
     message = InboundMessage(
         user_id=user_id,
-        session_id=uuid4().hex,
+        session_id=generate_session_id(),
         sender_name=request.sender_name,
         channel=request.channel,
         session_metadata={**request.session_metadata, "source": "scheduled_task"},

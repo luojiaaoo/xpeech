@@ -140,6 +140,7 @@ class LLMConfig(BaseModel):
     parallel: int = Field(default=4)
     summary_tokens: int = Field(default=8192, gt=0)
     max_iterations: int = Field(default=40, ge=1)
+    max_history_files_per_user: int = Field(default=100, ge=1)
 
     @field_validator("api_key_config")
     @classmethod
