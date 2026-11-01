@@ -8,14 +8,14 @@ from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app
 from xpeech.agent.server.dependencies import CHAT_GUARD, settings
 from xpeech.agent.server.schema import InputText
-from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
+from xpeech.utils.channel_jwt import ChannelJWTAuth
 
 UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 BUSY_UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000002"
 
 
 def chat_headers(**extra):
-    token = create_channel_access_token(ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key))
+    token = ChannelJWTAuth.create_token("web_client", secret_key=settings.jwt.channels["web_client"].secret_key)
     headers = {
         "Authorization": f"Bearer {token}",
         "x-user-id": "user",
@@ -97,7 +97,7 @@ def test_channel_comes_only_from_jwt_kid_and_ignores_request_input(fake_runner):
 
 
 def test_channel_jwt_signed_with_another_channels_key_is_rejected(fake_runner):
-    forged = create_channel_access_token(ChannelJWTAuth("feishu", settings.jwt.web_client_secret_key))
+    forged = ChannelJWTAuth.create_token("feishu", secret_key=settings.jwt.channels["web_client"].secret_key)
 
     response = TestClient(app).post(
         "/chat_sync",

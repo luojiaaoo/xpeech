@@ -37,7 +37,7 @@ from xpeech.subapp.scheduler.background import (
     start_background_scheduler,
     stop_background_scheduler,
 )
-from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
+from xpeech.utils.channel_jwt import ChannelJWTAuth
 from xpeech.utils.internal_jwt import (
     create_internal_access_token,
     decode_internal_access_token,
@@ -567,7 +567,7 @@ async def test_background_message_long_poll_times_out_with_204(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_http, monkeypatch):
-    token = create_channel_access_token(ChannelJWTAuth("feishu", settings.jwt.feishu_secret_key))
+    token = ChannelJWTAuth.create_token("feishu", secret_key=settings.jwt.channels["feishu"].secret_key)
     queue = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
     queue.put_nowait(
         FeishuBackgroundMessage(
@@ -641,10 +641,10 @@ async def test_scheduler_and_execution_endpoints_require_jwt(app, method, path):
 @pytest.mark.parametrize("channel", ["feishu", "web_client"])
 async def test_channel_jwt_cannot_access_internal_endpoints(app, method, path, channel):
     keys = {
-        "feishu": settings.jwt.feishu_secret_key,
-        "web_client": settings.jwt.web_client_secret_key,
+        "feishu": settings.jwt.channels["feishu"].secret_key,
+        "web_client": settings.jwt.channels["web_client"].secret_key,
     }
-    token = create_channel_access_token(ChannelJWTAuth(channel, keys[channel]))
+    token = ChannelJWTAuth.create_token(channel, secret_key=keys[channel])
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",

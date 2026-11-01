@@ -15,24 +15,18 @@ from xpeech.agent.server.api import app
 from xpeech.agent.server.context import get_lark_user_access_token
 from xpeech.agent.tools import sandbox
 from xpeech.config.settings import JWTConfig, settings
-from xpeech.utils.channel_jwt import (
-    ChannelJWTAuth,
-    create_channel_access_token,
-    decode_channel_access_token,
-)
+from xpeech.utils.channel_jwt import ChannelJWTAuth
 from xpeech.utils.internal_jwt import (
     create_internal_access_token,
     decode_internal_access_token,
 )
 
 TEST_SECRET_KEY = "test-secret-key-that-is-at-least-32-bytes"
-TEST_CHANNEL_AUTH = ChannelJWTAuth(
-    "test",
-    "test-channel-key-that-is-at-least-32-bytes",
-)
+TEST_CHANNEL = "test"
+TEST_CHANNEL_KEY = "test-channel-key-that-is-at-least-32-bytes"
 
 
-def test_example_jwt_config_has_three_flat_signing_keys():
+def test_example_jwt_config_defines_web_and_feishu_as_channels():
     with Path("conf.toml.example").open("rb") as config_file:
         config = tomllib.load(config_file)
 
@@ -40,12 +34,14 @@ def test_example_jwt_config_has_three_flat_signing_keys():
 
     assert set(config["jwt"]) == {
         "secret_key",
-        "web_client_secret_key",
-        "feishu_secret_key",
+        "channels",
         "algorithm",
         "access_token_expire_seconds",
     }
-    assert jwt_config.model_dump() == {**config["jwt"], "channels": {}}
+    assert set(jwt_config.channels) == {"web_client", "feishu"}
+    for name, channel in jwt_config.channels.items():
+        assert channel.secret_key == config["jwt"]["channels"][name]["secret_key"]
+        assert channel.channel_tags == []
     assert "jwt" not in config["web_client"]
     assert "jwt" not in config["feishu"]
 
@@ -53,18 +49,16 @@ def test_example_jwt_config_has_three_flat_signing_keys():
 @pytest.mark.parametrize(
     "first, second",
     [
-        ("secret_key", "web_client_secret_key"),
-        ("secret_key", "feishu_secret_key"),
-        ("web_client_secret_key", "feishu_secret_key"),
+        ("internal", "web_client"),
+        ("internal", "feishu"),
+        ("web_client", "feishu"),
     ],
 )
 def test_jwt_config_rejects_reused_signing_keys(first, second):
-    config = {
-        "secret_key": TEST_SECRET_KEY,
-        "web_client_secret_key": "test-web-channel-key-that-is-at-least-32-bytes",
-        "feishu_secret_key": "test-feishu-channel-key-that-is-at-least-32-bytes",
-    }
-    config[second] = config[first]
+    config = settings.jwt.model_dump()
+    config["channels"][second]["secret_key"] = (
+        config["secret_key"] if first == "internal" else config["channels"][first]["secret_key"]
+    )
 
     with pytest.raises(ValueError, match="must use distinct values"):
         JWTConfig.model_validate(config)
@@ -89,12 +83,11 @@ def test_internal_and_channel_tokens_use_shared_jwt_settings(monkeypatch, algori
     monkeypatch.setattr(settings.jwt, "access_token_expire_seconds", 30)
     now = datetime.now(UTC)
     internal_secret = "i" * 64
-    channel_auth = ChannelJWTAuth("test", "c" * 64)
 
     internal_token = create_internal_access_token(secret_key=internal_secret, now=now)
-    channel_token = create_channel_access_token(channel_auth, now=now)
+    channel_token = ChannelJWTAuth.create_token("test", secret_key="c" * 64, now=now)
     internal_claims = decode_internal_access_token(internal_token, secret_key=internal_secret)
-    channel_claims = decode_channel_access_token(channel_token, channel_auth)
+    channel_claims = ChannelJWTAuth(channel_token, secret_key="c" * 64).claims
 
     assert jwt.get_unverified_header(internal_token)["alg"] == algorithm
     assert jwt.get_unverified_header(channel_token)["alg"] == algorithm
@@ -103,13 +96,10 @@ def test_internal_and_channel_tokens_use_shared_jwt_settings(monkeypatch, algori
 
 
 def test_access_token_can_carry_lark_user_access_token():
-    token = create_channel_access_token(
-        TEST_CHANNEL_AUTH,
-        lark_user_access_token="u-request-token",
-    )
+    token = ChannelJWTAuth.create_token(TEST_CHANNEL, secret_key=TEST_CHANNEL_KEY, lark_user_access_token="u-request-token")
 
     assert (
-        decode_channel_access_token(token, TEST_CHANNEL_AUTH)[
+        ChannelJWTAuth(token, secret_key=TEST_CHANNEL_KEY).claims[
             "lark_user_access_token"
         ]
         == "u-request-token"
@@ -123,7 +113,7 @@ def test_api_rejects_invalid_lark_user_access_token_claim(lark_user_access_token
             "exp": datetime.now(UTC) + timedelta(seconds=60),
             "lark_user_access_token": lark_user_access_token,
         },
-        settings.jwt.feishu_secret_key,
+        settings.jwt.channels["feishu"].secret_key,
         algorithm=settings.jwt.algorithm,
         headers={"kid": "feishu"},
     )
@@ -169,10 +159,7 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
 
     async def send(client, user_id, lark_user_access_token):
-        token = create_channel_access_token(
-            ChannelJWTAuth("feishu", settings.jwt.feishu_secret_key),
-            lark_user_access_token=lark_user_access_token,
-        )
+        token = ChannelJWTAuth.create_token("feishu", secret_key=settings.jwt.channels["feishu"].secret_key, lark_user_access_token=lark_user_access_token)
         return await client.post(
             "/chat",
             headers={
@@ -213,23 +200,18 @@ def test_expired_access_token_is_rejected():
 
 def test_channel_access_token_only_requires_expiration():
     now = datetime.now(UTC)
-    token = create_channel_access_token(TEST_CHANNEL_AUTH, now=now)
+    token = ChannelJWTAuth.create_token(TEST_CHANNEL, secret_key=TEST_CHANNEL_KEY, now=now)
 
-    claims = decode_channel_access_token(
-        token,
-        TEST_CHANNEL_AUTH,
-    )
+    claims = ChannelJWTAuth(token, secret_key=TEST_CHANNEL_KEY).claims
 
     assert claims["exp"] == int((now + timedelta(seconds=60)).timestamp())
     assert jwt.get_unverified_header(token)["alg"] == "HS256"
-    assert jwt.get_unverified_header(token)["kid"] == TEST_CHANNEL_AUTH.channel
+    assert jwt.get_unverified_header(token)["kid"] == TEST_CHANNEL
     assert set(claims) == {"exp"}
 
 
 def test_channel_token_cannot_be_decoded_as_internal_token():
-    token = create_channel_access_token(
-        ChannelJWTAuth("feishu", settings.jwt.feishu_secret_key)
-    )
+    token = ChannelJWTAuth.create_token("feishu", secret_key=settings.jwt.channels["feishu"].secret_key)
 
     with pytest.raises(jwt.InvalidTokenError):
         decode_internal_access_token(token)
@@ -258,15 +240,10 @@ def test_api_rejects_lark_user_token_in_internal_jwt():
 
 
 def test_one_channel_key_cannot_impersonate_another_channel():
-    token = create_channel_access_token(
-        ChannelJWTAuth("feishu", settings.jwt.feishu_secret_key)
-    )
+    token = ChannelJWTAuth.create_token("feishu", secret_key=settings.jwt.channels["feishu"].secret_key)
 
     with pytest.raises(jwt.InvalidTokenError):
-        decode_channel_access_token(
-            token,
-            ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key),
-        )
+        ChannelJWTAuth(token, secret_key=settings.jwt.channels["web_client"].secret_key).claims
 
 
 @pytest.mark.parametrize(
@@ -283,8 +260,8 @@ def test_one_channel_key_cannot_impersonate_another_channel():
 def test_kid_cannot_select_a_different_signing_key(source, kid):
     keys = {
         "internal": settings.jwt.secret_key,
-        "feishu": settings.jwt.feishu_secret_key,
-        "web_client": settings.jwt.web_client_secret_key,
+        "feishu": settings.jwt.channels["feishu"].secret_key,
+        "web_client": settings.jwt.channels["web_client"].secret_key,
     }
     token = jwt.encode(
         {"exp": datetime.now(UTC) + timedelta(seconds=60)},
@@ -322,7 +299,7 @@ def test_api_rejects_unknown_kid(headers):
 
 @pytest.mark.parametrize(
     "secret_key",
-    [settings.jwt.feishu_secret_key, settings.jwt.web_client_secret_key],
+    [settings.jwt.channels["feishu"].secret_key, settings.jwt.channels["web_client"].secret_key],
 )
 def test_api_rejects_channel_token_without_kid(secret_key):
     token = jwt.encode(
@@ -341,10 +318,7 @@ def test_api_rejects_channel_token_without_kid(secret_key):
 
 
 def test_web_channel_key_cannot_supply_lark_user_token():
-    token = create_channel_access_token(
-        ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key),
-        lark_user_access_token="must-be-feishu-scoped",
-    )
+    token = ChannelJWTAuth.create_token("web_client", secret_key=settings.jwt.channels["web_client"].secret_key, lark_user_access_token="must-be-feishu-scoped")
 
     response = TestClient(app).post(
         "/answer_question",
@@ -361,12 +335,12 @@ def test_web_channel_key_cannot_supply_lark_user_token():
 @pytest.mark.parametrize(
     "channel, secret_key",
     [
-        ("feishu", settings.jwt.feishu_secret_key),
-        ("web_client", settings.jwt.web_client_secret_key),
+        ("feishu", settings.jwt.channels["feishu"].secret_key),
+        ("web_client", settings.jwt.channels["web_client"].secret_key),
     ],
 )
 def test_api_accepts_each_configured_channel_jwt(channel, secret_key):
-    token = create_channel_access_token(ChannelJWTAuth(channel, secret_key))
+    token = ChannelJWTAuth.create_token(channel, secret_key=secret_key)
 
     response = TestClient(app).post(
         "/answer_question",
@@ -383,8 +357,8 @@ def test_api_accepts_each_configured_channel_jwt(channel, secret_key):
 @pytest.mark.parametrize(
     "kid, secret_key",
     [
-        ("feishu", settings.jwt.feishu_secret_key),
-        ("web_client", settings.jwt.web_client_secret_key),
+        ("feishu", settings.jwt.channels["feishu"].secret_key),
+        ("web_client", settings.jwt.channels["web_client"].secret_key),
     ],
 )
 @pytest.mark.parametrize("expired", [False, True])
@@ -422,7 +396,7 @@ def test_api_requires_jwt():
 
 def test_api_rejects_token_signed_with_another_key():
     client = TestClient(app)
-    token = create_channel_access_token(ChannelJWTAuth("feishu", TEST_SECRET_KEY))
+    token = ChannelJWTAuth.create_token("feishu", secret_key=TEST_SECRET_KEY)
 
     response = client.post(
         "/answer_question",
@@ -453,8 +427,8 @@ def test_token_endpoint_rejects_wrong_jwt_secret():
 def test_token_endpoint_issues_channel_jwt_for_docs(channel):
     client = TestClient(app)
     keys = {
-        "feishu": settings.jwt.feishu_secret_key,
-        "web_client": settings.jwt.web_client_secret_key,
+        "feishu": settings.jwt.channels["feishu"].secret_key,
+        "web_client": settings.jwt.channels["web_client"].secret_key,
     }
 
     token_response = client.post(
@@ -466,7 +440,7 @@ def test_token_endpoint_issues_channel_jwt_for_docs(channel):
     assert token_response.headers["cache-control"] == "no-store"
     assert token_response.json()["token_type"] == "bearer"
     token = token_response.json()["access_token"]
-    claims = decode_channel_access_token(token, ChannelJWTAuth(channel, keys[channel]))
+    claims = ChannelJWTAuth(token, secret_key=keys[channel]).claims
     assert jwt.get_unverified_header(token)["kid"] == channel
     assert set(claims) == {"exp"}
 
@@ -525,7 +499,7 @@ def test_business_endpoints_reject_internal_jwt(method, path):
     ],
 )
 def test_statistics_endpoints_reject_feishu_channel(path):
-    token = create_channel_access_token(ChannelJWTAuth("feishu", settings.jwt.feishu_secret_key))
+    token = ChannelJWTAuth.create_token("feishu", secret_key=settings.jwt.channels["feishu"].secret_key)
 
     response = TestClient(app).get(path, headers={"Authorization": f"Bearer {token}"})
 

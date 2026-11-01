@@ -39,17 +39,20 @@ Compose 部署默认由 Nginx 对外提供该 Base URL，并按 `x-user-id` 做�
 ## 3. JWT 鉴权
 
 除健康检查、API 文档和浏览器预览外，本文涉及的 API 都需要短期 JWT。
-`[jwt]` 集中配置三组独立密钥：`secret_key` 用于 backend、scheduler 之间的内部互信，
-channel 分别使用 `feishu_secret_key` 和 `web_client_secret_key`。
-三把密钥必须互不相同：
+`jwt.secret_key` 用于 backend、scheduler 之间的内部互信，所有通道统一在
+`jwt.channels` 下配置各自的 `secret_key`。内部密钥与所有通道密钥必须互不相同：
 
 ```toml
 [jwt]
 secret_key = "replace-with-a-random-secret-of-at-least-32-characters"
-feishu_secret_key = "replace-with-a-different-feishu-channel-secret"
-web_client_secret_key = "replace-with-a-different-web-channel-secret"
 algorithm = "HS256"
 access_token_expire_seconds = 60
+
+[jwt.channels.web_client]
+secret_key = "replace-with-a-different-web-channel-secret"
+
+[jwt.channels.feishu]
+secret_key = "replace-with-a-different-feishu-channel-secret"
 ```
 
 自定义系统可配置独立 JWT 通道：
@@ -62,7 +65,7 @@ channel_tags = ["crm"]
 
 请求使用该密钥签名并设置 JWT header `kid="crm"`，或在 `/token` 使用
 `username=crm`、对应密钥作为 `password` 获取令牌。所有内部及通道密钥必须互不相同。
-通道名不能使用 `internal`、`feishu`、`web_client`。后端按验签后的 `kid` 从配置读取标签，
+通道名不能使用 `internal`；`web_client` 和 `feishu` 也采用上述通道配置结构。后端按验签后的 `kid` 从配置读取标签，
 忽略 payload、请求头或会话元数据中自带的标签。没有标签的内建技能/MCP 为公共资源；
 有标签的内建技能/MCP 仅在与通道标签存在交集时展示或注册。
 用户工作区里的技能不受标签匹配限制，全部加载。自定义通道不具备统计或内部接口权限。
@@ -70,8 +73,8 @@ channel_tags = ["crm"]
 Token 至少需要包含 `exp`；所有 JWT 共用 `[jwt]` 中的 `algorithm` 和
 `access_token_expire_seconds`，默认 HS256、60 秒。签发方应与这两项配置保持一致。
 内部 JWT 不携带 `kid`，直接使用 `secret_key` 验签。channel JWT 的 header 必须
-携带 `kid`：`feishu` 对应 `feishu_secret_key`，`web_client` 对应
-`web_client_secret_key`。本文介绍的聊天、追问、后台消息、文件、技能接口都必须使用
+携带 `kid`，并使用 `jwt.channels.<kid>.secret_key` 签名。
+本文介绍的聊天、追问、后台消息、文件、技能接口都必须使用
 带有效 channel `kid` 的 JWT，不接受内部 JWT；`/statistics` 及其子接口只接受
 `kid=web_client`。`/internal/scheduled-run` 和 scheduler 服务的接口只使用内部密钥验签。
 建议接入方在每次请求前签发新 Token，不要缓存到过期边界。
@@ -105,7 +108,7 @@ claims = {
 
 该字段只在当前请求上下文中使用，不会保存到会话历史。后续请求需要重新携带；
 使用 `jwt.secret_key` 签发的 internal token 不接受这一声明。
-飞书 token 应使用 `jwt.feishu_secret_key` 签名，并在 header 中设置 `kid="feishu"`。
+飞书 token 应使用 `jwt.channels.feishu.secret_key` 签名，并在 header 中设置 `kid="feishu"`。
 携带非空字段时，沙盒加载 `lark-skills-token`，使用 JWT 中的用户令牌，
 且 `lark-cli` 不会回退请求 `lark-token-manager`；未携带时加载 `lark-skills` 和 `lark-cli-auth`，使用令牌容器。
 
@@ -121,7 +124,7 @@ claims = {
 | --- | --- | --- |
 | `Authorization` | 是 | 短期 Bearer JWT |
 | `x-user-id` | 是 | 业务侧稳定用户 ID，用于隔离工作区、技能和 MCP 连接 |
-| `x-session-id` | 视渠道而定 | `web_client` 和 `feishu` 可缺省并使用主会话；其他渠道必填。显式传入时必须是规范的小写连字符 UUIDv7，不能传 `default` |
+| `x-session-id` | 否 | 所有通道均可省略并使用主会话。显式传入时必须是规范的小写连字符 UUIDv7，不能传 `default` |
 | `x-sender-name` | `/chat` 必填 | 展示用用户名；非 ASCII 字符必须做 UTF-8 URL 编码 |
 
 `user_id` 长度为 1～128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_`。
@@ -611,7 +614,7 @@ if __name__ == "__main__":
 
 ```bash
 export XPEECH_BASE_URL="http://localhost:7878"
-export XPEECH_JWT_SECRET="<conf.toml 中的 jwt.web_client_secret_key>"
+export XPEECH_JWT_SECRET="<conf.toml 中的 jwt.channels.web_client.secret_key>"
 export XPEECH_JWT_KID="web_client"
 python xpeech_question_demo.py
 ```

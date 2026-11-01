@@ -16,12 +16,16 @@ max_file_size_mb = 10
 # Generate three distinct keys with: python -c "import secrets; print(secrets.token_hex(32))"
 # Internal service-to-service trust.
 secret_key = "replace-with-a-random-secret-of-at-least-32-characters"
-# Each channel uses its own key.
-web_client_secret_key = "replace-with-a-different-web-channel-secret-key"
-feishu_secret_key = "replace-with-a-different-feishu-channel-secret"
 # Shared by internal services and all channels.
 algorithm = "HS256"
 access_token_expire_seconds = 60
+
+# Every channel uses its name as the JWT header kid and an independent key.
+[jwt.channels.web_client]
+secret_key = "replace-with-a-different-web-channel-secret-key"
+
+[jwt.channels.feishu]
+secret_key = "replace-with-a-different-feishu-channel-secret"
 
 # Custom channels use their name as the JWT header kid and an independent key.
 # Tags are granted by this server-side configuration, not by JWT claims.

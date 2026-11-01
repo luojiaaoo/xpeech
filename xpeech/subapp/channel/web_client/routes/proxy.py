@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import Response, StreamingResponse
 from yarl import URL
 
-from .....utils.channel_jwt import ChannelJWTAuth
 from ...helper import _backend_headers, fetch_file, open_chat_stream, submit_question
 from ..dao import User
 
@@ -16,7 +15,7 @@ UserDependency = Callable[..., Awaitable[User] | User]
 
 def create_proxy_router(
     backend_url: str,
-    backend_auth: ChannelJWTAuth,
+    jwt_secret_key: str,
     current_user_dependency: UserDependency,
     admin_user_dependency: UserDependency,
 ) -> APIRouter:
@@ -70,7 +69,8 @@ def create_proxy_router(
             content,
             json.dumps(metadata, ensure_ascii=False),
             str(URL(backend_url) / "chat"),
-            backend_auth,
+            "web_client",
+            secret_key=jwt_secret_key,
             files=upload_data,
             json_output=json_output,
         )
@@ -108,7 +108,8 @@ def create_proxy_router(
             user.user_id,
             answer,
             backend_url,
-            backend_auth,
+            "web_client",
+            secret_key=jwt_secret_key,
         )
         return Response(
             upstream.content,
@@ -125,7 +126,8 @@ def create_proxy_router(
             user.user_id,
             path,
             backend_url,
-            backend_auth,
+            "web_client",
+            secret_key=jwt_secret_key,
         )
         headers = {}
         if disposition := upstream.headers.get("content-disposition"):
@@ -151,7 +153,7 @@ def create_proxy_router(
         async with httpx.AsyncClient(timeout=30) as client:
             upstream = await client.get(
                 upstream_url,
-                headers=_backend_headers(user.user_id, backend_auth),
+                headers=_backend_headers(user.user_id, "web_client", secret_key=jwt_secret_key),
                 params=request.query_params.multi_items(),
             )
 

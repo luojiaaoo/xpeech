@@ -22,6 +22,7 @@ UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 @pytest.fixture
 def channels(monkeypatch):
     channels = {
+        **settings.jwt.channels,
         "crm": JWTChannelConfig(secret_key=CRM_KEY, channel_tags=["crm", "sales"]),
         "erp": JWTChannelConfig(secret_key=ERP_KEY, channel_tags=["erp"]),
     }
@@ -29,7 +30,7 @@ def channels(monkeypatch):
     return channels
 
 
-@pytest.mark.parametrize("name", ["internal", "web_client", "feishu", "", "bad name"])
+@pytest.mark.parametrize("name", ["internal", "", "bad name"])
 def test_custom_channels_reject_reserved_or_invalid_names(name):
     config = settings.jwt.model_dump()
     config["channels"] = {name: {"secret_key": CRM_KEY, "channel_tags": ["crm"]}}
@@ -38,10 +39,11 @@ def test_custom_channels_reject_reserved_or_invalid_names(name):
         JWTConfig.model_validate(config)
 
 
-@pytest.mark.parametrize("key_source", ["secret_key", "web_client_secret_key", "feishu_secret_key"])
+@pytest.mark.parametrize("key_source", ["internal", "web_client", "feishu"])
 def test_custom_channel_cannot_reuse_builtin_key(key_source):
     config = settings.jwt.model_dump()
-    config["channels"] = {"crm": {"secret_key": config[key_source], "channel_tags": ["crm"]}}
+    secret_key = config["secret_key"] if key_source == "internal" else config["channels"][key_source]["secret_key"]
+    config["channels"]["crm"] = {"secret_key": secret_key, "channel_tags": ["crm"]}
 
     with pytest.raises(ValueError, match="distinct values"):
         JWTConfig.model_validate(config)
@@ -64,7 +66,8 @@ def test_resource_tag_validation_is_consistent(channel_tags):
         skill_module.SkillMetadata(name="demo", description="Demo", channel_tags=channel_tags)
 
 
-def test_custom_channel_can_get_token_and_use_business_endpoints(channels):
+@pytest.mark.parametrize("session_id", [None, UUID7_SESSION_ID])
+def test_custom_channel_can_get_token_and_use_business_endpoints(channels, session_id):
     client = TestClient(app)
     response = client.post("/token", data={"username": "crm", "password": CRM_KEY})
     assert response.status_code == 200
@@ -73,8 +76,9 @@ def test_custom_channel_can_get_token_and_use_business_endpoints(channels):
     headers = {
         "Authorization": f"Bearer {token}",
         "x-user-id": "tag-test",
-        "x-session-id": UUID7_SESSION_ID,
     }
+    if session_id is not None:
+        headers["x-session-id"] = session_id
     assert client.post("/answer_question", data={"answer": "ok"}, headers=headers).status_code == 200
     assert client.get("/statistics", headers=headers).status_code == 403
     assert client.post("/internal/scheduled-run", headers=headers).status_code == 401
@@ -141,8 +145,12 @@ def test_skill_api_filters_using_server_channel_tags(
     assert visible_skills("crm", CRM_KEY, channel_tags=["erp"]) == user_skill_names | {"public", "crm-skill", "shared"}
     assert visible_skills("erp", ERP_KEY) == user_skill_names | {"public", "erp-skill", "shared"}
     assert visible_skills(
-        "web_client", settings.jwt.web_client_secret_key, channel_tags=["crm"]
+        "web_client", settings.jwt.channels["web_client"].secret_key, channel_tags=["crm"]
     ) == user_skill_names | {"public"}
+    monkeypatch.setattr(settings.jwt.channels["web_client"], "channel_tags", ["crm"])
+    assert visible_skills(
+        "web_client", settings.jwt.channels["web_client"].secret_key
+    ) == user_skill_names | {"public", "crm-skill"}
 
 
 @pytest.mark.asyncio
@@ -158,12 +166,14 @@ async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tm
 
 
 @pytest.mark.parametrize("path, not_interactive", [("/chat", False), ("/chat_sync", True)])
+@pytest.mark.parametrize("session_id", [None, UUID7_SESSION_ID])
 def test_chat_passes_verified_channel_tags_to_registration(
     channels,
     monkeypatch,
     tmp_path,
     path,
     not_interactive,
+    session_id,
 ):
     created = []
 
@@ -184,14 +194,16 @@ def test_chat_passes_verified_channel_tags_to_registration(
         algorithm=settings.jwt.algorithm,
         headers={"kid": "crm"},
     )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "x-user-id": "tag-user",
+        "x-sender-name": "test",
+    }
+    if session_id is not None:
+        headers["x-session-id"] = session_id
     response = TestClient(app).post(
         path,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "x-user-id": "tag-user",
-            "x-session-id": UUID7_SESSION_ID,
-            "x-sender-name": "test",
-        },
+        headers=headers,
         data={"content": '[{"text":"hello"}]', "session_metadata": '{"channel":"erp","channel_tags":"erp"}'},
     )
     assert response.status_code == 200

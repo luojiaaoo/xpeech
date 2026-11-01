@@ -71,17 +71,21 @@ uv run python -c "import secrets; print(secrets.token_hex(32))"
 [jwt]
 # 仅供 backend、scheduler 等内部服务互信
 secret_key = "replace-with-an-internal-random-value"
-web_client_secret_key = "replace-with-a-different-web-random-value"
-feishu_secret_key = "replace-with-a-different-feishu-random-value"
 algorithm = "HS256"
 access_token_expire_seconds = 60
+
+[jwt.channels.web_client]
+secret_key = "replace-with-a-different-web-random-value"
+
+[jwt.channels.feishu]
+secret_key = "replace-with-a-different-feishu-random-value"
 ```
 
 三组密钥至少 32 个字符、必须互不相同；算法和有效期在 `[jwt]` 下统一配置，
 默认 HS256、60 秒，有效期最长 60 秒。Compose 中的服务读取同一份 `conf.toml`，使用各自的密钥。
 内部 token 不携带 `kid`，直接使用 `secret_key` 验签。channel token 的 header
-使用 `kid` 选择密钥：`web_client` 对应 `web_client_secret_key`，`feishu` 对应
-`feishu_secret_key`。聊天、追问、后台消息、文件、技能接口必须使用带 `kid` 的 channel JWT；
+使用 `kid` 从 `jwt.channels` 选择同名通道的 `secret_key`，包括 `web_client` 和 `feishu`。
+聊天、追问、后台消息、文件、技能接口必须使用带 `kid` 的 channel JWT；
 `/statistics` 及其子接口只接受 `kid=web_client`。`/internal/scheduled-run` 和 scheduler
 服务的接口只使用内部密钥验签，不要求 `kid`。
 
@@ -93,8 +97,8 @@ secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
 channel_tags = ["crm", "sales"]
 ```
 
-自定义通道密钥至少 32 个字符，必须与内部密钥及其他通道密钥互不相同；通道名不能使用
-`internal`、`feishu`、`web_client`。自定义通道使用统一的 JWT 算法和有效期，支持业务接口，
+所有通道密钥至少 32 个字符，必须与内部密钥及其他通道密钥互不相同；通道名不能使用
+`internal`。所有通道使用统一的 JWT 算法和有效期，支持业务接口，
 也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口仍仅接受 `web_client`，内部接口仍使用内部密钥。
 通道的 `channel_tags` 由服务端配置确定，JWT payload 或会话元数据中的 `channel_tags` 不授予任何权限。
 省略通道 `channel_tags` 或配置 `[]` 时，该通道加载公共内建技能、公共 MCP，以及用户自己的全部技能。
@@ -157,7 +161,7 @@ uv run -m xpeech token_manager
 
 Swagger UI、ReDoc 及 `/openapi.json` 可直接访问。在
 Swagger UI 右上角点击 `Authorize`：`username` 填写 `web_client` 或 `feishu`，
-`password` 填写对应的 `jwt.web_client_secret_key` 或 `jwt.feishu_secret_key`。
+`password` 填写对应的 `jwt.channels.web_client.secret_key` 或 `jwt.channels.feishu.secret_key`。
 Swagger 会调用 `/token` 校验密钥并签发带 channel `kid`、有效期
 由 `jwt.access_token_expire_seconds` 决定的 JWT，后续调试请求会自动携带该令牌。部署时必须使用 HTTPS，避免共享密钥在
 传输过程中泄露。
@@ -328,8 +332,8 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 
 `user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、技能和 MCP 连接；`session_id`
 标识该用户的一次会话，用于隔离上下文、并发聊天和提问回答。同一个用户可以同时拥有多个会话。
-`web_client` 和 `feishu` 渠道可省略请求头 `x-session-id`，此时使用内部 `default` 主会话上下文；
-其他渠道必须传入。所有渠道都不能显式传 `default`，传入值必须是规范的小写连字符 UUIDv7。
+所有通道均可省略请求头 `x-session-id`，此时使用内部 `default` 主会话上下文；
+显式传入时必须是规范的小写连字符 UUIDv7，不能传 `default`。
 仅 `session_id` 为 `default` 时，向模型提供后台任务工具
 `feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`。
 请求头使用 `x-user-id`，接口字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，

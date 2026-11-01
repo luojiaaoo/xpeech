@@ -9,10 +9,33 @@ from xpeech.subapp.channel import helper
 from xpeech.subapp.channel.schema import ChatEventType, Message, TextData
 from xpeech.utils.channel_jwt import ChannelJWTAuth
 
-TEST_AUTH = ChannelJWTAuth(
-    "test",
-    "test-channel-key-that-is-at-least-32-bytes",
-)
+TEST_CHANNEL = "test"
+TEST_SECRET_KEY = "test-channel-key-that-is-at-least-32-bytes"
+
+
+@pytest.mark.asyncio
+async def test_backend_requests_use_channel_tokens_and_a_user_header(monkeypatch):
+    requests = []
+    client_class = httpx.AsyncClient
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, content=b"ok")
+
+    monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client_class(
+        transport=httpx.MockTransport(respond), **kwargs,
+    ))
+    stream = await helper.open_chat_stream("alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL, secret_key=TEST_SECRET_KEY)
+    await stream.aclose()
+    await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL, secret_key=TEST_SECRET_KEY)
+    await helper.fetch_file("alice", "report.txt", "http://backend.test", TEST_CHANNEL, secret_key=TEST_SECRET_KEY)
+    assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/sessions/alice/files"]
+    for request in requests:
+        assert request.headers["x-user-id"] == "alice"
+        token = request.headers["authorization"].removeprefix("Bearer ")
+        auth = ChannelJWTAuth(token, TEST_SECRET_KEY)
+        assert auth.channel == TEST_CHANNEL
+        assert set(auth.claims) == {"exp"}
 
 
 class _JsonErrorStream(httpx.AsyncByteStream):
@@ -43,7 +66,7 @@ async def test_iter_chat_events_reads_streaming_error_response(monkeypatch: pyte
             async for event in helper.iter_chat_events(
                 [message],
                 "http://backend.test/chat",
-                TEST_AUTH,
+                TEST_CHANNEL,
             )
         ]
 
@@ -87,7 +110,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
     events = helper.iter_chat_events(
         [message],
         "http://backend.test/chat",
-        TEST_AUTH,
+        TEST_CHANNEL,
     )
     thinking = await anext(events)
     assert thinking.event == ChatEventType.THINKING

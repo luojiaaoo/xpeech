@@ -126,7 +126,7 @@ def create_app(config: WebConfig) -> FastAPI:
     app.include_router(
         create_proxy_router(
             config.backend_url,
-            config.backend_auth,
+            config.jwt_secret_key,
             current_user,
             admin_user,
         )
@@ -204,7 +204,7 @@ def run(
         database_path=settings.web_client.database_path.resolve(),
         static_dir=static_dir.resolve(),
         system_name=_configured_system_name(),
-        jwt_secret_key=settings.jwt.web_client_secret_key,
+        jwt_secret_key=settings.jwt.channels["web_client"].secret_key,
         cookie_name=settings.web_client.cookie_name,
         oauth2=oauth2_config,
         inject_prompt=InjectPromptWebConfig(
