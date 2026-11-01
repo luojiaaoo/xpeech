@@ -14,7 +14,7 @@ from xpeech.agent import execute as execute_module
 from xpeech.agent.server.api import app
 from xpeech.agent.server.context import get_lark_user_access_token
 from xpeech.agent.tools import sandbox
-from xpeech.config.settings import JWTConfig, settings
+from xpeech.config.settings import JWTChannelConfig, JWTConfig, settings
 from xpeech.utils.channel_jwt import (
     ChannelJWTAuth,
     create_channel_access_token,
@@ -233,6 +233,34 @@ def test_channel_token_cannot_be_decoded_as_internal_token():
 
     with pytest.raises(jwt.InvalidTokenError):
         decode_internal_access_token(token)
+
+
+@pytest.mark.parametrize("path, method", [
+    ("/answer_question", "POST"),
+    ("/chat", "POST"),
+    ("/sessions/bob/files?path=report.txt", "GET"),
+    ("/skills?user_id=bob", "GET"),
+])
+def test_user_identity_jwt_cannot_be_used_as_a_backend_channel_token(monkeypatch, path, method):
+    monkeypatch.setitem(settings.jwt.channels, "crm", JWTChannelConfig(secret_key=TEST_CHANNEL_AUTH.secret_key))
+    token = jwt.encode(
+        {"sub": "alice", "exp": datetime.now(UTC) + timedelta(seconds=settings.jwt.access_token_expire_seconds)},
+        TEST_CHANNEL_AUTH.secret_key,
+        algorithm=settings.jwt.algorithm,
+        headers={"kid": "crm"},
+    )
+    response = TestClient(app).request(
+        method,
+        path,
+        data={"answer": "ok", "content": "[]"} if method == "POST" else None,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "x-user-id": "bob",
+            "x-sender-name": "Bob",
+            "x-session-id": "018f0000-0000-7000-8000-000000000001",
+        },
+    )
+    assert response.status_code == 401
 
 
 def test_api_rejects_lark_user_token_in_internal_jwt():
