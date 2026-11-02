@@ -332,6 +332,8 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 需要从自有业务后端、机器人通道或其他服务完整接入聊天、SSE 事件、追问回调和文件下载时，
 请参阅 [后端接入说明](docs/backend-integration.md)。
 
+需要将现成聊天界面嵌入业务网站时，请参阅 [iframe 嵌入接入文档](docs/iframe-integration.md)。
+
 `/chat` 需要带用户 `sub` 的 Bearer JWT，并通过 `x-sender-name` 请求头传入发送者用户名。
 用户 ID 只取已验签 JWT 的 `sub`；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码。
 
