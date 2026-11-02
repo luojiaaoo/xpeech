@@ -1,4 +1,4 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -14,7 +14,7 @@ from .tool_executor import ToolExecutionResult
 ChatCallable = Callable[..., Awaitable[LLMResponse]]
 ToolExecutorCallable = Callable[
     [list[ToolCallRequest], dict[str, Any]],
-    Awaitable[list[ToolExecutionResult]],
+    AsyncIterator[ToolExecutionResult],
 ]
 
 
@@ -112,9 +112,7 @@ class MemoryConsolidator:
         async with self._store.memory_file.transaction():
             return await self._consolidate_locked(clean_messages)
 
-    async def _consolidate_locked(
-        self, clean_messages: list[dict[str, Any]]
-    ) -> ConsolidationResult:
+    async def _consolidate_locked(self, clean_messages: list[dict[str, Any]]) -> ConsolidationResult:
         """在已有文件锁的保护下整理并保存记忆。"""
         memory_context = await self._store.get_memory_context() or "(empty)"
         messages_for_consolidation = [
@@ -140,13 +138,9 @@ class MemoryConsolidator:
         execution_results = []
         # 同一模型响应中的多个保存调用也必须按顺序执行。
         for tool_call in response.tool_calls:
-            execution_results.extend(
-                await self._execute_tools([tool_call], response.mapping_tool_call_funcs)
-            )
-        saved = any(
-            execution.call.name == "save_memory" and execution.succeeded
-            for execution in execution_results
-        )
+            async for execution in self._execute_tools([tool_call], response.mapping_tool_call_funcs):
+                execution_results.append(execution)
+        saved = any(execution.call.name == "save_memory" and execution.succeeded for execution in execution_results)
         if not saved:
             logger.info("记忆整理过程中未成功调用 save_memory 工具")
             return ConsolidationResult(

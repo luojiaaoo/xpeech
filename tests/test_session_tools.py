@@ -1,7 +1,7 @@
 import json
 import os
-from pathlib import Path
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -277,14 +277,18 @@ async def test_executor_injects_current_session_id_and_ignores_spoofed_arguments
     list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
     executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
 
-    results = await executor.execute(
-        [
-            ToolCallRequest(id="list", name="list_sessions", arguments={"session_id": SESSION_IDS[1]}),
-            ToolCallRequest(id="read", name="read_session", arguments={"session_id": SESSION_IDS[0]}),
-        ],
-        {"list_sessions": list_sessions, "read_session": read_session},
-        session_id=SESSION_IDS[0],
-    )
+    results = [
+        result
+        async for result in executor.execute(
+            [
+                ToolCallRequest(id="list", name="list_sessions", arguments={"session_id": SESSION_IDS[1]}),
+                ToolCallRequest(id="read", name="read_session", arguments={"session_id": SESSION_IDS[0]}),
+            ],
+            {"list_sessions": list_sessions, "read_session": read_session},
+            session_id=SESSION_IDS[0],
+        )
+    ]
+    results.sort(key=lambda result: result.call.id)
     assert results[0].succeeded
     assert json.loads(results[0].value)["total"] == 0
     assert not results[1].succeeded

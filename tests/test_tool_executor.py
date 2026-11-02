@@ -194,10 +194,13 @@ class TestToolExecutor:
         monkeypatch.setattr(shell_module, "_run_wrapped_command", timed_out_command)
         shell = build_shell_tools(tmp_path)
 
-        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=32).execute(
-            [ToolCallRequest(id="1", name="shell", arguments={"command": "sleep 10", "timeout_ms": 500})],
-            {"shell": shell},
-        )
+        [result] = [
+            result
+            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=32).execute(
+                [ToolCallRequest(id="1", name="shell", arguments={"command": "sleep 10", "timeout_ms": 500})],
+                {"shell": shell},
+            )
+        ]
 
         assert result.succeeded is True
         assert result.value.startswith("ERROR: Command timed out after 0")
@@ -216,7 +219,7 @@ class TestToolExecutor:
         assert result == full_result
 
     @pytest.mark.asyncio
-    async def test_executes_tools_and_preserves_request_order(self, tmp_path: Path):
+    async def test_executes_each_tool_once(self, tmp_path: Path):
         async def echo(args: EchoArgs) -> str:
             return args.text
 
@@ -225,15 +228,93 @@ class TestToolExecutor:
             ToolCallRequest(id="1", name="echo", arguments={"text": "first"}),
         ]
 
-        results = await ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
-            calls,
-            {"echo": echo},
-            loop_count=3,
-        )
+        results = [
+            result
+            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+                calls,
+                {"echo": echo},
+                loop_count=3,
+            )
+        ]
 
         assert [result.call.id for result in results] == ["2", "1"]
         assert [result.value for result in results] == ["second", "first"]
         assert all(result.succeeded for result in results)
+
+    @pytest.mark.asyncio
+    async def test_yields_completed_tool_before_other_tools_finish(self, tmp_path: Path):
+        release_slow = asyncio.Event()
+        slow_started = asyncio.Event()
+
+        async def slow_tool() -> str:
+            slow_started.set()
+            await release_slow.wait()
+            return "slow"
+
+        async def fast_tool() -> str:
+            await slow_started.wait()
+            return "fast"
+
+        calls = [
+            ToolCallRequest(id="slow", name="slow_tool", arguments={}),
+            ToolCallRequest(id="fast", name="fast_tool", arguments={}),
+        ]
+        executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+        results = []
+        async with asyncio.timeout(1):
+            async for result in executor.execute(calls, {"slow_tool": slow_tool, "fast_tool": fast_tool}):
+                results.append(result)
+                if result.call.id == "fast":
+                    assert not release_slow.is_set()
+                    release_slow.set()
+
+        assert [result.call.id for result in results] == ["fast", "slow"]
+        assert [result.value for result in results] == ["fast", "slow"]
+
+    @pytest.mark.asyncio
+    async def test_cancelling_iteration_cancels_pending_tools(self, tmp_path: Path):
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+        result_received = asyncio.Event()
+
+        async def stuck_tool() -> str:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        async def fast_tool() -> str:
+            await started.wait()
+            return "ready"
+
+        executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+
+        async def consume():
+            async for result in executor.execute(
+                [
+                    ToolCallRequest(id="stuck", name="stuck_tool", arguments={}),
+                    ToolCallRequest(id="fast", name="fast_tool", arguments={}),
+                ],
+                {"stuck_tool": stuck_tool, "fast_tool": fast_tool},
+            ):
+                assert result.call.id == "fast"
+                result_received.set()
+
+        consumer = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(result_received.wait(), timeout=1)
+        finally:
+            consumer.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await consumer
+
+        assert cancelled.is_set()
+
+    @pytest.mark.asyncio
+    async def test_empty_tool_calls_end_iteration(self, tmp_path: Path):
+        executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+        assert [result async for result in executor.execute([], {})] == []
 
     @pytest.mark.asyncio
     async def test_timed_out_tool_does_not_block_other_results(self, tmp_path: Path):
@@ -252,32 +333,38 @@ class TestToolExecutor:
             ToolCallRequest(id="1", name="stuck_tool", arguments={}),
             ToolCallRequest(id="2", name="fast_tool", arguments={}),
         ]
-        results = await ToolExecutor(
-            workspace=tmp_path,
-            max_result_chars=10_000,
-            max_tool_timeout=0.02,
-        ).execute(calls, {"stuck_tool": stuck_tool, "fast_tool": fast_tool})
+        results = [
+            result
+            async for result in ToolExecutor(
+                workspace=tmp_path,
+                max_result_chars=10_000,
+                max_tool_timeout=0.02,
+            ).execute(calls, {"stuck_tool": stuck_tool, "fast_tool": fast_tool})
+        ]
 
         assert cancelled.is_set()
-        assert [result.call.id for result in results] == ["1", "2"]
-        assert results[0].succeeded is False
-        assert results[0].value == "Tool call timed out after 0.02s"
-        assert results[1].succeeded is True
-        assert results[1].value == "ready"
+        assert [result.call.id for result in results] == ["2", "1"]
+        assert results[0].succeeded is True
+        assert results[0].value == "ready"
+        assert results[1].succeeded is False
+        assert results[1].value == "Tool call timed out after 0.02s"
 
     @pytest.mark.asyncio
     async def test_tool_raised_timeout_keeps_its_own_error(self, tmp_path: Path):
         async def network_tool() -> str:
             raise TimeoutError("read timed out")
 
-        [result] = await ToolExecutor(
-            workspace=tmp_path,
-            max_result_chars=10_000,
-            max_tool_timeout=300,
-        ).execute(
-            [ToolCallRequest(id="1", name="network_tool", arguments={})],
-            {"network_tool": network_tool},
-        )
+        [result] = [
+            result
+            async for result in ToolExecutor(
+                workspace=tmp_path,
+                max_result_chars=10_000,
+                max_tool_timeout=300,
+            ).execute(
+                [ToolCallRequest(id="1", name="network_tool", arguments={})],
+                {"network_tool": network_tool},
+            )
+        ]
 
         assert result.succeeded is False
         assert result.value == "TimeoutError: read timed out"
@@ -306,10 +393,14 @@ class TestToolExecutor:
             ToolCallRequest(id="2", name="context", arguments={}),
             ToolCallRequest(id="3", name="plain", arguments={"text": "plain"}),
         ]
-        results = await ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
-            calls, {"echo": echo, "context": context_only, "plain": plain},
-            session_metadata=metadata,
-        )
+        results = [
+            result
+            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+                calls,
+                {"echo": echo, "context": context_only, "plain": plain},
+                session_metadata=metadata,
+            )
+        ]
         assert all(result.succeeded for result in results)
         assert [result.value for result in results] == ["echo", "context", "plain"]
 
@@ -327,14 +418,17 @@ class TestToolExecutor:
 
         schema = as_tool(context)["function"]["parameters"]
         assert set(schema["properties"]) == {"text"}
-        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
-            [ToolCallRequest(id="1", name="context", arguments={"text": "ok"})],
-            {"context": context},
-            session_metadata={"source": "test"},
-            user_id="session-1",
-            sender_name="Alice",
-            channel="feishu",
-        )
+        [result] = [
+            result
+            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+                [ToolCallRequest(id="1", name="context", arguments={"text": "ok"})],
+                {"context": context},
+                session_metadata={"source": "test"},
+                user_id="session-1",
+                sender_name="Alice",
+                channel="feishu",
+            )
+        ]
         assert result.value == "ok:session-1:Alice:feishu:test"
 
     @pytest.mark.asyncio
@@ -349,14 +443,17 @@ class TestToolExecutor:
 
         schema = as_tool(with_channel)["function"]["parameters"]
         assert set(schema["properties"]) == {"text"}
-        results = await ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
-            [
-                ToolCallRequest(id="1", name="with_channel", arguments={"text": "a"}),
-                ToolCallRequest(id="2", name="without_channel", arguments={"text": "b"}),
-            ],
-            {"with_channel": with_channel, "without_channel": without_channel},
-            channel="feishu",
-        )
+        results = [
+            result
+            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+                [
+                    ToolCallRequest(id="1", name="with_channel", arguments={"text": "a"}),
+                    ToolCallRequest(id="2", name="without_channel", arguments={"text": "b"}),
+                ],
+                {"with_channel": with_channel, "without_channel": without_channel},
+                channel="feishu",
+            )
+        ]
         assert all(result.succeeded for result in results)
         assert [result.value for result in results] == ["a", "b"]
 
@@ -364,7 +461,9 @@ class TestToolExecutor:
     async def test_returns_failure_for_unregistered_tool(self, tmp_path: Path):
         call = ToolCallRequest(id="1", name="missing", arguments={})
 
-        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute([call], {})
+        [result] = [
+            result async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute([call], {})
+        ]
 
         assert not result.succeeded
         assert result.value == "ValueError: Tool is not registered for this request: missing"
@@ -377,10 +476,13 @@ class TestToolExecutor:
             return full_result
 
         call = ToolCallRequest(id="call/1", name="large_tool", arguments={})
-        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=12).execute(
-            [call],
-            {"large_tool": large_result},
-        )
+        [result] = [
+            result
+            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=12).execute(
+                [call],
+                {"large_tool": large_result},
+            )
+        ]
 
         assert result.succeeded
         assert result.value.startswith(full_result[:12])
@@ -398,10 +500,13 @@ class TestToolExecutor:
             return full_result
 
         call = ToolCallRequest(id="1", name="read_file", arguments={})
-        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=12).execute(
-            [call],
-            {"read_file": read_file},
-        )
+        [result] = [
+            result
+            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=12).execute(
+                [call],
+                {"read_file": read_file},
+            )
+        ]
 
         assert result.succeeded
         assert result.value == full_result
@@ -420,10 +525,13 @@ class TestToolExecutor:
             return full_result
 
         call = ToolCallRequest(id="1", name="multimodal", arguments={})
-        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=8).execute(
-            [call],
-            {"multimodal": multimodal_result},
-        )
+        [result] = [
+            result
+            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=8).execute(
+                [call],
+                {"multimodal": multimodal_result},
+            )
+        ]
 
         assert result.succeeded
         assert result.value == full_result
@@ -435,10 +543,13 @@ class TestToolExecutor:
             raise RuntimeError("x" * 40)
 
         call = ToolCallRequest(id="1", name="failure", arguments={})
-        [result] = await ToolExecutor(workspace=tmp_path, max_result_chars=16).execute(
-            [call],
-            {"failure": failing_tool},
-        )
+        [result] = [
+            result
+            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=16).execute(
+                [call],
+                {"failure": failing_tool},
+            )
+        ]
 
         assert not result.succeeded
         assert result.value == "RuntimeError: " + "x" * 40

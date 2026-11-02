@@ -313,10 +313,13 @@ async def test_search_error_is_reported_as_failed_execution(tmp_path, monkeypatc
     monkeypatch.setattr(web.requests, "get", fail)
     executor = ToolExecutor(tmp_path, max_result_chars=10_000)
     name = f"{engine}_search"
-    results = await executor.execute(
-        [ToolCallRequest(id="search-1", name=name, arguments={"query": "test"})],
-        {name: getattr(web, name)},
-    )
+    results = [
+        result
+        async for result in executor.execute(
+            [ToolCallRequest(id="search-1", name=name, arguments={"query": "test"})],
+            {name: getattr(web, name)},
+        )
+    ]
     assert not results[0].succeeded
     assert f"{label}搜索失败：offline" in results[0].value
 

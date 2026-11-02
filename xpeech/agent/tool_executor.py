@@ -1,5 +1,6 @@
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -68,8 +69,8 @@ class ToolExecutor:
         sender_name: str | None = None,
         channel: str | None = None,
         session_id: str | None = None,
-    ) -> list[ToolExecutionResult]:
-        """并发执行全部工具调用，并按原始顺序返回结构化结果。"""
+    ) -> AsyncIterator[ToolExecutionResult]:
+        """并发执行工具调用，每完成一个就立即产出对应结果。"""
 
         async def execute_one(tool_call: ToolCallRequest) -> ToolExecutionResult:
             """执行单个工具调用，并将异常转换为模型可读的结果。"""
@@ -141,23 +142,22 @@ class ToolExecutor:
                     succeeded=False,
                     duration_seconds=duration,
                 )
+            else:
+                duration = time.perf_counter() - start_time
+                logger.info(
+                    "Tool call successfully loop_count={} tool_name={} duration={:.2f}s",
+                    loop_count,
+                    tool_call.name,
+                    duration,
+                )
+                return ToolExecutionResult(
+                    call=tool_call,
+                    value=value,
+                    succeeded=True,
+                    duration_seconds=duration,
+                )
 
-            duration = time.perf_counter() - start_time
-            logger.info(
-                "Tool call successfully loop_count={} tool_name={} duration={:.2f}s",
-                loop_count,
-                tool_call.name,
-                duration,
-            )
-            return ToolExecutionResult(
-                call=tool_call,
-                value=value,
-                succeeded=True,
-                duration_seconds=duration,
-            )
-
-        tasks: list[asyncio.Task[ToolExecutionResult]] = []
         async with asyncio.TaskGroup() as task_group:
-            for tool_call in tool_calls:
-                tasks.append(task_group.create_task(execute_one(tool_call)))
-        return [task.result() for task in tasks]
+            tasks = [task_group.create_task(execute_one(tool_call)) for tool_call in tool_calls]
+            for completed in asyncio.as_completed(tasks):
+                yield await completed

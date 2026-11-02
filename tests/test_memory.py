@@ -99,14 +99,12 @@ class TestMemoryConsolidator:
             assert tool_calls == [tool_call]
             assert "save_memory" in mapping_tool_call_funcs
             assert loop_count is None
-            return [
-                ToolExecutionResult(
-                    call=tool_call,
-                    value="saved",
-                    succeeded=True,
-                    duration_seconds=0.1,
-                )
-            ]
+            yield ToolExecutionResult(
+                call=tool_call,
+                value="saved",
+                succeeded=True,
+                duration_seconds=0.1,
+            )
 
         consolidator = MemoryConsolidator(
             store=MemoryStore(tmp_path),

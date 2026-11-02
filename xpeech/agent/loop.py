@@ -127,9 +127,8 @@ class AgentLoop:
         messages_yaml.append(msg)
 
         # 执行工具调用
-        tool_call_result = []
         with_metas = []
-        execution_results = await self.tool_executor.execute(
+        async for execution in self.tool_executor.execute(
             response.tool_calls,
             response.mapping_tool_call_funcs,
             loop_count=loop_count,
@@ -138,8 +137,7 @@ class AgentLoop:
             sender_name=sender_name,
             channel=channel,
             session_id=session_id,
-        )
-        for execution in execution_results:
+        ):
             tool_call = execution.call
             result = execution.value
             success = execution.succeeded
@@ -179,7 +177,7 @@ class AgentLoop:
                 logger.info("Sending file {}", result)
                 yield {"event": "send_file", "context": result}
                 append_tool_result_messages_yaml(tool_call, result)
-                tool_call_result.append((tool_call.id, tool_call.name, f'已发送：{result}', duration_seconds))
+                tool_call_result = (tool_call.id, tool_call.name, f"已发送：{result}", duration_seconds)
             elif tool_call.name == "ask_user_question" and success:
                 # 等待用户输入
                 logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
@@ -199,10 +197,12 @@ class AgentLoop:
                 duration_seconds = time.perf_counter() - question_start_time
                 answer = question_event.answer
                 append_tool_result_messages_yaml(tool_call, answer)
-                tool_call_result.append((tool_call.id, tool_call.name, answer, duration_seconds))
+                tool_call_result = (tool_call.id, tool_call.name, answer, duration_seconds)
             else:
                 append_tool_result_messages_yaml(tool_call, result)
-                tool_call_result.append((tool_call.id, tool_call.name, result, duration_seconds))
+                tool_call_result = (tool_call.id, tool_call.name, result, duration_seconds)
+
+            yield {"event": "tool_call_result", "context": json.dumps([tool_call_result])}
 
         # 如果包含_meta属性，则把这类消息转成user消息
         if with_metas:
@@ -212,9 +212,6 @@ class AgentLoop:
                     "content": with_metas,
                 }
             )
-
-        # 输出工具调用结果消息
-        yield {"event": "tool_call_result", "context": json.dumps(tool_call_result)}
 
     # ----------------- agent loop run -----------------
 
