@@ -68,7 +68,12 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
             />
           ) : null}
           {field.type === 'date' || field.type === 'datetime' ? (
-            <DatePicker showTime={field.type === 'datetime'} className="full-width" />
+            <DatePicker
+              showTime={field.type === 'datetime'}
+              className="full-width"
+              classNames={{ popup: { root: 'question-date-picker-popup' } }}
+              popupAlign={{ offset: [0, 0], overflow: { adjustX: true, adjustY: true, shiftX: true, shiftY: true } }}
+            />
           ) : null}
         </Form.Item>
       ))}

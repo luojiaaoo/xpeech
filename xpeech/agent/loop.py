@@ -137,6 +137,7 @@ class AgentLoop:
             user_id=user_id,
             sender_name=sender_name,
             channel=channel,
+            session_id=session_id,
         )
         for execution in execution_results:
             tool_call = execution.call

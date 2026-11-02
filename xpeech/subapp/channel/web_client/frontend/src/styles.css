@@ -221,6 +221,40 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .sender-footer .sender-tip { min-width: 0; font-size: 11px; text-align: left; }
 .question-form { width: 500px; max-width: 100%; padding: 16px; background: #f7f9fc; border-radius: 12px; }
 .full-width { width: 100%; }
+/* Popup viewports are relative to the iframe, including when portaled to body. */
+.question-date-picker-popup { max-width: calc(100vw - 16px); }
+.question-date-picker-popup .ant-picker-panel-container {
+  max-width: 100%;
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+}
+.question-date-picker-popup .ant-picker-footer {
+  position: sticky;
+  z-index: 1;
+  bottom: 0;
+  background: var(--ant-color-bg-elevated, #fff);
+}
+@media (max-width: 575px) {
+  .question-date-picker-popup .ant-picker-panel-layout,
+  .question-date-picker-popup .ant-picker-datetime-panel {
+    flex-direction: column;
+  }
+  .question-date-picker-popup .ant-picker-date-panel,
+  .question-date-picker-popup .ant-picker-year-panel,
+  .question-date-picker-popup .ant-picker-month-panel,
+  .question-date-picker-popup .ant-picker-decade-panel {
+    width: min(280px, calc(100vw - 16px));
+  }
+  .question-date-picker-popup .ant-picker-datetime-panel .ant-picker-time-panel {
+    border-inline-start: 0;
+    border-top: 1px solid #f0f0f0;
+  }
+  .question-date-picker-popup .ant-picker-panel .ant-picker-time-panel .ant-picker-content {
+    height: min(144px, 25vh);
+    height: min(144px, 25dvh);
+  }
+}
 .admin-page { height: 100%; overflow: auto; padding: 32px; background: #f7f8fa; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
 .admin-page .ant-table-wrapper { background: #fff; padding: 8px 20px 20px; border-radius: 14px; border: 1px solid #e8e9ed; }
