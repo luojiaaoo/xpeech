@@ -16,6 +16,9 @@ def test_session_id_accepts_default_and_canonical_uuidv7():
 @pytest.mark.parametrize(
     "session_id",
     [
+        None,
+        "",
+        " ",
         "chat-1",
         "01234567-89ab-4def-8123-456789abcdef",
         "018F0000-0000-7000-8000-000000000001",

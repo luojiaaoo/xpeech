@@ -66,7 +66,7 @@ def test_resource_tag_validation_is_consistent(channel_tags):
         skill_module.SkillMetadata(name="demo", description="Demo", channel_tags=channel_tags)
 
 
-@pytest.mark.parametrize("session_id", [None, UUID7_SESSION_ID])
+@pytest.mark.parametrize("session_id", ["default", UUID7_SESSION_ID])
 def test_custom_channel_can_get_token_and_use_business_endpoints(channels, session_id):
     client = TestClient(app)
     response = client.post("/token", auth=("crm", CRM_KEY))
@@ -76,9 +76,8 @@ def test_custom_channel_can_get_token_and_use_business_endpoints(channels, sessi
     headers = {
         "Authorization": f"Bearer {token}",
         "x-user-id": "tag-test",
+        "x-session-id": session_id,
     }
-    if session_id is not None:
-        headers["x-session-id"] = session_id
     assert client.post("/answer_question", data={"answer": "ok"}, headers=headers).status_code == 200
     assert client.get("/statistics", headers=headers).status_code == 401
     assert client.post("/internal/scheduled-run", headers=headers).status_code == 401
@@ -164,7 +163,7 @@ async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tm
 
 
 @pytest.mark.parametrize("path, not_interactive", [("/chat", False), ("/chat_sync", True)])
-@pytest.mark.parametrize("session_id", [None, UUID7_SESSION_ID])
+@pytest.mark.parametrize("session_id", ["default", UUID7_SESSION_ID])
 def test_chat_passes_verified_channel_tags_to_registration(
     channels,
     monkeypatch,
@@ -195,10 +194,9 @@ def test_chat_passes_verified_channel_tags_to_registration(
     headers = {
         "Authorization": f"Bearer {token}",
         "x-user-id": "tag-user",
+        "x-session-id": session_id,
         "x-sender-name": "test",
     }
-    if session_id is not None:
-        headers["x-session-id"] = session_id
     response = TestClient(app).post(
         path,
         headers=headers,

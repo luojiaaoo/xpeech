@@ -334,8 +334,8 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 
 `user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、技能和 MCP 连接；`session_id`
 标识该用户的一次会话，用于隔离上下文、并发聊天和提问回答。同一个用户可以同时拥有多个会话。
-所有通道均可省略请求头 `x-session-id`，此时使用内部 `default` 主会话上下文；
-显式传入时必须是规范的小写连字符 UUIDv7，不能传 `default`。
+所有通道均必须传入非空请求头 `x-session-id`，只允许 `default`（主会话）或规范的小写连字符 UUIDv7；
+省略、空值或其他格式均返回 HTTP 422。
 仅 `session_id` 为 `default` 时，向模型提供后台任务工具
 `feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`。
 请求头使用 `x-user-id`，接口字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，

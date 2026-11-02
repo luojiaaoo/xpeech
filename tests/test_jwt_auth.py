@@ -178,6 +178,7 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
             headers={
                 "Authorization": f"Bearer {token}",
                 "x-user-id": user_id,
+                "x-session-id": "default",
                 "x-sender-name": "test-user",
             },
             data={"content": '[{"text":"hello"}]'},
@@ -345,6 +346,7 @@ def test_backend_accepts_lark_user_token_from_any_configured_channel(channel):
         headers={
             "Authorization": f"Bearer {token}",
             "x-user-id": "test",
+            "x-session-id": "default",
         },
     )
 
@@ -358,7 +360,8 @@ def test_backend_accepts_lark_user_token_from_any_configured_channel(channel):
         ("web_client", settings.jwt.channels["web_client"].secret_key),
     ],
 )
-def test_api_accepts_each_configured_channel_jwt(channel, secret_key):
+@pytest.mark.parametrize("session_id", ["default", "018f0000-0000-7000-8000-000000000001"])
+def test_api_accepts_each_configured_channel_jwt(channel, secret_key, session_id):
     token = create_token(ChannelTokenParams(channel))
 
     response = TestClient(app).post(
@@ -367,6 +370,7 @@ def test_api_accepts_each_configured_channel_jwt(channel, secret_key):
         headers={
             "Authorization": f"Bearer {token}",
             "x-user-id": "test",
+            "x-session-id": session_id,
         },
     )
 
@@ -485,6 +489,7 @@ def test_token_endpoint_issues_channel_jwt_for_docs(channel):
         headers={
             "Authorization": f"Bearer {token}",
             "x-user-id": "test",
+            "x-session-id": "default",
         },
     )
     assert api_response.status_code == 200

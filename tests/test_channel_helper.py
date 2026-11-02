@@ -34,6 +34,7 @@ async def test_backend_requests_use_channel_tokens_and_a_user_header(monkeypatch
     assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/sessions/alice/files"]
     for request in requests:
         assert request.headers["x-user-id"] == "alice"
+        assert request.headers["x-session-id"] == "default"
         token = request.headers["authorization"].removeprefix("Bearer ")
         auth = ChannelJWTAuth(token)
         assert auth.channel == TEST_CHANNEL

@@ -36,29 +36,31 @@ def test_sender_name_header_is_required():
     assert sender_name["required"] is True
 
 
-def test_session_id_header_is_optional_without_exposing_default_value():
+def test_session_id_header_is_required_without_a_default_value():
     for path in ("/chat", "/chat_sync", "/answer_question"):
         parameters = app.openapi()["paths"][path]["post"]["parameters"]
         session_id = next(parameter for parameter in parameters if parameter["name"] == "x-session-id")
         assert session_id["in"] == "header"
-        assert session_id["required"] is False
+        assert session_id["required"] is True
         assert "default" not in session_id["schema"]
 
 
-def test_session_id_header_uses_the_main_session_when_omitted():
-    assert session_id_header(None) == "default"
+def test_session_id_header_accepts_default_and_uuidv7():
+    assert session_id_header("default") == "default"
     assert session_id_header(UUID7_SESSION_ID) == UUID7_SESSION_ID
 
 
 @pytest.mark.parametrize(
     "session_id",
-    [None, UUID7_SESSION_ID],
+    ["default", UUID7_SESSION_ID],
 )
+@pytest.mark.parametrize("channel", ["web_client", "feishu"])
 @pytest.mark.parametrize("json_output", [None, False, True])
 def test_chat_initializes_all_tools_for_every_session(
     tmp_path,
     monkeypatch,
     session_id,
+    channel,
     json_output,
 ):
     from xpeech.agent import execute as execute_module
@@ -72,14 +74,13 @@ def test_chat_initializes_all_tools_for_every_session(
     create = AsyncMock(return_value=SimpleNamespace(workspace=tmp_path, run=run))
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
     monkeypatch.setattr(settings.llm, "support_json_output", True)
-    token = create_token(ChannelTokenParams("web_client"))
+    token = create_token(ChannelTokenParams(channel))
     headers = {
         "Authorization": f"Bearer {token}",
         "x-user-id": "user",
+        "x-session-id": session_id,
         "x-sender-name": "Alice",
     }
-    if session_id is not None:
-        headers["x-session-id"] = session_id
 
     data = {"content": '[{"text":"hello"}]'}
     if json_output is not None:
@@ -92,29 +93,45 @@ def test_chat_initializes_all_tools_for_every_session(
 
     assert response.status_code == 200
     create.assert_awaited_once_with("user", not_interactive=False, channel_tags=[])
-    assert messages[0].session_id == (session_id or "default")
+    assert messages[0].session_id == session_id
+    assert messages[0].channel == channel
     assert messages[0].json_output is (json_output is True)
 
 
 @pytest.mark.parametrize(
     "session_id",
-    ["default", "chat-1", "01234567-89ab-4def-8123-456789abcdef"],
+    [
+        None,
+        "",
+        " ",
+        "chat-1",
+        "01234567-89ab-4def-8123-456789abcdef",
+        UUID7_SESSION_ID.upper(),
+        UUID7_SESSION_ID.replace("-", ""),
+    ],
 )
-def test_chat_rejects_non_uuidv7_session_ids(session_id):
-    token = create_token(ChannelTokenParams("web_client"))
+@pytest.mark.parametrize("path", ["/chat", "/chat_sync", "/answer_question"])
+@pytest.mark.parametrize("channel", ["web_client", "feishu"])
+def test_chat_rejects_missing_empty_or_invalid_session_ids(session_id, path, channel):
+    token = create_token(ChannelTokenParams(channel))
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "x-user-id": "user",
+        "x-sender-name": "Alice",
+    }
+    if session_id is not None:
+        headers["x-session-id"] = session_id
     response = TestClient(app).post(
-        "/chat",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "x-user-id": "user",
-            "x-session-id": session_id,
-            "x-sender-name": "Alice",
-        },
-        data={"content": '[{"text":"hello"}]'},
+        path,
+        headers=headers,
+        data={"content": '[{"text":"hello"}]', "answer": "yes"},
     )
 
     assert response.status_code == 422
-    assert response.json() == {"detail": "Invalid session_id"}
+    if session_id is None:
+        assert any(error["loc"] == ["header", "x-session-id"] for error in response.json()["detail"])
+    else:
+        assert response.json() == {"detail": "Invalid session_id"}
 
 
 def test_unsupported_json_output_returns_http_error_before_starting_stream(monkeypatch):
@@ -129,6 +146,7 @@ def test_unsupported_json_output_returns_http_error_before_starting_stream(monke
         headers={
             "Authorization": f"Bearer {token}",
             "x-user-id": "user",
+            "x-session-id": "default",
             "x-sender-name": "Alice",
         },
         data={"content": '[{"text":"hello"}]', "json_output": "true"},

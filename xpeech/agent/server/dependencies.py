@@ -7,7 +7,7 @@ from fastapi import Depends, Form, Header, HTTPException, status
 
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
-from ...utils.ids import DEFAULT_SESSION_ID, validate_session_id, validate_user_id
+from ...utils.ids import validate_session_id, validate_user_id
 from .schema import InputContent
 from .session_guard import SessionChatGuard
 
@@ -47,19 +47,15 @@ def user_id_header(
 
 def session_id_header(
     session_id: Annotated[
-        str | None,
+        str,
         Header(
-            description="UUIDv7 会话 ID；省略时使用主会话",
+            description="必填会话 ID；所有通道均可传 default（主会话）或规范的小写连字符 UUIDv7",
             alias="x-session-id",
         ),
-    ] = None,
+    ],
 ) -> str:
     """Validate the session ID from the request header."""
-    if session_id is None:
-        return DEFAULT_SESSION_ID
     try:
-        if session_id == DEFAULT_SESSION_ID:
-            raise PathProtectionError("The default session ID cannot be passed explicitly")
         return validate_session_id(session_id)
     except PathProtectionError:
         raise HTTPException(

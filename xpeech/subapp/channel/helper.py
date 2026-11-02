@@ -12,6 +12,7 @@ from httpx_sse import EventSource
 from yarl import URL
 
 from ...utils.channel_jwt import ChannelTokenParams, create_token
+from ...utils.ids import DEFAULT_SESSION_ID
 from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
@@ -41,6 +42,7 @@ def _backend_headers(
     headers = {
         "authorization": f"Bearer {create_token(ChannelTokenParams(channel))}",
         "x-user-id": user_id,
+        "x-session-id": DEFAULT_SESSION_ID,
     }
     if sender_name is not None:
         headers["x-sender-name"] = quote(sender_name, safe="")

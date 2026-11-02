@@ -125,11 +125,11 @@ claims = {
 | --- | --- | --- |
 | `Authorization` | 是 | 短期 Bearer JWT |
 | `x-user-id` | 是 | 业务侧稳定用户 ID，用于隔离工作区、技能和 MCP 连接 |
-| `x-session-id` | 否 | 所有通道均可省略并使用主会话。显式传入时必须是规范的小写连字符 UUIDv7，不能传 `default` |
+| `x-session-id` | 是 | 所有通道均必须传入非空值，只允许 `default`（主会话）或规范的小写连字符 UUIDv7 |
 | `x-sender-name` | `/chat` 必填 | 展示用用户名；非 ASCII 字符必须做 UTF-8 URL 编码 |
 
 `user_id` 长度为 1～128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_`。
-服务端内部使用特殊值 `default` 表示主会话；调用方传入的 `session_id` 只允许规范的小写连字符 UUIDv7。
+所有通道均可传入 `default` 使用主会话，或传入规范的小写连字符 UUIDv7 使用独立会话；省略、空值或其他格式均返回 HTTP 422。
 
 同一用户可同时使用多个不同的 `session_id`。会话历史按 `user_id + session_id` 隔离，但同一用户的文件工作区是共享的。只有 `default` 会话会加载后台任务工具。
 

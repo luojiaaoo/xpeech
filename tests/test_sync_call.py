@@ -20,6 +20,7 @@ def chat_headers(**extra):
     headers = {
         "Authorization": f"Bearer {token}",
         "x-user-id": "user",
+        "x-session-id": "default",
         "x-sender-name": "Alice",
     }
     headers.update(extra)
@@ -115,15 +116,13 @@ def test_channel_jwt_signed_with_another_channels_key_is_rejected(fake_runner):
 
 @pytest.mark.parametrize(
     "session_id",
-    [None, UUID7_SESSION_ID],
+    ["default", UUID7_SESSION_ID],
 )
 def test_chat_sync_initializes_non_interactive_tools_for_every_session(
     fake_runner,
     session_id,
 ):
-    headers = chat_headers()
-    if session_id is not None:
-        headers["x-session-id"] = session_id
+    headers = chat_headers(**{"x-session-id": session_id})
 
     response = TestClient(app).post(
         "/chat_sync",
