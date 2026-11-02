@@ -621,7 +621,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `web_fetch` | 使用 requests 抓取网页、Trafilatura 提取正文和评论并输出 Markdown，保留链接和表格；模型可通过 include_images 选择保留图片信息；支持 HTTP 重定向，不启动浏览器、不执行 JavaScript |
 | `baidu_search` | 使用百度搜索中文网页，返回标题、链接、摘要；支持条数限制，不支持时间过滤 |
 | `bing_search` | 使用必应 RSS 搜索网页，返回标题、链接、摘要；支持条数限制，不支持时间过滤 |
-| `news_search` | 直接读取 Bing 新闻 RSS，返回标题、链接、摘要、日期和媒体来源；按 RSS 发布时间过滤时间范围 |
+| `news_search` | 直接读取 Bing 新闻 RSS，固定请求参数 `cc=us` 避免地区判定导致首页跳转；返回标题、链接、摘要、日期和媒体来源，按 RSS 发布时间过滤时间范围；非 RSS 响应报告新闻源异常 |
 | `create_browser_preview` | 将工作区内目录或单个 HTML 复制到 UUID 预览目录，返回目录 URL 前缀或完整文件 URL |
 | `read_doc_file` | 使用 firecrawl-anydoc 读取 Word、PowerPoint、Excel（含旧版和宏格式）、OpenDocument、RTF、EPUB、CSV、PDF，输出 Markdown |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |

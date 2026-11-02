@@ -144,21 +144,33 @@ async def baidu_search(args: BaiduSearchArgs) -> str:
     return json.dumps(hits, ensure_ascii=False, indent=2)
 
 
+def _fetch_bing_rss(url: str, params: dict[str, str], *, source: str) -> ElementTree.Element:
+    with requests.get(
+        url,
+        params=params,
+        headers={"User-Agent": _WEB_USER_AGENT},
+        timeout=(WEB_CONNECT_TIMEOUT_SECONDS, WEB_CONNECT_TIMEOUT_SECONDS),
+    ) as response:
+        response.raise_for_status()
+        try:
+            root = ElementTree.fromstring(response.content)
+        except ElementTree.ParseError as error:
+            raise ValueError(f"{source} 未返回有效 RSS，可能被重定向到首页或验证页，请稍后重试") from error
+    if root.tag != "rss" or root.find("channel") is None:
+        raise ValueError(f"{source} 未返回有效 RSS，可能被重定向到首页或验证页，请稍后重试")
+    return root
+
+
 async def bing_search(args: BingSearchArgs) -> str:
     """使用必应检索网页，返回标题、链接、摘要和排名。
     默认返回 5 条，最多 10 条，不支持时间过滤。需要正文时，用 web_fetch 读取结果链接。
     """
     def search() -> list[dict[str, Any]]:
-        with requests.get(
+        root = _fetch_bing_rss(
             "https://cn.bing.com/search",
-            params={"q": args.query, "format": "rss"},
-            headers={"User-Agent": _WEB_USER_AGENT},
-            timeout=(WEB_CONNECT_TIMEOUT_SECONDS, WEB_CONNECT_TIMEOUT_SECONDS),
-        ) as response:
-            response.raise_for_status()
-            root = ElementTree.fromstring(response.content)
-        if root.tag != "rss":
-            raise ValueError("Bing returned a non-RSS response")
+            {"q": args.query, "format": "rss"},
+            source="Bing",
+        )
         return [
             {
                 "title": item.findtext("title", ""),
@@ -194,22 +206,14 @@ async def news_search(args: NewsSearchArgs) -> str:
     timelimit 按 RSS 中的发布时间过滤，默认返回 5 条，最多 10 条。需要正文时，用 web_fetch 读取结果链接。
     """
     def search() -> list[dict[str, Any]]:
-        params = {"q": args.query, "format": "rss"}
+        # Pin the news region to avoid Bing's regional homepage redirects.
+        params = {"q": args.query, "format": "rss", "cc": "us"}
         cutoff = None
         if args.timelimit:
             params["qft"] = 'sortbydate="1"'
             days = {"d": 1, "w": 7, "m": 30, "y": 365}[args.timelimit]
             cutoff = datetime.now(UTC) - timedelta(days=days)
-        with requests.get(
-            "https://www.bing.com/news/search",
-            params=params,
-            headers={"User-Agent": _WEB_USER_AGENT},
-            timeout=(WEB_CONNECT_TIMEOUT_SECONDS, WEB_CONNECT_TIMEOUT_SECONDS),
-        ) as response:
-            response.raise_for_status()
-            root = ElementTree.fromstring(response.content)
-        if root.tag != "rss":
-            raise ValueError("Bing News returned a non-RSS response")
+        root = _fetch_bing_rss("https://www.bing.com/news/search", params, source="Bing News")
 
         hits = []
         for item in root.findall("./channel/item"):

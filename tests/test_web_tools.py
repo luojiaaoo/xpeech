@@ -254,7 +254,7 @@ async def test_web_search_routes_and_normalizes_results(engine, monkeypatch):
         })]
     else:
         assert calls == [("bing", "https://www.bing.com/news/search", {
-            "params": {"q": "测试", "format": "rss", "qft": 'sortbydate="1"'},
+            "params": {"q": "测试", "format": "rss", "cc": "us", "qft": 'sortbydate="1"'},
             "headers": {"User-Agent": web._WEB_USER_AGENT},
             "timeout": (10, 10),
         })]
@@ -272,6 +272,9 @@ async def test_split_search_tools_expose_independent_schemas_and_defaults(monkey
     result = json.loads(await web.bing_search(web.BingSearchArgs(query="test")))
     assert result[0]["url"] == "https://example.test"
     assert calls == [("https://cn.bing.com/search", {"q": "test", "format": "rss"})]
+    news_result = json.loads(await web.news_search(web.NewsSearchArgs(query="test")))
+    assert news_result[0]["url"] == "https://example.test"
+    assert calls[-1] == ("https://www.bing.com/news/search", {"q": "test", "format": "rss", "cc": "us"})
     for tool, properties in [
         (web.baidu_search, {"query", "max_results"}),
         (web.bing_search, {"query", "max_results"}),
@@ -294,13 +297,65 @@ async def test_web_search_empty_results(engine, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine,label", [("bing", "Bing"), ("news", "新闻")])
-@pytest.mark.parametrize("content", [b"<html><body>Verify you are human</body></html>", b"not XML"])
+@pytest.mark.parametrize("content", [
+    b"<!doctype html><html><body>Bing homepage</body></html>",
+    b"<html><body>Verify you are human</body></html>",
+    b'<script type="text/javascript">var example = 1;</script><style>html{color:black}</style>',
+    b"not XML",
+    b"",
+    b"<rss />",
+])
 async def test_search_rejects_invalid_feed_instead_of_reporting_empty_results(content, monkeypatch, engine, label):
     monkeypatch.setattr(web.requests, "get", lambda *_args, **_kwargs: nullcontext(
         SimpleNamespace(content=content, raise_for_status=lambda: None)
     ))
-    with pytest.raises(RuntimeError, match=f"{label}搜索失败"):
+    with pytest.raises(RuntimeError, match=f"{label}搜索失败.*未返回有效 RSS"):
         await getattr(web, f"{engine}_search")(SEARCH_ARG_TYPES[engine](query="test"))
+
+
+@pytest.mark.asyncio
+async def test_news_pins_country_and_preserves_filters(monkeypatch):
+    calls = []
+    now = datetime.now(UTC).replace(microsecond=0)
+    items = [
+        {"title": "old", "date": format_datetime(now - timedelta(days=2))},
+        {"title": "recent", "date": format_datetime(now - timedelta(hours=1))},
+        {"title": "other", "date": format_datetime(now - timedelta(hours=2))},
+    ]
+    for item in items:
+        item.update(url="https://example.test/article", abstract="summary", source="Example publisher")
+
+    def get(url, **kwargs):
+        calls.append((url, kwargs["params"]))
+        return rss_response(items)
+
+    monkeypatch.setattr(web.requests, "get", get)
+    result = json.loads(await web.news_search(web.NewsSearchArgs(query="今日热点新闻", timelimit="d", max_results=1)))
+
+    params = {"q": "今日热点新闻", "format": "rss", "cc": "us", "qft": 'sortbydate="1"'}
+    assert calls == [("https://www.bing.com/news/search", params)]
+    assert result == [{
+        "title": "recent",
+        "url": "https://example.test/article",
+        "abstract": "summary",
+        "date": (now - timedelta(hours=1)).isoformat(),
+        "publisher": "Example publisher",
+        "rank": "1",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_news_reports_invalid_feed_without_repeating_identical_request(monkeypatch):
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append(kwargs["params"])
+        return nullcontext(SimpleNamespace(content=b"not XML", raise_for_status=lambda: None))
+
+    monkeypatch.setattr(web.requests, "get", get)
+    with pytest.raises(RuntimeError, match="新闻搜索失败.*未返回有效 RSS"):
+        await web.news_search(web.NewsSearchArgs(query="test"))
+    assert calls == [{"q": "test", "format": "rss", "cc": "us"}]
 
 
 @pytest.mark.asyncio
