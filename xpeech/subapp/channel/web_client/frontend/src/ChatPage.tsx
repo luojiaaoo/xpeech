@@ -135,7 +135,11 @@ function renderStreamContent(type: StreamEventType, content: string, streaming: 
   return markdown;
 }
 
-export default function ChatPage({ systemName, sessionId }: { systemName: string; sessionId?: string }) {
+export default function ChatPage({ systemName, sessionId, active = true }: {
+  systemName: string;
+  sessionId: string;
+  active?: boolean;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [value, setValue] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -149,24 +153,33 @@ export default function ChatPage({ systemName, sessionId }: { systemName: string
 
   useEffect(() => () => requestRef.current?.abort(), []);
 
+  useEffect(() => {
+    if (active) return;
+    requestRef.current?.abort();
+    requestRef.current = null;
+    setMessages(finishChatTurn);
+    setLoading(false);
+  }, [active]);
+
   useEffect(() => subscribePendingUserPrefix((userPrefix) => {
     setPendingUserPrefix(userPrefix);
     setUserPrefixExpanded(false);
   }), []);
 
   useEffect(() => {
+    if (!active) return;
     const frame = requestAnimationFrame(() => {
       bubbleListRef.current?.scrollTo({ top: 'bottom', behavior: loading ? 'auto' : 'smooth' });
     });
     return () => cancelAnimationFrame(frame);
-  }, [loading, messages]);
+  }, [active, loading, messages]);
 
   function appendEvent(event: ChatEvent) {
     setMessages((current) => appendChatEvent(current, event));
   }
 
   async function send(text: string) {
-    if (loading || requestRef.current || (!text.trim() && files.length === 0)) return;
+    if (!active || loading || requestRef.current || (!text.trim() && files.length === 0)) return;
     const controller = new AbortController();
     requestRef.current = controller;
     const sentFiles = files;
@@ -261,7 +274,7 @@ export default function ChatPage({ systemName, sessionId }: { systemName: string
     : pendingUserPrefix;
 
   return (
-    <main className="chat-page">
+    <div className="chat-page">
       <div className="chat-content">
         {messages.length === 0 ? (
           <Flex vertical align="center" justify="center" className="welcome-area" gap={18}>
@@ -317,6 +330,6 @@ export default function ChatPage({ systemName, sessionId }: { systemName: string
         />
         <Typography.Text type="secondary" className="sender-tip">内容由 AI 生成，请核实重要信息</Typography.Text>
       </div>
-    </main>
+    </div>
   );
 }

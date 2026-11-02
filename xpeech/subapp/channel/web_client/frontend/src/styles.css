@@ -3,8 +3,20 @@ html, body, #root { margin: 0; min-width: 320px; min-height: 100%; height: 100%;
 body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2329; background: #f5f6f8; }
 .loading-page { width: min(420px, calc(100% - 32px)); margin: 25vh auto; }
 .embedded-app { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: #fff; }
-.embedded-chat-toolbar { display: flex; align-items: center; flex-shrink: 0; padding: 4px 8px; border-bottom: 1px solid #edf0f5; }
-.embedded-chat-content { flex: 1; min-height: 0; }
+.chat-workspace { height: 100%; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: #fff; }
+.embedded-app > .chat-workspace { flex: 1; }
+.conversation-toolbar { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 12px 28px; border-bottom: 1px solid #edf0f5; }
+.conversation-heading { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.conversation-heading .ant-segmented { padding: 3px; background: #f4f6f9; }
+.conversation-heading .ant-segmented-item-label { display: flex; align-items: center; gap: 6px; padding-inline: 12px; }
+.conversation-title { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.conversation-title .anticon { color: #3370ff; }
+.conversation-description { font-size: 12px; color: #86909c; white-space: nowrap; }
+.new-conversation-button { flex-shrink: 0; border-color: #dce5f5; color: #245bdb; box-shadow: none; }
+.conversation-panel { flex: 1; min-width: 0; min-height: 0; }
+.conversation-panel[hidden] { display: none; }
+.conversation-loading { max-width: 720px; margin: 24px auto; padding: 0 20px; }
+.chat-workspace-embedded .conversation-toolbar { min-height: 52px; padding: 9px 14px; }
 .app-shell { height: 100vh; height: 100dvh; overflow: hidden; }
 .brand-mark, .header-brand-mark { display: grid; place-items: center; color: white; background: linear-gradient(145deg, #3370ff, #6957f5); font-weight: 800; box-shadow: 0 8px 24px #3370ff40; }
 .app-header { height: 56px; flex-shrink: 0; line-height: normal; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 24px; background: #fff; border-bottom: 1px solid #e5e6eb; }
@@ -1241,6 +1253,10 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .login-card h2 { font-size: 26px; }
   .login-subtitle { margin-bottom: 22px !important; }
   .app-header { padding: 0 14px; gap: 12px; }
+  .conversation-toolbar { min-height: 56px; padding: 10px 14px; gap: 8px; }
+  .conversation-heading { gap: 8px; }
+  .conversation-heading .ant-segmented-item-label { gap: 4px; padding-inline: 6px; }
+  .conversation-description { display: none; }
   .header-brand-name, .header-divider, .header-user-copy { display: none; }
   .settings-button > span:not(.ant-btn-icon) { display: none; }
   .bubble-list { padding: 14px 14px 12px; }

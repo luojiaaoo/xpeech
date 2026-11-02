@@ -34,12 +34,13 @@ def create_proxy_router(
         session_id: Annotated[str | None, Header(alias="x-session-id")] = None,
     ) -> str | None:
         token = session_token(None, request.headers.get("authorization"))
+        embedded = bool(token and token.startswith(EMBED_TOKEN_PREFIX))
         if session_id is None:
-            if token and token.startswith(EMBED_TOKEN_PREFIX):
+            if embedded:
                 raise HTTPException(422, "嵌入聊天必须提供 UUIDv7 格式的 x-session-id")
             return None
         try:
-            if session_id == DEFAULT_SESSION_ID:
+            if embedded and session_id == DEFAULT_SESSION_ID:
                 raise PathProtectionError("Explicit default session is not allowed")
             return validate_session_id(session_id)
         except PathProtectionError:

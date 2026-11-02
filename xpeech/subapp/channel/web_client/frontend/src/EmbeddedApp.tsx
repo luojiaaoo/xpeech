@@ -1,18 +1,14 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { Alert, Button, Skeleton } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { useEffect, useState } from 'react';
+import { Alert, Skeleton } from 'antd';
 import { appApi, authApi, setSessionToken } from './api';
 import { takePendingUserPrefix } from './pendingUserPrefix';
-import { uuidv7 } from './uuidv7';
+import ChatWorkspace from './ChatWorkspace';
 import type { AppConfig, User } from './types';
-
-const ChatPage = lazy(() => import('./ChatPage'));
 
 export default function EmbeddedApp() {
   const [config, setConfig] = useState<AppConfig>();
   const [user, setUser] = useState<User>();
   const [error, setError] = useState<string>();
-  const [sessionId, setSessionId] = useState(uuidv7);
 
   useEffect(() => {
     let active = true;
@@ -76,15 +72,7 @@ export default function EmbeddedApp() {
   if (!config || !user) return <div className="loading-page"><Skeleton active /></div>;
   return (
     <main className="embedded-app">
-      <header className="embedded-chat-toolbar">
-        <Button type="text" icon={<PlusOutlined />} aria-label="新对话" title="新对话"
-          onClick={() => setSessionId(uuidv7())} />
-      </header>
-      <div className="embedded-chat-content">
-        <Suspense fallback={<Skeleton active />}>
-          <ChatPage key={`${user.id}:${sessionId}`} systemName={config.system_name} sessionId={sessionId} />
-        </Suspense>
-      </div>
+      <ChatWorkspace key={user.id} systemName={config.system_name} embedded />
     </main>
   );
 }

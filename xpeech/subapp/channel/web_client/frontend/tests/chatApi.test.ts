@@ -43,4 +43,13 @@ test('chat and question answers carry the same explicit conversation ID', async 
   assert.equal((calls.at(-1)!.init.headers as Headers).get('x-session-id'), null);
   assert.equal((calls.at(-1)!.init.headers as Headers).get('x-channel-name'), null);
   assert.equal(calls.at(-1)!.init.credentials, 'same-origin');
+  for (const sessionId of ['default', next]) {
+    await api.streamChat('standalone conversation', [], () => {}, { sessionId });
+    await api.answerQuestion('standalone answer', sessionId);
+    for (const call of calls.slice(-2)) {
+      assert.equal((call.init.headers as Headers).get('x-session-id'), sessionId);
+      assert.equal((call.init.headers as Headers).get('authorization'), null);
+      assert.equal(call.init.credentials, 'same-origin');
+    }
+  }
 });

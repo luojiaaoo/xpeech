@@ -241,6 +241,31 @@ def test_two_embedded_conversations_forward_distinct_ids(client, monkeypatch):
     assert [call.kwargs["session_id"] for call in stream.await_args_list] == [SESSION_ID, SESSION_ID, second_id]
 
 
+@pytest.mark.parametrize("session_id", [None, "default", SESSION_ID, "018f0000-0000-7000-8000-000000000002"])
+def test_cookie_chat_and_answers_forward_main_or_temporary_session(client, monkeypatch, session_id):
+    secret = "web-client-test-key-at-least-64-characters-for-sha512-signing-tests"
+    monkeypatch.setitem(settings.jwt.channels, "web_client", JWTChannelConfig(secret_key=secret))
+    assert client.post("/api/auth/login", json={"user_id": "admin", "password": "admin123456"}).status_code == 200
+    calls = []
+
+    def backend(request):
+        calls.append(request)
+        token = request.headers["authorization"].removeprefix("Bearer ")
+        assert jwt.get_unverified_header(token)["kid"] == "web_client"
+        assert jwt.decode(token, secret, algorithms=[settings.jwt.algorithm])["sub"] == "admin"
+        assert request.headers["x-session-id"] == (session_id or "default")
+        return httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n')
+
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: async_client(
+        **kwargs, transport=httpx.MockTransport(backend),
+    ))
+    headers = {"x-session-id": session_id} if session_id is not None else {}
+    assert client.post("/api/chat", headers=headers, data={"content": "[]"}).status_code == 200
+    assert client.post("/api/answer_question", headers=headers, data={"answer": "yes"}).status_code == 200
+    assert [request.url.path for request in calls] == ["/chat", "/answer_question"]
+
+
 def test_origin_configuration_requires_exact_origins():
     assert EmbedConfig().allowed_origins == []
     for origins in (["*"], ["https://portal.test/path"], ["https://user@portal.test"], ["null"]):

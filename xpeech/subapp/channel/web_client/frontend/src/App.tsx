@@ -11,9 +11,9 @@ import {
 } from '@ant-design/icons';
 import { appApi, authApi } from './api';
 import { savePendingUserPrefix } from './pendingUserPrefix';
+import ChatWorkspace from './ChatWorkspace';
 import type { AppConfig, User } from './types';
 
-const ChatPage = lazy(() => import('./ChatPage'));
 const LoginPage = lazy(() => import('./LoginPage'));
 const StatisticsDashboard = lazy(() => import('./StatisticsDashboard'));
 const UserManagement = lazy(() => import('./UserManagement'));
@@ -184,9 +184,7 @@ function StandaloneApp() {
           </Space>
         </Layout.Header>
         <Layout.Content className="app-main">
-          <Suspense fallback={<PageFallback />}>
-            <ChatPage systemName={systemName} />
-          </Suspense>
+          <ChatWorkspace key={user.id} systemName={systemName} />
         </Layout.Content>
         {user.is_admin ? (
           <Modal
