@@ -251,4 +251,11 @@ export async function answerQuestion(answer: unknown, sessionId?: string) {
   });
   if (response.status === 401) jwtExpired();
   if (!response.ok) throw new Error(await response.text());
+  const result = await response.json() as { message?: string };
+  if (result.message === 'Question event not found') {
+    throw new Error('答案未被接收：问题已结束、已超时，或请求未到达等待答案的后端实例');
+  }
+  if (result.message !== 'Answer received') {
+    throw new Error('答案提交失败：后端未确认收到答案');
+  }
 }

@@ -14,6 +14,8 @@ test('chat and question answers carry the same explicit conversation ID', async 
       calls.push({ url, init });
       return url === '/api/chat'
         ? new Response('data: {"event":"assistant","context":"hello"}\n\n')
+        : url === '/api/answer_question'
+        ? Response.json({ message: 'Answer received' })
         : new Response(null, { status: 204 });
     },
   });
@@ -58,4 +60,31 @@ test('chat and question answers carry the same explicit conversation ID', async 
     assert.equal((call.init.headers as Headers).get('authorization'), null);
     assert.equal(call.init.credentials, 'same-origin');
   }
+});
+
+test('question answers require backend acknowledgement and report missing waiters', async () => {
+  let response = Response.json({ message: 'Question event not found' });
+  let expired = 0;
+  const context = vm.createContext({
+    Headers, FormData, Event,
+    window: { dispatchEvent() { expired++; } },
+    fetch: async () => response,
+  });
+  const source = stripTypeScriptTypes(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(() => { throw new Error('Only type imports are expected'); });
+  await module.evaluate();
+  const api = module.namespace as { setEmbeddedJWT: Function; answerQuestion: Function };
+
+  await assert.rejects(api.answerQuestion('yes', 'default'), /答案未被接收/);
+  response = Response.json({ message: 'unexpected' });
+  await assert.rejects(api.answerQuestion('yes', 'default'), /后端未确认收到答案/);
+  response = Response.json({ message: 'Answer received' });
+  await api.answerQuestion('yes', 'default');
+  response = new Response('upstream unavailable', { status: 502 });
+  await assert.rejects(api.answerQuestion('yes', 'default'), /upstream unavailable/);
+  api.setEmbeddedJWT('expired.jwt.signature');
+  response = new Response('JWT expired', { status: 401 });
+  await assert.rejects(api.answerQuestion('yes', 'default'), /JWT expired/);
+  assert.equal(expired, 1);
 });

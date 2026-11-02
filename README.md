@@ -262,6 +262,12 @@ Compose 会启动六类容器：
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
 - `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
 
+Nginx 使用普通 `hash $user_id` 直接选择 DNS 解析出的副本。这里不能使用
+`consistent`：所有副本共用 `backend:8080` 名称时，它仍会在这些 IP 间轮询，
+导致 `/chat` 和 `/answer_question` 落到不同进程，无法唤醒等待中的问答。
+等待答案的状态保存在进程内存中；扩缩容或重建 backend 可能改变用户分配，
+应在进行中的对话结束后操作。
+
 先准备配置和环境变量：
 
 ```bash

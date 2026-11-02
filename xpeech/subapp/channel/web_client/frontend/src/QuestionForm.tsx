@@ -44,6 +44,8 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
       await answerQuestion(normalized, sessionId);
       setAnswered(true);
       message.success('答案已提交');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '答案提交失败，请重试');
     } finally {
       setSubmitting(false);
     }
