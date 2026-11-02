@@ -34,13 +34,35 @@ class ChatStream:
         await self._client.aclose()
 
 
+@dataclass(frozen=True)
+class BackendUserParams:
+    user_id: str
+    channel: str
+
+
+@dataclass(frozen=True)
+class BackendJWTParams:
+    jwt_token: str
+
+
+BackendAuthParams = BackendUserParams | BackendJWTParams
+
+
 def _backend_headers(
-    user_id: str,
-    channel: str,
+    auth: BackendAuthParams,
     sender_name: str | None = None,
 ) -> dict[str, str]:
+    """Sign for a user identity or pass through the supplied JWT."""
+    if isinstance(auth, BackendJWTParams):
+        return _passthrough_headers(auth.jwt_token, sender_name)
+    token = create_token(UserTokenParams(auth.channel, user_id=auth.user_id))
+    return _passthrough_headers(token, sender_name)
+
+
+def _passthrough_headers(jwt_token: str, sender_name: str | None = None) -> dict[str, str]:
+    """Build headers using the original JWT without issuing a new token."""
     headers = {
-        "authorization": f"Bearer {create_token(UserTokenParams(channel, user_id=user_id))}",
+        "authorization": f"Bearer {jwt_token}",
         "x-session-id": DEFAULT_SESSION_ID,
     }
     if sender_name is not None:
@@ -70,7 +92,7 @@ async def open_chat_stream(
 
     client = httpx.AsyncClient(timeout=None)
     try:
-        headers = _backend_headers(user_id, channel, sender_name)
+        headers = _backend_headers(BackendUserParams(user_id, channel), sender_name)
         headers.update({"Accept": "text/event-stream", "Cache-Control": "no-store"})
         response = await client.send(
             client.build_request(
@@ -186,7 +208,7 @@ async def submit_question(
     async with httpx.AsyncClient(timeout=30) as client:
         return await client.post(
             answer_url,
-            headers=_backend_headers(user_id, channel),
+            headers=_backend_headers(BackendUserParams(user_id, channel)),
             data={"answer": answer},
         )
 
@@ -202,10 +224,9 @@ async def notify_question(
 
 
 async def fetch_file(
-    user_id: str,
+    auth: BackendAuthParams,
     path: str,
     api_base_url: str,
-    channel: str,
 ) -> httpx.Response:
     """Fetch a session file and return the backend response without changing its status."""
 
@@ -213,7 +234,7 @@ async def fetch_file(
     async with httpx.AsyncClient(timeout=None) as client:
         return await client.get(
             file_url,
-            headers=_backend_headers(user_id, channel),
+            headers=_backend_headers(auth),
             params={"path": path},
         )
 
@@ -224,7 +245,7 @@ async def download_file(
     api_base_url: str,
     channel: str,
 ) -> DownloadedFile:
-    response = await fetch_file(user_id, path, api_base_url, channel)
+    response = await fetch_file(BackendUserParams(user_id, channel), path, api_base_url)
     response.raise_for_status()
 
     filename = _filename_from_content_disposition(response.headers.get("content-disposition")) or Path(path).name

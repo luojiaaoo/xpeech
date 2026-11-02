@@ -1,6 +1,6 @@
 /* Xpeech embedded chat module: no signing keys, cookies, or persistent tokens. */
 var origin = new URL(import.meta.url).origin;
-var endpoint = origin + "/api/auth/embed/session";
+var endpoint = origin + "/api/auth/embed";
 var hostOrigin = window.location.origin;
 var host = null;
 var root = null;
@@ -15,8 +15,11 @@ var currentId = null;
 var channelName = null;
 var currentJWT = null;
 var jwtProvider = null;
+var currentSenderName;
+var currentTitle = "AI 助手";
+var currentSessionMetadata = {};
 var identityConfigured = false;
-var session = null;
+var verifiedJWT = null;
 var version = 0;
 var controller = null;
 var refreshTimer = null;
@@ -37,13 +40,16 @@ function initialize() {
   '#close{background:none;border:0;font-size:24px;color:#5b6578}#body{flex:1;min-height:0;position:relative}' +
   '#status{padding:24px;line-height:1.6;font-size:14px}iframe{display:block;width:100%;height:100%;border:0}' +
   'button:focus-visible{outline:3px solid #8ab4ff;outline-offset:3px}[hidden]{display:none!important}' +
-  '</style><section id="panel" role="dialog" aria-label="AI 助手"><header><strong>AI 助手</strong><button id="close" aria-label="关闭聊天">×</button></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-label="打开 AI 助手" aria-expanded="false">💬</button>';
+  '</style><section id="panel" role="dialog"><header><strong id="title"></strong><button id="close" aria-label="关闭聊天">×</button></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-expanded="false">💬</button>';
   document.body.appendChild(host);
   panel = root.getElementById("panel");
   launcher = root.getElementById("launcher");
   closeButton = root.getElementById("close");
   body = root.getElementById("body");
   status = root.getElementById("status");
+  root.getElementById("title").textContent = currentTitle;
+  panel.setAttribute("aria-label", currentTitle);
+  launcher.setAttribute("aria-label", "打开 " + currentTitle);
   launcher.addEventListener("click", function () {
     if (panel.classList.contains("open")) close(); else open();
   });
@@ -84,13 +90,6 @@ function report(error) {
   showStatus("连接失败：" + detail + "。请点击按钮重试。");
   window.dispatchEvent(new CustomEvent("xpeech:error", { detail: { message: detail } }));
 }
-function revoke(token) {
-  if (!token) return;
-  fetch(endpoint, {
-    method: "DELETE", credentials: "omit", keepalive: true,
-    headers: { Authorization: "Bearer " + token }
-  }).catch(function () { /* The server also expires abandoned sessions. */ });
-}
 function removeFrame() {
   clearTimeout(frameTimer);
   frameReady = false;
@@ -100,7 +99,7 @@ function removeFrame() {
 function createFrame() {
   if (frame) return;
   frame = document.createElement("iframe");
-  frame.title = "AI 助手聊天";
+  frame.title = currentTitle + "聊天";
   var url = new URL("/", origin);
   url.searchParams.set("embed", "1");
   url.searchParams.set("parent_origin", hostOrigin);
@@ -115,9 +114,10 @@ function createFrame() {
   }, 20000);
 }
 function deliver() {
-  if (!frame || !frameReady || !session) return;
+  if (!frame || !frameReady || !verifiedJWT) return;
   frame.contentWindow.postMessage({
-    type: "xpeech:session", token: session.token, channel_name: channelName
+    type: "xpeech:credentials", jwt: verifiedJWT, user_id: currentId,
+    sender_name: currentSenderName, title: currentTitle, session_metadata: currentSessionMetadata
   }, origin);
 }
 function onMessage(event) {
@@ -129,7 +129,7 @@ function onMessage(event) {
     clearTimeout(frameTimer);
     deliver();
   } else if (data.type === "xpeech:authenticated") {
-    if (session) status.hidden = true;
+    if (verifiedJWT) status.hidden = true;
   } else if (data.type === "xpeech:expired") {
     refresh();
   } else if (data.type === "xpeech:error") {
@@ -151,34 +151,25 @@ async function connect(expectedVersion) {
       channelName = next.channelName;
       currentJWT = next.token;
     }
-    var previous = session;
-    var headers = { "Content-Type": "application/json" };
-    if (previous) headers.Authorization = "Bearer " + previous.token;
     var response = await fetch(endpoint, {
-      method: "POST", credentials: "omit", headers: headers,
-      body: JSON.stringify({ jwt: currentJWT }),
+      method: "GET", credentials: "omit",
+      headers: { Authorization: "Bearer " + currentJWT },
       signal: pending.signal
     });
     var result = await response.json();
-    if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "无法建立用户会话");
-    if (typeof result.token !== "string" || !result.token.startsWith("embed_") ||
-        !Number.isFinite(result.expires_in) || result.expires_in <= 0) {
-      throw new Error("无效的会话响应");
+    if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "JWT 校验失败");
+    if (expectedVersion !== version || !host) return;
+    if (result.user_id !== currentId || !Number.isFinite(result.expires_in) || result.expires_in <= 0) {
+      throw new Error("无效的 JWT 校验响应");
     }
-    if (expectedVersion !== version || !host) {
-      revoke(result.token);
-      return;
-    }
-    if (result.channel_name !== channelName || !result.user || result.user.user_id !== currentId) {
-      revoke(result.token);
-      throw new Error("会话身份与 JWT 不一致");
-    }
-    session = result;
+    verifiedJWT = currentJWT;
     needsRetry = false;
     createFrame();
     deliver();
     clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(refresh, Math.max(1000, (result.expires_in - 30) * 1000));
+    var remaining = result.expires_in;
+    var delay = jwtProvider ? remaining - Math.min(30, remaining / 2) : remaining;
+    refreshTimer = setTimeout(refresh, Math.min(2147483647, Math.max(1000, delay * 1000)));
   } catch (error) {
     if (expectedVersion === version && host && error.name !== "AbortError") report(error);
   } finally {
@@ -190,7 +181,7 @@ function refresh() {
 }
 function normalize(value) {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 16384) {
-    throw new TypeError("setJWT 需要有效的 JWT 字符串");
+    throw new TypeError("init 需要有效的 JWT 字符串");
   }
   var token = value.trim();
   try {
@@ -215,22 +206,51 @@ function normalize(value) {
   }
 }
 function ensureConnected() {
-  if (host && (currentJWT || jwtProvider) && (!session || !frame || needsRetry) && !controller) {
+  if (host && (currentJWT || jwtProvider) && (!verifiedJWT || !frame || needsRetry) && !controller) {
     showStatus("正在连接…");
-    if (session && !needsRetry) { createFrame(); deliver(); } else connect(version);
+    if (verifiedJWT && !needsRetry) { createFrame(); deliver(); } else connect(version);
   }
 }
-function setJWT(value) {
-  if (identityConfigured) throw new Error("setJWT 只能初始化一次，请先调用 destroy() 再设置 JWT");
+function normalizeSenderName(sender) {
+  if (typeof sender !== "string" || !sender.trim()) {
+    throw new TypeError("senderName 必须为非空字符串");
+  }
+  return sender.trim();
+}
+function normalizeSessionMetadata(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new TypeError("sessionMetadata 必须为 JSON 对象");
+  }
+  try {
+    metadata = JSON.parse(JSON.stringify(metadata));
+  } catch (_) {
+    throw new TypeError("sessionMetadata 必须为 JSON 对象");
+  }
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new TypeError("sessionMetadata 必须为 JSON 对象");
+  }
+  return metadata;
+}
+function init(value, senderName, title = "AI 助手", sessionMetadata = {}) {
+  if (identityConfigured) throw new Error("init 只能初始化一次，请先调用 destroy() 再设置 JWT");
+  var nextSenderName = normalizeSenderName(senderName);
+  if (typeof title !== "string" || !title.trim()) throw new TypeError("title 必须为非空字符串");
+  var nextMetadata = normalizeSessionMetadata(sessionMetadata);
   if (typeof value === "function") {
     identityConfigured = true;
     jwtProvider = value;
+    currentSenderName = nextSenderName;
+    currentTitle = title.trim();
+    currentSessionMetadata = nextMetadata;
     initialize();
     showStatus("正在连接…");
     connect(version);
     return;
   }
   var next = normalize(value);
+  currentSenderName = nextSenderName;
+  currentTitle = title.trim();
+  currentSessionMetadata = nextMetadata;
   identityConfigured = true;
   initialize();
   currentId = next.userId;
@@ -251,12 +271,14 @@ function destroy() {
   clearTimeout(refreshTimer);
   if (controller) controller.abort();
   controller = null;
-  if (session) revoke(session.token);
-  session = null;
+  verifiedJWT = null;
   currentId = null;
   currentJWT = null;
   jwtProvider = null;
   identityConfigured = false;
+  currentSenderName = undefined;
+  currentTitle = "AI 助手";
+  currentSessionMetadata = {};
   channelName = null;
   needsRetry = false;
   removeFrame();
@@ -265,4 +287,4 @@ function destroy() {
   host = root = panel = launcher = closeButton = body = status = null;
 }
 
-export { setJWT, hideButton, showButton, open, close, destroy };
+export { init, hideButton, showButton, open, close, destroy };

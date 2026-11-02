@@ -13,23 +13,26 @@ import type {
   User,
 } from './types';
 
-let memoryToken: string | null = null;
-let memoryChannelName: string | null = null;
+let memoryJWT: string | null = null;
+let memorySenderName: string | null = null;
+let memorySessionMetadata: Record<string, unknown> = {};
 
-export function setSessionToken(token: string | null, channelName: string | null = null) {
-  memoryToken = token;
-  memoryChannelName = token ? channelName : null;
+export function setEmbeddedJWT(
+  token: string | null, senderName: string | null = null, sessionMetadata: Record<string, unknown> = {},
+) {
+  memoryJWT = token;
+  memorySenderName = token ? senderName : null;
+  memorySessionMetadata = token ? sessionMetadata : {};
 }
 
 function authHeaders(initial?: HeadersInit): Headers {
   const headers = new Headers(initial);
-  if (memoryToken) headers.set('Authorization', `Bearer ${memoryToken}`);
-  if (memoryToken && memoryChannelName) headers.set('x-channel-name', memoryChannelName);
+  if (memoryJWT) headers.set('Authorization', `Bearer ${memoryJWT}`);
   return headers;
 }
 
-function sessionExpired() {
-  if (memoryToken) window.dispatchEvent(new Event('xpeech:session-expired'));
+function jwtExpired() {
+  if (memoryJWT) window.dispatchEvent(new Event('xpeech:jwt-expired'));
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -39,11 +42,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   const response = await fetch(url, {
     ...init,
-    credentials: memoryToken ? 'omit' : 'same-origin',
+    credentials: memoryJWT ? 'omit' : 'same-origin',
     headers,
   });
   if (!response.ok) {
-    if (response.status === 401) sessionExpired();
+    if (response.status === 401) jwtExpired();
     let detail = `${response.status} ${response.statusText}`;
     try {
       detail = (await response.json()).detail || detail;
@@ -111,11 +114,11 @@ export const appApi = {
 
 export async function downloadFile(path: string) {
   const response = await fetch(`/api/files?${new URLSearchParams({ path })}`, {
-    credentials: memoryToken ? 'omit' : 'same-origin',
+    credentials: memoryJWT ? 'omit' : 'same-origin',
     headers: authHeaders(),
   });
   if (!response.ok) {
-    if (response.status === 401) sessionExpired();
+    if (response.status === 401) jwtExpired();
     throw new Error('文件下载失败');
   }
   const url = URL.createObjectURL(await response.blob());
@@ -202,17 +205,20 @@ export async function streamChat(
 ) {
   const form = new FormData();
   form.set('content', JSON.stringify(text.trim() ? [{ text: text.trim() }] : []));
-  form.set('session_metadata', JSON.stringify({ channel: 'web' }));
+  if (memoryJWT) form.set('session_metadata', JSON.stringify(memorySessionMetadata));
   files.forEach((file) => form.append('files', file, file.name));
   const headers = authHeaders();
+  if (memorySenderName !== null) {
+    headers.set('x-sender-name', encodeURIComponent(memorySenderName));
+  }
   if (options.sessionId) headers.set('x-session-id', options.sessionId);
   const response = await fetch('/api/chat', {
     method: 'POST', body: form,
-    credentials: memoryToken ? 'omit' : 'same-origin', headers, signal: options.signal,
+    credentials: memoryJWT ? 'omit' : 'same-origin', headers, signal: options.signal,
   });
   if (!response.ok || !response.body) {
     if (response.status === 401) {
-      if (memoryToken) sessionExpired(); else window.location.reload();
+      if (memoryJWT) jwtExpired(); else window.location.reload();
     }
     throw new Error((await response.text()) || '消息发送失败');
   }
@@ -241,8 +247,8 @@ export async function answerQuestion(answer: unknown, sessionId?: string) {
   if (sessionId) headers.set('x-session-id', sessionId);
   const response = await fetch('/api/answer_question', {
     method: 'POST', body: form,
-    credentials: memoryToken ? 'omit' : 'same-origin', headers,
+    credentials: memoryJWT ? 'omit' : 'same-origin', headers,
   });
-  if (response.status === 401) sessionExpired();
+  if (response.status === 401) jwtExpired();
   if (!response.ok) throw new Error(await response.text());
 }

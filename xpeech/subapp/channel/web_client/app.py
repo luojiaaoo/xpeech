@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 
+from ....utils.channel_jwt import UserJWTAuth
 from .dao import User, WebClientDAO
 from .models import (
     InjectPromptWebConfig,
@@ -22,7 +23,7 @@ from .routes.admin import create_admin_router
 from .routes.auth import create_auth_router
 from .routes.embed import create_embed_router
 from .routes.proxy import create_proxy_router
-from .session import EMBED_TOKEN_PREFIX, session_token
+from .session import require_embedded_jwt
 
 PBKDF2_ITERATIONS = 600_000
 XPEECH_FAVICON = Path(__file__).resolve().parents[4] / "assets" / "favicon.ico"
@@ -71,7 +72,7 @@ def create_app(config: WebConfig) -> FastAPI:
         lifespan=lifespan,
     )
 
-    app.include_router(create_embed_router(dao, _password_hash))
+    app.include_router(create_embed_router())
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -127,18 +128,24 @@ def create_app(config: WebConfig) -> FastAPI:
             ],
         }
 
-    async def current_user(
+    async def current_identity(
         token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
         authorization: Annotated[str | None, Header()] = None,
-    ) -> User:
-        token = session_token(token, authorization)
-        if not token or (authorization is None and token.startswith(EMBED_TOKEN_PREFIX)):
+    ) -> User | UserJWTAuth:
+        if authorization is not None:
+            return require_embedded_jwt(authorization)
+        if not token:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "请先登录")
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        user = await dao.get_user_for_session(token_hash, require_embed_channel=token.startswith(EMBED_TOKEN_PREFIX))
+        user = await dao.get_user_for_session(token_hash)
         if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
         return user
+
+    def current_user(identity: Annotated[User | UserJWTAuth, Depends(current_identity)]) -> User:
+        if isinstance(identity, UserJWTAuth):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "嵌入会话不能访问本地账号接口")
+        return identity
 
     CurrentUser = Annotated[User, Depends(current_user)]
 
@@ -160,9 +167,8 @@ def create_app(config: WebConfig) -> FastAPI:
     app.include_router(
         create_proxy_router(
             config.backend_url,
-            current_user,
+            current_identity,
             admin_user,
-            dao,
         )
     )
 

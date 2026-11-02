@@ -161,8 +161,6 @@ function StandaloneApp() {
           <div className="header-heading">
             <span className="header-brand-mark">{Array.from(systemName.trim())[0]?.toUpperCase() || 'A'}</span>
             <Typography.Text strong className="header-brand-name">{systemName}</Typography.Text>
-            <span className="header-divider" />
-            <Typography.Title level={4}>AI 助手</Typography.Title>
           </div>
           <Space size={12} className="header-actions">
             <div className="header-user">

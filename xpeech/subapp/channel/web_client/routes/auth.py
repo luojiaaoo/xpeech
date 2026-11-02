@@ -33,7 +33,7 @@ from ..models import (
     WebConfig,
     public_user,
 )
-from ..session import EMBED_TOKEN_PREFIX, session_token
+from ..session import session_token
 
 SESSION_DAYS = 7
 OAUTH2_LOGIN_MINUTES = 5
@@ -41,7 +41,7 @@ OAUTH2_MAX_ATTEMPTS = 1_000
 
 PasswordHash = Callable[[str], str]
 PasswordMatches = Callable[[str, str], bool]
-CurrentUserDependency = Callable[..., Awaitable[User]]
+CurrentUserDependency = Callable[..., Awaitable[User] | User]
 
 
 @dataclass
@@ -469,8 +469,9 @@ def create_auth_router(
         authorization: Annotated[str | None, Header()] = None,
     ):
         token = session_token(token, authorization)
-        if token:
-            await dao.delete_session(hashlib.sha256(token.encode()).hexdigest())
+        if token and authorization is None:
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            await dao.delete_session(token_hash)
         if authorization is None:
             response.delete_cookie(config.cookie_name, path="/")
 
@@ -486,8 +487,6 @@ def create_auth_router(
         authorization: Annotated[str | None, Header()] = None,
     ):
         token = session_token(token, authorization)
-        if token and token.startswith(EMBED_TOKEN_PREFIX):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "嵌入会话不支持修改密码")
         if user.id is None or token is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
         changed = await dao.change_password(

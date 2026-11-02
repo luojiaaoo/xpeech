@@ -7,16 +7,15 @@ import httpx
 from yarl import URL
 
 from ....utils.ids import DEFAULT_SESSION_ID
-from ..helper import ChatStream, _backend_headers
+from ..helper import BackendAuthParams, ChatStream, _backend_headers
 
 
 async def open_chat_stream(
-    user_id: str,
+    auth: BackendAuthParams,
     sender_name: str,
     content: str,
     session_metadata: str,
     chat_url: str,
-    channel: str,
     *,
     files: Any = None,
     json_output: bool = False,
@@ -25,7 +24,7 @@ async def open_chat_stream(
     data = {"session_metadata": session_metadata, "content": content}
     if json_output:
         data["json_output"] = "true"
-    headers = _backend_headers(user_id, channel, sender_name)
+    headers = _backend_headers(auth, sender_name)
     headers.update({
         "x-session-id": session_id or DEFAULT_SESSION_ID,
         "Accept": "text/event-stream",
@@ -44,14 +43,13 @@ async def open_chat_stream(
 
 
 async def submit_question(
-    user_id: str,
+    auth: BackendAuthParams,
     result: Any,
     chat_url: str,
-    channel: str,
     *,
     session_id: str | None = None,
 ) -> httpx.Response:
-    headers = _backend_headers(user_id, channel)
+    headers = _backend_headers(auth)
     headers["x-session-id"] = session_id or DEFAULT_SESSION_ID
     answer = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
     async with httpx.AsyncClient(timeout=30) as client:

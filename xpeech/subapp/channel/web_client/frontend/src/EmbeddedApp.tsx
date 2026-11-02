@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Alert, Skeleton } from 'antd';
-import { appApi, authApi, setSessionToken } from './api';
+import { appApi, setEmbeddedJWT } from './api';
 import { takePendingUserPrefix } from './pendingUserPrefix';
 import ChatWorkspace from './ChatWorkspace';
-import type { AppConfig, User } from './types';
+import type { AppConfig } from './types';
 
 export default function EmbeddedApp() {
   const [config, setConfig] = useState<AppConfig>();
-  const [user, setUser] = useState<User>();
+  const [userId, setUserId] = useState<string>();
+  const [title, setTitle] = useState('AI 助手');
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -15,7 +16,6 @@ export default function EmbeddedApp() {
     appApi.config().then((value) => {
       if (active) {
         setConfig(value);
-        document.title = value.system_name;
       }
     }).catch(() => { if (active) setError('无法加载聊天配置'); });
     return () => { active = false; };
@@ -28,50 +28,43 @@ export default function EmbeddedApp() {
       setError('请通过网站嵌入组件打开聊天');
       return;
     }
-    let active = true;
-    let version = 0;
     takePendingUserPrefix();
     function send(data: Record<string, unknown>) {
       window.parent.postMessage(data, parentOrigin!);
     }
-    async function receive(event: MessageEvent) {
+    function receive(event: MessageEvent) {
       if (event.origin !== parentOrigin || event.source !== window.parent) return;
       const data = event.data;
-      if (!data || data.type !== 'xpeech:session' || typeof data.token !== 'string'
-          || !data.token.startsWith('embed_')) return;
-      if (typeof data.channel_name !== 'string' || !data.channel_name) return;
-      const requestVersion = ++version;
-      setSessionToken(data.token, data.channel_name);
-      try {
-        const authenticated = await authApi.me();
-        if (!active || requestVersion !== version) return;
-        setUser(authenticated);
-        setError(undefined);
-        send({ type: 'xpeech:authenticated' });
-      } catch {
-        if (!active || requestVersion !== version) return;
-        setSessionToken(null);
-        setUser(undefined);
-        send({ type: 'xpeech:error', message: '嵌入会话无效，请重试' });
-      }
+      if (!data || data.type !== 'xpeech:credentials' || typeof data.jwt !== 'string' || !data.jwt) return;
+      if (typeof data.user_id !== 'string' || !data.user_id.trim()) return;
+      if (typeof data.sender_name !== 'string' || !data.sender_name.trim()) return;
+      if (data.title !== undefined && (typeof data.title !== 'string' || !data.title.trim())) return;
+      if (data.session_metadata !== undefined && (!data.session_metadata
+          || typeof data.session_metadata !== 'object' || Array.isArray(data.session_metadata))) return;
+      const nextTitle = data.title?.trim() ?? 'AI 助手';
+      setEmbeddedJWT(data.jwt, data.sender_name, data.session_metadata ?? {});
+      setUserId(data.user_id);
+      setTitle(nextTitle);
+      document.title = nextTitle;
+      setError(undefined);
+      send({ type: 'xpeech:authenticated' });
     }
     function expired() { send({ type: 'xpeech:expired' }); }
     window.addEventListener('message', receive);
-    window.addEventListener('xpeech:session-expired', expired);
+    window.addEventListener('xpeech:jwt-expired', expired);
     send({ type: 'xpeech:ready' });
     return () => {
-      active = false;
-      setSessionToken(null);
+      setEmbeddedJWT(null);
       window.removeEventListener('message', receive);
-      window.removeEventListener('xpeech:session-expired', expired);
+      window.removeEventListener('xpeech:jwt-expired', expired);
     };
   }, [config]);
 
   if (error) return <Alert type="error" showIcon message={error} />;
-  if (!config || !user) return <div className="loading-page"><Skeleton active /></div>;
+  if (!config || !userId) return <div className="loading-page"><Skeleton active /></div>;
   return (
     <main className="embedded-app">
-      <ChatWorkspace key={user.id} systemName={config.system_name} embedded />
+      <ChatWorkspace key={userId} systemName={title} embedded />
     </main>
   );
 }

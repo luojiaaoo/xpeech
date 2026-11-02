@@ -1,7 +1,7 @@
-import hashlib
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
+from urllib.parse import unquote
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile, status
@@ -9,33 +9,30 @@ from fastapi.responses import Response, StreamingResponse
 from yarl import URL
 
 from .....exceptions import PathProtectionError
+from .....utils.channel_jwt import UserJWTAuth
 from .....utils.internal_jwt import create_internal_access_token
 from .....utils.ids import DEFAULT_SESSION_ID, validate_session_id
-from ...helper import fetch_file
+from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file
 from ..backend import open_chat_stream, submit_question
-from ..dao import User, WebClientDAO
-from ..session import EMBED_TOKEN_PREFIX, embedded_channel, session_token
+from ..dao import User
 
-UserDependency = Callable[..., Awaitable[User] | User]
+UserDependency = Callable[..., Awaitable[User | UserJWTAuth] | User | UserJWTAuth]
 
 
 def create_proxy_router(
     backend_url: str,
     current_user_dependency: UserDependency,
     admin_user_dependency: UserDependency,
-    dao: WebClientDAO,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
-    CurrentUser = Annotated[User, Depends(current_user_dependency)]
+    CurrentUser = Annotated[User | UserJWTAuth, Depends(current_user_dependency)]
     AdminUser = Annotated[User, Depends(admin_user_dependency)]
 
     def chat_session_id(
-        request: Request,
+        user: CurrentUser,
         session_id: Annotated[str | None, Header(alias="x-session-id")] = None,
     ) -> str | None:
-        token = session_token(None, request.headers.get("authorization"))
-        embedded = bool(token and token.startswith(EMBED_TOKEN_PREFIX))
-        if not embedded:
+        if not isinstance(user, UserJWTAuth):
             if session_id not in (None, DEFAULT_SESSION_ID):
                 raise HTTPException(422, "非嵌入聊天只支持主会话（default）")
             return session_id
@@ -50,21 +47,12 @@ def create_proxy_router(
 
     ChatSessionId = Annotated[str | None, Depends(chat_session_id)]
 
-    async def request_backend_channel(
-        request: Request,
-        channel_name: Annotated[str | None, Header(alias="x-channel-name")] = None,
-    ) -> str:
-        token = session_token(None, request.headers.get("authorization"))
-        if token and token.startswith(EMBED_TOKEN_PREFIX):
-            bound_channel = await dao.get_session_channel(hashlib.sha256(token.encode()).hexdigest())
-            if bound_channel is None or (channel_name is not None and channel_name != bound_channel):
-                raise HTTPException(403, "嵌入请求的通道与已验证的 JWT 不一致")
-            return embedded_channel(bound_channel)
-        if channel_name is not None:
-            raise HTTPException(403, "仅嵌入会话可以指定 channel_name")
-        return "web_client"
+    def request_backend_auth(user: CurrentUser) -> BackendAuthParams:
+        if isinstance(user, UserJWTAuth):
+            return BackendJWTParams(jwt_token=user.token)
+        return BackendUserParams(user_id=user.user_id, channel="web_client")
 
-    RequestBackendChannel = Annotated[str, Depends(request_backend_channel)]
+    RequestBackendAuth = Annotated[BackendAuthParams, Depends(request_backend_auth)]
 
     @router.post("/chat")
     async def proxy_chat(
@@ -72,7 +60,8 @@ def create_proxy_router(
         content: Annotated[str, Form()],
         user: CurrentUser,
         session_id: ChatSessionId,
-        channel: RequestBackendChannel,
+        backend_auth: RequestBackendAuth,
+        sender_name: Annotated[str | None, Header(alias="x-sender-name", min_length=1)] = None,
         session_metadata: Annotated[str, Form()] = "{}",
         files: Annotated[list[UploadFile] | None, File()] = None,
         json_output: Annotated[
@@ -83,6 +72,14 @@ def create_proxy_router(
             ),
         ] = False,
     ):
+        if sender_name is None and isinstance(user, UserJWTAuth):
+            raise HTTPException(422, "嵌入聊天必须提供 x-sender-name")
+        try:
+            sender_name = user.username if sender_name is None else unquote(sender_name, errors="strict").strip()
+        except UnicodeDecodeError:
+            raise HTTPException(422, "Invalid UTF-8 encoding in x-sender-name header") from None
+        if not sender_name:
+            raise HTTPException(422, "x-sender-name header must not be blank")
         try:
             metadata = json.loads(session_metadata)
         except json.JSONDecodeError:
@@ -109,12 +106,11 @@ def create_proxy_router(
                 )
             )
         chat_stream = await open_chat_stream(
-            user.user_id,
-            user.username,
+            backend_auth,
+            sender_name,
             content,
             json.dumps(metadata, ensure_ascii=False),
             str(URL(backend_url) / "chat"),
-            channel,
             files=upload_data,
             json_output=json_output,
             session_id=session_id,
@@ -147,15 +143,13 @@ def create_proxy_router(
     @router.post("/answer_question")
     async def proxy_answer(
         answer: Annotated[str, Form()],
-        user: CurrentUser,
         session_id: ChatSessionId,
-        channel: RequestBackendChannel,
+        backend_auth: RequestBackendAuth,
     ):
         upstream = await submit_question(
-            user.user_id,
+            backend_auth,
             answer,
             backend_url,
-            channel,
             session_id=session_id,
         )
         return Response(
@@ -167,14 +161,12 @@ def create_proxy_router(
     @router.get("/files")
     async def proxy_file(
         path: str,
-        user: CurrentUser,
-        channel: RequestBackendChannel,
+        backend_auth: RequestBackendAuth,
     ):
         upstream = await fetch_file(
-            user.user_id,
+            backend_auth,
             path,
             backend_url,
-            channel,
         )
         headers = {}
         if disposition := upstream.headers.get("content-disposition"):
@@ -191,7 +183,6 @@ def create_proxy_router(
     async def proxy_statistics(
         request: Request,
         user: AdminUser,
-        channel: RequestBackendChannel,
         statistics_path: str = "",
     ):
         """将已登录 Web 用户的统计查询转发到后端统计接口。"""

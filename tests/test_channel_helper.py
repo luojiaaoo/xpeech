@@ -30,7 +30,7 @@ async def test_backend_requests_bind_user_in_jwt_subject(monkeypatch):
     stream = await helper.open_chat_stream("alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL)
     await stream.aclose()
     await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL)
-    await helper.fetch_file("alice", "report.txt", "http://backend.test", TEST_CHANNEL)
+    await helper.fetch_file(helper.BackendUserParams("alice", TEST_CHANNEL), "report.txt", "http://backend.test")
     assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/files"]
     for request in requests:
         assert "x-user-id" not in request.headers

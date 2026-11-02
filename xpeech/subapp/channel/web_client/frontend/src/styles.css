@@ -5,25 +5,31 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .embedded-app { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: #fff; }
 .chat-workspace { height: 100%; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: #fff; }
 .embedded-app > .chat-workspace { flex: 1; }
-.conversation-toolbar { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 12px 28px; border-bottom: 1px solid #edf0f5; }
-.conversation-heading { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.conversation-title { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; white-space: nowrap; }
-.conversation-title .anticon { color: #3370ff; }
-.conversation-description { font-size: 12px; color: #86909c; white-space: nowrap; }
-.new-conversation-button { flex-shrink: 0; border-color: #dce5f5; color: #245bdb; box-shadow: none; }
+.chat-workspace-embedded { position: relative; }
+.chat-workspace-embedded .new-conversation-button {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  border-color: rgb(180 194 214 / 50%);
+  color: #245bdb;
+  background: rgb(255 255 255 / 65%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgb(31 45 70 / 8%);
+}
+.chat-workspace-embedded .new-conversation-button:not(:disabled):hover { background: rgb(255 255 255 / 90%); }
+.chat-workspace-embedded .bubble-list { padding-top: 56px; }
 .conversation-panel { flex: 1; min-width: 0; min-height: 0; }
 .conversation-loading { max-width: 720px; margin: 24px auto; padding: 0 20px; }
-.chat-workspace-embedded .conversation-toolbar { min-height: 52px; padding: 9px 14px; }
 .app-shell { height: 100vh; height: 100dvh; overflow: hidden; }
 .brand-mark, .header-brand-mark { display: grid; place-items: center; color: white; background: linear-gradient(145deg, #3370ff, #6957f5); font-weight: 800; box-shadow: 0 8px 24px #3370ff40; }
 .app-header { height: 56px; flex-shrink: 0; line-height: normal; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 24px; background: #fff; border-bottom: 1px solid #e5e6eb; }
 .header-heading, .header-actions, .header-user { display: flex; align-items: center; }
 .header-heading { min-width: 0; gap: 12px; }
-.header-heading h4, .page-heading h3 { margin: 0 !important; }
-.header-heading h4 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-heading h3 { margin: 0 !important; }
 .header-brand-mark { width: 34px; height: 34px; flex: 0 0 auto; border-radius: 10px; }
 .header-brand-name { font-size: 16px; }
-.header-divider { width: 1px; height: 22px; margin-inline: 2px; background: #e5e6eb; }
 .header-actions { flex: 0 0 auto; }
 .header-user { min-width: 0; gap: 9px; }
 .header-user-avatar { flex: 0 0 auto; color: #245bdb; background: #e8f0ff; font-weight: 700; }
@@ -1250,11 +1256,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .login-card h2 { font-size: 26px; }
   .login-subtitle { margin-bottom: 22px !important; }
   .app-header { padding: 0 14px; gap: 12px; }
-  .conversation-toolbar { min-height: 56px; padding: 10px 14px; gap: 8px; }
-  .conversation-heading { gap: 8px; }
-  .conversation-heading .ant-segmented-item-label { gap: 4px; padding-inline: 6px; }
-  .conversation-description { display: none; }
-  .header-brand-name, .header-divider, .header-user-copy { display: none; }
+  .header-brand-name, .header-user-copy { display: none; }
   .settings-button > span:not(.ant-btn-icon) { display: none; }
   .bubble-list { padding: 14px 14px 12px; }
   .bubble-list .ant-bubble.ant-bubble-start:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-end: 0; }
