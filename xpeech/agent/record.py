@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Index
+from sqlalchemy import Index, event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel
@@ -8,6 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config.settings import settings
 from ..utils.file_io import ensure_path
+from ..utils.sqlite import configure_sqlite_connection
 
 TABLE_NAME = "conversation_records"
 _record_registry = registry()
@@ -16,8 +17,8 @@ ensure_path(_record_database_path.parent)
 record_engine = create_async_engine(
     f"sqlite+aiosqlite:///{_record_database_path.as_posix()}",
     echo=False,
-    connect_args={"timeout": 30},
 )
+event.listen(record_engine.sync_engine, "connect", configure_sqlite_connection)
 
 
 class _RecordSQLModel(SQLModel, registry=_record_registry):

@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 from sqlalchemy import Column, ForeignKey, Index, Integer, String, event
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
+
+from ....utils.sqlite import configure_sqlite_connection
 
 _web_client_registry = registry()
 
@@ -71,14 +74,12 @@ def create_web_client_engine(database_path: Path) -> AsyncEngine:
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{resolved_path.as_posix()}",
         echo=False,
-        connect_args={"timeout": 30},
     )
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def _enable_foreign_keys(dbapi_connection, _connection_record) -> None:
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys = ON")
-        cursor.close()
+    event.listen(
+        engine.sync_engine,
+        "connect",
+        partial(configure_sqlite_connection, foreign_keys=True),
+    )
 
     return engine
 

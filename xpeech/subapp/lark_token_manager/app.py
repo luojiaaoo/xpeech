@@ -10,17 +10,17 @@ import asyncio
 import base64
 import hashlib
 import hmac
-import sqlite3
 import time
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 
 from ...config.settings import settings
+from .dao import DeviceAuthorization, TokenSession, TokenStore
 
 DEVICE_AUTH_URL = "https://accounts.feishu.cn/oauth/v1/device_authorization"
 TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
@@ -63,68 +63,6 @@ class MigrateRequest(BaseModel):
     scope: str = ""
     expires_at: int = 0
     refresh_token_expires_at: int = 0
-
-
-class TokenStore:
-    def __init__(self, path: Path):
-        self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.parent.chmod(0o700)
-        self.db = sqlite3.connect(self.path, check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.execute("PRAGMA secure_delete=ON")
-        for table in ("sessions", "device_authorizations"):
-            columns = {row["name"] for row in self.db.execute(f"PRAGMA table_info({table})")}
-            if table == "sessions" and "session_id" in columns and "user_id" in columns:
-                self.db.execute("ALTER TABLE sessions RENAME COLUMN user_id TO open_id")
-            if "session_id" in columns:
-                self.db.execute(f"ALTER TABLE {table} RENAME COLUMN session_id TO user_id")
-        self.db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
-              user_id TEXT PRIMARY KEY, open_id TEXT, user_name TEXT,
-              access_token TEXT, refresh_token TEXT, scope TEXT NOT NULL DEFAULT '',
-              access_expires_at INTEGER NOT NULL DEFAULT 0,
-              refresh_expires_at INTEGER NOT NULL DEFAULT 0,
-              status TEXT NOT NULL DEFAULT 'unauthorized',
-              updated_at INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS device_authorizations (
-              user_id TEXT PRIMARY KEY, device_code TEXT NOT NULL,
-              user_code TEXT NOT NULL DEFAULT '', verification_uri TEXT NOT NULL,
-              verification_uri_complete TEXT NOT NULL DEFAULT '', scope TEXT NOT NULL,
-              interval_seconds INTEGER NOT NULL DEFAULT 5,
-              expires_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
-              last_error TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
-            );
-            """
-        )
-        self.db.commit()
-        self.path.chmod(0o600)
-        self.locks: dict[str, asyncio.Lock] = {}
-
-    def lock(self, user_id: str) -> asyncio.Lock:
-        return self.locks.setdefault(user_id, asyncio.Lock())
-
-    def row(self, user_id: str) -> sqlite3.Row | None:
-        return self.db.execute("SELECT * FROM sessions WHERE user_id=?", (user_id,)).fetchone()
-
-    def ensure(self, user_id: str) -> sqlite3.Row:
-        self.db.execute("INSERT OR IGNORE INTO sessions(user_id, updated_at) VALUES (?, ?)", (user_id, int(time.time())))
-        self.db.commit()
-        return self.row(user_id)  # type: ignore[return-value]
-
-    def scopes(self, user_id: str, requested: list[str]) -> list[str]:
-        self.ensure(user_id)
-        values = {s.strip() for s in requested if s.strip()}
-        # Feishu owns the user's previously granted scope set.  We only send
-        # the scopes requested for this authorization attempt; do not invent
-        # a local cumulative scope list.  A transparent first request has no
-        # endpoint-specific scope available, so it only establishes refresh
-        # capability; explicit login must supply the business scopes.
-        values.add("offline_access")
-        return sorted(values)
 
 
 store = TokenStore(settings.feishu.lark_cli.database_path)
@@ -214,20 +152,38 @@ def _token_expiry(data: dict[str, Any], now: int) -> tuple[int, int]:
 def _mark_reauthorization_required(user_id: str) -> None:
     # Clear both credentials after a terminal refresh failure.  This prevents
     # a background scan from retrying a rotated/expired refresh token forever.
-    store.db.execute(
-        "UPDATE sessions SET access_token=NULL, refresh_token=NULL, access_expires_at=0, refresh_expires_at=0, status='reauthorization_required', updated_at=? WHERE user_id=?",
-        (int(time.time()), user_id),
-    )
-    store.db.commit()
+    store.update_session(user_id, {
+        "access_token": None,
+        "refresh_token": None,
+        "access_expires_at": 0,
+        "refresh_expires_at": 0,
+        "status": "reauthorization_required",
+        "updated_at": int(time.time()),
+    })
 
 
 def _save_authorized(user_id: str, scope: str, data: dict[str, Any], user: dict[str, Any]) -> None:
     now = int(time.time())
     granted = " ".join(sorted(set(filter(None, str(data.get("scope") or scope).split()))))
     access_expires_at, refresh_expires_at = _token_expiry(data, now)
-    store.db.execute("UPDATE sessions SET open_id=?, user_name=?, access_token=?, refresh_token=?, scope=?, access_expires_at=?, refresh_expires_at=?, status='authorized', updated_at=? WHERE user_id=?", (user.get("open_id"), user.get("name", ""), data.get("access_token", ""), data.get("refresh_token", ""), granted, access_expires_at, refresh_expires_at, now, user_id))
-    store.db.execute("DELETE FROM device_authorizations WHERE user_id=?", (user_id,))
-    store.db.commit()
+    store.update_session(user_id, {
+        "open_id": user.get("open_id"),
+        "user_name": user.get("name", ""),
+        "access_token": data.get("access_token", ""),
+        "refresh_token": data.get("refresh_token", ""),
+        "scope": granted,
+        "access_expires_at": access_expires_at,
+        "refresh_expires_at": refresh_expires_at,
+        "status": "authorized",
+        "updated_at": now,
+    }, clear_authorization=True)
+
+
+def _end_device_authorization(user_id: str) -> None:
+    store.update_session(user_id, {
+        "status": "authorization_required",
+        "updated_at": int(time.time()),
+    }, clear_authorization=True)
 
 
 async def _complete_device(user_id: str, scope: str, body: dict[str, Any]) -> None:
@@ -246,41 +202,37 @@ async def _device_poll(user_id: str) -> None:
     interval = 5
     try:
         while True:
-            row = store.db.execute("SELECT * FROM device_authorizations WHERE user_id=?", (user_id,)).fetchone()
+            row = store.authorization(user_id)
             if not row:
                 return
             now = int(time.time())
-            if row["expires_at"] <= now:
-                store.db.execute("DELETE FROM device_authorizations WHERE user_id=?", (user_id,))
-                store.db.execute("UPDATE sessions SET status='authorization_required', updated_at=? WHERE user_id=?", (now, user_id))
-                store.db.commit()
+            if row.expires_at <= now:
+                _end_device_authorization(user_id)
                 return
-            interval = max(1, int(row["interval_seconds"] or interval))
-            await asyncio.sleep(min(interval, max(1, row["expires_at"] - now)))
+            interval = max(1, int(row.interval_seconds or interval))
+            await asyncio.sleep(min(interval, max(1, row.expires_at - now)))
             try:
-                body = await _poll_device_token(row["device_code"])
+                body = await _poll_device_token(row.device_code)
             except (RuntimeError, httpx.HTTPError) as exc:
-                store.db.execute("UPDATE device_authorizations SET last_error=?, updated_at=? WHERE user_id=?", (str(exc)[:200], int(time.time()), user_id))
-                store.db.commit()
+                store.update_authorization(user_id, {
+                    "last_error": str(exc)[:200],
+                    "updated_at": int(time.time()),
+                })
                 interval = min(interval + 5, 60)
                 continue
             error = _error_code(body)
             if body.get("access_token") or _token_data(body).get("access_token"):
                 try:
-                    await _complete_device(user_id, row["scope"], body)
-                except (RuntimeError, ValueError, KeyError, httpx.HTTPError, sqlite3.Error):
-                    store.db.execute("DELETE FROM device_authorizations WHERE user_id=?", (user_id,))
-                    store.db.execute("UPDATE sessions SET status='authorization_required', updated_at=? WHERE user_id=?", (int(time.time()), user_id))
-                    store.db.commit()
+                    await _complete_device(user_id, row.scope, body)
+                except (RuntimeError, ValueError, KeyError, httpx.HTTPError, SQLAlchemyError):
+                    _end_device_authorization(user_id)
                 return
             if error == "authorization_pending":
                 continue
             if error == "slow_down":
                 interval = min(interval + 5, 60)
                 continue
-            store.db.execute("DELETE FROM device_authorizations WHERE user_id=?", (user_id,))
-            store.db.execute("UPDATE sessions SET status='authorization_required', updated_at=? WHERE user_id=?", (int(time.time()), user_id))
-            store.db.commit()
+            _end_device_authorization(user_id)
             return
     finally:
         _poll_tasks.pop(user_id, None)
@@ -292,15 +244,15 @@ def _schedule_poll(user_id: str) -> None:
         _poll_tasks[user_id] = asyncio.create_task(_device_poll(user_id))
 
 
-async def _refresh(row: sqlite3.Row) -> bool:
+async def _refresh(row: TokenSession) -> bool:
     now = int(time.time())
-    if not row["refresh_token"]:
+    if not row.refresh_token:
         return False
-    if row["refresh_expires_at"] <= now:
-        _mark_reauthorization_required(row["user_id"])
+    if row.refresh_expires_at <= now:
+        _mark_reauthorization_required(row.user_id)
         return False
     try:
-        body = await _form_post(TOKEN_URL, {"grant_type": "refresh_token", "refresh_token": row["refresh_token"], "client_id": settings.feishu.app_id, "client_secret": settings.feishu.app_secret})
+        body = await _form_post(TOKEN_URL, {"grant_type": "refresh_token", "refresh_token": row.refresh_token, "client_id": settings.feishu.app_id, "client_secret": settings.feishu.app_secret})
         error = _error_code(body)
         if error and error not in {"0", "none"}:
             raise RuntimeError(f"refresh failed with Feishu error {error}: {body.get('msg') or body.get('message') or ''}")
@@ -309,12 +261,19 @@ async def _refresh(row: sqlite3.Row) -> bool:
         if not access or not refresh:
             raise RuntimeError("refresh response did not rotate both tokens")
         access_expires_at, refresh_expires_at = _token_expiry(data, now)
-        store.db.execute("UPDATE sessions SET access_token=?, refresh_token=?, scope=?, access_expires_at=?, refresh_expires_at=?, status='authorized', updated_at=? WHERE user_id=?", (access, refresh, data.get("scope") or row["scope"], access_expires_at, refresh_expires_at, now, row["user_id"]))
-        store.db.commit()
+        store.update_session(row.user_id, {
+            "access_token": access,
+            "refresh_token": refresh,
+            "scope": data.get("scope") or row.scope,
+            "access_expires_at": access_expires_at,
+            "refresh_expires_at": refresh_expires_at,
+            "status": "authorized",
+            "updated_at": now,
+        })
         return True
-    except (RuntimeError, ValueError, KeyError, httpx.HTTPError, sqlite3.Error) as exc:
+    except (RuntimeError, ValueError, KeyError, httpx.HTTPError, SQLAlchemyError) as exc:
         if any(word in str(exc).lower() for word in ("invalid_grant", "invalid refresh", "expired", "revoked", "already used", "20026", "20037", "20064", "20073")):
-            _mark_reauthorization_required(row["user_id"])
+            _mark_reauthorization_required(row.user_id)
         return False
 
 
@@ -323,20 +282,17 @@ async def refresh_due() -> None:
     now = current + REFRESH_SKEW_SECONDS
     # Expired refresh tokens are terminal.  Mark them once and exclude them
     # from the scan so the service does not issue a failed request every minute.
-    expired_rows = store.db.execute(
-        "SELECT user_id FROM sessions WHERE refresh_token IS NOT NULL AND refresh_token != '' AND refresh_expires_at <= ?",
-        (current,),
-    ).fetchall()
+    expired_rows = store.expired_refresh_sessions(current)
     for expired in expired_rows:
-        async with store.lock(expired["user_id"]):
-            latest = store.row(expired["user_id"])
-            if latest and latest["refresh_token"] and latest["refresh_expires_at"] <= current:
-                _mark_reauthorization_required(expired["user_id"])
-    rows = store.db.execute("SELECT * FROM sessions WHERE refresh_token IS NOT NULL AND refresh_token != '' AND refresh_expires_at > ? AND access_expires_at <= ?", (current, now)).fetchall()
+        async with store.lock(expired.user_id):
+            latest = store.row(expired.user_id)
+            if latest and latest.refresh_token and latest.refresh_expires_at <= current:
+                _mark_reauthorization_required(expired.user_id)
+    rows = store.due_refresh_sessions(current, now)
     for row in rows:
-        async with store.lock(row["user_id"]):
-            latest = store.row(row["user_id"])
-            if latest and latest["refresh_expires_at"] > current and latest["access_expires_at"] <= now:
+        async with store.lock(row.user_id):
+            latest = store.row(row.user_id)
+            if latest and latest.refresh_expires_at > current and latest.access_expires_at <= now:
                 await _refresh(latest)
 
 
@@ -349,8 +305,8 @@ async def refresh_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     refresh_task = asyncio.create_task(refresh_loop())
-    for row in store.db.execute("SELECT user_id FROM device_authorizations WHERE expires_at>?", (int(time.time()),)).fetchall():
-        _schedule_poll(row["user_id"])
+    for user_id in store.pending_user_ids(int(time.time())):
+        _schedule_poll(user_id)
     try:
         yield
     finally:
@@ -359,7 +315,7 @@ async def lifespan(_: FastAPI):
         for task in tasks:
             task.cancel()
         await asyncio.gather(refresh_task, *tasks, return_exceptions=True)
-        store.db.close()
+        store.close()
 
 
 app = FastAPI(title="Xpeech Feishu token manager", lifespan=lifespan)
@@ -375,10 +331,10 @@ async def authorization_start(payload: StartRequest) -> dict[str, Any]:
     async with store.lock(payload.user_id):
         scopes = store.scopes(payload.user_id, payload.scopes)
         now = int(time.time())
-        existing = store.db.execute("SELECT * FROM device_authorizations WHERE user_id=? AND status='pending' AND expires_at>?", (payload.user_id, now)).fetchone()
-        if existing and set(existing["scope"].split()) == set(scopes):
+        existing = store.authorization(payload.user_id, pending_only=True, valid_at=now)
+        if existing and set(existing.scope.split()) == set(scopes):
             _schedule_poll(payload.user_id)
-            return {"status": "pending", "authorization_url": existing["verification_uri_complete"] or existing["verification_uri"], "verification_uri": existing["verification_uri"], "user_code": existing["user_code"], "expires_at": existing["expires_at"], "scopes": scopes}
+            return {"status": "pending", "authorization_url": existing.verification_uri_complete or existing.verification_uri, "verification_uri": existing.verification_uri, "user_code": existing.user_code, "expires_at": existing.expires_at, "scopes": scopes}
         data = await _request_device_code(scopes)
         expires_in = max(1, int(data.get("expires_in", data.get("expire_in", 240))))
         now = int(time.time())
@@ -386,10 +342,17 @@ async def authorization_start(payload: StartRequest) -> dict[str, Any]:
         # second deployment-specific timeout that can disagree with Feishu.
         expires_at = now + expires_in
         interval = max(1, int(data.get("interval", 5)))
-        store.db.execute("DELETE FROM device_authorizations WHERE user_id=?", (payload.user_id,))
-        store.db.execute("INSERT INTO device_authorizations(user_id, device_code, user_code, verification_uri, verification_uri_complete, scope, interval_seconds, expires_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (payload.user_id, data["device_code"], data.get("user_code", ""), data.get("verification_uri", ""), data.get("verification_uri_complete", data.get("verification_uri", "")), " ".join(scopes), interval, expires_at, now))
-        store.db.execute("UPDATE sessions SET status='pending', updated_at=? WHERE user_id=?", (now, payload.user_id))
-        store.db.commit()
+        store.save_authorization(DeviceAuthorization(
+            user_id=payload.user_id,
+            device_code=data["device_code"],
+            user_code=data.get("user_code", ""),
+            verification_uri=data.get("verification_uri", ""),
+            verification_uri_complete=data.get("verification_uri_complete", data.get("verification_uri", "")),
+            scope=" ".join(scopes),
+            interval_seconds=interval,
+            expires_at=expires_at,
+            updated_at=now,
+        ))
     _schedule_poll(payload.user_id)
     return {"status": "pending", "authorization_url": data.get("verification_uri_complete") or data.get("verification_uri"), "verification_uri": data.get("verification_uri", ""), "user_code": data.get("user_code", ""), "expires_at": expires_at, "scopes": scopes}
 
@@ -403,16 +366,16 @@ async def token_resolve(payload: ResolveRequest) -> dict[str, Any]:
             data = _token_data(await _json_post(TENANT_URL, {"app_id": settings.feishu.app_id, "app_secret": settings.feishu.app_secret}))
             return {"access_token": data["tenant_access_token"], "expires_at": now + int(data.get("expire", 7200)), "scope": ""}
         requested = {s.strip() for s in payload.scopes if s.strip()}
-        granted = set(filter(None, row["scope"].split()))
+        granted = set(filter(None, row.scope.split()))
         # Credential Provider requests do not carry endpoint-specific scopes;
         # a valid user token is therefore usable until the upstream command
         # reports a missing scope and the user explicitly authorizes it.
         required = requested
-        if row["access_token"] and row["access_expires_at"] > now + 30 and required <= granted:
-            return {"access_token": row["access_token"], "expires_at": row["access_expires_at"], "scope": row["scope"]}
-        if row["refresh_token"] and row["refresh_expires_at"] > now and required <= granted and await _refresh(row):
+        if row.access_token and row.access_expires_at > now + 30 and required <= granted:
+            return {"access_token": row.access_token, "expires_at": row.access_expires_at, "scope": row.scope}
+        if row.refresh_token and row.refresh_expires_at > now and required <= granted and await _refresh(row):
             row = store.row(payload.user_id)
-            return {"access_token": row["access_token"], "expires_at": row["access_expires_at"], "scope": row["scope"]}  # type: ignore[index]
+            return {"access_token": row.access_token, "expires_at": row.access_expires_at, "scope": row.scope}
     start = await authorization_start(StartRequest(user_id=payload.user_id, scopes=payload.scopes))
     raise HTTPException(status_code=428, detail={"type": "authorization_required", **start})
 
@@ -425,24 +388,23 @@ async def token_invalidate(payload: InvalidateRequest) -> dict[str, bool]:
 
     async with store.lock(payload.user_id):
         row = store.row(payload.user_id)
-        if not row or not row["access_token"]:
+        if not row or not row.access_token:
             return {"invalidated": False}
-        current_hash = hashlib.sha256(row["access_token"].encode()).hexdigest()
+        current_hash = hashlib.sha256(row.access_token.encode()).hexdigest()
         if not hmac.compare_digest(current_hash, payload.token_hash):
             return {"invalidated": False}
 
         now = int(time.time())
-        has_refresh = bool(row["refresh_token"]) and row["refresh_expires_at"] > now
-        store.db.execute(
-            "UPDATE sessions SET access_token=NULL, access_expires_at=0, status=?, updated_at=? WHERE user_id=?",
-            ("authorized" if has_refresh else "reauthorization_required", now, payload.user_id),
-        )
+        has_refresh = bool(row.refresh_token) and row.refresh_expires_at > now
+        values = {
+            "access_token": None,
+            "access_expires_at": 0,
+            "status": "authorized" if has_refresh else "reauthorization_required",
+            "updated_at": now,
+        }
         if not has_refresh:
-            store.db.execute(
-                "UPDATE sessions SET refresh_token=NULL, refresh_expires_at=0 WHERE user_id=?",
-                (payload.user_id,),
-            )
-        store.db.commit()
+            values.update(refresh_token=None, refresh_expires_at=0)
+        store.update_session(payload.user_id, values)
         return {"invalidated": True}
 
 
@@ -451,10 +413,10 @@ async def status(user_id: str) -> dict[str, Any]:
     row = store.row(user_id)
     if not row:
         return {"status": "unauthorized", "scopes": []}
-    pending = store.db.execute("SELECT verification_uri_complete, verification_uri, user_code, expires_at, scope FROM device_authorizations WHERE user_id=? AND status='pending'", (user_id,)).fetchone()
-    result: dict[str, Any] = {"status": row["status"], "open_id": row["open_id"], "user_name": row["user_name"], "scopes": row["scope"].split(), "access_expires_at": row["access_expires_at"], "refresh_expires_at": row["refresh_expires_at"]}
+    pending = store.authorization(user_id, pending_only=True)
+    result: dict[str, Any] = {"status": row.status, "open_id": row.open_id, "user_name": row.user_name, "scopes": row.scope.split(), "access_expires_at": row.access_expires_at, "refresh_expires_at": row.refresh_expires_at}
     if pending:
-        result.update({"status": "pending", "authorization_url": pending["verification_uri_complete"] or pending["verification_uri"], "verification_uri": pending["verification_uri"], "user_code": pending["user_code"], "authorization_expires_at": pending["expires_at"], "requested_scopes": pending["scope"].split()})
+        result.update({"status": "pending", "authorization_url": pending.verification_uri_complete or pending.verification_uri, "verification_uri": pending.verification_uri, "user_code": pending.user_code, "authorization_expires_at": pending.expires_at, "requested_scopes": pending.scope.split()})
     return result
 
 
@@ -463,9 +425,17 @@ async def logout(payload: LogoutRequest) -> dict[str, str]:
     task = _poll_tasks.pop(payload.user_id, None)
     if task:
         task.cancel()
-    store.db.execute("DELETE FROM device_authorizations WHERE user_id=?", (payload.user_id,))
-    store.db.execute("UPDATE sessions SET open_id=NULL, user_name=NULL, access_token=NULL, refresh_token=NULL, scope='', access_expires_at=0, refresh_expires_at=0, status='unauthorized', updated_at=? WHERE user_id=?", (int(time.time()), payload.user_id))
-    store.db.commit()
+    store.update_session(payload.user_id, {
+        "open_id": None,
+        "user_name": None,
+        "access_token": None,
+        "refresh_token": None,
+        "scope": "",
+        "access_expires_at": 0,
+        "refresh_expires_at": 0,
+        "status": "unauthorized",
+        "updated_at": int(time.time()),
+    }, clear_authorization=True)
     return {"status": "logged_out"}
 
 
@@ -474,9 +444,15 @@ async def migrate(payload: MigrateRequest) -> dict[str, str]:
     if payload.app_id != settings.feishu.app_id or not payload.access_token:
         raise HTTPException(status_code=400, detail="invalid legacy token")
     now = int(time.time())
-    store.db.execute("INSERT INTO sessions(user_id, access_token, refresh_token, scope, access_expires_at, refresh_expires_at, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'authorized', ?) ON CONFLICT(user_id) DO UPDATE SET access_token=excluded.access_token, refresh_token=excluded.refresh_token, scope=excluded.scope, access_expires_at=excluded.access_expires_at, refresh_expires_at=excluded.refresh_expires_at, status='authorized', updated_at=excluded.updated_at", (payload.user_id, payload.access_token, payload.refresh_token, payload.scope, payload.expires_at, payload.refresh_token_expires_at, now))
-    store.db.execute("DELETE FROM device_authorizations WHERE user_id=?", (payload.user_id,))
-    store.db.commit()
+    store.update_session(payload.user_id, {
+        "access_token": payload.access_token,
+        "refresh_token": payload.refresh_token,
+        "scope": payload.scope,
+        "access_expires_at": payload.expires_at,
+        "refresh_expires_at": payload.refresh_token_expires_at,
+        "status": "authorized",
+        "updated_at": now,
+    }, clear_authorization=True, create=True)
     return {"status": "migrated"}
 
 

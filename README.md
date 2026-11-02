@@ -437,6 +437,11 @@ curl -N -X POST "http://localhost:7878/chat" \
 `session_record_path` 默认是
 `data/session/record.db`，可在 `conf.toml` 的 `[path]` 中覆盖。
 
+对话记录、Web 用户与会话、飞书令牌的建表和业务读写统一使用 SQLModel；
+定时任务保留 APScheduler 自带的 SQLAlchemyJobStore，并接入公共 SQLite 连接配置。
+SQLite 连接统一启用 WAL 模式，
+支持读写并发；写入之间仍然串行，遇到锁竞争时最多等待 30 秒。已有数据库会在服务重启后首次连接时自动切换。
+
 ## 飞书定时任务
 
 在飞书会话中可以直接用自然语言要求 Agent 创建、查看或取消定时任务，例如“明天上午 9 点提醒我

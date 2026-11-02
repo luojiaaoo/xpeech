@@ -14,6 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from loguru import logger
+from sqlalchemy import event
 
 from ...agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
 from ...agent.tools.schedule.schema import (
@@ -23,6 +24,7 @@ from ...agent.tools.schedule.schema import (
 )
 from ...config.settings import settings
 from ...utils.internal_jwt import create_internal_access_token
+from ...utils.sqlite import configure_sqlite_connection
 
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
 EXECUTION_TIMEOUT_SECONDS = 3600.0
@@ -65,10 +67,6 @@ def _scheduler_database_path(database_path: str | Path | None = None) -> Path:
     path = path.expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def _sqlite_url(path: Path) -> str:
-    return f"sqlite:///{path.as_posix()}"
 
 
 def get_background_scheduler() -> AsyncIOScheduler:
@@ -136,8 +134,10 @@ def start_background_scheduler(
         return _scheduler
 
     path = _scheduler_database_path(database_path)
+    jobstore = SQLAlchemyJobStore(url=f"sqlite:///{path.as_posix()}")
+    event.listen(jobstore.engine, "connect", configure_sqlite_connection)
     scheduler = AsyncIOScheduler(
-        jobstores={"default": SQLAlchemyJobStore(url=_sqlite_url(path))},
+        jobstores={"default": jobstore},
     )
     timezone = scheduler.timezone
     scheduler.start(paused=True)

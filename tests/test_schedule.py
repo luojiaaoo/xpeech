@@ -201,6 +201,16 @@ async def test_schedule_api_offloads_database_calls(monkeypatch, scheduler_http)
 
 
 @pytest.mark.asyncio
+async def test_scheduler_database_connections_use_wal(tmp_path: Path):
+    scheduler = start_background_scheduler(tmp_path / "schedule.db")
+    engine = scheduler._jobstores["default"].engine
+    with engine.connect() as first, engine.connect() as second:
+        for connection in (first, second):
+            assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
+            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 30000
+
+
+@pytest.mark.asyncio
 async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(tmp_path: Path):
     scheduler = start_background_scheduler(tmp_path / "schedule.db")
     now = datetime.now(scheduler.timezone)

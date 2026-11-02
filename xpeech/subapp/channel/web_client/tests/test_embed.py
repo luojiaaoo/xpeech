@@ -1,6 +1,5 @@
 import base64
 import json
-import sqlite3
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from pathlib import Path
@@ -12,10 +11,13 @@ import httpx
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import inspect
+from sqlalchemy.orm import registry
+from sqlmodel import Field, Session, SQLModel, create_engine, func, select
 
 from xpeech.config.settings import JWTChannelConfig, settings
 from xpeech.subapp.channel.helper import BackendJWTParams, ChatStream
-from xpeech.subapp.channel.web_client.dao import WebClientDAO
+from xpeech.subapp.channel.web_client.dao import AuthenticationSession, User, WebClientDAO
 
 web = import_module("xpeech.subapp.channel.web_client.app")
 proxy = import_module("xpeech.subapp.channel.web_client.routes.proxy")
@@ -100,11 +102,14 @@ def test_embed_validation_is_stateless_and_does_not_create_users_or_sessions(cli
         assert mocked.await_args.args[0] == BackendJWTParams(token)
     assert client.post("/api/auth/logout", headers=headers).status_code == 204
     assert client.get("/api/auth/embed", headers=headers).status_code == 200
-    with sqlite3.connect(tmp_path / "users.db") as database:
-        assert database.execute("SELECT user_id FROM users").fetchall() == [("admin",)]
-        assert database.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
-        tables = {row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        assert "embedded_sessions" not in tables
+    engine = create_engine(f"sqlite:///{(tmp_path / 'users.db').as_posix()}")
+    try:
+        with Session(engine) as database:
+            assert database.exec(select(User.user_id)).all() == ["admin"]
+            assert database.exec(select(func.count()).select_from(AuthenticationSession)).one() == 0
+        assert "embedded_sessions" not in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
     assert "/api/auth/embed/session" not in client.app.openapi()["paths"]
     for method in (client.post, client.delete):
         assert method("/api/auth/embed/session").status_code == 404
@@ -322,16 +327,37 @@ def test_local_cookie_requests_only_allow_main_session(client, path, session_id)
 @pytest.mark.asyncio
 async def test_old_local_session_schema_is_preserved_without_creating_embedded_table(tmp_path):
     path = tmp_path / "old-users.db"
-    with sqlite3.connect(path) as database:
-        database.execute("CREATE TABLE sessions (token_hash VARCHAR PRIMARY KEY, user_id INTEGER NOT NULL, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL)")
-        database.execute("INSERT INTO sessions VALUES ('old-session', 1, '2999-01-01', '2026-01-01')")
+
+    class LegacyModel(SQLModel, registry=registry()):
+        pass
+
+    class LegacySession(LegacyModel, table=True):
+        __tablename__ = "sessions"
+
+        token_hash: str = Field(primary_key=True)
+        user_id: int
+        expires_at: datetime
+        created_at: datetime
+
+    engine = create_engine(f"sqlite:///{path.as_posix()}")
+    try:
+        LegacySession.metadata.create_all(engine)
+        with Session(engine) as database:
+            database.add(LegacySession(
+                token_hash="old-session", user_id=1,
+                expires_at=datetime(2999, 1, 1), created_at=datetime(2026, 1, 1),
+            ))
+            database.commit()
+    finally:
+        engine.dispose()
     dao = WebClientDAO(path)
     try:
         await dao.initialize(lambda: "admin-hash")
         assert (await dao.get_user_for_session("old-session")).user_id == "admin"
         await dao.initialize(lambda: "unused")
         assert (await dao.get_user_for_session("old-session")).user_id == "admin"
-        with sqlite3.connect(path) as database:
-            assert database.execute("SELECT name FROM sqlite_master WHERE name = 'embedded_sessions'").fetchone() is None
+        async with dao.engine.connect() as connection:
+            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+            assert "embedded_sessions" not in tables
     finally:
         await dao.close()
