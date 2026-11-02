@@ -39,11 +39,12 @@ def client(tmp_path: Path, monkeypatch):
         yield client
 
 
-def signed_channel_token(channel_name="crm", *, secret=None, claims=None, algorithm=None):
+def signed_identity(user_id="alice", channel_name="crm", *, secret=None, claims=None, algorithm=None):
     if secret is None:
         channel = settings.jwt.channels.get(channel_name)
         secret = channel.secret_key if channel is not None else "unconfigured-channel-key-at-least-32-characters"
     payload = {
+        "sub": user_id,
         "exp": datetime.now(UTC) + timedelta(seconds=settings.jwt.access_token_expire_seconds),
     }
     if claims is not None:
@@ -53,10 +54,10 @@ def signed_channel_token(channel_name="crm", *, secret=None, claims=None, algori
 
 
 def login_embedded(client, user_id="alice", origin=ORIGIN, token=None, channel_name="crm"):
-    headers = {"Origin": origin, "X-USER-ID": user_id}
+    headers = {"Origin": origin}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    return client.post("/api/auth/embed/session", json={"jwt": signed_channel_token(channel_name)}, headers=headers)
+    return client.post("/api/auth/embed/session", json={"jwt": signed_identity(user_id, channel_name)}, headers=headers)
 
 
 def test_existing_account_is_used_without_admin_cookie_privileges(client):
@@ -102,8 +103,8 @@ def test_actual_user_id_is_shared_across_allowed_origins_and_refresh_revokes_old
         "Origin": ORIGIN, "Authorization": f"Bearer {again['token']}",
     }).status_code == 204
     assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {again['token']}"}).status_code == 401
-    for headers in ({"X-USER-ID": "alice"}, {"Origin": "https://attacker.test", "X-USER-ID": "alice"}):
-        response = client.post("/api/auth/embed/session", json={"jwt": signed_channel_token()}, headers=headers)
+    for headers in ({}, {"Origin": "https://attacker.test"}):
+        response = client.post("/api/auth/embed/session", json={"jwt": signed_identity()}, headers=headers)
         assert response.status_code == 403
         assert "access-control-allow-origin" not in response.headers
 
@@ -112,7 +113,7 @@ def test_cors_is_limited_to_embed_session_routes(client):
     assert "/api/auth/embed/session" in client.app.openapi()["paths"]
     preflight = client.options("/api/auth/embed/session", headers={
         "Origin": ORIGIN, "Access-Control-Request-Method": "POST",
-        "Access-Control-Request-Headers": "content-type,authorization,x-user-id",
+        "Access-Control-Request-Headers": "content-type,authorization",
     })
     assert preflight.status_code == 200
     assert preflight.headers["access-control-allow-origin"] == ORIGIN
@@ -123,7 +124,7 @@ def test_cors_is_limited_to_embed_session_routes(client):
     assert denied.status_code == 400
     assert "access-control-allow-origin" not in denied.headers
     assert "access-control-allow-origin" not in client.get("/api/admin/users", headers={"Origin": ORIGIN}).headers
-    invalid = client.post("/api/auth/embed/session", json={"user_id": ""}, headers={"Origin": ORIGIN, "X-USER-ID": "alice"})
+    invalid = client.post("/api/auth/embed/session", json={"user_id": ""}, headers={"Origin": ORIGIN})
     assert invalid.status_code == 422
     assert invalid.headers["access-control-allow-origin"] == ORIGIN
     policy = client.get("/?embed=1").headers["content-security-policy"]
@@ -136,7 +137,7 @@ def test_cors_is_limited_to_embed_session_routes(client):
 
 @pytest.mark.parametrize("user_id", ["", "  ", "x" * 129, "a\nb", "../admin", "user/name"])
 def test_rejects_invalid_identity(client, user_id):
-    assert login_embedded(client, user_id).status_code == 422
+    assert login_embedded(client, user_id).status_code == 401
 
 
 def test_default_embed_requires_an_allowed_origin(tmp_path):
@@ -263,8 +264,7 @@ def test_embedded_channel_signs_all_backend_requests_with_its_own_key(client, mo
         calls.append(request)
         token = request.headers["authorization"].removeprefix("Bearer ")
         assert jwt.get_unverified_header(token)["kid"] == name
-        claims = jwt.decode(token, secret, algorithms=[settings.jwt.algorithm], options={"require": ["exp"]})
-        assert set(claims) == {"exp"}
+        jwt.decode(token, secret, algorithms=[settings.jwt.algorithm], options={"require": ["exp"]})
         assert request.headers["x-user-id"] == user_id
         return httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n')
 
@@ -331,46 +331,48 @@ def test_cookie_login_cannot_override_backend_channel(client, monkeypatch):
     {"jwt": "invalid", "user_id": "admin"},
     {"jwt": "invalid", "channel_name": "crm"},
 ])
-def test_embed_body_rejects_user_id_and_channel_name(client, body):
-    assert client.post("/api/auth/embed/session", json=body, headers={"Origin": ORIGIN, "X-USER-ID": "alice"}).status_code == 422
+def test_plain_user_ids_and_independent_channels_are_no_longer_accepted(client, body):
+    assert client.post("/api/auth/embed/session", json=body, headers={"Origin": ORIGIN}).status_code == 422
 
 
 @pytest.mark.parametrize("claims", [
-    {},
-    {"exp": 1},
-    {"exp": True},
-    {"exp": "9999999999"},
-    {"exp": float("inf")},
-    {"exp": float("nan")},
-    {"exp": 1e100},
-    {"exp": 9999999999, "nbf": 9999999998},
+    {"sub": "alice"},
+    {"exp": 9999999999},
+    {"sub": 0, "exp": 9999999999},
+    {"sub": "alice", "exp": 1},
+    {"sub": "alice", "exp": True},
+    {"sub": "alice", "exp": "9999999999"},
+    {"sub": "alice", "exp": float("inf")},
+    {"sub": "alice", "exp": float("nan")},
+    {"sub": "alice", "exp": 1e100},
+    {"sub": "alice", "exp": 9999999999, "nbf": 9999999998},
 ])
 def test_invalid_or_expired_claims_cannot_create_sessions(client, claims):
-    token = signed_channel_token(claims=claims)
-    assert client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN, "X-USER-ID": "alice"}).status_code == 401
+    token = signed_identity(claims=claims)
+    assert client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN}).status_code == 401
 
 
-def test_signature_tampering_and_algorithm_substitution_are_rejected(client):
-    valid = signed_channel_token()
+def test_signature_tampering_and_algorithm_substitution_cannot_impersonate_admin(client):
+    valid = signed_identity()
     parts = valid.split(".")
     claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=="))
-    claims["exp"] = 9999999999
+    claims["sub"] = "admin"
     parts[1] = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
     for token in (
         ".".join(parts),
-        signed_channel_token(secret="wrong-signing-key-at-least-32-characters"),
-        signed_channel_token(algorithm="HS512"),
-        jwt.encode({"exp": 9999999999}, "", algorithm="none", headers={"kid": "crm"}),
+        signed_identity("admin", secret="wrong-signing-key-at-least-32-characters"),
+        signed_identity("admin", algorithm="HS512"),
+        jwt.encode({"sub": "admin", "exp": 9999999999}, "", algorithm="none", headers={"kid": "crm"}),
         "not.a.jwt",
     ):
-        assert client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN, "X-USER-ID": "alice"}).status_code == 401
+        assert client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN}).status_code == 401
 
 
 def test_global_jwt_algorithm_and_lifetime_are_used_without_audience_validation(client, monkeypatch):
     monkeypatch.setattr(settings.jwt, "algorithm", "HS512")
     monkeypatch.setattr(settings.jwt, "access_token_expire_seconds", 45)
-    token = signed_channel_token(claims={"exp": 9999999999, "aud": "business"})
-    result = client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN, "X-USER-ID": "alice"})
+    token = signed_identity(claims={"sub": "alice", "exp": 9999999999, "aud": "business"})
+    result = client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN})
     assert result.status_code == 200
     assert 0 < result.json()["expires_in"] <= 45
     assert result.json()["channel_name"] == "crm"
@@ -379,11 +381,11 @@ def test_global_jwt_algorithm_and_lifetime_are_used_without_audience_validation(
 
 def test_session_never_outlives_jwt_and_invalid_refresh_keeps_existing_session(client, tmp_path):
     expires_at = int((datetime.now(UTC) + timedelta(seconds=15)).timestamp())
-    token = signed_channel_token(claims={"exp": expires_at, "is_admin": True})
-    result = client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN, "X-USER-ID": "alice"}).json()
+    token = signed_identity(claims={"sub": "alice", "exp": expires_at, "is_admin": True})
+    result = client.post("/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN}).json()
     assert 0 < result["expires_in"] <= 15
     assert result["user"]["is_admin"] is False
-    headers = {"Origin": ORIGIN, "X-USER-ID": "alice", "Authorization": f"Bearer {result['token']}"}
+    headers = {"Origin": ORIGIN, "Authorization": f"Bearer {result['token']}"}
     assert client.post("/api/auth/embed/session", json={"jwt": "invalid"}, headers=headers).status_code == 401
     assert client.get("/api/auth/me", headers=headers).status_code == 200
     with sqlite3.connect(tmp_path / "users.db") as database:
@@ -432,20 +434,3 @@ def test_embed_tokens_cannot_use_cookie_transport_to_bypass_the_bound_channel(cl
     assert client.get("/api/files", params={"path": "a.txt"}).status_code == 401
     assert client.post("/api/chat", data={"content": "[]"}).status_code == 401
     assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {account['token']}"}).status_code == 200
-
-
-def test_embed_user_is_selected_by_required_header_without_jwt_subject(client):
-    token = signed_channel_token()
-    assert "sub" not in jwt.decode(token, options={"verify_signature": False})
-    for user_id in ("alice", "bob"):
-        result = client.post(
-            "/api/auth/embed/session", json={"jwt": token},
-            headers={"Origin": ORIGIN, "X-USER-ID": user_id},
-        )
-        assert result.status_code == 200
-        assert result.json()["user"]["user_id"] == user_id
-    response = client.post(
-        "/api/auth/embed/session", json={"jwt": token}, headers={"Origin": ORIGIN},
-    )
-    assert response.status_code == 422
-    assert response.json()["detail"][0]["loc"] == ["header", "X-USER-ID"]

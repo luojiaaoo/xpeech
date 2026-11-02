@@ -817,8 +817,7 @@ userinfo_filter = 'select(.data.department == "R&D")'
 
 业务网站通过 ES Module `embed.js` 接入聊天组件，无需对接 OAuth2。使用 `import()` 动态
 加载模块，不需要插入 `<script src>`，也不向 `window` 注册全局 API。登录成功后通过
-`setJWT(jwtOrProvider, userId)` 传入业务后端签发的 JWT 和当前用户 ID，组件自动初始化并
-显示浮动按钮；点击按钮展开聊天窗口。
+`setJWT()` 传入业务后端签发的 JWT，组件自动初始化并显示浮动按钮；点击按钮展开聊天窗口。
 退出登录时调用 `destroy()`，移除按钮和窗口，并清理会话。
 
 iframe 内聊天界面左上角的 **＋** 用于新建对话：点击后清空当前界面、取消当前回复并生成新的 UUIDv7
@@ -840,7 +839,7 @@ allowed_origins = ["https://portal.example.com", "http://localhost:3000"]
 ```javascript
 const assistant = await import("https://assistant.example.com/embed.js");
 
-// 业务网站自行实现此接口：先验证当前登录身份，再签发通道 JWT。
+// 业务网站自行实现此接口：先验证当前登录身份，再为当前用户签发 JWT。
 async function loadAssistantJWT() {
   const response = await fetch("/api/assistant/jwt", {
     credentials: "same-origin",
@@ -851,8 +850,8 @@ async function loadAssistantJWT() {
 }
 
 // 每次登录只调用一次；首次连接和自动续期都会调用获取函数。
-function onLoginSuccess(currentUser) {
-  assistant.setJWT(loadAssistantJWT, String(currentUser.user_id));
+function onLoginSuccess() {
+  assistant.setJWT(loadAssistantJWT);
   // 自动初始化并显示浮动按钮，聊天窗口默认收起。
 }
 
@@ -864,37 +863,36 @@ function onLogout() {
 ```
 
 浮动按钮的创建和点击事件均由组件自动处理，业务网站不需要创建按钮或绑定 DOM 事件。
-页面刷新后，如果业务网站恢复了登录状态，在模块加载完成后调用 `onLoginSuccess(currentUser)`。
+页面刷新后，如果业务网站恢复了登录状态，在模块加载完成后调用 `onLoginSuccess()`。
 单页应用退出时先调用 `destroy()`，下次登录再调用 `setJWT()`；浏览器会复用同一 URL 的模块实例。
 单独导入模块不会显示组件或请求会话，只有调用 `setJWT()` 才会初始化。
 必须遵循 `setJWT(...) → destroy() → setJWT(...)` 的顺序；初始化后再次调用 `setJWT()`
 会抛出异常，即使用户、通道或 JWT 完全相同。切换用户或通道必须先销毁组件，不能自动切换。
-用户 ID 在初始化时固定，自动续期的获取函数只能返回同一通道的 JWT；切换通道会报错。
+自动续期的获取函数也只能返回同一用户、同一通道的 JWT；身份变化会报错，不会替换当前会话。
 
 组件提供以下方法：
 
 | 方法 | 行为 |
 | --- | --- |
-| `assistant.setJWT(jwtOrProvider, userId)` | 传入 JWT 字符串或获取函数，以及当前用户 ID 字符串；每次销毁前只允许设置一次 |
+| `assistant.setJWT(jwtOrProvider)` | 传入 JWT 字符串，或返回 JWT 字符串的同步/异步函数；每次销毁前只允许设置一次 |
 | `assistant.hideButton()` | 隐藏浮动按钮，不关闭已打开的聊天窗口 |
 | `assistant.showButton()` | 显示浮动按钮，不自动打开聊天窗口 |
 | `assistant.open()` | 通过代码主动展开聊天 iframe，无需用户点击浮动按钮 |
 | `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
 | `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存身份并撤销已知 token |
 
-`setUserId()` 和 `setChannelName()` 已移除。`setJWT()` 的无效 JWT 或用户 ID 参数会同步抛出异常，
+`setUserId()` 和 `setChannelName()` 已移除。`setJWT()` 的无效字符串参数会同步抛出异常，
 不初始化组件；验签失败、凭证过期或获取函数失败会显示错误并触发 `xpeech:error`。
-也可以直接调用 `assistant.setJWT(jwt, userId)`，但组件无法签发新的业务 JWT；该凭证到期后
+也可以直接调用 `assistant.setJWT(jwt)`，但组件无法签发新的业务 JWT；该凭证到期后
 必须先 `destroy()`，再用新 JWT 初始化。需要自动续期时应使用上述获取函数，业务后端接口
 应返回 `{ "jwt": "..." }` 并设置 `Cache-Control: no-store`。
 组件尚未初始化或已经销毁时，显示、隐藏、打开、关闭操作不会创建组件；销毁可以重复调用。
 
-JWT 必须由业务后端先验证网站当前用户的登录身份，再签发通道凭证。Header 的 `kid`
-必须与服务端 `jwt.channels` 的自定义通道名一致，例如 `crm`
+JWT 必须由业务后端先验证网站当前用户的登录身份，再为该用户签发，不能直接采用浏览器提交的
+任意用户 ID。Header 的 `kid` 必须与服务端 `jwt.channels` 的自定义通道名一致，例如 `crm`
 对应 `[jwt.channels.crm]`，使用该通道的密钥签名。禁止使用 `web_client`、`feishu`、`internal`。
 通道名为 1–64 个字符，支持字母、数字、点、下划线、冒号和连字符，首字符须为字母或数字。
-Payload 不注入 `sub`；实际用户 ID 通过 `X-USER-ID` 请求头传递，必须为 1–128 字符的字符串，
-不自动去除空格或转换数字。
+Payload 的 `sub` 是实际用户 ID，必须为 1–128 字符的字符串，不自动去除空格或转换数字。
 `exp` 为必填的数值类型 Unix 秒时间戳；若包含 `nbf`、`iat`，也会校验时间有效性。
 签名算法和有效期统一使用全局 `jwt.algorithm`、`jwt.access_token_expire_seconds`；
 不要求或校验 `aud`，JWT 中的角色字段也不会授予权限。以下代码仅在业务后端运行，
@@ -906,11 +904,12 @@ import jwt
 from xpeech.config.settings import settings
 
 
-def issue_assistant_jwt():
-    # 仅允许已通过业务后端登录认证的请求调用。
+def issue_assistant_jwt(current_user):
+    # current_user 由业务后端自己的登录认证取得。
     channel_name = "crm"
     return jwt.encode(
         {
+            "sub": str(current_user.user_id),
             "exp": datetime.now(UTC) + timedelta(seconds=settings.jwt.access_token_expire_seconds),
         },
         settings.jwt.channels[channel_name].secret_key,
@@ -922,11 +921,13 @@ def issue_assistant_jwt():
 组件服务和聊天后端需配置相同的通道及密钥。聊天、表单回答和文件下载转发时，服务端使用
 会话绑定通道的密钥签名，JWT header 的 `kid` 原样使用完整通道名；密钥不传给浏览器。
 后续请求不能改用其他通道。
+带 `sub` 的用户 JWT 仅用于嵌入身份交换，聊天后端不会将其作为服务通道凭证接受，
+避免浏览器绕过嵌入服务，通过自选用户请求头或文件路径访问其他账号。
 
-SDK 使用 `credentials: omit` 向嵌入会话接口提交 `{ "jwt": "..." }`，并通过
-`X-USER-ID` 请求头传递用户 ID；JSON 中不接受 `user_id` 或 `channel_name`。
-服务端按 `kid` 查找配置密钥，验签通过后使用请求头的用户 ID 查找或创建账号。
-换出的会话有效期取 JWT 剩余时间与全局 `jwt.access_token_expire_seconds` 的较短者。
+SDK 使用 `credentials: omit` 向嵌入会话接口提交 `{ "jwt": "..." }`，不接受独立的
+`user_id` 或 `channel_name`。服务端按 `kid` 查找配置密钥，验签通过后才使用 `sub`
+查找或创建账号。换出的会话有效期取 JWT 剩余时间与全局 `jwt.access_token_expire_seconds`
+的较短者。
 SDK 通过校验来源和窗口的 `postMessage` 把随机会话 token 交给聊天 iframe，不传递原始业务 JWT。
 SDK 和 iframe 均只在内存中保存凭证，不写 Cookie、URL、
 localStorage 或 sessionStorage；请求通过 `Authorization: Bearer` 携带。
@@ -939,7 +940,7 @@ HTTPS 加载组件。`/embed.js` 作为公开模块提供跨域加载响应头�
 `allowed_origins` 限制来源。业务网站配置 CSP 时，需要允许从组件服务地址加载脚本、发起
 连接并嵌入 iframe。
 
-`X-USER-ID` 直接对应 Web 客户端的实际账号 ID，不加前缀、不做哈希或来源隔离。
+验签后的 JWT `sub` 直接对应 Web 客户端的实际账号 ID，不加前缀、不做哈希或来源隔离。
 已有账号会复用其资料和后端身份；账号不存在时自动创建普通用户，初始显示名称为用户 ID，
 密码为服务端随机值。聊天、表单和文件下载均使用这个实际用户 ID，因此与普通页面访问同一
 账号时使用相同的后端身份。用户 ID 格式与本地账号一致，允许字母、数字、下划线和
@@ -949,6 +950,5 @@ HTTPS 加载组件。`/embed.js` 作为公开模块提供跨域加载响应头�
 嵌入会话不能调用 `/api/auth/password` 修改自身密码；管理员账号仍保留用户管理权限。
 普通页面原有的密码登录不受影响。
 
-通道 JWT 与用户 ID 分开传递，持有有效通道 JWT 的调用方可以通过 `X-USER-ID` 选择账号，
-因此应仅向受信任的调用方提供凭证。业务后端必须保护密钥和 JWT 签发接口；浏览器仅接收
+持有通道密钥的业务后端是受信任的身份签发方，必须保护密钥和 JWT 签发接口；浏览器仅接收
 签好的短期 JWT。来源白名单不能替代身份认证。不要把服务端密钥或管理员密码放入嵌入代码。

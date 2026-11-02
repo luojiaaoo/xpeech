@@ -144,14 +144,15 @@ async function connect(expectedVersion) {
     if (jwtProvider) {
       var next = normalize(await jwtProvider());
       if (expectedVersion !== version || !host) return;
-      if (channelName !== null && next.channelName !== channelName) {
-        throw new Error("续期 JWT 不能切换通道，请先调用 destroy()");
+      if (currentId !== null && (next.userId !== currentId || next.channelName !== channelName)) {
+        throw new Error("续期 JWT 不能切换用户或通道，请先调用 destroy()");
       }
+      currentId = next.userId;
       channelName = next.channelName;
       currentJWT = next.token;
     }
     var previous = session;
-    var headers = { "Content-Type": "application/json", "X-USER-ID": currentId };
+    var headers = { "Content-Type": "application/json" };
     if (previous) headers.Authorization = "Bearer " + previous.token;
     var response = await fetch(endpoint, {
       method: "POST", credentials: "omit", headers: headers,
@@ -170,7 +171,7 @@ async function connect(expectedVersion) {
     }
     if (result.channel_name !== channelName || !result.user || result.user.user_id !== currentId) {
       revoke(result.token);
-      throw new Error("会话用户或通道不一致");
+      throw new Error("会话身份与 JWT 不一致");
     }
     session = result;
     needsRetry = false;
@@ -203,12 +204,14 @@ function normalize(value) {
       return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     }
     var header = decode(parts[0]);
+    var claims = decode(parts[1]);
     if (!header || typeof header.kid !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(header.kid) ||
-        ["internal", "feishu", "web_client"].includes(header.kid)) throw new Error("invalid JWT channel");
-    // This unverified field only enforces the SDK lifecycle. The server verifies the token.
-    return { token: token, channelName: header.kid };
+        ["internal", "feishu", "web_client"].includes(header.kid) ||
+        !claims || typeof claims.sub !== "string" || !claims.sub.trim()) throw new Error("invalid JWT identity");
+    // These unverified fields only enforce the SDK lifecycle. The server verifies all claims.
+    return { token: token, userId: claims.sub, channelName: header.kid };
   } catch (_) {
-    throw new TypeError("JWT 格式无效，必须包含自定义通道 kid");
+    throw new TypeError("JWT 格式无效，必须包含自定义通道 kid 和用户 sub");
   }
 }
 function ensureConnected() {
@@ -217,13 +220,9 @@ function ensureConnected() {
     if (session && !needsRetry) { createFrame(); deliver(); } else connect(version);
   }
 }
-function setJWT(value, userId) {
+function setJWT(value) {
   if (identityConfigured) throw new Error("setJWT 只能初始化一次，请先调用 destroy() 再设置 JWT");
-  if (typeof userId !== "string" || !userId.trim() || userId.length > 128) {
-    throw new TypeError("setJWT 需要有效的用户 ID 字符串");
-  }
   if (typeof value === "function") {
-    currentId = userId;
     identityConfigured = true;
     jwtProvider = value;
     initialize();
@@ -234,7 +233,7 @@ function setJWT(value, userId) {
   var next = normalize(value);
   identityConfigured = true;
   initialize();
-  currentId = userId;
+  currentId = next.userId;
   channelName = next.channelName;
   currentJWT = next.token;
   jwtProvider = null;

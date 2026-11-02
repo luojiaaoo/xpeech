@@ -88,7 +88,7 @@ def create_app(config: WebConfig) -> FastAPI:
         EmbedCORSMiddleware,
         allow_origins=config.embed.allowed_origins,
         allow_methods=["POST", "DELETE"],
-        allow_headers=["Content-Type", "Authorization", "X-USER-ID"],
+        allow_headers=["Content-Type", "Authorization"],
     )
 
     @app.middleware("http")
