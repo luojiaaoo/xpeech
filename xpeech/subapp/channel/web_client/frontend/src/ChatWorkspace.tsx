@@ -16,13 +16,24 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
   return (
     <section className={`chat-workspace${embedded ? ' chat-workspace-embedded' : ''}`} aria-label="会话工作区">
       {embedded ? (
-        <Button className="new-conversation-button" icon={<PlusOutlined aria-hidden />} onClick={() => setSessionId(uuidv7())}>
-          新建会话
-        </Button>
+        <div className="conversation-toolbar">
+          <Button
+            className="new-conversation-button"
+            type="text"
+            icon={<PlusOutlined aria-hidden />}
+            onClick={() => setSessionId(uuidv7())}
+          >
+            新建会话
+          </Button>
+        </div>
       ) : null}
       <section className="conversation-panel" aria-label={title}>
         <Suspense fallback={<Skeleton className="conversation-loading" active />}>
-          <ChatPage key={sessionId} systemName={systemName} sessionId={sessionId} />
+          <ChatPage
+            key={sessionId}
+            systemName={systemName}
+            sessionId={sessionId}
+          />
         </Suspense>
       </section>
     </section>

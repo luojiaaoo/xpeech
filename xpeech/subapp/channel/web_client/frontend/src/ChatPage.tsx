@@ -280,6 +280,7 @@ export default function ChatPage({ systemName, sessionId, active = true }: {
           <Flex vertical align="center" justify="center" className="welcome-area" gap={18}>
             <Welcome icon={<div className="welcome-icon"><RobotOutlined /></div>} title={`你好，我是 ${systemName}`} description="可以和我聊天，也可以上传图片和文件让我分析。" />
             <Prompts
+              wrap
               items={[
                 { key: 'intro', label: '介绍一下你能做什么' },
                 { key: 'summary', label: '帮我总结一份文档' },
@@ -328,7 +329,9 @@ export default function ChatPage({ systemName, sessionId, active = true }: {
           prefix={<Button type="text" icon={<PaperClipOutlined />} onClick={() => setAttachmentsOpen((open) => !open)} />}
           onPasteFile={(pasted) => { setFiles((current) => [...current, ...Array.from(pasted)]); setAttachmentsOpen(true); }}
         />
-        <Typography.Text type="secondary" className="sender-tip">内容由 AI 生成，请核实重要信息</Typography.Text>
+        <div className="sender-footer">
+          <Typography.Text type="secondary" className="sender-tip">内容由 AI 生成，请核实重要信息</Typography.Text>
+        </div>
       </div>
     </div>
   );

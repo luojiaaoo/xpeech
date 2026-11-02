@@ -25,6 +25,8 @@ var controller = null;
 var refreshTimer = null;
 var frameTimer = null;
 var needsRetry = false;
+var drag = null;
+var suppressLauncherClick = false;
 
 function initialize() {
   if (host) return;
@@ -32,15 +34,22 @@ function initialize() {
   host.id = "xpeech-widget";
   root = host.attachShadow({ mode: "open" });
   root.innerHTML = '<style>' +
-  ':host{all:initial;position:fixed;right:20px;bottom:20px;z-index:2147483000;font-family:system-ui,sans-serif;color:#18213d}' +
+  ':host{all:initial;position:fixed;right:20px;bottom:20px;width:46px;height:46px;z-index:2147483000;font-family:system-ui,sans-serif;color:#18213d;pointer-events:none}' +
   '*{box-sizing:border-box}button{font:inherit;cursor:pointer}' +
-  '#launcher{width:58px;height:58px;border:0;border-radius:50%;background:#3370ff;color:white;box-shadow:0 6px 24px #152c6740;font-size:24px}' +
-  '#panel{display:none;position:absolute;right:0;bottom:76px;width:min(440px,calc(100vw - 40px));height:min(700px,calc(100dvh - 120px));background:white;border:1px solid #dfe5ef;border-radius:16px;box-shadow:0 12px 48px #152c6733;overflow:hidden;flex-direction:column}' +
+  '#launcher{display:grid;place-items:center;width:46px;height:46px;padding:0;border:0;border-radius:50%;background:#3370ff;color:white;box-shadow:0 4px 16px #152c6730;pointer-events:auto;touch-action:none;user-select:none;transition:transform .18s,background .18s,box-shadow .18s;animation:xpeech-enter .32s ease-out,xpeech-breathe 3.2s ease-in-out .4s 3}' +
+  '#launcher svg{width:22px;height:22px;pointer-events:none}' +
+  '@media(hover:hover){#launcher:hover{background:#2862ed;transform:translateY(-2px);box-shadow:0 6px 20px #152c6740}}' +
+  '#launcher.positioned{animation:none}' +
+  '#launcher.dragging{cursor:grabbing;transform:scale(.96);animation:none;transition:none}' +
+  '@keyframes xpeech-enter{from{opacity:0;transform:translateY(8px) scale(.85)}to{opacity:1;transform:translateY(0) scale(1)}}' +
+  '@keyframes xpeech-breathe{50%{box-shadow:0 4px 20px #3370ff45,0 0 0 5px #3370ff0a}}' +
+  '@media(prefers-reduced-motion:reduce){#launcher{animation:none;transition:none}#launcher:hover{transform:none}}' +
+  '#panel{display:none;position:fixed;width:min(440px,calc(100vw - 24px));height:min(700px,calc(100dvh - 100px));background:white;border:1px solid #dfe5ef;border-radius:16px;box-shadow:0 12px 48px #152c6733;overflow:hidden;flex-direction:column;pointer-events:auto}' +
   '#panel.open{display:flex}header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #edf0f5;flex-shrink:0}' +
   '#close{background:none;border:0;font-size:24px;color:#5b6578}#body{flex:1;min-height:0;position:relative}' +
   '#status{padding:24px;line-height:1.6;font-size:14px}iframe{display:block;width:100%;height:100%;border:0}' +
   'button:focus-visible{outline:3px solid #8ab4ff;outline-offset:3px}[hidden]{display:none!important}' +
-  '</style><section id="panel" role="dialog"><header><strong id="title"></strong><button id="close" aria-label="关闭聊天">×</button></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-expanded="false">💬</button>';
+  '</style><section id="panel" role="dialog"><header><strong id="title"></strong><button id="close" aria-label="关闭聊天">×</button></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-expanded="false" title="点击打开聊天，拖动调整位置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg></button>';
   document.body.appendChild(host);
   panel = root.getElementById("panel");
   launcher = root.getElementById("launcher");
@@ -51,18 +60,75 @@ function initialize() {
   panel.setAttribute("aria-label", currentTitle);
   launcher.setAttribute("aria-label", "打开 " + currentTitle);
   launcher.addEventListener("click", function () {
+    if (suppressLauncherClick) {
+      suppressLauncherClick = false;
+      return;
+    }
     if (panel.classList.contains("open")) close(); else open();
   });
+  launcher.addEventListener("pointerdown", startDrag);
+  launcher.addEventListener("pointermove", moveDrag);
+  launcher.addEventListener("pointerup", endDrag);
+  launcher.addEventListener("pointercancel", endDrag);
+  launcher.addEventListener("lostpointercapture", endDrag);
   closeButton.addEventListener("click", close);
   root.addEventListener("keydown", function (event) {
     if (event.key === "Escape") close();
   });
   window.addEventListener("message", onMessage);
+  window.addEventListener("resize", keepInViewport);
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+function positionPanel() {
+  if (!host || !panel.classList.contains("open")) return;
+  var rect = host.getBoundingClientRect();
+  var width = panel.offsetWidth;
+  var height = panel.offsetHeight;
+  var top = rect.top >= window.innerHeight - rect.bottom ? rect.top - height - 12 : rect.bottom + 12;
+  panel.style.left = clamp(rect.right - width, 12, window.innerWidth - width - 12) + "px";
+  panel.style.top = clamp(top, 12, window.innerHeight - height - 12) + "px";
+}
+function moveLauncher(left, top) {
+  host.style.right = window.innerWidth - clamp(left, 12, window.innerWidth - 58) - 46 + "px";
+  host.style.bottom = window.innerHeight - clamp(top, 12, window.innerHeight - 58) - 46 + "px";
+  positionPanel();
+}
+function keepInViewport() {
+  if (!host) return;
+  var rect = host.getBoundingClientRect();
+  moveLauncher(rect.left, rect.top);
+}
+function startDrag(event) {
+  if (!event.isPrimary || event.button !== 0 || drag) return;
+  var rect = host.getBoundingClientRect();
+  suppressLauncherClick = false;
+  drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
+  launcher.setPointerCapture(event.pointerId);
+}
+function moveDrag(event) {
+  if (!drag || event.pointerId !== drag.id) return;
+  var dx = event.clientX - drag.x;
+  var dy = event.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+  drag.moved = true;
+  launcher.classList.add("positioned");
+  launcher.classList.add("dragging");
+  moveLauncher(drag.left + dx, drag.top + dy);
+}
+function endDrag(event) {
+  if (!drag || event.pointerId !== drag.id) return;
+  suppressLauncherClick = drag.moved && event.type === "pointerup";
+  drag = null;
+  launcher.classList.remove("dragging");
+  if (launcher.hasPointerCapture(event.pointerId)) launcher.releasePointerCapture(event.pointerId);
+}
 function open() {
   if (!host) return;
   panel.classList.add("open");
+  positionPanel();
   launcher.setAttribute("aria-expanded", "true");
   ensureConnected();
   closeButton.focus();
@@ -74,7 +140,10 @@ function close() {
   if (!launcher.hidden) launcher.focus();
 }
 function hideButton() {
-  if (launcher) launcher.hidden = true;
+  if (launcher) {
+    if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
+    launcher.hidden = true;
+  }
 }
 function showButton() {
   if (launcher) launcher.hidden = false;
@@ -283,6 +352,9 @@ function destroy() {
   needsRetry = false;
   removeFrame();
   window.removeEventListener("message", onMessage);
+  window.removeEventListener("resize", keepInViewport);
+  if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
+  suppressLauncherClick = false;
   if (host) host.remove();
   host = root = panel = launcher = closeButton = body = status = null;
 }

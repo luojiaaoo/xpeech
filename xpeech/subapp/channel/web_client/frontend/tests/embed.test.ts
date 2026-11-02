@@ -22,6 +22,9 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
     textContent = '';
     src = '';
     title = '';
+    style: Record<string, string> = {};
+    offsetWidth = 440;
+    offsetHeight = 700;
     attrs: Record<string, string> = {};
     events: Record<string, Function> = {};
     ids = new Map<string, Element>();
@@ -38,9 +41,13 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
     setAttribute(key: string, value: string) { this.attrs[key] = value; }
     addEventListener(type: string, handler: Function) { this.events[type] = handler; }
     focus() {}
+    getBoundingClientRect() { return { left: 958, top: 702, right: 1004, bottom: 748, width: 46, height: 46 }; }
+    setPointerCapture(_id: number) {}
+    hasPointerCapture(_id: number) { return false; }
   }
   const hosts: Element[] = [];
   const window: any = {
+    innerWidth: 1024, innerHeight: 768,
     location: { href: 'https://portal.test/page', origin: 'https://portal.test' },
     user_id: 'unrelated-website-state',
     addEventListener(type: string, handler: Function) {
@@ -136,6 +143,48 @@ test('button and panel visibility are independent and closing preserves the ifra
   app.api.showButton();
   assert.equal(launcher.hidden, false);
   assert.equal(app.calls.length, 1);
+});
+
+test('dragging the launcher moves it without opening chat, while small pointer movements still click', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  const host = app.hosts[0];
+  const launcher = host.ids.get('launcher')!;
+  const panel = host.ids.get('panel')!;
+  const pointer = { isPrimary: true, button: 0, pointerId: 1, clientX: 980, clientY: 725 };
+  launcher.events.pointerdown(pointer);
+  launcher.events.pointermove({ ...pointer, clientX: 680, clientY: 425 });
+  launcher.events.pointerup({ ...pointer, type: 'pointerup' });
+  launcher.events.click();
+  assert.equal(panel.classes.has('open'), false);
+  assert.equal(host.style.right, '320px');
+  assert.equal(host.style.bottom, '320px');
+  launcher.events.pointerdown(pointer);
+  launcher.events.pointermove({ ...pointer, clientX: 982, clientY: 726 });
+  launcher.events.pointerup({ ...pointer, type: 'pointerup' });
+  launcher.events.click();
+  assert.equal(panel.classes.has('open'), true);
+  app.api.destroy();
+  assert.equal(app.listeners.get('resize')?.length, 0);
+});
+
+test('cancelled drags and secondary pointers do not leave the launcher stuck', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  const host = app.hosts[0];
+  const launcher = host.ids.get('launcher')!;
+  const pointer = { isPrimary: true, button: 0, pointerId: 1, clientX: 980, clientY: 725 };
+  launcher.events.pointerdown({ ...pointer, isPrimary: false });
+  launcher.events.pointermove({ ...pointer, clientX: 500 });
+  assert.equal(host.style.right, undefined);
+  launcher.events.pointerdown(pointer);
+  launcher.events.pointermove({ ...pointer, clientX: 500 });
+  launcher.events.pointercancel({ ...pointer, type: 'pointercancel' });
+  assert.equal(launcher.classes.has('dragging'), false);
+  launcher.events.click();
+  assert.equal(host.ids.get('panel')!.classes.has('open'), true);
 });
 
 test('custom title and metadata survive JWT refresh and reset after destroy', async () => {
