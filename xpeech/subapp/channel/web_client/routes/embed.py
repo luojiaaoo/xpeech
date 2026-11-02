@@ -1,6 +1,5 @@
 import hashlib
 import math
-import re
 import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -10,9 +9,10 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from .....config.settings import settings
+from .....utils.channel_jwt import UserJWTAuth
 from ..dao import DuplicateUserIdError, WebClientDAO
-from ..models import USER_ID_PATTERN, WebConfig, public_user
-from ..session import EMBED_TOKEN_PREFIX, embedded_channel_auth, session_token
+from ..models import WebConfig, public_user
+from ..session import EMBED_TOKEN_PREFIX, embedded_channel, session_token
 
 
 class EmbedSessionBody(BaseModel):
@@ -24,27 +24,12 @@ class EmbedSessionBody(BaseModel):
 def verify_embed_jwt(token: str) -> tuple[str, str, datetime]:
     """Only a verified business-server assertion may select the local user/channel."""
     try:
-        header = jwt.get_unverified_header(token)
-        channel_name = header.get("kid")
-        if (
-            not isinstance(channel_name, str)
-            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", channel_name) is None
-        ):
-            raise jwt.InvalidTokenError("Invalid key ID")
-        channel_auth = embedded_channel_auth(channel_name)
-        claims = jwt.decode(
-            token,
-            channel_auth.secret_key,
-            algorithms=[settings.jwt.algorithm],
-            options={"require": ["sub", "exp"], "verify_aud": False},
-        )
-        user_id = claims["sub"]
-        if (
-            not isinstance(user_id, str)
-            or not 1 <= len(user_id) <= 128
-            or re.fullmatch(USER_ID_PATTERN, user_id) is None
-        ):
-            raise jwt.InvalidTokenError("Invalid subject")
+        auth = UserJWTAuth(token)
+        channel_name = embedded_channel(auth.channel)
+        user_id = auth.user_id
+        if not user_id.strip():
+            raise jwt.InvalidTokenError("Empty user identity")
+        claims = auth.claims
         expires_at = claims["exp"]
         if (
             isinstance(expires_at, bool)

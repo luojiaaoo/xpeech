@@ -1,27 +1,23 @@
-import secrets
-from dataclasses import dataclass
 from typing import Annotated, Any
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, Form, HTTPException, Response, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2PasswordBearer
 from pydantic import BaseModel
 
 from ...config.settings import settings
-from ...utils.channel_jwt import (
-    ChannelJWTAuth,
-    create_channel_access_token,
-    decode_channel_access_token,
-)
+from ...exceptions import PathProtectionError
+from ...utils.channel_jwt import ChannelJWTAuth, ChannelTokenParams, UserJWTAuth, UserTokenParams, create_token
 from ...utils.internal_jwt import decode_internal_access_token
-from .context import lark_user_access_token_var
 
 router = APIRouter(tags=["auth"])
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="token",
     description=(
-        "Swagger UI 使用 channel 名称和对应 JWT 密钥换取一个有效期 "
-        f"{settings.jwt.access_token_expire_seconds} 秒的访问令牌。"
+        "Swagger UI 的 client_id 填写 channel，client_secret 填写对应的 secret_key，"
+        "Client credentials location 选择 Authorization header。username 填写用户 ID，password 留空。"
+        "换取的访问令牌有效期为 "
+        f"{settings.jwt.access_token_expire_seconds} 秒。"
     ),
 )
 
@@ -31,61 +27,53 @@ class TokenResponse(BaseModel):
     token_type: str
 
 
-@dataclass(frozen=True)
-class AuthenticatedChannel:
+class AuthenticatedChannel(ChannelJWTAuth):
     """Verified channel identity and its server-configured channel tags."""
 
-    name: str
-    channel_tags: list[str]
+    @property
+    def channel_tags(self) -> list[str]:
+        channel = settings.jwt.channels.get(self.channel)
+        return channel.channel_tags if channel is not None else []
 
 
-def _channel_keys() -> dict[str, str]:
-    keys = {
-        "feishu": settings.jwt.feishu_secret_key,
-        "web_client": settings.jwt.web_client_secret_key,
-    }
-    keys.update(
-        {
-            channel_name: channel.secret_key
-            for channel_name, channel in settings.jwt.channels.items()
-        }
-    )
-    return keys
+class AuthenticatedUser(UserJWTAuth, AuthenticatedChannel):
+    """Verified user identity with server-configured channel tags."""
 
 
 @router.post("/token", response_model=TokenResponse, include_in_schema=False)
 async def issue_access_token(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     response: Response,
+    credentials: Annotated[HTTPBasicCredentials, Depends(HTTPBasic())],
+    username: Annotated[str, Form(description="用户 ID；留空时只签发 channel JWT")] = "",
 ) -> TokenResponse:
-    """Validate a channel key and issue a channel token for Swagger UI."""
+    """Validate a channel key and optionally bind the issued token to a user."""
 
-    secret_key = _channel_keys().get(form_data.username)
-    if secret_key is None or not secrets.compare_digest(
-        form_data.password.encode("utf-8"),
-        secret_key.encode("utf-8"),
-    ):
+    try:
+        token = create_token(
+            (
+                UserTokenParams(channel=credentials.username, user_id=username)
+                if username else ChannelTokenParams(channel=credentials.username)
+            ),
+            secret_key4verify=credentials.password,
+        )
+    except (jwt.InvalidTokenError, ValueError, PathProtectionError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect JWT secret",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+            headers={"WWW-Authenticate": "Basic"},
+        ) from None
 
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return TokenResponse(
-        access_token=create_channel_access_token(
-            ChannelJWTAuth(form_data.username, secret_key)
-        ),
+        access_token=token,
         token_type="bearer",
     )
 
 
-def _authenticate_channel_token(
-    token: str | None,
-    *,
-    web_client_only: bool = False,
-) -> dict[str, Any]:
+def _authenticate_channel_token[Auth: AuthenticatedChannel](
+    token: str | None, auth_type: type[Auth],
+) -> Auth:
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -93,38 +81,17 @@ def _authenticate_channel_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        kid = jwt.get_unverified_header(token).get("kid")
-        channel_keys = _channel_keys()
-        if not isinstance(kid, str) or kid not in channel_keys:
-            raise jwt.InvalidTokenError("Invalid channel JWT key ID")
-        claims = decode_channel_access_token(
-            token,
-            ChannelJWTAuth(kid, channel_keys[kid]),
-        )
-        # Browser identity assertions share a channel key, but must never grant
-        # the service-level ability to choose arbitrary x-user-id/path values.
-        if "sub" in claims:
-            raise jwt.InvalidTokenError("A user identity JWT is not a backend channel token")
-        lark_user_access_token = claims.get("lark_user_access_token")
-        if lark_user_access_token is not None:
-            if kid != "feishu":
-                raise jwt.InvalidTokenError(
-                    "lark_user_access_token is only valid in a Feishu channel token"
-                )
-            if not isinstance(lark_user_access_token, str):
-                raise jwt.InvalidTokenError("Invalid lark_user_access_token claim")
-        if web_client_only and kid != "web_client":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This endpoint requires the web_client channel",
-            )
-        return claims
+        auth = auth_type(token)
+        lark_user_access_token = auth.claims.get("lark_user_access_token")
+        if lark_user_access_token is not None and not isinstance(lark_user_access_token, str):
+            raise jwt.InvalidTokenError("Invalid lark_user_access_token claim")
     except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    return auth
 
 
 async def require_channel_jwt(
@@ -132,23 +99,14 @@ async def require_channel_jwt(
 ) -> AuthenticatedChannel:
     """Authenticate business API callers using a channel JWT with kid."""
 
-    claims = _authenticate_channel_token(token)
-    lark_user_access_token_var.set(claims.get("lark_user_access_token"))
-    kid = jwt.get_unverified_header(token)["kid"]
-    channel = settings.jwt.channels.get(kid)
-    return AuthenticatedChannel(
-        name=kid, channel_tags=channel.channel_tags if channel is not None else [],
-    )
+    return _authenticate_channel_token(token, AuthenticatedChannel)
 
 
-async def require_web_client_jwt(
+async def require_user_jwt(
     token: Annotated[str, Depends(oauth2_scheme)],
-) -> dict[str, Any]:
-    """Authenticate statistics callers using the Web channel's JWT."""
-
-    claims = _authenticate_channel_token(token, web_client_only=True)
-    lark_user_access_token_var.set(None)
-    return claims
+) -> AuthenticatedUser:
+    """Authenticate an external user exclusively through the signed subject."""
+    return _authenticate_channel_token(token, AuthenticatedUser)
 
 
 async def require_internal_jwt(
@@ -164,5 +122,4 @@ async def require_internal_jwt(
             detail="Invalid or expired bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    lark_user_access_token_var.set(None)
     return claims

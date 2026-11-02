@@ -7,8 +7,8 @@ from fastapi import Depends, Form, Header, HTTPException, status
 
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
-from ...utils.ids import DEFAULT_SESSION_ID, validate_session_id, validate_user_id
-from .auth import AuthenticatedChannel, require_channel_jwt
+from ...utils.ids import validate_session_id
+from .auth import AuthenticatedUser, require_user_jwt
 from .schema import InputContent
 from .session_guard import SessionChatGuard
 
@@ -33,40 +33,31 @@ def json_output_enabled(
     return json_output
 
 
-def user_id_header(
-    user_id: Annotated[str, Header(description="用户 ID", alias="x-user-id")],
+def internal_user_id(
+    user_id: Annotated[str, Header(alias="x-user-id")],
 ) -> str:
-    """Validate the user ID from the request header."""
-    try:
-        return validate_user_id(user_id)
-    except PathProtectionError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid user_id",
-        ) from None
+    """Use the trusted internal caller's user parameter directly."""
+    return user_id
+
+
+def authenticated_user_id(
+    auth: Annotated[AuthenticatedUser, Depends(require_user_jwt)],
+) -> str:
+    """Use only the verified JWT subject as the external user identity."""
+    return auth.user_id
 
 
 def session_id_header(
-    channel: Annotated[AuthenticatedChannel, Depends(require_channel_jwt)],
     session_id: Annotated[
-        str | None,
+        str,
         Header(
-            description="UUIDv7 会话 ID；仅 web_client 和 feishu 可省略并使用主会话",
+            description="必填会话 ID；所有通道均可传 default（主会话）或规范的小写连字符 UUIDv7",
             alias="x-session-id",
         ),
-    ] = None,
+    ],
 ) -> str:
     """Validate the session ID from the request header."""
-    if session_id is None:
-        if channel.name in {"web_client", "feishu"}:
-            return DEFAULT_SESSION_ID
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="x-session-id is required for this channel",
-        )
     try:
-        if session_id == DEFAULT_SESSION_ID:
-            raise PathProtectionError("The default session ID cannot be passed explicitly")
         return validate_session_id(session_id)
     except PathProtectionError:
         raise HTTPException(
@@ -140,7 +131,7 @@ def content(
 
 
 async def acquire_chat_session(
-    user_id: Annotated[str, Depends(user_id_header)],
+    user_id: Annotated[str, Depends(authenticated_user_id)],
     session_id: Annotated[str, Depends(session_id_header)],
 ) -> AsyncIterator[None]:
     """占用会话直至响应结束，并拒绝同一会话的并发请求。"""

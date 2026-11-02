@@ -11,7 +11,8 @@ import httpx
 from httpx_sse import EventSource
 from yarl import URL
 
-from ...utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
+from ...utils.channel_jwt import UserTokenParams, create_token
+from ...utils.ids import DEFAULT_SESSION_ID
 from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
@@ -35,19 +36,15 @@ class ChatStream:
 
 def _backend_headers(
     user_id: str,
-    auth: ChannelJWTAuth,
+    channel: str,
     sender_name: str | None = None,
-    *,
-    session_id: str | None = None,
 ) -> dict[str, str]:
     headers = {
-        "authorization": f"Bearer {create_channel_access_token(auth)}",
-        "x-user-id": user_id,
+        "authorization": f"Bearer {create_token(UserTokenParams(channel, user_id=user_id))}",
+        "x-session-id": DEFAULT_SESSION_ID,
     }
     if sender_name is not None:
         headers["x-sender-name"] = quote(sender_name, safe="")
-    if session_id is not None:
-        headers["x-session-id"] = session_id
     return headers
 
 
@@ -57,11 +54,10 @@ async def open_chat_stream(
     content: str,
     session_metadata: str,
     chat_url: str,
-    auth: ChannelJWTAuth,
+    channel: str,
     *,
     files: Any = None,
     json_output: bool = False,
-    session_id: str | None = None,
 ) -> ChatStream:
     """Open a streaming request to the backend chat endpoint."""
 
@@ -74,7 +70,7 @@ async def open_chat_stream(
 
     client = httpx.AsyncClient(timeout=None)
     try:
-        headers = _backend_headers(user_id, auth, sender_name, session_id=session_id)
+        headers = _backend_headers(user_id, channel, sender_name)
         headers.update({"Accept": "text/event-stream", "Cache-Control": "no-store"})
         response = await client.send(
             client.build_request(
@@ -95,7 +91,7 @@ async def open_chat_stream(
 async def iter_chat_events(
     messages: list[Message],
     chat_url: str,
-    auth: ChannelJWTAuth,
+    channel: str,
 ) -> AsyncIterator[ChatEvent]:
     """Send channel messages to the chat endpoint and yield parsed SSE event dicts."""
 
@@ -137,7 +133,7 @@ async def iter_chat_events(
                 ensure_ascii=False,
             ),
             chat_url,
-            auth,
+            channel,
             files=upload_files,
         )
         try:
@@ -181,9 +177,7 @@ async def submit_question(
     user_id: str,
     result: Any,
     chat_url: str,
-    auth: ChannelJWTAuth,
-    *,
-    session_id: str | None = None,
+    channel: str,
 ) -> httpx.Response:
     """Submit a question answer and return the backend response without changing its status."""
 
@@ -192,7 +186,7 @@ async def submit_question(
     async with httpx.AsyncClient(timeout=30) as client:
         return await client.post(
             answer_url,
-            headers=_backend_headers(user_id, auth, session_id=session_id),
+            headers=_backend_headers(user_id, channel),
             data={"answer": answer},
         )
 
@@ -201,9 +195,9 @@ async def notify_question(
     user_id: str,
     result: Any,
     chat_url: str,
-    auth: ChannelJWTAuth,
+    channel: str,
 ) -> None:
-    response = await submit_question(user_id, result, chat_url, auth)
+    response = await submit_question(user_id, result, chat_url, channel)
     response.raise_for_status()
 
 
@@ -211,15 +205,15 @@ async def fetch_file(
     user_id: str,
     path: str,
     api_base_url: str,
-    auth: ChannelJWTAuth,
+    channel: str,
 ) -> httpx.Response:
     """Fetch a session file and return the backend response without changing its status."""
 
-    file_url = str(URL(api_base_url) / "sessions" / user_id / "files")
+    file_url = str(URL(api_base_url) / "files")
     async with httpx.AsyncClient(timeout=None) as client:
         return await client.get(
             file_url,
-            headers=_backend_headers(user_id, auth),
+            headers=_backend_headers(user_id, channel),
             params={"path": path},
         )
 
@@ -228,9 +222,9 @@ async def download_file(
     user_id: str,
     path: str,
     api_base_url: str,
-    auth: ChannelJWTAuth,
+    channel: str,
 ) -> DownloadedFile:
-    response = await fetch_file(user_id, path, api_base_url, auth)
+    response = await fetch_file(user_id, path, api_base_url, channel)
     response.raise_for_status()
 
     filename = _filename_from_content_disposition(response.headers.get("content-disposition")) or Path(path).name

@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import Receive, Scope, Send
 
+from .config import EmbedSettings
 from .dao import User, WebClientDAO
 from .models import (
     InjectPromptWebConfig,
@@ -173,7 +174,6 @@ def create_app(config: WebConfig) -> FastAPI:
     app.include_router(
         create_proxy_router(
             config.backend_url,
-            config.backend_auth,
             current_user,
             admin_user,
             dao,
@@ -252,14 +252,13 @@ def run(
         database_path=settings.web_client.database_path.resolve(),
         static_dir=static_dir.resolve(),
         system_name=_configured_system_name(),
-        jwt_secret_key=settings.jwt.web_client_secret_key,
         cookie_name=settings.web_client.cookie_name,
         oauth2=oauth2_config,
         inject_prompt=InjectPromptWebConfig(
             enabled=settings.web_client.inject_prompt.enabled,
             command_template=settings.web_client.inject_prompt.command_template,
         ),
-        embed=settings.web_client.embed,
+        embed=EmbedSettings().web_client.embed,
     )
     uvicorn.run(create_app(config), host=host, port=port)
 

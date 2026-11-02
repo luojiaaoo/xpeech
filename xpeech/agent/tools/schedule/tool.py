@@ -117,7 +117,7 @@ async def feishu_schedule(
     job = await scheduler_request(
         "POST",
         "/schedules",
-        validated_user_id,
+        user_id=validated_user_id,
         payload={
             **args.model_dump(mode="json"),
             "sender_name": validated_sender_name,
@@ -131,7 +131,7 @@ async def feishu_schedule(
 async def feishu_schedule_list(user_id: str | None) -> str:
     """列出当前用户所有渠道仍有效的后台定时任务。"""
     validated_user_id = _require_text(user_id, "user_id")
-    tasks = await scheduler_request("GET", "/schedules", validated_user_id)
+    tasks = await scheduler_request("GET", "/schedules", user_id=validated_user_id)
     return json.dumps(tasks, ensure_ascii=False)
 
 
@@ -142,6 +142,7 @@ async def feishu_schedule_cancel(
     """取消当前用户拥有的后台定时任务。"""
     validated_user_id = _require_text(user_id, "user_id")
     await scheduler_request(
-        "DELETE", f"/schedules/{quote(args.job_id, safe='')}", validated_user_id,
+        "DELETE", f"/schedules/{quote(args.job_id, safe='')}",
+        user_id=validated_user_id,
     )
     return f"Scheduled task cancelled successfully: {args.job_id}"

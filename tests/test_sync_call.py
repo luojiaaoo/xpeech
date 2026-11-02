@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import httpx
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,17 +9,17 @@ from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app
 from xpeech.agent.server.dependencies import CHAT_GUARD, settings
 from xpeech.agent.server.schema import InputText
-from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
+from xpeech.utils.channel_jwt import UserTokenParams, create_token
 
 UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 BUSY_UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000002"
 
 
 def chat_headers(**extra):
-    token = create_channel_access_token(ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key))
+    token = create_token(UserTokenParams("web_client", user_id="user"))
     headers = {
         "Authorization": f"Bearer {token}",
-        "x-user-id": "user",
+        "x-session-id": "default",
         "x-sender-name": "Alice",
     }
     headers.update(extra)
@@ -97,7 +98,10 @@ def test_channel_comes_only_from_jwt_kid_and_ignores_request_input(fake_runner):
 
 
 def test_channel_jwt_signed_with_another_channels_key_is_rejected(fake_runner):
-    forged = create_channel_access_token(ChannelJWTAuth("feishu", settings.jwt.web_client_secret_key))
+    forged = jwt.encode(
+        {"exp": 9999999999}, settings.jwt.channels["web_client"].secret_key,
+        algorithm=settings.jwt.algorithm, headers={"kid": "feishu"},
+    )
 
     response = TestClient(app).post(
         "/chat_sync",
@@ -111,15 +115,13 @@ def test_channel_jwt_signed_with_another_channels_key_is_rejected(fake_runner):
 
 @pytest.mark.parametrize(
     "session_id",
-    [None, UUID7_SESSION_ID],
+    ["default", UUID7_SESSION_ID],
 )
 def test_chat_sync_initializes_non_interactive_tools_for_every_session(
     fake_runner,
     session_id,
 ):
-    headers = chat_headers()
-    if session_id is not None:
-        headers["x-session-id"] = session_id
+    headers = chat_headers(**{"x-session-id": session_id})
 
     response = TestClient(app).post(
         "/chat_sync",
@@ -193,3 +195,26 @@ async def test_chat_sync_conflicts_with_active_session(fake_runner):
 
     assert response.status_code == 409
     assert fake_runner.messages == []
+
+
+def test_chat_sync_uses_subject_even_when_request_names_another_user(fake_runner, monkeypatch):
+    from xpeech.agent.server.context import get_user_id
+
+    original_run = fake_runner.run_not_interactive
+
+    async def run(message):
+        assert get_user_id() == "user"
+        return await original_run(message)
+
+    monkeypatch.setattr(fake_runner, "run_not_interactive", run)
+    response = TestClient(app).post(
+        "/chat_sync?user_id=other-user",
+        headers=chat_headers(**{"x-user-id": "other-user"}),
+        data={"content": '[{"text":"hello"}]', "user_id": "other-user"},
+    )
+    assert response.status_code == 200
+    assert fake_runner.created["user_id"] == "user"
+    assert fake_runner.messages[0].user_id == "user"
+    assert response.headers["x-user-id"] == "user"
+    assert response.headers["x-channel"] == "web_client"
+    assert get_user_id() is None

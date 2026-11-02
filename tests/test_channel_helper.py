@@ -5,38 +5,41 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from xpeech.config.settings import JWTChannelConfig, settings
 from xpeech.subapp.channel import helper
 from xpeech.subapp.channel.schema import ChatEventType, Message, TextData
-from xpeech.utils.channel_jwt import ChannelJWTAuth
+from xpeech.utils.channel_jwt import UserJWTAuth
 
-TEST_AUTH = ChannelJWTAuth(
-    "test",
-    "test-channel-key-that-is-at-least-32-bytes",
-)
+TEST_CHANNEL = "test"
+TEST_SECRET_KEY = "test-channel-key-that-is-at-least-32-bytes"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("session_id", [None, "018f0000-0000-7000-8000-000000000001"])
-async def test_chat_and_question_forward_session_header(monkeypatch, session_id):
+async def test_backend_requests_bind_user_in_jwt_subject(monkeypatch):
+    monkeypatch.setitem(settings.jwt.channels, TEST_CHANNEL, JWTChannelConfig(secret_key=TEST_SECRET_KEY))
     requests = []
-    real_client = httpx.AsyncClient
+    client_class = httpx.AsyncClient
 
     def respond(request):
         requests.append(request)
         return httpx.Response(200, content=b"ok")
 
-    monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: real_client(
+    monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client_class(
         transport=httpx.MockTransport(respond), **kwargs,
     ))
-    stream = await helper.open_chat_stream(
-        "alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_AUTH, session_id=session_id,
-    )
+    stream = await helper.open_chat_stream("alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL)
     await stream.aclose()
-    await helper.submit_question("alice", "yes", "http://backend.test", TEST_AUTH, session_id=session_id)
-    assert [request.url.path for request in requests] == ["/chat", "/answer_question"]
+    await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL)
+    await helper.fetch_file("alice", "report.txt", "http://backend.test", TEST_CHANNEL)
+    assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/files"]
     for request in requests:
-        assert request.headers.get("x-session-id") == session_id
-        assert request.headers["x-user-id"] == "alice"
+        assert "x-user-id" not in request.headers
+        assert request.headers["x-session-id"] == "default"
+        token = request.headers["authorization"].removeprefix("Bearer ")
+        auth = UserJWTAuth(token)
+        assert auth.channel == TEST_CHANNEL
+        assert auth.user_id == "alice"
+        assert set(auth.claims) == {"exp", "sub"}
 
 
 class _JsonErrorStream(httpx.AsyncByteStream):
@@ -67,7 +70,7 @@ async def test_iter_chat_events_reads_streaming_error_response(monkeypatch: pyte
             async for event in helper.iter_chat_events(
                 [message],
                 "http://backend.test/chat",
-                TEST_AUTH,
+                TEST_CHANNEL,
             )
         ]
 
@@ -111,7 +114,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
     events = helper.iter_chat_events(
         [message],
         "http://backend.test/chat",
-        TEST_AUTH,
+        TEST_CHANNEL,
     )
     thinking = await anext(events)
     assert thinking.event == ChatEventType.THINKING

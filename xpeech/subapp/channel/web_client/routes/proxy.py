@@ -9,18 +9,18 @@ from fastapi.responses import Response, StreamingResponse
 from yarl import URL
 
 from .....exceptions import PathProtectionError
-from .....utils.channel_jwt import ChannelJWTAuth
+from .....utils.internal_jwt import create_internal_access_token
 from .....utils.ids import DEFAULT_SESSION_ID, validate_session_id
-from ...helper import _backend_headers, fetch_file, open_chat_stream, submit_question
+from ...helper import fetch_file
+from ..backend import open_chat_stream, submit_question
 from ..dao import User, WebClientDAO
-from ..session import EMBED_TOKEN_PREFIX, embedded_channel_auth, session_token
+from ..session import EMBED_TOKEN_PREFIX, embedded_channel, session_token
 
 UserDependency = Callable[..., Awaitable[User] | User]
 
 
 def create_proxy_router(
     backend_url: str,
-    backend_auth: ChannelJWTAuth,
     current_user_dependency: UserDependency,
     admin_user_dependency: UserDependency,
     dao: WebClientDAO,
@@ -47,21 +47,21 @@ def create_proxy_router(
 
     ChatSessionId = Annotated[str | None, Depends(chat_session_id)]
 
-    async def request_backend_auth(
+    async def request_backend_channel(
         request: Request,
         channel_name: Annotated[str | None, Header(alias="x-channel-name")] = None,
-    ) -> ChannelJWTAuth:
+    ) -> str:
         token = session_token(None, request.headers.get("authorization"))
         if token and token.startswith(EMBED_TOKEN_PREFIX):
             bound_channel = await dao.get_session_channel(hashlib.sha256(token.encode()).hexdigest())
             if bound_channel is None or (channel_name is not None and channel_name != bound_channel):
                 raise HTTPException(403, "嵌入请求的通道与已验证的 JWT 不一致")
-            return embedded_channel_auth(bound_channel)
+            return embedded_channel(bound_channel)
         if channel_name is not None:
             raise HTTPException(403, "仅嵌入会话可以指定 channel_name")
-        return backend_auth
+        return "web_client"
 
-    RequestBackendAuth = Annotated[ChannelJWTAuth, Depends(request_backend_auth)]
+    RequestBackendChannel = Annotated[str, Depends(request_backend_channel)]
 
     @router.post("/chat")
     async def proxy_chat(
@@ -69,7 +69,7 @@ def create_proxy_router(
         content: Annotated[str, Form()],
         user: CurrentUser,
         session_id: ChatSessionId,
-        channel_auth: RequestBackendAuth,
+        channel: RequestBackendChannel,
         session_metadata: Annotated[str, Form()] = "{}",
         files: Annotated[list[UploadFile] | None, File()] = None,
         json_output: Annotated[
@@ -111,7 +111,7 @@ def create_proxy_router(
             content,
             json.dumps(metadata, ensure_ascii=False),
             str(URL(backend_url) / "chat"),
-            channel_auth,
+            channel,
             files=upload_data,
             json_output=json_output,
             session_id=session_id,
@@ -146,13 +146,13 @@ def create_proxy_router(
         answer: Annotated[str, Form()],
         user: CurrentUser,
         session_id: ChatSessionId,
-        channel_auth: RequestBackendAuth,
+        channel: RequestBackendChannel,
     ):
         upstream = await submit_question(
             user.user_id,
             answer,
             backend_url,
-            channel_auth,
+            channel,
             session_id=session_id,
         )
         return Response(
@@ -165,13 +165,13 @@ def create_proxy_router(
     async def proxy_file(
         path: str,
         user: CurrentUser,
-        channel_auth: RequestBackendAuth,
+        channel: RequestBackendChannel,
     ):
         upstream = await fetch_file(
             user.user_id,
             path,
             backend_url,
-            channel_auth,
+            channel,
         )
         headers = {}
         if disposition := upstream.headers.get("content-disposition"):
@@ -188,7 +188,7 @@ def create_proxy_router(
     async def proxy_statistics(
         request: Request,
         user: AdminUser,
-        channel_auth: RequestBackendAuth,
+        channel: RequestBackendChannel,
         statistics_path: str = "",
     ):
         """将已登录 Web 用户的统计查询转发到后端统计接口。"""
@@ -198,7 +198,10 @@ def create_proxy_router(
         async with httpx.AsyncClient(timeout=30) as client:
             upstream = await client.get(
                 upstream_url,
-                headers=_backend_headers(user.user_id, channel_auth),
+                headers={
+                    "authorization": f"Bearer {create_internal_access_token()}",
+                    "x-user-id": user.user_id,
+                },
                 params=request.query_params.multi_items(),
             )
 

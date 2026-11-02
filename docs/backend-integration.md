@@ -10,7 +10,7 @@ Xpeech API 默认监听 `http://localhost:7878`。一次完整的聊天交互如
 2. 接入方以表单请求调用 `POST /chat`；携带附件时使用 `multipart/form-data`。
 3. Xpeech 通过 SSE 持续返回思考、正文、工具调用、文件和追问等事件。
 4. 收到 `question` 事件时，接入方展示表单，并通过 `POST /answer_question` 提交答案；原 `/chat` SSE 连接继续保持。
-5. 收到 `send_file` 事件时，接入方通过 `GET /sessions/{user_id}/files` 下载文件。
+5. 收到 `send_file` 事件时，接入方通过 `GET /files` 下载文件。
 6. SSE 连接结束，代表本轮 Agent 运行完成。
 
 不需要流式返回时，可改用同步接口 `POST /chat_sync`：请求参数与 `POST /chat` 相同，阻塞到运行结束后一次性返回全部事件（见 5.3 节）。
@@ -31,25 +31,30 @@ Xpeech API 默认监听 `http://localhost:7878`。一次完整的聊天交互如
 
 生产环境必须使用 HTTPS，并限制 API 只能被可信服务访问。
 
-Compose 部署默认由 Nginx 对外提供该 Base URL，并按 `x-user-id` 做用户 ID 哈希，
-将同一用户的请求稳定转发到同一个 backend 副本。这是因为 `/chat` 的运行状态和
-`/answer_question` 的等待事件位于 backend 进程内存中。接入方必须在聊天、追问回答和文件请求中
-使用完全相同的 `x-user-id`；扩缩容或替换 backend 容器前，应等待正在进行的 SSE 会话结束。
+Compose 部署默认由 Nginx 对外提供该 Base URL。Nginx 直接读取 JWT `sub` 做一致性哈希，
+将同一用户的请求稳定转发到同一个 backend 副本；内部请求通过 `x-user-id` 分流，
+两者都没有则正常轮询。JWT 验签由 backend 负责，对外接口的用户身份只取 JWT `sub`。
+这是因为 `/chat` 的运行状态和 `/answer_question` 的等待事件位于 backend 进程内存中。
+接入方必须在聊天、追问回答和文件请求中使用相同的用户身份；扩缩容或替换 backend
+容器前，应等待正在进行的 SSE 会话结束。
 
 ## 3. JWT 鉴权
 
 除健康检查、API 文档和浏览器预览外，本文涉及的 API 都需要短期 JWT。
-`[jwt]` 集中配置三组独立密钥：`secret_key` 用于 backend、scheduler 之间的内部互信，
-channel 分别使用 `feishu_secret_key` 和 `web_client_secret_key`。
-三把密钥必须互不相同：
+`jwt.secret_key` 用于 backend、scheduler 之间的内部互信，所有通道统一在
+`jwt.channels` 下配置各自的 `secret_key`。内部密钥与所有通道密钥必须互不相同：
 
 ```toml
 [jwt]
 secret_key = "replace-with-a-random-secret-of-at-least-32-characters"
-feishu_secret_key = "replace-with-a-different-feishu-channel-secret"
-web_client_secret_key = "replace-with-a-different-web-channel-secret"
 algorithm = "HS256"
 access_token_expire_seconds = 60
+
+[jwt.channels.web_client]
+secret_key = "replace-with-a-different-web-channel-secret"
+
+[jwt.channels.feishu]
+secret_key = "replace-with-a-different-feishu-channel-secret"
 ```
 
 自定义系统可配置独立 JWT 通道：
@@ -61,19 +66,22 @@ channel_tags = ["crm"]
 ```
 
 请求使用该密钥签名并设置 JWT header `kid="crm"`，或在 `/token` 使用
-`username=crm`、对应密钥作为 `password` 获取令牌。所有内部及通道密钥必须互不相同。
-通道名不能使用 `internal`、`feishu`、`web_client`。后端按验签后的 `kid` 从配置读取标签，
+HTTP Basic 用户名 `crm`、密码为对应密钥，并在表单 `username` 中填写用户 ID 获取令牌。所有内部及通道密钥必须互不相同。
+通道名不能使用 `internal`；`web_client` 和 `feishu` 也采用上述通道配置结构。后端按验签后的 `kid` 从配置读取标签，
 忽略 payload、请求头或会话元数据中自带的标签。没有标签的内建技能/MCP 为公共资源；
 有标签的内建技能/MCP 仅在与通道标签存在交集时展示或注册。
 用户工作区里的技能不受标签匹配限制，全部加载。自定义通道不具备统计或内部接口权限。
 
-Token 至少需要包含 `exp`；所有 JWT 共用 `[jwt]` 中的 `algorithm` 和
+channel token 至少需要包含 `exp`；用户 token 还必须包含 `sub`（用户 ID）。所有 JWT 共用 `[jwt]` 中的 `algorithm` 和
 `access_token_expire_seconds`，默认 HS256、60 秒。签发方应与这两项配置保持一致。
-内部 JWT 不携带 `kid`，直接使用 `secret_key` 验签。channel JWT 的 header 必须
-携带 `kid`：`feishu` 对应 `feishu_secret_key`，`web_client` 对应
-`web_client_secret_key`。本文介绍的聊天、追问、后台消息、文件、技能接口都必须使用
-带有效 channel `kid` 的 JWT，不接受内部 JWT；`/statistics` 及其子接口只接受
-`kid=web_client`。`/internal/scheduled-run` 和 scheduler 服务的接口只使用内部密钥验签。
+内部 JWT 只携带 `exp` 用于服务鉴权，不携带 `kid` 或 `sub`，直接使用 `secret_key` 验签。
+内部用户参数通过 `x-user-id` 直接传递，按可信服务参数使用。channel JWT 的 header 必须
+携带 `kid`，并使用 `jwt.channels.<kid>.secret_key` 签名。
+本文介绍的聊天、追问、文件、技能接口必须使用带有效 channel `kid` 和用户 `sub` 的 JWT。
+缺少或非法 `sub` 返回 HTTP 401，对外接口不读取 `x-user-id` 请求头，也不因此报错；
+后台消息接口只需 Feishu channel JWT，无需用户身份。
+上述接口都不接受内部 JWT；`/statistics` 及其子接口只接受内部 JWT。`/internal/scheduled-run` 和 scheduler 服务的接口只使用内部密钥验签。
+后台消息的外部入口由 backend 校验 Feishu channel JWT，再使用内部 JWT 请求 scheduler。
 建议接入方在每次请求前签发新 Token，不要缓存到过期边界。
 
 Python 签发示例：
@@ -84,20 +92,21 @@ from datetime import UTC, datetime, timedelta
 import jwt
 
 
-def create_xpeech_token(secret: str, kid: str = "web_client") -> str:
+def create_xpeech_token(secret: str, user_id: str, kid: str = "web_client") -> str:
     return jwt.encode(
-        {"exp": datetime.now(UTC) + timedelta(seconds=60)},
+        {"exp": datetime.now(UTC) + timedelta(seconds=60), "sub": user_id},
         secret,
         algorithm="HS256",
         headers={"kid": kid},
     )
 ```
 
-`lark_user_access_token` 是飞书 channel 请求声明，不属于内部 JWT。飞书 channel
-需要以用户身份调用命令时，会在其 channel JWT 中额外放入该字符串声明：
+`lark_user_access_token` 是用户请求声明，不属于内部 JWT。飞书 channel
+需要以用户身份调用命令时，会在其用户 JWT 中额外放入该字符串声明：
 
 ```python
 claims = {
+    "sub": "demo-user",
     "exp": datetime.now(UTC) + timedelta(seconds=60),
     "lark_user_access_token": "<feishu-user-access-token>",
 }
@@ -105,12 +114,15 @@ claims = {
 
 该字段只在当前请求上下文中使用，不会保存到会话历史。后续请求需要重新携带；
 使用 `jwt.secret_key` 签发的 internal token 不接受这一声明。
-飞书 token 应使用 `jwt.feishu_secret_key` 签名，并在 header 中设置 `kid="feishu"`。
+飞书 token 应使用 `jwt.channels.feishu.secret_key` 签名，并在 header 中设置 `kid="feishu"`。
 携带非空字段时，沙盒加载 `lark-skills-token`，使用 JWT 中的用户令牌，
 且 `lark-cli` 不会回退请求 `lark-token-manager`；未携带时加载 `lark-skills` 和 `lark-cli-auth`，使用令牌容器。
 
-`POST /token` 主要供 Swagger UI 调试：`username` 填写 `web_client` 或 `feishu`，
-`password` 填写对应的 channel JWT 密钥，返回带该 channel `kid` 的 token。
+`POST /token` 主要供 Swagger UI 调试：HTTP Basic 的用户名填写 channel，密码填写对应的密钥；
+表单 `username` 填写用户 ID，返回同时带 channel `kid` 和用户 `sub` 的 token。
+Swagger UI 中，`client_id` 填 channel、`client_secret` 填密钥，凭据位置选 Authorization header，
+`username` 填用户 ID，`password` 留空。表单 `username` 留空时只签发 channel token，
+仅用于相应 channel 接口，不能调用聊天、文件或技能接口；用户接口必须重新签发包含 `sub` 的 JWT。
 业务系统应自行签发 JWT，不应在浏览器、移动端或其他不可信客户端中保存或传输共享密钥。
 
 ## 4. 会话和用户标识
@@ -120,12 +132,14 @@ claims = {
 | 请求头 | 必填 | 说明 |
 | --- | --- | --- |
 | `Authorization` | 是 | 短期 Bearer JWT |
-| `x-user-id` | 是 | 业务侧稳定用户 ID，用于隔离工作区、技能和 MCP 连接 |
-| `x-session-id` | 视渠道而定 | `web_client` 和 `feishu` 可缺省并使用主会话；其他渠道必填。显式传入时必须是规范的小写连字符 UUIDv7，不能传 `default` |
+| `x-session-id` | 是 | 所有通道均必须传入非空值，只允许 `default`（主会话）或规范的小写连字符 UUIDv7 |
 | `x-sender-name` | `/chat` 必填 | 展示用用户名；非 ASCII 字符必须做 UTF-8 URL 编码 |
 
-`user_id` 长度为 1～128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_`。
-服务端内部使用特殊值 `default` 表示主会话；调用方传入的 `session_id` 只允许规范的小写连字符 UUIDv7。
+对外接口的用户身份只取已验签 JWT 的 `sub`，忽略 `x-user-id` 请求头；仅内部调用读取此请求头传递用户参数。
+用户 ID 用于隔离工作区、技能和 MCP 连接，不通过路径或查询参数切换用户。
+响应头在有对应值时回传 `x-user-id` 和 `x-channel`；无对应值时不添加。
+`sub` 中的 `user_id` 长度为 1～128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_`。
+所有通道均可传入 `default` 使用主会话，或传入规范的小写连字符 UUIDv7 使用独立会话；省略、空值或其他格式均返回 HTTP 422。
 
 同一用户可同时使用多个不同的 `session_id`。会话历史按 `user_id + session_id` 隔离，但同一用户的文件工作区是共享的。只有 `default` 会话会加载后台任务工具。
 
@@ -157,7 +171,6 @@ Accept: text/event-stream
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-user-id: demo-user" \
   -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -H "Accept: text/event-stream" \
@@ -169,7 +182,6 @@ curl -N -X POST "http://localhost:7878/chat" \
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-user-id: demo-user" \
   -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"请分析这些附件"}]' \
@@ -219,7 +231,6 @@ Content-Type: multipart/form-data
 ```bash
 curl -X POST "http://localhost:7878/chat_sync" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-user-id: demo-user" \
   -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"你好，请介绍一下自己"}]'
@@ -279,14 +290,12 @@ async def chat_events(
     *,
     base_url: str,
     token: str,
-    user_id: str,
     session_id: str,
     sender_name: str,
     text: str,
 ) -> AsyncIterator[dict]:
     headers = {
         "Authorization": f"Bearer {token}",
-        "x-user-id": user_id,
         "x-session-id": session_id,
         "x-sender-name": quote(sender_name, safe=""),
     }
@@ -388,7 +397,6 @@ async def collect_answer(**kwargs) -> str:
 ```http
 POST /answer_question
 Authorization: Bearer <new JWT>
-x-user-id: <与 /chat 完全相同>
 x-session-id: <与 /chat 完全相同>
 Content-Type: application/x-www-form-urlencoded
 ```
@@ -398,7 +406,6 @@ Content-Type: application/x-www-form-urlencoded
 ```bash
 curl -X POST "http://localhost:7878/answer_question" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-user-id: demo-user" \
   -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -F 'answer={"service_name":"order-api","environment":"prod","regions":["cn-shanghai","cn-beijing"],"release_date":"2026-10-29","change_window":"2026-10-29 22:00:00"}'
 ```
@@ -418,7 +425,7 @@ curl -X POST "http://localhost:7878/answer_question" \
 注意：
 
 - 问题默认等待 300 秒，超时后 Agent 会自动继续处理。
-- `/answer_question` 必须复用原请求的 `user_id` 和 `session_id`，否则无法唤醒对应会话。
+- `/answer_question` 的 JWT `sub` 必须与原请求相同，且复用原请求的 `session_id`，否则无法唤醒对应会话。
 - JWT 最长有效期为 60 秒，因此答题时通常需要签发一个新 Token。
 - 不要关闭原 `/chat` SSE 后再答题；Agent 正在该连接对应的任务中等待答案。
 
@@ -458,7 +465,7 @@ SENDER_NAME = "张三"
 def create_token() -> str:
     """每次 API 调用前签发新 Token，避免答题时复用过期 Token。"""
     return jwt.encode(
-        {"exp": datetime.now(UTC) + timedelta(seconds=60)},
+        {"exp": datetime.now(UTC) + timedelta(seconds=60), "sub": USER_ID},
         JWT_SECRET,
         algorithm="HS256",
         headers={"kid": JWT_KID},
@@ -525,7 +532,6 @@ async def submit_answer(answer: dict[str, Any]) -> None:
     """使用新 JWT 和相同的用户、会话标识回答当前追问。"""
     headers = {
         "Authorization": f"Bearer {create_token()}",
-        "x-user-id": USER_ID,
         "x-session-id": SESSION_ID,
     }
     data = {"answer": json.dumps(answer, ensure_ascii=False)}
@@ -548,7 +554,6 @@ async def run_chat(text: str) -> str:
     """发起聊天；遇到 question 时回答，然后继续消费原 SSE。"""
     headers = {
         "Authorization": f"Bearer {create_token()}",
-        "x-user-id": USER_ID,
         "x-session-id": SESSION_ID,
         "x-sender-name": quote(SENDER_NAME, safe=""),
     }
@@ -611,7 +616,7 @@ if __name__ == "__main__":
 
 ```bash
 export XPEECH_BASE_URL="http://localhost:7878"
-export XPEECH_JWT_SECRET="<conf.toml 中的 jwt.web_client_secret_key>"
+export XPEECH_JWT_SECRET="<conf.toml 中的 jwt.channels.web_client.secret_key>"
 export XPEECH_JWT_KID="web_client"
 python xpeech_question_demo.py
 ```
@@ -629,20 +634,21 @@ python xpeech_question_demo.py
 使用事件中的 `context` 原值作为 `path` 查询参数：
 
 ```bash
-curl --get "http://localhost:7878/sessions/demo-user/files" \
+curl --get "http://localhost:7878/files" \
   -H "Authorization: Bearer <JWT>" \
   --data-urlencode "path=outputs/result.xlsx" \
   --output result.xlsx
 ```
 
-路径参数会限制在该用户的工作区中。文件不存在返回 `404`，路径越界返回 `403`。响应中的 `Content-Disposition` 包含建议文件名。
+文件路径会限制在 JWT `sub` 对应用户的工作区中。文件不存在返回 `404`，路径越界返回 `403`。响应中的 `Content-Disposition` 包含建议文件名。
 
 ## 9. 接收飞书后台任务消息（可选）
 
 这一接口只用于自建飞书投递通道接收定时 Agent 任务的执行结果；普通聊天接入不需要调用。
+它是独立的 channel 级接口，使用 `kid="feishu"`、含 `exp` 的 channel JWT，无需用户 `sub`。
 
 ```http
-GET /background_message?channel=feishu
+GET /background_message
 Authorization: Bearer <JWT>
 ```
 
@@ -656,7 +662,8 @@ Authorization: Bearer <JWT>
 }
 ```
 
-投递方收到消息后，应使用 `open_id` 将 `content` 发送给对应飞书用户，然后立即发起下一次长轮询。当前只支持 `channel=feishu`。
+投递方收到消息后，应使用 `open_id` 将 `content` 发送给对应飞书用户，然后立即发起下一次长轮询。
+通道由 JWT 确定，无需传入 `channel` 查询参数；当前仅允许 Feishu 通道领取消息。
 
 ## 10. 内置会话命令
 
@@ -675,7 +682,7 @@ Authorization: Bearer <JWT>
 | 状态码 | 常见原因 | 建议处理 |
 | --- | --- | --- |
 | `400` | 开启了服务端不支持的 `json_output` | 关闭该参数或修改模型配置 |
-| `401` | JWT 缺失、签名错误或已过期 | 重新签发 Token；不要盲目无限重试 |
+| `401` | JWT 缺失、签名错误、已过期，或用户 `sub` 缺失/非法 | 使用合法用户 ID 重新签发 Token；不要盲目无限重试 |
 | `403` | 文件路径越出用户工作区 | 检查是否原样使用 `send_file.context` |
 | `404` | 下载文件不存在 | 提示文件已不存在或记录日志 |
 | `409` | 同一用户、同一会话已有聊天请求 | 等待现有请求完成，按会话排队 |
@@ -695,7 +702,7 @@ SSE 建立后发生异常时，连接可能直接结束，不能假设一定会�
 - JWT 密钥只保存在可信后端和 Xpeech 配置中，未下发到浏览器或 App。
 - Xpeech 对外访问使用 HTTPS，API 网络入口受到访问控制。
 - 每次 API 调用都签发短期 JWT，答题回调不会复用已过期 Token。
-- `user_id` 使用业务侧稳定且不可冲突的标识。
+- JWT `sub` 使用业务侧稳定且不可冲突的用户标识，聊天、答题、文件和技能请求保持一致。
 - `session_id` 能区分多个聊天窗口，并在聊天、答题流程中保持一致。
 - 同一会话的消息在接入层串行化，能正确处理 `409`。
 - SSE 按空行分隔事件并解析 `data`，不会按 TCP chunk 直接解析 JSON。

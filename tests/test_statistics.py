@@ -22,8 +22,7 @@ from xpeech.agent.server.routes.statistics import (
     SqliteConversationStatisticsRepository,
     get_statistics_repository,
 )
-from xpeech.config.settings import settings
-from xpeech.utils.channel_jwt import ChannelJWTAuth, create_channel_access_token
+from xpeech.utils.internal_jwt import create_internal_access_token
 
 
 def test_statistics_timezone_does_not_depend_on_system_tzdata():
@@ -114,7 +113,7 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
     repository = SqliteConversationStatisticsRepository(engine)
     _clear_statistics_caches()
     app.dependency_overrides[get_statistics_repository] = lambda: repository
-    token = create_channel_access_token(ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key))
+    token = create_internal_access_token()
     headers = {"Authorization": f"Bearer {token}"}
 
     try:
@@ -236,7 +235,7 @@ def test_statistics_api_rejects_invalid_filters(tmp_path: Path):
     engine = asyncio.run(_seed_statistics_database(tmp_path / "invalid-filters.db"))
     repository = SqliteConversationStatisticsRepository(engine)
     app.dependency_overrides[get_statistics_repository] = lambda: repository
-    token = create_channel_access_token(ChannelJWTAuth("web_client", settings.jwt.web_client_secret_key))
+    token = create_internal_access_token()
     headers = {"Authorization": f"Bearer {token}"}
 
     try:

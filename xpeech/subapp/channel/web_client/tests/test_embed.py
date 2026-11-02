@@ -13,8 +13,10 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from xpeech.config.settings import EmbedConfig, JWTChannelConfig, settings
+from xpeech.config.settings import JWTChannelConfig, settings
+from xpeech.subapp.channel.web_client.config import EmbedConfig, EmbedSettings
 from xpeech.subapp.channel.helper import ChatStream
+from xpeech.subapp.channel.web_client.dao import WebClientDAO
 
 web = import_module("xpeech.subapp.channel.web_client.app")
 proxy = import_module("xpeech.subapp.channel.web_client.routes.proxy")
@@ -247,6 +249,25 @@ def test_origin_configuration_requires_exact_origins():
     assert EmbedConfig(allowed_origins=["https://PORTAL.test:443/"]).allowed_origins == ["https://portal.test"]
 
 
+def test_web_only_embed_settings_read_toml_and_environment(tmp_path, monkeypatch):
+    config_module = import_module("xpeech.config.settings")
+    config_file = tmp_path / "embed.toml"
+    config_file.write_text(
+        '[web_client]\ndatabase_path = "users.db"\n'
+        '[web_client.embed]\nallowed_origins = ["https://PORTAL.test:443/"]\n',
+    )
+    monkeypatch.setattr(config_module, "conf_toml_path", str(config_file))
+    assert EmbedSettings().web_client.embed.allowed_origins == ["https://portal.test"]
+    monkeypatch.setenv("XPEECH_WEB_CLIENT__EMBED__ALLOWED_ORIGINS", '["https://override.test"]')
+    assert EmbedSettings().web_client.embed.allowed_origins == ["https://override.test"]
+
+
+def test_signed_user_ids_follow_backend_validation(client):
+    assert login_embedded(client, "Alice Smith").status_code == 200
+    for user_id in ("alice@example.test", "alice.name", "用户"):
+        assert login_embedded(client, user_id).status_code == 401
+
+
 @pytest.mark.parametrize("user_id", ["alice", "admin"])
 def test_embedded_channel_signs_all_backend_requests_with_its_own_key(client, monkeypatch, user_id):
     name = "crm.portal-v2"
@@ -265,7 +286,7 @@ def test_embedded_channel_signs_all_backend_requests_with_its_own_key(client, mo
         token = request.headers["authorization"].removeprefix("Bearer ")
         assert jwt.get_unverified_header(token)["kid"] == name
         jwt.decode(token, secret, algorithms=[settings.jwt.algorithm], options={"require": ["exp"]})
-        assert request.headers["x-user-id"] == user_id
+        assert jwt.decode(token, secret, algorithms=[settings.jwt.algorithm])["sub"] == user_id
         return httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n')
 
     async_client = httpx.AsyncClient
@@ -275,10 +296,7 @@ def test_embedded_channel_signs_all_backend_requests_with_its_own_key(client, mo
     assert client.post("/api/chat", headers=headers, data={"content": "[]"}).status_code == 200
     assert client.post("/api/answer_question", headers=headers, data={"answer": "yes"}).status_code == 200
     assert client.get("/api/files", headers=headers, params={"path": "report.txt"}).status_code == 200
-    expected_paths = ["/chat", "/answer_question", f"/sessions/{user_id}/files"]
-    if user_id == "admin":
-        assert client.get("/api/statistics", headers=headers).status_code == 200
-        expected_paths.append("/statistics")
+    expected_paths = ["/chat", "/answer_question", "/files"]
     assert [request.url.path for request in calls] == expected_paths
     assert calls[0].headers["x-session-id"] == calls[1].headers["x-session-id"] == SESSION_ID
 
@@ -406,7 +424,7 @@ def test_channel_is_inferred_and_other_configured_channels_cannot_be_selected(cl
     monkeypatch.setattr(proxy, "fetch_file", file)
     headers = {"Authorization": f"Bearer {account['token']}"}
     assert client.get("/api/files", headers=headers, params={"path": "a.txt"}).status_code == 200
-    assert file.await_args.args[3].channel == "crm"
+    assert file.await_args.args[3] == "crm"
     headers["x-channel-name"] = "private"
     assert client.get("/api/files", headers=headers, params={"path": "a.txt"}).status_code == 403
     assert file.await_count == 1
@@ -434,3 +452,24 @@ def test_embed_tokens_cannot_use_cookie_transport_to_bypass_the_bound_channel(cl
     assert client.get("/api/files", params={"path": "a.txt"}).status_code == 401
     assert client.post("/api/chat", data={"content": "[]"}).status_code == 401
     assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {account['token']}"}).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_existing_session_schema_is_migrated_without_removing_password_sessions(tmp_path):
+    path = tmp_path / "old-users.db"
+    with sqlite3.connect(path) as database:
+        database.execute(
+            "CREATE TABLE sessions (token_hash VARCHAR PRIMARY KEY, user_id INTEGER NOT NULL, "
+            "expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL)"
+        )
+        database.execute("INSERT INTO sessions VALUES ('old-password-session', 1, '2999-01-01', '2026-01-01')")
+    dao = WebClientDAO(path)
+    try:
+        await dao.initialize(lambda: "test-admin-hash")
+        assert (await dao.get_user_for_session("old-password-session")).user_id == "admin"
+        assert await dao.get_user_for_session("old-password-session", require_embed_channel=True) is None
+        assert await dao.get_session_channel("old-password-session") is None
+        await dao.initialize(lambda: "unused")
+        assert (await dao.get_user_for_session("old-password-session")).user_id == "admin"
+    finally:
+        await dao.close()
