@@ -88,9 +88,9 @@ def backend_http(monkeypatch):
     async def record_request(request):
         requests.append(request)
         token = request.headers["authorization"].removeprefix("Bearer ")
-        decode_internal_access_token(token)
-        assert str(request.url) == f"{TEST_BACKEND_URL}/internal/scheduled-run"
+        assert set(decode_internal_access_token(token)) == {"exp"}
         assert request.headers["x-user-id"] == "session-1"
+        assert str(request.url) == f"{TEST_BACKEND_URL}/internal/scheduled-run"
 
     monkeypatch.setattr(
         background.httpx,
@@ -702,7 +702,7 @@ async def test_only_scheduler_lifespan_starts_scheduling(tmp_path, monkeypatch):
 )
 async def test_scheduler_and_execution_endpoints_require_jwt(app, method, path):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.request(method, path, headers={"x-user-id": "alice"})
+        response = await client.request(method, path, headers={})
     assert response.status_code == 401
 
 
@@ -730,7 +730,7 @@ async def test_scheduler_rejects_invalid_internal_jwt(method, path, token_kind):
         transport=httpx.ASGITransport(app=scheduler_service.app), base_url="http://test",
     ) as client:
         response = await client.request(
-            method, path, headers={"Authorization": f"Bearer {token}", "x-user-id": "alice"},
+            method, path, headers={"Authorization": f"Bearer {token}"},
         )
 
     assert response.status_code == 401
@@ -760,7 +760,6 @@ async def test_channel_jwt_cannot_access_internal_endpoints(app, method, path, c
             path,
             headers={
                 "Authorization": f"Bearer {token}",
-                "x-user-id": "alice",
             },
         )
 
@@ -815,26 +814,30 @@ async def test_scheduler_api_limit_is_shared_across_http_clients(tmp_path, sched
 
 
 @pytest.mark.asyncio
-async def test_execution_rejects_invalid_user_id_before_running(monkeypatch):
-    create = AsyncMock()
-    monkeypatch.setattr(AgentRunner, "create", create)
+async def test_execution_uses_trusted_internal_user_parameter(monkeypatch):
+    from xpeech.agent.server.routes import internal
+
+    execute = AsyncMock(return_value={
+        "content": "done", "schedule_type": "cron", "schedule_value": "0 9 * * *",
+    })
+    monkeypatch.setattr(internal, "execute_scheduled_chat", execute)
     transport = httpx.ASGITransport(app=backend_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
             "/internal/scheduled-run",
-            headers={"Authorization": f"Bearer {create_internal_access_token()}", "x-user-id": "../escape"},
+            headers={
+                "Authorization": f"Bearer {create_internal_access_token()}",
+                "x-user-id": "trusted/internal-user",
+            },
             json={
-                "job_id": "job-1",
-                "prompt": "task",
-                "sender_name": "Alice",
-                "channel": "feishu",
-                "session_metadata": {},
-                "schedule_type": "cron",
-                "schedule_value": "0 9 * * *",
+                "job_id": "job-1", "prompt": "task", "sender_name": "Alice",
+                "channel": "feishu", "session_metadata": {},
+                "schedule_type": "cron", "schedule_value": "0 9 * * *",
             },
         )
-    assert response.status_code == 422
-    create.assert_not_awaited()
+    assert response.status_code == 200
+    execute.assert_awaited_once()
+    assert execute.await_args.args[0] == "trusted/internal-user"
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,7 @@ import pytest
 
 from xpeech.config.settings import JWTChannelConfig, settings
 from xpeech.utils import channel_jwt
-from xpeech.utils.channel_jwt import ChannelJWTAuth, ChannelTokenParams, create_token
+from xpeech.utils.channel_jwt import ChannelJWTAuth, ChannelTokenParams, UserJWTAuth, UserTokenParams, create_token
 
 KEY = "channel-object-test-signing-key-at-least-64-characters-long-for-all-hmac-algorithms"
 
@@ -92,7 +92,7 @@ def test_expiration_property_follows_pyjwt_numeric_date_conversion():
 
 
 def test_token_issuance_keeps_optional_claims_isolated():
-    feishu_claim = ChannelJWTAuth(_token(lark_user_access_token="user-access-token"))
+    feishu_claim = UserJWTAuth(create_token(UserTokenParams("crm", user_id="alice", lark_user_access_token="user-access-token")))
     plain = ChannelJWTAuth(_token())
     assert set(plain.claims) == {"exp"}
     assert feishu_claim.claims["lark_user_access_token"] == "user-access-token"

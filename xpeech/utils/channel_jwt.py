@@ -9,6 +9,8 @@ from typing import Any
 import jwt
 
 from ..config.settings import settings
+from ..exceptions import PathProtectionError
+from .ids import validate_user_id
 
 
 def _channel_secret_key(channel: str) -> str:
@@ -25,6 +27,13 @@ class ChannelTokenParams:
     """Parameters for issuing a channel JWT."""
 
     channel: str
+
+
+@dataclass(frozen=True)
+class UserTokenParams(ChannelTokenParams):
+    """Parameters for issuing a channel JWT bound to one user."""
+
+    user_id: str
     lark_user_access_token: str | None = field(default=None, repr=False)
 
 
@@ -72,6 +81,21 @@ class ChannelJWTAuth:
         return f"ChannelJWTAuth(channel={self.channel!r}, exp={self.exp!r})"
 
 
+class UserJWTAuth(ChannelJWTAuth):
+    """Channel credential bound only to its verified user subject."""
+
+    def __init__(self, token: str):
+        super().__init__(token)
+        try:
+            self._user_id = validate_user_id(self.claims.get("sub"))
+        except PathProtectionError:
+            raise jwt.InvalidTokenError("Invalid or missing user JWT subject") from None
+
+    @property
+    def user_id(self) -> str:
+        return self._user_id
+
+
 def create_token(params: ChannelTokenParams, *, secret_key4verify: str | None = None) -> str:
     """Sign a channel JWT, optionally verifying the supplied channel secret first."""
     channel = params.channel
@@ -86,6 +110,8 @@ def create_token(params: ChannelTokenParams, *, secret_key4verify: str | None = 
     claims: dict[str, Any] = {
         "exp": int((issued_at + timedelta(seconds=settings.jwt.access_token_expire_seconds)).timestamp()),
     }
-    if params.lark_user_access_token is not None:
-        claims["lark_user_access_token"] = params.lark_user_access_token
+    if isinstance(params, UserTokenParams):
+        claims["sub"] = validate_user_id(params.user_id)
+        if params.lark_user_access_token is not None:
+            claims["lark_user_access_token"] = params.lark_user_access_token
     return jwt.encode(claims, secret_key, algorithm=settings.jwt.algorithm, headers={"kid": channel})

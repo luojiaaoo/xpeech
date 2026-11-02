@@ -17,7 +17,7 @@ from xpeech.agent.server.dependencies import (
     settings,
 )
 from xpeech.agent.server.routes.chat import answer_question
-from xpeech.utils.channel_jwt import ChannelTokenParams, create_token
+from xpeech.utils.channel_jwt import UserTokenParams, create_token
 
 UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 
@@ -74,10 +74,9 @@ def test_chat_initializes_all_tools_for_every_session(
     create = AsyncMock(return_value=SimpleNamespace(workspace=tmp_path, run=run))
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
     monkeypatch.setattr(settings.llm, "support_json_output", True)
-    token = create_token(ChannelTokenParams(channel))
+    token = create_token(UserTokenParams(channel, user_id="user"))
     headers = {
         "Authorization": f"Bearer {token}",
-        "x-user-id": "user",
         "x-session-id": session_id,
         "x-sender-name": "Alice",
     }
@@ -113,10 +112,9 @@ def test_chat_initializes_all_tools_for_every_session(
 @pytest.mark.parametrize("path", ["/chat", "/chat_sync", "/answer_question"])
 @pytest.mark.parametrize("channel", ["web_client", "feishu"])
 def test_chat_rejects_missing_empty_or_invalid_session_ids(session_id, path, channel):
-    token = create_token(ChannelTokenParams(channel))
+    token = create_token(UserTokenParams(channel, user_id="user"))
     headers = {
         "Authorization": f"Bearer {token}",
-        "x-user-id": "user",
         "x-sender-name": "Alice",
     }
     if session_id is not None:
@@ -130,6 +128,7 @@ def test_chat_rejects_missing_empty_or_invalid_session_ids(session_id, path, cha
     assert response.status_code == 422
     if session_id is None:
         assert any(error["loc"] == ["header", "x-session-id"] for error in response.json()["detail"])
+        assert "x-session-id" not in response.headers
     else:
         assert response.json() == {"detail": "Invalid session_id"}
 
@@ -140,12 +139,11 @@ def test_unsupported_json_output_returns_http_error_before_starting_stream(monke
     monkeypatch.setattr(settings.llm, "support_json_output", False)
     create = AsyncMock()
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
-    token = create_token(ChannelTokenParams("web_client"))
+    token = create_token(UserTokenParams("web_client", user_id="user"))
     response = TestClient(app).post(
         "/chat",
         headers={
             "Authorization": f"Bearer {token}",
-            "x-user-id": "user",
             "x-session-id": "default",
             "x-sender-name": "Alice",
         },

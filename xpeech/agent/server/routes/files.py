@@ -1,26 +1,23 @@
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
 from ....config.settings import settings
 from ....exceptions import PathProtectionError
-from ....utils.ids import validate_user_id
 from ...tools.helper import safe_resolve_workspace_path
+from ..dependencies import authenticated_user_id
 
 router = APIRouter()
 
 
-@router.get("/sessions/{user_id}/files")
+@router.get("/files")
 async def download_session_file(
-    user_id: str,
+    user_id: Annotated[str, Depends(authenticated_user_id)],
     path: Annotated[str, Query(description="File path returned by a send_file event.")],
 ):
     """下载指定会话工作区内的文件。"""
-    try:
-        workspace = (settings.path.workspace_base_path / validate_user_id(user_id)).resolve()
-    except PathProtectionError:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Invalid user_id") from None
+    workspace = (settings.path.workspace_base_path / user_id).resolve()
     try:
         file_path = safe_resolve_workspace_path(
             path,

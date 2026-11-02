@@ -10,7 +10,7 @@ def create_internal_access_token() -> str:
     """Create a short-lived token for calls between trusted Xpeech services."""
 
     issued_at = datetime.now(UTC)
-    claims = {
+    claims: dict[str, Any] = {
         "exp": issued_at + timedelta(seconds=settings.jwt.access_token_expire_seconds),
     }
     return jwt.encode(

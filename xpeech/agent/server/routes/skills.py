@@ -1,14 +1,15 @@
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from ....config.settings import settings
 from ....exceptions import PathProtectionError
 from ....utils.file_io import is_relative_path
-from ....utils.ids import MAX_ID_LENGTH, validate_user_id
+from ....utils.ids import validate_user_id
 from ...skills.skill import SkillInfo, SkillsLoader
-from ..auth import AuthenticatedChannel, require_channel_jwt
+from ..auth import AuthenticatedUser, require_user_jwt
+from ..dependencies import authenticated_user_id
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -68,20 +69,17 @@ def _import_skill_file(data: bytes, workspace: Path) -> SkillInfo:
 
 @router.get("", response_model=list[SkillInfo])
 async def list_skills(
-    channel: Annotated[AuthenticatedChannel, Depends(require_channel_jwt)],
-    user_id: Annotated[
-        str | None,
-        Query(max_length=MAX_ID_LENGTH, description="用户 ID；为空时仅返回内置技能"),
-    ] = None,
+    channel: Annotated[AuthenticatedUser, Depends(require_user_jwt)],
+    user_id: Annotated[str, Depends(authenticated_user_id)],
 ) -> list[SkillInfo]:
-    """返回内置技能，以及指定用户可用的 SKILL 列表。"""
-    workspace = _user_workspace(user_id) if user_id else None
+    """返回内置技能，以及 JWT 用户可用的 SKILL 列表。"""
+    workspace = _user_workspace(user_id)
     return await SkillsLoader(workspace, channel_tags=channel.channel_tags).list_skill_info()
 
 
 @router.post("/import", response_model=SkillInfo, status_code=status.HTTP_201_CREATED)
 def import_skill(
-    user_id: Annotated[str, Query(min_length=1, max_length=MAX_ID_LENGTH, description="用户 ID")],
+    user_id: Annotated[str, Depends(authenticated_user_id)],
     file: Annotated[UploadFile, File(description="SKILL.md 文件")],
 ) -> SkillInfo:
     """将用户上传的 SKILL.md 导入指定用户工作区。"""

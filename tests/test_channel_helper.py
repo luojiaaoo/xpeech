@@ -8,14 +8,14 @@ import pytest
 from xpeech.config.settings import JWTChannelConfig, settings
 from xpeech.subapp.channel import helper
 from xpeech.subapp.channel.schema import ChatEventType, Message, TextData
-from xpeech.utils.channel_jwt import ChannelJWTAuth
+from xpeech.utils.channel_jwt import UserJWTAuth
 
 TEST_CHANNEL = "test"
 TEST_SECRET_KEY = "test-channel-key-that-is-at-least-32-bytes"
 
 
 @pytest.mark.asyncio
-async def test_backend_requests_use_channel_tokens_and_a_user_header(monkeypatch):
+async def test_backend_requests_bind_user_in_jwt_subject(monkeypatch):
     monkeypatch.setitem(settings.jwt.channels, TEST_CHANNEL, JWTChannelConfig(secret_key=TEST_SECRET_KEY))
     requests = []
     client_class = httpx.AsyncClient
@@ -31,14 +31,15 @@ async def test_backend_requests_use_channel_tokens_and_a_user_header(monkeypatch
     await stream.aclose()
     await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL)
     await helper.fetch_file("alice", "report.txt", "http://backend.test", TEST_CHANNEL)
-    assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/sessions/alice/files"]
+    assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/files"]
     for request in requests:
-        assert request.headers["x-user-id"] == "alice"
+        assert "x-user-id" not in request.headers
         assert request.headers["x-session-id"] == "default"
         token = request.headers["authorization"].removeprefix("Bearer ")
-        auth = ChannelJWTAuth(token)
+        auth = UserJWTAuth(token)
         assert auth.channel == TEST_CHANNEL
-        assert set(auth.claims) == {"exp"}
+        assert auth.user_id == "alice"
+        assert set(auth.claims) == {"exp", "sub"}
 
 
 class _JsonErrorStream(httpx.AsyncByteStream):

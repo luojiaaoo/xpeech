@@ -7,7 +7,8 @@ from fastapi import Depends, Form, Header, HTTPException, status
 
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
-from ...utils.ids import validate_session_id, validate_user_id
+from ...utils.ids import validate_session_id
+from .auth import AuthenticatedUser, require_user_jwt
 from .schema import InputContent
 from .session_guard import SessionChatGuard
 
@@ -32,17 +33,18 @@ def json_output_enabled(
     return json_output
 
 
-def user_id_header(
-    user_id: Annotated[str, Header(description="用户 ID", alias="x-user-id")],
+def internal_user_id(
+    user_id: Annotated[str, Header(alias="x-user-id")],
 ) -> str:
-    """Validate the user ID from the request header."""
-    try:
-        return validate_user_id(user_id)
-    except PathProtectionError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid user_id",
-        ) from None
+    """Use the trusted internal caller's user parameter directly."""
+    return user_id
+
+
+def authenticated_user_id(
+    auth: Annotated[AuthenticatedUser, Depends(require_user_jwt)],
+) -> str:
+    """Use only the verified JWT subject as the external user identity."""
+    return auth.user_id
 
 
 def session_id_header(
@@ -129,7 +131,7 @@ def content(
 
 
 async def acquire_chat_session(
-    user_id: Annotated[str, Depends(user_id_header)],
+    user_id: Annotated[str, Depends(authenticated_user_id)],
     session_id: Annotated[str, Depends(session_id_header)],
 ) -> AsyncIterator[None]:
     """占用会话直至响应结束，并拒绝同一会话的并发请求。"""

@@ -12,7 +12,7 @@ from xpeech.agent.server.routes.public_file import preview_file
 from xpeech.agent.tools.browser_preview import BrowserPreviewArgs, build_browser_preview_tool
 from xpeech.agent.tools.helper import as_tool
 from xpeech.config.settings import settings
-from xpeech.utils.channel_jwt import ChannelTokenParams, create_token
+from xpeech.utils.channel_jwt import UserTokenParams, create_token
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def test_download_session_file_requires_valid_jwt(file_roots: tuple[Path, Path])
     session_workspace.mkdir()
     (session_workspace / "result.txt").write_text("downloaded", encoding="utf-8")
     client = TestClient(app)
-    url = f"/sessions/{user_id}/files"
+    url = "/files"
     params = {"path": "result.txt"}
 
     missing_token = client.get(url, params=params)
@@ -42,7 +42,7 @@ def test_download_session_file_requires_valid_jwt(file_roots: tuple[Path, Path])
         params=params,
         headers={"Authorization": "Bearer invalid-token"},
     )
-    token = create_token(ChannelTokenParams("web_client"))
+    token = create_token(UserTokenParams("web_client", user_id=user_id))
     valid_token = client.get(
         url,
         params=params,

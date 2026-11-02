@@ -69,13 +69,12 @@ def test_resource_tag_validation_is_consistent(channel_tags):
 @pytest.mark.parametrize("session_id", ["default", UUID7_SESSION_ID])
 def test_custom_channel_can_get_token_and_use_business_endpoints(channels, session_id):
     client = TestClient(app)
-    response = client.post("/token", auth=("crm", CRM_KEY))
+    response = client.post("/token", auth=("crm", CRM_KEY), data={"username": "tag-test"})
     assert response.status_code == 200
     token = response.json()["access_token"]
     assert jwt.get_unverified_header(token)["kid"] == "crm"
     headers = {
         "Authorization": f"Bearer {token}",
-        "x-user-id": "tag-test",
         "x-session-id": session_id,
     }
     assert client.post("/answer_question", data={"answer": "ok"}, headers=headers).status_code == 200
@@ -126,14 +125,13 @@ def test_skill_api_filters_using_server_channel_tags(
 
     def visible_skills(channel, key, **extra_claims):
         token = jwt.encode(
-            {"exp": datetime.now(UTC) + timedelta(seconds=60), **extra_claims},
+            {"exp": datetime.now(UTC) + timedelta(seconds=60), "sub": "tag-user", **extra_claims},
             key,
             algorithm=settings.jwt.algorithm,
             headers={"kid": channel},
         )
         response = client.get(
             "/skills",
-            params={"user_id": "tag-user"},
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
@@ -186,14 +184,13 @@ def test_chat_passes_verified_channel_tags_to_registration(
 
     monkeypatch.setattr(AgentRunner, "create", create)
     token = jwt.encode(
-        {"exp": datetime.now(UTC) + timedelta(seconds=60), "channel_tags": ["erp"]},
+        {"exp": datetime.now(UTC) + timedelta(seconds=60), "sub": "tag-user", "channel_tags": ["erp"]},
         CRM_KEY,
         algorithm=settings.jwt.algorithm,
         headers={"kid": "crm"},
     )
     headers = {
         "Authorization": f"Bearer {token}",
-        "x-user-id": "tag-user",
         "x-session-id": session_id,
         "x-sender-name": "test",
     }

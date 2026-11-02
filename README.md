@@ -85,7 +85,8 @@ secret_key = "replace-with-a-different-feishu-random-value"
 默认 HS256、60 秒，有效期最长 60 秒。Compose 中的服务读取同一份 `conf.toml`，使用各自的密钥。
 内部 token 不携带 `kid`，直接使用 `secret_key` 验签。channel token 的 header
 使用 `kid` 从 `jwt.channels` 选择同名通道的 `secret_key`，包括 `web_client` 和 `feishu`。
-聊天、追问、后台消息、文件、技能接口必须使用带 `kid` 的 channel JWT；
+聊天、追问、文件、技能接口必须使用同时带 channel `kid` 和用户 `sub` 的 JWT；
+后台消息接口只需带 `kid` 的 channel JWT。对外接口忽略 `x-user-id` 请求头；
 `/statistics` 及其子接口、`/internal/scheduled-run` 和 scheduler
 服务的接口使用内部 JWT，通过 `jwt.secret_key` 验签。
 
@@ -257,7 +258,7 @@ Compose 会启动六类容器：
 - `lark-token-manager`：飞书用户令牌管理服务
 - `backend`：Xpeech API、Agent 和工具执行服务，默认启动 4 个副本
 - `scheduler`：单实例调度服务，独占 `schedule.db`，通过 Nginx 调用 backend 执行到期任务
-- `nginx`：后端 API 入口，按 `x-user-id` 将同一用户稳定分配到同一 backend
+- `nginx`：后端 API 入口，按 JWT `sub` 将同一用户稳定分配到同一 backend
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
 - `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
 
@@ -284,8 +285,10 @@ docker compose up -d --build
 BACKEND_REPLICAS=4 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 ```
 
-Nginx 使用用户 ID 哈希按 `x-user-id` 分流。`/chat`、`/answer_question` 和文件请求都必须
-携带相同的 `x-user-id`；调整副本数或替换 backend 容器可能改变用户的映射，操作前应先等待
+Nginx 按 JWT `sub`（对外请求）或 `x-user-id`（内部请求）做一致性哈希分流；两者都没有时正常轮询。
+JWT 验签由 backend 负责。
+`/chat`、`/answer_question`、文件和技能请求必须使用用户 JWT，且 `sub` 保持一致；对外接口忽略 `x-user-id` 请求头。
+内部 JWT 仅用于服务鉴权，用户参数通过 `x-user-id` 直接传递。调整副本数或替换 backend 容器可能改变用户的映射，操作前应先等待
 正在进行的 SSE 会话结束。
 
 查看运行状态和日志：
@@ -310,7 +313,7 @@ docker compose up -d --build --force-recreate backend
 ```
 
 后台定时任务由单实例 `scheduler` 管理，backend 使用内部 JWT 通过 HTTP 创建、查询和取消任务。
-到期后 scheduler 携带 JWT 和 `x-user-id` 请求 `http://nginx:7878/internal/scheduled-run`，
+到期后 scheduler 携带内部 JWT 和 `x-user-id` 请求 `http://nginx:7878/internal/scheduled-run`，
 由用户对应的 backend 使用 `background=True` 执行，结果返回 scheduler 供飞书轮询。
 `/background_message` 经 Nginx 到达任意 backend，backend 校验通道 JWT 并限制仅 Feishu 通道可领取，
 再使用内部 JWT 向 scheduler 领取消息，不需要绑定特定实例。
@@ -329,8 +332,8 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 需要从自有业务后端、机器人通道或其他服务完整接入聊天、SSE 事件、追问回调和文件下载时，
 请参阅 [后端接入说明](docs/backend-integration.md)。
 
-`/chat` 需要 Bearer JWT，并通过请求头传入用户 ID 和发送者用户名。JWT、用户 ID
-和发送者用户名都是必填项；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码。
+`/chat` 需要带用户 `sub` 的 Bearer JWT，并通过 `x-sender-name` 请求头传入发送者用户名。
+用户 ID 只取已验签 JWT 的 `sub`；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码。
 
 `user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、技能和 MCP 连接；`session_id`
 标识该用户的一次会话，用于隔离上下文、并发聊天和提问回答。同一个用户可以同时拥有多个会话。
@@ -338,7 +341,7 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 省略、空值或其他格式均返回 HTTP 422。
 仅 `session_id` 为 `default` 时，向模型提供后台任务工具
 `feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`。
-请求头使用 `x-user-id`，接口字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
+对外用户身份只使用 JWT `sub`；仅内部请求通过 `x-user-id` 传递用户。代码字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
 OAuth2 用户标识配置使用 `user_id_claim`。
 
 会话历史保存在 `session_history_path` 目录中，文件名固定为
@@ -373,7 +376,6 @@ UUIDv7 格式的 `session_id`，保存历史时直接复用此 ID；执行时间
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-user-id: demo-user" \
   -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"你好，介绍一下你自己"}]'
@@ -384,7 +386,6 @@ curl -N -X POST "http://localhost:7878/chat" \
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-user-id: demo-user" \
   -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"帮我看看这个文件"}]' \

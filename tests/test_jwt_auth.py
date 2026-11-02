@@ -16,7 +16,7 @@ from xpeech.agent.server.context import get_lark_user_access_token
 from xpeech.agent.tools import sandbox
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, settings
 from xpeech.utils import internal_jwt
-from xpeech.utils.channel_jwt import ChannelJWTAuth, ChannelTokenParams, create_token
+from xpeech.utils.channel_jwt import ChannelJWTAuth, ChannelTokenParams, UserTokenParams, create_token
 from xpeech.utils.internal_jwt import (
     create_internal_access_token,
     decode_internal_access_token,
@@ -108,7 +108,7 @@ def test_internal_and_channel_tokens_use_shared_jwt_settings(monkeypatch, algori
 
 
 def test_access_token_can_carry_lark_user_access_token():
-    token = create_token(ChannelTokenParams(TEST_CHANNEL, lark_user_access_token="u-request-token"))
+    token = create_token(UserTokenParams(TEST_CHANNEL, user_id="test", lark_user_access_token="u-request-token"))
 
     assert (
         ChannelJWTAuth(token).claims[
@@ -124,6 +124,7 @@ def test_api_rejects_invalid_lark_user_access_token_claim(channel, lark_user_acc
     token = jwt.encode(
         {
             "exp": datetime.now(UTC) + timedelta(seconds=60),
+            "sub": "test",
             "lark_user_access_token": lark_user_access_token,
         },
         settings.jwt.channels[channel].secret_key,
@@ -133,7 +134,7 @@ def test_api_rejects_invalid_lark_user_access_token_claim(channel, lark_user_acc
     response = TestClient(app).post(
         "/answer_question",
         data={"answer": "ok"},
-        headers={"Authorization": f"Bearer {token}", "x-user-id": "test"},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 401
@@ -172,12 +173,11 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
 
     async def send(client, user_id, lark_user_access_token):
-        token = create_token(ChannelTokenParams("feishu", lark_user_access_token=lark_user_access_token))
+        token = create_token(UserTokenParams("feishu", user_id=user_id, lark_user_access_token=lark_user_access_token))
         return await client.post(
             "/chat",
             headers={
                 "Authorization": f"Bearer {token}",
-                "x-user-id": user_id,
                 "x-session-id": "default",
                 "x-sender-name": "test-user",
             },
@@ -248,7 +248,6 @@ def test_api_rejects_lark_user_token_in_internal_jwt():
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-user-id": "test",
         },
     )
 
@@ -292,7 +291,7 @@ def test_kid_cannot_select_a_different_signing_key(source, kid):
     response = TestClient(app).post(
         "/answer_question",
         data={"answer": "ok"},
-        headers={"Authorization": f"Bearer {token}", "x-user-id": "test"},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 401
@@ -310,7 +309,7 @@ def test_api_rejects_unknown_kid(headers):
     response = TestClient(app).post(
         "/answer_question",
         data={"answer": "ok"},
-        headers={"Authorization": f"Bearer {token}", "x-user-id": "test"},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 401
@@ -330,7 +329,7 @@ def test_api_rejects_channel_token_without_kid(secret_key):
     response = TestClient(app).post(
         "/answer_question",
         data={"answer": "ok"},
-        headers={"Authorization": f"Bearer {token}", "x-user-id": "test"},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 401
@@ -338,14 +337,13 @@ def test_api_rejects_channel_token_without_kid(secret_key):
 
 @pytest.mark.parametrize("channel", ["feishu", "web_client", TEST_CHANNEL])
 def test_backend_accepts_lark_user_token_from_any_configured_channel(channel):
-    token = create_token(ChannelTokenParams(channel, lark_user_access_token="u-request-token"))
+    token = create_token(UserTokenParams(channel, user_id="test", lark_user_access_token="u-request-token"))
 
     response = TestClient(app).post(
         "/answer_question",
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-user-id": "test",
             "x-session-id": "default",
         },
     )
@@ -362,14 +360,13 @@ def test_backend_accepts_lark_user_token_from_any_configured_channel(channel):
 )
 @pytest.mark.parametrize("session_id", ["default", "018f0000-0000-7000-8000-000000000001"])
 def test_api_accepts_each_configured_channel_jwt(channel, secret_key, session_id):
-    token = create_token(ChannelTokenParams(channel))
+    token = create_token(UserTokenParams(channel, user_id="test"))
 
     response = TestClient(app).post(
         "/answer_question",
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-user-id": "test",
             "x-session-id": session_id,
         },
     )
@@ -401,7 +398,6 @@ def test_api_rejects_channel_tokens_with_missing_or_expired_exp(kid, secret_key,
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-user-id": "test",
         },
     )
 
@@ -411,7 +407,7 @@ def test_api_rejects_channel_tokens_with_missing_or_expired_exp(kid, secret_key,
 def test_api_requires_jwt():
     client = TestClient(app)
 
-    api_response = client.post("/answer_question", data={"answer": "ok"}, headers={"x-user-id": "test"})
+    api_response = client.post("/answer_question", data={"answer": "ok"}, headers={})
 
     assert api_response.status_code == 401
     assert api_response.headers["www-authenticate"] == "Bearer"
@@ -429,7 +425,6 @@ def test_api_rejects_token_signed_with_another_key():
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-user-id": "test",
         },
     )
 
@@ -472,7 +467,7 @@ def test_token_endpoint_issues_channel_jwt_for_docs(channel):
     token_response = client.post(
         "/token",
         auth=(channel, keys[channel]),
-        data={"grant_type": "password", "username": "", "password": ""},
+        data={"grant_type": "password", "username": "test", "password": ""},
     )
 
     assert token_response.status_code == 200
@@ -481,14 +476,14 @@ def test_token_endpoint_issues_channel_jwt_for_docs(channel):
     token = token_response.json()["access_token"]
     claims = ChannelJWTAuth(token).claims
     assert jwt.get_unverified_header(token)["kid"] == channel
-    assert set(claims) == {"exp"}
+    assert set(claims) == {"exp", "sub"}
+    assert claims["sub"] == "test"
 
     api_response = client.post(
         "/answer_question",
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-user-id": "test",
             "x-session-id": "default",
         },
     )
@@ -502,9 +497,9 @@ def test_token_endpoint_issues_channel_jwt_for_docs(channel):
         ("POST", "/chat_sync"),
         ("POST", "/answer_question"),
         ("GET", "/background_message"),
-        ("GET", "/sessions/test/files?path=result.txt"),
+        ("GET", "/files?path=result.txt"),
         ("GET", "/skills"),
-        ("POST", "/skills/import?user_id=test"),
+        ("POST", "/skills/import"),
     ],
 )
 def test_business_endpoints_reject_internal_jwt(method, path):
@@ -513,7 +508,7 @@ def test_business_endpoints_reject_internal_jwt(method, path):
     response = TestClient(app).request(
         method,
         path,
-        headers={"Authorization": f"Bearer {token}", "x-user-id": "test"},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 401

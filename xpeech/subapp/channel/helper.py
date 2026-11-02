@@ -11,7 +11,7 @@ import httpx
 from httpx_sse import EventSource
 from yarl import URL
 
-from ...utils.channel_jwt import ChannelTokenParams, create_token
+from ...utils.channel_jwt import UserTokenParams, create_token
 from ...utils.ids import DEFAULT_SESSION_ID
 from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
@@ -40,8 +40,7 @@ def _backend_headers(
     sender_name: str | None = None,
 ) -> dict[str, str]:
     headers = {
-        "authorization": f"Bearer {create_token(ChannelTokenParams(channel))}",
-        "x-user-id": user_id,
+        "authorization": f"Bearer {create_token(UserTokenParams(channel, user_id=user_id))}",
         "x-session-id": DEFAULT_SESSION_ID,
     }
     if sender_name is not None:
@@ -210,7 +209,7 @@ async def fetch_file(
 ) -> httpx.Response:
     """Fetch a session file and return the backend response without changing its status."""
 
-    file_url = str(URL(api_base_url) / "sessions" / user_id / "files")
+    file_url = str(URL(api_base_url) / "files")
     async with httpx.AsyncClient(timeout=None) as client:
         return await client.get(
             file_url,

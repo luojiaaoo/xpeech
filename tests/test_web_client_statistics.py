@@ -110,5 +110,6 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
     assert second_request["params"] == [("range", "week")]
     for request in FakeAsyncClient.requests:
         token = request["headers"]["authorization"].removeprefix("Bearer ")
-        assert set(decode_internal_access_token(token)) == {"exp"}
+        claims = decode_internal_access_token(token)
+        assert set(claims) == {"exp"}
         assert "kid" not in jwt.get_unverified_header(token)
