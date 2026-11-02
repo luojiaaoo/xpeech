@@ -256,7 +256,7 @@ Compose 已配置相同入口。
 Compose 会启动六类容器：
 
 - `lark-token-manager`：飞书用户令牌管理服务
-- `backend`：Xpeech API、Agent 和工具执行服务，默认启动 4 个副本
+- `backend`：Xpeech API、Agent 和工具执行服务，默认启动 16 个副本
 - `scheduler`：单实例调度服务，独占 `schedule.db`，通过 Nginx 调用 backend 执行到期任务
 - `nginx`：后端 API 入口，按 JWT `sub` 将同一用户稳定分配到同一 backend
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
@@ -282,7 +282,7 @@ docker compose up -d --build
 不依赖这两个端口：
 
 ```bash
-BACKEND_REPLICAS=4 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
+BACKEND_REPLICAS=16 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 ```
 
 Nginx 按 JWT `sub`（对外请求）或 `x-user-id`（内部请求）做一致性哈希分流；两者都没有时正常轮询。
