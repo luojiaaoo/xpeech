@@ -13,13 +13,23 @@ class OutputEventType(TypedDict):
     text_size: NotRequired[str | dict[str, Any]]
     text_align: NotRequired[str]
     icon: NotRequired[dict[str, Any] | None]
+    title: NotRequired[str]
+    expanded_title: NotRequired[str]
+    expanded: NotRequired[bool]
+    max_title_chars: NotRequired[int]
+    max_chars: NotRequired[int]
+    max_argument_chars: NotRequired[int]
+    max_result_chars: NotRequired[int]
 
 
 # 图标：https://open.feishu.cn/document/feishu-cards/enumerations-for-icons
-# None 不发送；... 表示流式；str 表示直接输出。
+# None 按事件内容格式化；... 表示流式；str 表示固定文本。
 OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
     ChatEventType.THINKING: {
         "content": ...,
+        "title": "查看思考过程",
+        "expanded_title": "收起思考过程",
+        "expanded": False,
         "text_size": "notation",
         "text_align": "left",
         "icon": {
@@ -59,24 +69,20 @@ OUTPUT_EVENT_TYPES: dict[ChatEventType, OutputEventType] = {
         },
     },
     ChatEventType.TOOL_CALL: {
-        "content": "我需要调用工具处理一下。",
+        "content": ...,
+        "title": "工具调用",
+        "expanded": False,
         "text_size": "notation",
-        "text_align": "center",
+        "text_align": "left",
         "icon": {
             "tag": "standard_icon",
             "token": "select-up_outlined",
             "color": "wathet",
         },
-    },
-    ChatEventType.TOOL_CALL_RESULT: {
-        "content": "工具处理完成，我继续整理结果。",
-        "text_size": "notation",
-        "text_align": "center",
-        "icon": {
-            "tag": "standard_icon",
-            "token": "bitableform_outlined",
-            "color": "yellow",
-        },
+        "max_title_chars": 800,
+        "max_chars": 6_000,
+        "max_argument_chars": 160,
+        "max_result_chars": 2_000,
     },
     ChatEventType.TOKEN_USAGE: {
         "content": None,
@@ -101,9 +107,7 @@ class FeishuEventFormatter:
         if event.event == ChatEventType.ERROR:
             return f"**[错误]** {content}"
         if event.event == ChatEventType.TOOL_CALL:
-            return f"**[调用工具]** {self._format_tool_call_event(content)}"
-        if event.event == ChatEventType.TOOL_CALL_RESULT:
-            return f"**[工具调用结果]** {self._format_json_context(content)}"
+            return content or "执行中…"
         if event.event == ChatEventType.TOKEN_USAGE:
             return f"**[词元]** {self._format_token_usage(content)}"
         return f"[{event.event}]\n{content}"
@@ -111,6 +115,8 @@ class FeishuEventFormatter:
     def _format_chat_event(
         self,
         event: ChatEvent,
+        *,
+        title: str | None = None,
     ) -> tuple[dict[str, Any], AsyncIterator[str] | None] | None:
         if event.event not in OUTPUT_EVENT_TYPES:
             return None
@@ -118,6 +124,7 @@ class FeishuEventFormatter:
         output = OUTPUT_EVENT_TYPES[event.event]
         content = output["content"]
         text = content if isinstance(content, str) else self._format_chat_event_content(event)
+        text = self._truncate(text, output.get("max_chars"))
         element = {
             "tag": "markdown",
             "margin": "0px 0px 0px 0px",
@@ -129,14 +136,22 @@ class FeishuEventFormatter:
             element["icon"] = output["icon"]
 
         card_element = element
-        if event.event == ChatEventType.THINKING:
+        if "title" in output:
+            header = {
+                "title": plain_text(
+                    self._truncate(
+                        output["title"] + (f" · {title}" if title else ""),
+                        output.get("max_title_chars"),
+                    )
+                ),
+            }
+            if "expanded_title" in output:
+                header["expanded_title"] = plain_text(output["expanded_title"])
             card_element = {
                 "tag": "collapsible_panel",
-                "expanded": False,
-                "header": {
-                    "title": plain_text("查看思考过程"),
-                    "expanded_title": plain_text("收起思考过程"),
-                },
+                "element_id": "panel",
+                "expanded": output.get("expanded", False),
+                "header": header,
                 "elements": [element],
             }
 
@@ -153,7 +168,7 @@ class FeishuEventFormatter:
                         "body": {"elements": [card_element]},
                     }
                 },
-                event.context,
+                event.context if isinstance(event.context, AsyncIterator) else None,
             )
 
         return (
@@ -166,33 +181,33 @@ class FeishuEventFormatter:
             None,
         )
 
-    def _format_tool_call_event(self, content: str) -> str:
-        try:
-            tool_calls = json.loads(content)
-        except json.JSONDecodeError:
-            return content
-
-        if not isinstance(tool_calls, list):
-            return self._format_json_value(tool_calls)
-
-        lines: list[str] = []
-        for index, tool_call in enumerate(tool_calls, start=1):
-            if isinstance(tool_call, list) and len(tool_call) >= 3:
-                lines.append(f"{index}. {tool_call[1]}\n```json\n{self._format_json_value(tool_call[2])}\n```")
-            else:
-                lines.append(f"{index}. {self._format_json_value(tool_call)}")
-        return "\n\n".join(lines)
-
-    def _format_json_context(self, context: str) -> str:
-        try:
-            value = json.loads(context)
-        except json.JSONDecodeError:
-            return context
-        return f"```json\n{self._format_json_value(value)}\n```"
-
     def _format_token_usage(self, context: str) -> str:
         data: dict[str, str] = json.loads(context)
         return " | ".join(f"{key}：{value}" for key, value in data.items())
 
-    def _format_json_value(self, value: Any) -> str:
-        return json.dumps(value, ensure_ascii=False, indent=4)
+    @staticmethod
+    def _truncate(text: str, max_chars: int | None) -> str:
+        if max_chars is None or len(text) <= max_chars:
+            return text
+        return text[: max(0, max_chars - 1)] + "…"
+
+    def _format_tool_event(self, event: ChatEvent) -> str:
+        """将工具事件转换为摘要或结果文本，样式统一使用 TOOL_CALL 配置。"""
+        output = OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL]
+        is_result = event.event == ChatEventType.TOOL_CALL_RESULT
+        limit = output.get("max_result_chars" if is_result else "max_argument_chars")
+        try:
+            entries = json.loads(event.context)
+        except (json.JSONDecodeError, TypeError):
+            entries = None
+        if not isinstance(entries, list) or not all(
+            isinstance(entry, list) and len(entry) >= 3 and isinstance(entry[1], str) for entry in entries
+        ):
+            return self._truncate(str(event.context), limit)
+        lines = []
+        for _, name, value, *_ in entries:
+            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            name = self._truncate(name, output.get("max_argument_chars"))
+            text = self._truncate(text, limit)
+            lines.append(f"**{name}**\n{text}" if is_result else f"{name} {text}")
+        return ("\n\n" if is_result else " | ").join(lines)

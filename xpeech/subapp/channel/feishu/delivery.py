@@ -2,16 +2,77 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from lark_channel import SendResult
 from loguru import logger
 
-from ..schema import ChatEventType
+from ..schema import ChatEvent, ChatEventType
 from .config import FEISHU_STREAM_UPDATE_INTERVAL_SECONDS
+from .formatting import OUTPUT_EVENT_TYPES
+
+
+@dataclass
+class ToolProgress:
+    card_id: str | None = None
+    sequence: int = 0
+    title: str = ""
+    text: str = ""
 
 
 class FeishuDeliveryMixin:
     """发送普通卡片、流式卡片和可更新的飞书卡片。"""
+
+    async def send_tool_progress(self, to: str, event: ChatEvent, progress: ToolProgress) -> None:
+        """每次收到工具事件时更新同一张折叠卡片。"""
+        output = OUTPUT_EVENT_TYPES.get(ChatEventType.TOOL_CALL)
+        if output is None:
+            return
+        text = self._format_tool_event(event)
+        if event.event == ChatEventType.TOOL_CALL:
+            progress.title = self._truncate(
+                " | ".join(filter(None, (progress.title, text))),
+                output.get("max_title_chars"),
+            )
+        else:
+            progress.text = self._truncate(
+                "\n\n".join(filter(None, (progress.text, text))),
+                output.get("max_chars"),
+            )
+        message, _ = self._format_chat_event(
+            ChatEvent(event=ChatEventType.TOOL_CALL, context=progress.text),
+            title=progress.title,
+        )
+        card = message["card"]
+        if progress.card_id is None:
+            progress.card_id = await self.channel.create_card_instance(card)
+            result = await self.channel.send_card_by_reference(to, progress.card_id)
+            self._ensure_send_success(result, operation="send tool card")
+        else:
+            await asyncio.sleep(FEISHU_STREAM_UPDATE_INTERVAL_SECONDS)
+            element = card["body"]["elements"][0]
+            if event.event == ChatEventType.TOOL_CALL and "header" in element:
+                progress.sequence += 1
+                await self.channel.patch_card_element(
+                    progress.card_id,
+                    "panel",
+                    {"header": element["header"]},
+                    sequence=progress.sequence,
+                )
+            body = element["elements"][0] if element["tag"] == "collapsible_panel" else element
+            progress.sequence += 1
+            await self.channel.update_card_element_content(
+                progress.card_id,
+                "main",
+                body["content"],
+                sequence=progress.sequence,
+            )
+
+    async def finish_tool_progress(self, progress: ToolProgress) -> None:
+        """结束一轮对话的工具卡片流式更新。"""
+        if progress.card_id is not None:
+            progress.sequence += 1
+            await self.channel.finish_streaming_card(progress.card_id, sequence=progress.sequence)
 
     @staticmethod
     def _ensure_send_success(

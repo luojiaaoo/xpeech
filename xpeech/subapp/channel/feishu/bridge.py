@@ -31,7 +31,7 @@ from .cards import (
 )
 from .channel import XpeechFeishuChannel
 from .config import EMOJI_TYPES
-from .delivery import FeishuDeliveryMixin
+from .delivery import FeishuDeliveryMixin, ToolProgress
 from .formatting import FeishuEventFormatter
 from .inbound import FeishuInboundMixin, UnsupportedFeishuMessageError
 
@@ -113,6 +113,7 @@ class FeishuBridge(
         chat_id = message.chat_id
         reply_to = message.message_id
         sender_name = message.sender_name
+        tool_progress = ToolProgress()
         for source in messages:
             try:
                 await self.add_reaction(source)
@@ -128,6 +129,9 @@ class FeishuBridge(
                 str(URL(self.chat_url) / "chat"),
                 "feishu",
             ):
+                if event.event in {ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT}:
+                    await self.send_tool_progress(chat_id, event, tool_progress)
+                    continue
                 if event.event == ChatEventType.SEND_FILE:
                     downloaded_file = await download_channel_file(
                         user_id,
@@ -186,6 +190,8 @@ class FeishuBridge(
                 "Failed to consume Feishu messages user_id={}",
                 user_id,
             )
+        finally:
+            await self.finish_tool_progress(tool_progress)
 
     async def _send_backend_error(
         self,

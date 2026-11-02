@@ -676,6 +676,7 @@ def test_thinking_card_wraps_content_in_collapsible_panel():
     panel = message["card"]["body"]["elements"][0]
     assert panel == {
         "tag": "collapsible_panel",
+        "element_id": "panel",
         "expanded": False,
         "header": {
             "title": {"tag": "plain_text", "content": "查看思考过程"},
