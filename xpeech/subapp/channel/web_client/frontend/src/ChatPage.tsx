@@ -135,10 +135,11 @@ function renderStreamContent(type: StreamEventType, content: string, streaming: 
   return markdown;
 }
 
-export default function ChatPage({ systemName, sessionId, active = true }: {
+export default function ChatPage({ systemName, sessionId, active = true, embedded = false }: {
   systemName: string;
   sessionId: string;
   active?: boolean;
+  embedded?: boolean;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [value, setValue] = useState('');
@@ -324,7 +325,7 @@ export default function ChatPage({ systemName, sessionId, active = true }: {
           onSubmit={send}
           loading={loading}
           header={header}
-          placeholder="输入消息，Enter 发送，Shift + Enter 换行"
+          placeholder={embedded ? '输入消息…' : '输入消息，Enter 发送，Shift + Enter 换行'}
           autoSize={{ minRows: 1, maxRows: 6 }}
           prefix={<Button type="text" icon={<PaperClipOutlined />} onClick={() => setAttachmentsOpen((open) => !open)} />}
           onPasteFile={(pasted) => { setFiles((current) => [...current, ...Array.from(pasted)]); setAttachmentsOpen(true); }}

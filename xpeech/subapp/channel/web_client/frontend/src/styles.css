@@ -3,9 +3,10 @@ html, body, #root { margin: 0; min-width: 320px; min-height: 100%; height: 100%;
 body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2329; background: #f5f6f8; }
 .loading-page { width: min(420px, calc(100% - 32px)); margin: 25vh auto; }
 .embedded-app { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: #fff; }
+.embedded-error { padding: 16px; }
 .chat-workspace { height: 100%; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: #fff; }
 .embedded-app > .chat-workspace { flex: 1; }
-.chat-workspace-embedded { position: relative; }
+.chat-workspace-embedded { position: relative; --conversation-toolbar-height: 48px; --conversation-content-top: calc(var(--conversation-toolbar-height) + 12px); }
 .conversation-toolbar {
   position: absolute;
   top: 0;
@@ -14,6 +15,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   z-index: 5;
   display: flex;
   align-items: center;
+  height: var(--conversation-toolbar-height);
   padding: 8px 12px;
   pointer-events: none;
 }
@@ -41,8 +43,8 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .conversation-toolbar .new-conversation-button:focus-visible { outline: 2px solid #3370ff; outline-offset: 2px; }
 .chat-workspace-embedded .bubble-list { padding-block: 0; }
 .chat-workspace-embedded .ant-bubble-list-scroll-box { height: 100%; }
-.chat-workspace-embedded .ant-bubble-list-scroll-content { padding-top: 60px; padding-bottom: 14px; }
-.chat-workspace-embedded .welcome-area { padding-top: 60px; }
+.chat-workspace-embedded .ant-bubble-list-scroll-content { padding-top: var(--conversation-content-top); padding-bottom: 14px; }
+.chat-workspace-embedded .welcome-area { padding-top: var(--conversation-content-top); }
 .conversation-panel { flex: 1; min-width: 0; min-height: 0; }
 .conversation-loading { max-width: 720px; margin: 24px auto; padding: 0 20px; }
 .app-shell { height: 100vh; height: 100dvh; overflow: hidden; }
@@ -65,6 +67,25 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .welcome-area { height: 100%; overflow: auto; text-align: center; padding: 24px; }
 .welcome-area > * { flex-shrink: 0; max-width: 100%; }
 .welcome-icon { width: 54px; height: 54px; display: grid; place-items: center; font-size: 26px; border-radius: 18px; color: #3370ff; background: #e8f0ff; }
+.chat-loading-placeholder { display: block; flex-shrink: 0; border-radius: 6px; background: linear-gradient(90deg, #f1f3f6 25%, #e8ecf2 50%, #f1f3f6 75%); background-size: 400% 100%; animation: chat-loading-shimmer 1.8s ease infinite; }
+.chat-loading-welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; }
+.chat-loading-intro { display: flex; align-items: center; gap: 16px; width: 100%; min-height: 104px; padding: 12px 16px; border-radius: 12px; background: #fafbfc; }
+.chat-loading-icon { width: 54px; height: 54px; border-radius: 18px; }
+.chat-loading-copy { flex: 1; min-width: 0; }
+.chat-loading-title { width: 72%; height: 24px; margin-bottom: 12px; }
+.chat-loading-description { width: 100%; height: 14px; }
+.chat-loading-prompts { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; }
+.chat-loading-prompts > span { width: 160px; height: 48px; border-radius: 12px; }
+.chat-loading-prompts > span:nth-child(2) { width: 146px; }
+.chat-loading-prompts > span:nth-child(3) { width: 174px; }
+.chat-loading-toolbar { width: 94px; height: 16px; margin-inline: 8px; }
+.chat-loading-composer { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 50px; padding: 8px 10px; border: 1px solid #e8ecf2; border-radius: 10px; }
+.chat-loading-input { width: min(220px, 65%); height: 14px; }
+.chat-loading-send { width: 32px; height: 32px; border-radius: 50%; }
+.chat-loading-tip { width: 180px; height: 10px; }
+@keyframes chat-loading-shimmer { from { background-position: 100% 50%; } to { background-position: 0 50%; } }
+@media (max-width: 360px) { .chat-loading-intro { min-height: 132px; } }
+@media (prefers-reduced-motion: reduce) { .chat-loading-placeholder { animation: none; } }
 .bubble-list { height: 100%; padding: 18px clamp(24px, 3vw, 56px) 14px; }
 .bubble-list .ant-bubble { width: 100%; padding-block: 6px; }
 .bubble-list .ant-bubble-avatar { flex-shrink: 0; }

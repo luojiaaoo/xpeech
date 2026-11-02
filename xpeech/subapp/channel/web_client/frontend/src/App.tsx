@@ -12,6 +12,7 @@ import {
 import { appApi, authApi } from './api';
 import { savePendingUserPrefix } from './pendingUserPrefix';
 import ChatWorkspace from './ChatWorkspace';
+import { EmbeddedLoading } from './ChatLoading';
 import type { AppConfig, User } from './types';
 
 const LoginPage = lazy(() => import('./LoginPage'));
@@ -25,7 +26,7 @@ function PageFallback() {
 
 export default function App() {
   if (new URLSearchParams(window.location.search).get('embed') === '1') {
-    return <Suspense fallback={<PageFallback />}><EmbeddedApp /></Suspense>;
+    return <Suspense fallback={<EmbeddedLoading />}><EmbeddedApp /></Suspense>;
   }
   return <StandaloneApp />;
 }

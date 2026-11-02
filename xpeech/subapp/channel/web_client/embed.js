@@ -47,7 +47,7 @@ function initialize() {
   '#panel{display:none;position:fixed;width:min(440px,calc(100vw - 24px));height:min(700px,calc(100dvh - 100px));background:white;border:1px solid #dfe5ef;border-radius:16px;box-shadow:0 12px 48px #152c6733;overflow:hidden;flex-direction:column;pointer-events:auto}' +
   '#panel.open{display:flex}header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #edf0f5;flex-shrink:0}' +
   '#close{background:none;border:0;font-size:24px;color:#5b6578}#body{flex:1;min-height:0;position:relative}' +
-  '#status{padding:24px;line-height:1.6;font-size:14px}iframe{display:block;width:100%;height:100%;border:0}' +
+  '#status{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px;background:#fff;color:#68788f;line-height:1.6;font-size:14px;text-align:center;overflow:auto}iframe{display:block;width:100%;height:100%;border:0}' +
   'button:focus-visible{outline:3px solid #8ab4ff;outline-offset:3px}[hidden]{display:none!important}' +
   '</style><section id="panel" role="dialog"><header><strong id="title"></strong><button id="close" aria-label="关闭聊天">×</button></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-expanded="false" title="点击打开聊天，拖动调整位置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg></button>';
   document.body.appendChild(host);

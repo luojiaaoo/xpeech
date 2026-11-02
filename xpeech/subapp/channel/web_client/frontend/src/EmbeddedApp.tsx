@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Alert, Skeleton } from 'antd';
+import { Alert } from 'antd';
 import { appApi, setEmbeddedJWT } from './api';
 import { takePendingUserPrefix } from './pendingUserPrefix';
 import ChatWorkspace from './ChatWorkspace';
+import { EmbeddedLoading } from './ChatLoading';
 import type { AppConfig } from './types';
 
 export default function EmbeddedApp() {
@@ -60,8 +61,8 @@ export default function EmbeddedApp() {
     };
   }, [config]);
 
-  if (error) return <Alert type="error" showIcon message={error} />;
-  if (!config || !userId) return <div className="loading-page"><Skeleton active /></div>;
+  if (error) return <main className="embedded-app embedded-error"><Alert type="error" showIcon message={error} /></main>;
+  if (!config || !userId) return <EmbeddedLoading />;
   return (
     <main className="embedded-app">
       <ChatWorkspace key={userId} systemName={title} embedded />
