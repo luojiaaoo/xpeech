@@ -10,10 +10,9 @@ from ....utils.internal_jwt import create_internal_access_token
 async def scheduler_request(
     method: str,
     path: str,
-    user_id: str | None = None,
     *,
+    user_id: str | None = None,
     payload: dict[str, Any] | None = None,
-    timeout: float = 30,
 ) -> Any:
     from ...server.server import app
 
@@ -21,7 +20,7 @@ async def scheduler_request(
     headers = {"Authorization": f"Bearer {create_internal_access_token()}"}
     if user_id is not None:
         headers["x-user-id"] = user_id
-    async with AsyncClient(timeout=timeout) as client:
+    async with AsyncClient(timeout=60) as client:
         response = await client.request(
             method,
             f"{scheduler_url}{path}",

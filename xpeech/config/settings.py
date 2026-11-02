@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 from threading import Lock
 from typing import Literal
@@ -167,7 +166,7 @@ class LarkCLIConfig(BaseModel):
 
 
 class JWTChannelConfig(BaseModel):
-    """A custom JWT channel and the resource channel tags it grants."""
+    """A JWT channel and the resource channel tags it grants."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -184,8 +183,6 @@ class JWTConfig(BaseModel):
     """Separate signing keys for internal services and each channel."""
 
     secret_key: str = Field(min_length=32, repr=False)
-    web_client_secret_key: str = Field(min_length=32, repr=False)
-    feishu_secret_key: str = Field(min_length=32, repr=False)
     channels: dict[str, JWTChannelConfig] = Field(default_factory=dict)
     algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
     access_token_expire_seconds: int = Field(default=60, ge=1, le=60)
@@ -193,7 +190,7 @@ class JWTConfig(BaseModel):
     @model_validator(mode="after")
     def validate_distinct_secrets(self) -> "JWTConfig":
         channel_names = set(self.channels)
-        reserved_names = {"internal", "feishu", "web_client"}
+        reserved_names = {"internal"}
         invalid_names: list[str] = []
         for name in channel_names:
             try:
@@ -205,14 +202,12 @@ class JWTConfig(BaseModel):
                     invalid_names.append(name)
         if invalid_names:
             raise ValueError(
-                "Custom JWT channel names must be valid channel tags and cannot use reserved names: "
+                "JWT channel names must be valid channel tags and cannot use reserved names: "
                 + ", ".join(sorted(invalid_names))
             )
 
         all_secrets = [
             self.secret_key,
-            self.web_client_secret_key,
-            self.feishu_secret_key,
             *(channel.secret_key for channel in self.channels.values()),
         ]
         if len(set(all_secrets)) != len(all_secrets):
@@ -332,28 +327,6 @@ class InjectPromptConfig(BaseModel):
         return self
 
 
-class EmbedConfig(BaseModel):
-    """Allowed origins for embedding with signed business-server JWTs."""
-
-    allowed_origins: list[str] = Field(default_factory=list)
-
-    @field_validator("allowed_origins")
-    @classmethod
-    def validate_origins(cls, origins: list[str]) -> list[str]:
-        normalized: list[str] = []
-        for origin in origins:
-            origin = origin.strip().lower().rstrip("/")
-            if not re.fullmatch(r"https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?::[0-9]+)?", origin):
-                raise ValueError("embed.allowed_origins must contain exact HTTP(S) origins, without paths or wildcards")
-            parsed = urlsplit(origin)
-            port = parsed.port
-            if port == (443 if parsed.scheme == "https" else 80):
-                origin = origin.rsplit(":", 1)[0]
-            if origin not in normalized:
-                normalized.append(origin)
-        return normalized
-
-
 class WebClientConfig(BaseModel):
     """Web client storage settings."""
 
@@ -365,7 +338,6 @@ class WebClientConfig(BaseModel):
     )
     oauth2: list[OAuth2Config] = Field(default_factory=list)
     inject_prompt: InjectPromptConfig = Field(default_factory=InjectPromptConfig)
-    embed: EmbedConfig = Field(default_factory=EmbedConfig)
 
     @model_validator(mode="after")
     def validate_oauth2_provider_names(self) -> "WebClientConfig":

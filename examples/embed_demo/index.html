@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Xpeech 本地嵌入演示</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f7fb; color: #18213d; font: 16px/1.7 system-ui, sans-serif; }
+    main { max-width: 780px; margin: 12vh auto; padding: 36px; }
+    article { padding: 36px; border: 1px solid #dfe5ef; border-radius: 20px; background: white; box-shadow: 0 12px 48px #152c670c; }
+    .tag { color: #3370ff; font-size: 13px; font-weight: 600; letter-spacing: .12em; }
+    h1 { margin: 10px 0; font-size: 30px; }
+    p { color: #5b6578; }
+    dl { padding: 18px 22px; background: #f4f7fb; border-radius: 12px; }
+    dt { color: #5b6578; font-size: 13px; }
+    dd { margin: 0 0 12px; overflow-wrap: anywhere; }
+    dd:last-child { margin: 0; }
+    button { border: 0; border-radius: 9px; padding: 10px 18px; background: #3370ff; color: white; cursor: pointer; font: inherit; margin: 4px 6px 4px 0; }
+    button.secondary { color: #18213d; background: #edf1f8; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #status { font-size: 14px; margin-top: 20px; }
+    @media (max-width: 600px) { main { margin: 24px auto; padding: 16px; } article { padding: 24px; } }
+  </style>
+</head>
+<body>
+  <main><article>
+    <span class="tag">XPEECH · 本地接入演示</span>
+    <h1>你的 AI 助手已接入</h1>
+    <p>点击右下角的聊天按钮，或使用下方按钮展开对话。关闭窗口后，再次打开可继续当前会话。</p>
+    <dl>
+      <dt>聊天服务</dt><dd id="service">加载中…</dd>
+      <dt>通道</dt><dd id="channel">—</dd>
+      <dt>演示用户</dt><dd id="user">—</dd>
+      <dt>发送者名称</dt><dd id="sender">—</dd>
+      <dt>助手标题</dt><dd id="assistant-title">—</dd>
+      <dt>会话元数据</dt><dd id="metadata">—</dd>
+    </dl>
+    <button id="open" disabled>打开聊天</button>
+    <button id="toggle" class="secondary" disabled>退出演示登录</button>
+    <p id="status" role="status">正在加载聊天组件…</p>
+  </article></main>
+  <script type="module">
+    const status = document.querySelector('#status');
+    const open = document.querySelector('#open');
+    const toggle = document.querySelector('#toggle');
+    let assistant;
+    let senderName;
+    let assistantTitle;
+    let sessionMetadata;
+    let loggedIn = false;
+    window.addEventListener('xpeech:error', event => {
+      status.textContent = `连接失败：${event.detail.message}`;
+    });
+    async function loadJWT() {
+      const response = await fetch('/api/assistant/jwt', { credentials: 'same-origin', cache: 'no-store' });
+      if (!response.ok) throw new Error('获取登录凭证失败');
+      const { jwt } = await response.json();
+      return jwt;
+    }
+    function login() {
+      assistant.init(loadJWT, senderName, assistantTitle, sessionMetadata);
+      loggedIn = true;
+      open.disabled = false;
+      toggle.textContent = '退出演示登录';
+      status.textContent = '演示用户已登录，聊天组件自动获取并续签凭证。';
+    }
+    try {
+      const response = await fetch('/api/config', { cache: 'no-store' });
+      if (!response.ok) throw new Error('读取演示配置失败');
+      const config = await response.json();
+      senderName = config.sender_name;
+      assistantTitle = config.title;
+      sessionMetadata = config.session_metadata;
+      document.querySelector('#service').textContent = config.assistant_url;
+      document.querySelector('#channel').textContent = config.channel;
+      document.querySelector('#user').textContent = config.user_id;
+      document.querySelector('#sender').textContent = config.sender_name;
+      document.querySelector('#assistant-title').textContent = config.title;
+      document.querySelector('#metadata').textContent = JSON.stringify(config.session_metadata);
+      assistant = await import(new URL('/embed.js', config.assistant_url).href);
+      open.addEventListener('click', () => assistant.open());
+      toggle.addEventListener('click', () => {
+        if (loggedIn) {
+          assistant.destroy();
+          loggedIn = false;
+          open.disabled = true;
+          toggle.textContent = '重新登录演示';
+          status.textContent = '已退出演示登录，聊天组件已销毁。';
+        } else login();
+      });
+      toggle.disabled = false;
+      login();
+    } catch (error) {
+      status.textContent = `加载失败：${error.message}`;
+    }
+  </script>
+</body>
+</html>

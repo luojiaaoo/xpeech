@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, model_validator
 
 from ...agent.server.auth import require_internal_jwt
-from ...agent.server.dependencies import user_id_header
+from ...agent.server.dependencies import internal_user_id
 from ...agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
 from ...agent.tools.schedule import FeishuScheduleArgs
 from ...agent.tools.schedule.schema import ScheduledTask
@@ -72,7 +72,7 @@ async def health():
 @router.post("/schedules")
 async def create_schedule(
     request: FeishuScheduleCreateRequest,
-    user_id: Annotated[str, Depends(user_id_header)],
+    user_id: Annotated[str, Depends(internal_user_id)],
 ) -> dict[str, str | None]:
     if request.channel != "feishu":
         raise HTTPException(
@@ -93,7 +93,7 @@ async def create_schedule(
 
 @router.get("/schedules")
 async def list_schedules(
-    user_id: Annotated[str, Depends(user_id_header)],
+    user_id: Annotated[str, Depends(internal_user_id)],
 ) -> list[ScheduledTask]:
     return await ensure_async(list_scheduled_tasks)(user_id)
 
@@ -101,7 +101,7 @@ async def list_schedules(
 @router.delete("/schedules/{job_id}", status_code=204)
 async def delete_schedule(
     job_id: str,
-    user_id: Annotated[str, Depends(user_id_header)],
+    user_id: Annotated[str, Depends(internal_user_id)],
 ) -> Response:
     try:
         await ensure_async(cancel_scheduled_task)(user_id=user_id, job_id=job_id)

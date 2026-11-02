@@ -3,18 +3,58 @@ html, body, #root { margin: 0; min-width: 320px; min-height: 100%; height: 100%;
 body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2329; background: #f5f6f8; }
 .loading-page { width: min(420px, calc(100% - 32px)); margin: 25vh auto; }
 .embedded-app { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: #fff; }
-.embedded-chat-toolbar { display: flex; align-items: center; flex-shrink: 0; padding: 4px 8px; border-bottom: 1px solid #edf0f5; }
-.embedded-chat-content { flex: 1; min-height: 0; }
+.embedded-error { padding: 16px; }
+.chat-workspace { height: 100%; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: #fff; }
+.embedded-app > .chat-workspace { flex: 1; }
+.chat-workspace-embedded { position: relative; --conversation-toolbar-height: 48px; --conversation-content-top: calc(var(--conversation-toolbar-height) + 12px); }
+.conversation-toolbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  height: var(--conversation-toolbar-height);
+  padding: 8px 12px;
+  pointer-events: none;
+}
+.conversation-toolbar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -16px;
+  z-index: -1;
+  background: linear-gradient(to bottom, #fff 0%, rgb(255 255 255 / 92%) 30%, rgb(255 255 255 / 55%) 65%, rgb(255 255 255 / 0%) 100%);
+  pointer-events: none;
+}
+.conversation-toolbar .new-conversation-button {
+  height: 32px;
+  padding-inline: 8px;
+  border: 0;
+  border-radius: 6px;
+  color: #68788f;
+  background: transparent;
+  box-shadow: none;
+  font-size: 13px;
+  pointer-events: auto;
+}
+.conversation-toolbar .new-conversation-button .anticon { font-size: 14px; }
+.conversation-toolbar .new-conversation-button:not(:disabled):hover { color: #245bdb; background: #f0f4fa; }
+.conversation-toolbar .new-conversation-button:focus-visible { outline: 2px solid #3370ff; outline-offset: 2px; }
+.chat-workspace-embedded .bubble-list { padding-block: 0; }
+.chat-workspace-embedded .ant-bubble-list-scroll-box { height: 100%; }
+.chat-workspace-embedded .ant-bubble-list-scroll-content { padding-top: var(--conversation-content-top); padding-bottom: 14px; }
+.chat-workspace-embedded .welcome-area { padding-top: var(--conversation-content-top); }
+.conversation-panel { flex: 1; min-width: 0; min-height: 0; }
+.conversation-loading { max-width: 720px; margin: 24px auto; padding: 0 20px; }
 .app-shell { height: 100vh; height: 100dvh; overflow: hidden; }
 .brand-mark, .header-brand-mark { display: grid; place-items: center; color: white; background: linear-gradient(145deg, #3370ff, #6957f5); font-weight: 800; box-shadow: 0 8px 24px #3370ff40; }
 .app-header { height: 56px; flex-shrink: 0; line-height: normal; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 24px; background: #fff; border-bottom: 1px solid #e5e6eb; }
 .header-heading, .header-actions, .header-user { display: flex; align-items: center; }
 .header-heading { min-width: 0; gap: 12px; }
-.header-heading h4, .page-heading h3 { margin: 0 !important; }
-.header-heading h4 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-heading h3 { margin: 0 !important; }
 .header-brand-mark { width: 34px; height: 34px; flex: 0 0 auto; border-radius: 10px; }
 .header-brand-name { font-size: 16px; }
-.header-divider { width: 1px; height: 22px; margin-inline: 2px; background: #e5e6eb; }
 .header-actions { flex: 0 0 auto; }
 .header-user { min-width: 0; gap: 9px; }
 .header-user-avatar { flex: 0 0 auto; color: #245bdb; background: #e8f0ff; font-weight: 700; }
@@ -27,6 +67,25 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .welcome-area { height: 100%; overflow: auto; text-align: center; padding: 24px; }
 .welcome-area > * { flex-shrink: 0; max-width: 100%; }
 .welcome-icon { width: 54px; height: 54px; display: grid; place-items: center; font-size: 26px; border-radius: 18px; color: #3370ff; background: #e8f0ff; }
+.chat-loading-placeholder { display: block; flex-shrink: 0; border-radius: 6px; background: linear-gradient(90deg, #f1f3f6 25%, #e8ecf2 50%, #f1f3f6 75%); background-size: 400% 100%; animation: chat-loading-shimmer 1.8s ease infinite; }
+.chat-loading-welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; }
+.chat-loading-intro { display: flex; align-items: center; gap: 16px; width: 100%; min-height: 104px; padding: 12px 16px; border-radius: 12px; background: #fafbfc; }
+.chat-loading-icon { width: 54px; height: 54px; border-radius: 18px; }
+.chat-loading-copy { flex: 1; min-width: 0; }
+.chat-loading-title { width: 72%; height: 24px; margin-bottom: 12px; }
+.chat-loading-description { width: 100%; height: 14px; }
+.chat-loading-prompts { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; }
+.chat-loading-prompts > span { width: 160px; height: 48px; border-radius: 12px; }
+.chat-loading-prompts > span:nth-child(2) { width: 146px; }
+.chat-loading-prompts > span:nth-child(3) { width: 174px; }
+.chat-loading-toolbar { width: 94px; height: 16px; margin-inline: 8px; }
+.chat-loading-composer { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 50px; padding: 8px 10px; border: 1px solid #e8ecf2; border-radius: 10px; }
+.chat-loading-input { width: min(220px, 65%); height: 14px; }
+.chat-loading-send { width: 32px; height: 32px; border-radius: 50%; }
+.chat-loading-tip { width: 180px; height: 10px; }
+@keyframes chat-loading-shimmer { from { background-position: 100% 50%; } to { background-position: 0 50%; } }
+@media (max-width: 360px) { .chat-loading-intro { min-height: 132px; } }
+@media (prefers-reduced-motion: reduce) { .chat-loading-placeholder { animation: none; } }
 .bubble-list { height: 100%; padding: 18px clamp(24px, 3vw, 56px) 14px; }
 .bubble-list .ant-bubble { width: 100%; padding-block: 6px; }
 .bubble-list .ant-bubble-avatar { flex-shrink: 0; }
@@ -158,7 +217,8 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .pending-user-prefix-toggle { height: auto; margin-top: 4px; padding: 0; }
 .sender-wrap .ant-sender { text-align: left; box-shadow: 0 8px 32px #1f23291a; border-color: #d9dce3; }
 .sender-wrap .ant-sender-content { padding: 8px 10px; }
-.sender-tip { display: inline-block; margin-top: 4px; font-size: 11px; }
+.sender-footer { display: flex; min-height: 24px; margin-top: 4px; align-items: center; justify-content: center; gap: 8px; }
+.sender-footer .sender-tip { min-width: 0; font-size: 11px; text-align: left; }
 .question-form { width: 500px; max-width: 100%; padding: 16px; background: #f7f9fc; border-radius: 12px; }
 .full-width { width: 100%; }
 /* Popup viewports are relative to the iframe, including when portaled to body. */
@@ -1275,7 +1335,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .login-card h2 { font-size: 26px; }
   .login-subtitle { margin-bottom: 22px !important; }
   .app-header { padding: 0 14px; gap: 12px; }
-  .header-brand-name, .header-divider, .header-user-copy { display: none; }
+  .header-brand-name, .header-user-copy { display: none; }
   .settings-button > span:not(.ant-btn-icon) { display: none; }
   .bubble-list { padding: 14px 14px 12px; }
   .bubble-list .ant-bubble.ant-bubble-start:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-end: 0; }

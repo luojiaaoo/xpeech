@@ -1,6 +1,6 @@
 /* Xpeech embedded chat module: no signing keys, cookies, or persistent tokens. */
 var origin = new URL(import.meta.url).origin;
-var endpoint = origin + "/api/auth/embed/session";
+var endpoint = origin + "/api/auth/embed";
 var hostOrigin = window.location.origin;
 var host = null;
 var root = null;
@@ -15,13 +15,18 @@ var currentId = null;
 var channelName = null;
 var currentJWT = null;
 var jwtProvider = null;
+var currentSenderName;
+var currentTitle = "AI 助手";
+var currentSessionMetadata = {};
 var identityConfigured = false;
-var session = null;
+var verifiedJWT = null;
 var version = 0;
 var controller = null;
 var refreshTimer = null;
 var frameTimer = null;
 var needsRetry = false;
+var drag = null;
+var suppressLauncherClick = false;
 
 function initialize() {
   if (host) return;
@@ -29,34 +34,101 @@ function initialize() {
   host.id = "xpeech-widget";
   root = host.attachShadow({ mode: "open" });
   root.innerHTML = '<style>' +
-  ':host{all:initial;position:fixed;right:20px;bottom:20px;z-index:2147483000;font-family:system-ui,sans-serif;color:#18213d}' +
+  ':host{all:initial;position:fixed;right:20px;bottom:20px;width:46px;height:46px;z-index:2147483000;font-family:system-ui,sans-serif;color:#18213d;pointer-events:none}' +
   '*{box-sizing:border-box}button{font:inherit;cursor:pointer}' +
-  '#launcher{width:58px;height:58px;border:0;border-radius:50%;background:#3370ff;color:white;box-shadow:0 6px 24px #152c6740;font-size:24px}' +
-  '#panel{display:none;position:absolute;right:0;bottom:76px;width:min(440px,calc(100vw - 40px));height:min(700px,calc(100dvh - 120px));background:white;border:1px solid #dfe5ef;border-radius:16px;box-shadow:0 12px 48px #152c6733;overflow:hidden;flex-direction:column}' +
+  '#launcher{display:grid;place-items:center;width:46px;height:46px;padding:0;border:0;border-radius:50%;background:#3370ff;color:white;box-shadow:0 4px 16px #152c6730;pointer-events:auto;touch-action:none;user-select:none;transition:transform .18s,background .18s,box-shadow .18s;animation:xpeech-enter .32s ease-out,xpeech-breathe 3.2s ease-in-out .4s 3}' +
+  '#launcher svg{width:22px;height:22px;pointer-events:none}' +
+  '@media(hover:hover){#launcher:hover{background:#2862ed;transform:translateY(-2px);box-shadow:0 6px 20px #152c6740}}' +
+  '#launcher.positioned{animation:none}' +
+  '#launcher.dragging{cursor:grabbing;transform:scale(.96);animation:none;transition:none}' +
+  '@keyframes xpeech-enter{from{opacity:0;transform:translateY(8px) scale(.85)}to{opacity:1;transform:translateY(0) scale(1)}}' +
+  '@keyframes xpeech-breathe{50%{box-shadow:0 4px 20px #3370ff45,0 0 0 5px #3370ff0a}}' +
+  '@media(prefers-reduced-motion:reduce){#launcher{animation:none;transition:none}#launcher:hover{transform:none}}' +
+  '#panel{display:none;position:fixed;width:min(440px,calc(100vw - 24px));height:min(700px,calc(100dvh - 100px));background:white;border:1px solid #dfe5ef;border-radius:16px;box-shadow:0 12px 48px #152c6733;overflow:hidden;flex-direction:column;pointer-events:auto}' +
   '#panel.open{display:flex}header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #edf0f5;flex-shrink:0}' +
   '#close{background:none;border:0;font-size:24px;color:#5b6578}#body{flex:1;min-height:0;position:relative}' +
-  '#status{padding:24px;line-height:1.6;font-size:14px}iframe{display:block;width:100%;height:100%;border:0}' +
+  '#status{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px;background:#fff;color:#68788f;line-height:1.6;font-size:14px;text-align:center;overflow:auto}iframe{display:block;width:100%;height:100%;border:0}' +
   'button:focus-visible{outline:3px solid #8ab4ff;outline-offset:3px}[hidden]{display:none!important}' +
-  '</style><section id="panel" role="dialog" aria-label="AI 助手"><header><strong>AI 助手</strong><button id="close" aria-label="关闭聊天">×</button></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-label="打开 AI 助手" aria-expanded="false">💬</button>';
+  '</style><section id="panel" role="dialog"><header><strong id="title"></strong><button id="close" aria-label="关闭聊天">×</button></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-expanded="false" title="点击打开聊天，拖动调整位置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg></button>';
   document.body.appendChild(host);
   panel = root.getElementById("panel");
   launcher = root.getElementById("launcher");
   closeButton = root.getElementById("close");
   body = root.getElementById("body");
   status = root.getElementById("status");
+  root.getElementById("title").textContent = currentTitle;
+  panel.setAttribute("aria-label", currentTitle);
+  launcher.setAttribute("aria-label", "打开 " + currentTitle);
   launcher.addEventListener("click", function () {
+    if (suppressLauncherClick) {
+      suppressLauncherClick = false;
+      return;
+    }
     if (panel.classList.contains("open")) close(); else open();
   });
+  launcher.addEventListener("pointerdown", startDrag);
+  launcher.addEventListener("pointermove", moveDrag);
+  launcher.addEventListener("pointerup", endDrag);
+  launcher.addEventListener("pointercancel", endDrag);
+  launcher.addEventListener("lostpointercapture", endDrag);
   closeButton.addEventListener("click", close);
   root.addEventListener("keydown", function (event) {
     if (event.key === "Escape") close();
   });
   window.addEventListener("message", onMessage);
+  window.addEventListener("resize", keepInViewport);
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+function positionPanel() {
+  if (!host || !panel.classList.contains("open")) return;
+  var rect = host.getBoundingClientRect();
+  var width = panel.offsetWidth;
+  var height = panel.offsetHeight;
+  var top = rect.top >= window.innerHeight - rect.bottom ? rect.top - height - 12 : rect.bottom + 12;
+  panel.style.left = clamp(rect.right - width, 12, window.innerWidth - width - 12) + "px";
+  panel.style.top = clamp(top, 12, window.innerHeight - height - 12) + "px";
+}
+function moveLauncher(left, top) {
+  host.style.right = window.innerWidth - clamp(left, 12, window.innerWidth - 58) - 46 + "px";
+  host.style.bottom = window.innerHeight - clamp(top, 12, window.innerHeight - 58) - 46 + "px";
+  positionPanel();
+}
+function keepInViewport() {
+  if (!host) return;
+  var rect = host.getBoundingClientRect();
+  moveLauncher(rect.left, rect.top);
+}
+function startDrag(event) {
+  if (!event.isPrimary || event.button !== 0 || drag) return;
+  var rect = host.getBoundingClientRect();
+  suppressLauncherClick = false;
+  drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
+  launcher.setPointerCapture(event.pointerId);
+}
+function moveDrag(event) {
+  if (!drag || event.pointerId !== drag.id) return;
+  var dx = event.clientX - drag.x;
+  var dy = event.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+  drag.moved = true;
+  launcher.classList.add("positioned");
+  launcher.classList.add("dragging");
+  moveLauncher(drag.left + dx, drag.top + dy);
+}
+function endDrag(event) {
+  if (!drag || event.pointerId !== drag.id) return;
+  suppressLauncherClick = drag.moved && event.type === "pointerup";
+  drag = null;
+  launcher.classList.remove("dragging");
+  if (launcher.hasPointerCapture(event.pointerId)) launcher.releasePointerCapture(event.pointerId);
+}
 function open() {
   if (!host) return;
   panel.classList.add("open");
+  positionPanel();
   launcher.setAttribute("aria-expanded", "true");
   ensureConnected();
   closeButton.focus();
@@ -68,7 +140,10 @@ function close() {
   if (!launcher.hidden) launcher.focus();
 }
 function hideButton() {
-  if (launcher) launcher.hidden = true;
+  if (launcher) {
+    if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
+    launcher.hidden = true;
+  }
 }
 function showButton() {
   if (launcher) launcher.hidden = false;
@@ -84,13 +159,6 @@ function report(error) {
   showStatus("连接失败：" + detail + "。请点击按钮重试。");
   window.dispatchEvent(new CustomEvent("xpeech:error", { detail: { message: detail } }));
 }
-function revoke(token) {
-  if (!token) return;
-  fetch(endpoint, {
-    method: "DELETE", credentials: "omit", keepalive: true,
-    headers: { Authorization: "Bearer " + token }
-  }).catch(function () { /* The server also expires abandoned sessions. */ });
-}
 function removeFrame() {
   clearTimeout(frameTimer);
   frameReady = false;
@@ -100,7 +168,7 @@ function removeFrame() {
 function createFrame() {
   if (frame) return;
   frame = document.createElement("iframe");
-  frame.title = "AI 助手聊天";
+  frame.title = currentTitle + "聊天";
   var url = new URL("/", origin);
   url.searchParams.set("embed", "1");
   url.searchParams.set("parent_origin", hostOrigin);
@@ -110,14 +178,15 @@ function createFrame() {
   frameTimer = setTimeout(function () {
     if (!frameReady) {
       removeFrame();
-      report(new Error("聊天页面未能加载，请检查前端构建和嵌入来源配置"));
+      report(new Error("聊天页面未能加载，请检查前端构建和服务地址"));
     }
   }, 20000);
 }
 function deliver() {
-  if (!frame || !frameReady || !session) return;
+  if (!frame || !frameReady || !verifiedJWT) return;
   frame.contentWindow.postMessage({
-    type: "xpeech:session", token: session.token, channel_name: channelName
+    type: "xpeech:credentials", jwt: verifiedJWT, user_id: currentId,
+    sender_name: currentSenderName, title: currentTitle, session_metadata: currentSessionMetadata
   }, origin);
 }
 function onMessage(event) {
@@ -129,7 +198,7 @@ function onMessage(event) {
     clearTimeout(frameTimer);
     deliver();
   } else if (data.type === "xpeech:authenticated") {
-    if (session) status.hidden = true;
+    if (verifiedJWT) status.hidden = true;
   } else if (data.type === "xpeech:expired") {
     refresh();
   } else if (data.type === "xpeech:error") {
@@ -151,34 +220,25 @@ async function connect(expectedVersion) {
       channelName = next.channelName;
       currentJWT = next.token;
     }
-    var previous = session;
-    var headers = { "Content-Type": "application/json" };
-    if (previous) headers.Authorization = "Bearer " + previous.token;
     var response = await fetch(endpoint, {
-      method: "POST", credentials: "omit", headers: headers,
-      body: JSON.stringify({ jwt: currentJWT }),
+      method: "GET", credentials: "omit",
+      headers: { Authorization: "Bearer " + currentJWT },
       signal: pending.signal
     });
     var result = await response.json();
-    if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "无法建立用户会话");
-    if (typeof result.token !== "string" || !result.token.startsWith("embed_") ||
-        !Number.isFinite(result.expires_in) || result.expires_in <= 0) {
-      throw new Error("无效的会话响应");
+    if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "JWT 校验失败");
+    if (expectedVersion !== version || !host) return;
+    if (result.user_id !== currentId || !Number.isFinite(result.expires_in) || result.expires_in <= 0) {
+      throw new Error("无效的 JWT 校验响应");
     }
-    if (expectedVersion !== version || !host) {
-      revoke(result.token);
-      return;
-    }
-    if (result.channel_name !== channelName || !result.user || result.user.user_id !== currentId) {
-      revoke(result.token);
-      throw new Error("会话身份与 JWT 不一致");
-    }
-    session = result;
+    verifiedJWT = currentJWT;
     needsRetry = false;
     createFrame();
     deliver();
     clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(refresh, Math.max(1000, (result.expires_in - 30) * 1000));
+    var remaining = result.expires_in;
+    var delay = jwtProvider ? remaining - Math.min(30, remaining / 2) : remaining;
+    refreshTimer = setTimeout(refresh, Math.min(2147483647, Math.max(1000, delay * 1000)));
   } catch (error) {
     if (expectedVersion === version && host && error.name !== "AbortError") report(error);
   } finally {
@@ -190,7 +250,7 @@ function refresh() {
 }
 function normalize(value) {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 16384) {
-    throw new TypeError("setJWT 需要有效的 JWT 字符串");
+    throw new TypeError("init 需要有效的 JWT 字符串");
   }
   var token = value.trim();
   try {
@@ -215,22 +275,51 @@ function normalize(value) {
   }
 }
 function ensureConnected() {
-  if (host && (currentJWT || jwtProvider) && (!session || !frame || needsRetry) && !controller) {
+  if (host && (currentJWT || jwtProvider) && (!verifiedJWT || !frame || needsRetry) && !controller) {
     showStatus("正在连接…");
-    if (session && !needsRetry) { createFrame(); deliver(); } else connect(version);
+    if (verifiedJWT && !needsRetry) { createFrame(); deliver(); } else connect(version);
   }
 }
-function setJWT(value) {
-  if (identityConfigured) throw new Error("setJWT 只能初始化一次，请先调用 destroy() 再设置 JWT");
+function normalizeSenderName(sender) {
+  if (typeof sender !== "string" || !sender.trim()) {
+    throw new TypeError("senderName 必须为非空字符串");
+  }
+  return sender.trim();
+}
+function normalizeSessionMetadata(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new TypeError("sessionMetadata 必须为 JSON 对象");
+  }
+  try {
+    metadata = JSON.parse(JSON.stringify(metadata));
+  } catch (_) {
+    throw new TypeError("sessionMetadata 必须为 JSON 对象");
+  }
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new TypeError("sessionMetadata 必须为 JSON 对象");
+  }
+  return metadata;
+}
+function init(value, senderName, title = "AI 助手", sessionMetadata = {}) {
+  if (identityConfigured) throw new Error("init 只能初始化一次，请先调用 destroy() 再设置 JWT");
+  var nextSenderName = normalizeSenderName(senderName);
+  if (typeof title !== "string" || !title.trim()) throw new TypeError("title 必须为非空字符串");
+  var nextMetadata = normalizeSessionMetadata(sessionMetadata);
   if (typeof value === "function") {
     identityConfigured = true;
     jwtProvider = value;
+    currentSenderName = nextSenderName;
+    currentTitle = title.trim();
+    currentSessionMetadata = nextMetadata;
     initialize();
     showStatus("正在连接…");
     connect(version);
     return;
   }
   var next = normalize(value);
+  currentSenderName = nextSenderName;
+  currentTitle = title.trim();
+  currentSessionMetadata = nextMetadata;
   identityConfigured = true;
   initialize();
   currentId = next.userId;
@@ -251,18 +340,23 @@ function destroy() {
   clearTimeout(refreshTimer);
   if (controller) controller.abort();
   controller = null;
-  if (session) revoke(session.token);
-  session = null;
+  verifiedJWT = null;
   currentId = null;
   currentJWT = null;
   jwtProvider = null;
   identityConfigured = false;
+  currentSenderName = undefined;
+  currentTitle = "AI 助手";
+  currentSessionMetadata = {};
   channelName = null;
   needsRetry = false;
   removeFrame();
   window.removeEventListener("message", onMessage);
+  window.removeEventListener("resize", keepInViewport);
+  if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
+  suppressLauncherClick = false;
   if (host) host.remove();
   host = root = panel = launcher = closeButton = body = status = null;
 }
 
-export { setJWT, hideButton, showButton, open, close, destroy };
+export { init, hideButton, showButton, open, close, destroy };

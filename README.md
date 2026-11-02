@@ -69,21 +69,26 @@ uv run python -c "import secrets; print(secrets.token_hex(32))"
 
 ```toml
 [jwt]
-# 仅供 backend、scheduler 等内部服务互信
+# 仅供 backend、scheduler、Web 统计代理等内部服务互信
 secret_key = "replace-with-an-internal-random-value"
-web_client_secret_key = "replace-with-a-different-web-random-value"
-feishu_secret_key = "replace-with-a-different-feishu-random-value"
 algorithm = "HS256"
 access_token_expire_seconds = 60
+
+[jwt.channels.web_client]
+secret_key = "replace-with-a-different-web-random-value"
+
+[jwt.channels.feishu]
+secret_key = "replace-with-a-different-feishu-random-value"
 ```
 
 三组密钥至少 32 个字符、必须互不相同；算法和有效期在 `[jwt]` 下统一配置，
 默认 HS256、60 秒，有效期最长 60 秒。Compose 中的服务读取同一份 `conf.toml`，使用各自的密钥。
 内部 token 不携带 `kid`，直接使用 `secret_key` 验签。channel token 的 header
-使用 `kid` 选择密钥：`web_client` 对应 `web_client_secret_key`，`feishu` 对应
-`feishu_secret_key`。聊天、追问、后台消息、文件、技能接口必须使用带 `kid` 的 channel JWT；
-`/statistics` 及其子接口只接受 `kid=web_client`。`/internal/scheduled-run` 和 scheduler
-服务的接口只使用内部密钥验签，不要求 `kid`。
+使用 `kid` 从 `jwt.channels` 选择同名通道的 `secret_key`，包括 `web_client` 和 `feishu`。
+聊天、追问、文件、技能接口必须使用同时带 channel `kid` 和用户 `sub` 的 JWT；
+后台消息接口只需带 `kid` 的 channel JWT。对外接口忽略 `x-user-id` 请求头；
+`/statistics` 及其子接口、`/internal/scheduled-run` 和 scheduler
+服务的接口使用内部 JWT，通过 `jwt.secret_key` 验签。
 
 自定义系统接入可在 `jwt.channels` 下配置独立通道，通道名就是 JWT header 的 `kid`：
 
@@ -93,9 +98,9 @@ secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
 channel_tags = ["crm", "sales"]
 ```
 
-自定义通道密钥至少 32 个字符，必须与内部密钥及其他通道密钥互不相同；通道名不能使用
-`internal`、`feishu`、`web_client`。自定义通道使用统一的 JWT 算法和有效期，支持业务接口，
-也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口仍仅接受 `web_client`，内部接口仍使用内部密钥。
+所有通道密钥至少 32 个字符，必须与内部密钥及其他通道密钥互不相同；通道名不能使用
+`internal`。所有通道使用统一的 JWT 算法和有效期，支持业务接口，
+也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口和内部接口使用内部 JWT。
 通道的 `channel_tags` 由服务端配置确定，JWT payload 或会话元数据中的 `channel_tags` 不授予任何权限。
 省略通道 `channel_tags` 或配置 `[]` 时，该通道加载公共内建技能、公共 MCP，以及用户自己的全部技能。
 
@@ -156,8 +161,9 @@ uv run -m xpeech token_manager
 - ReDoc：`http://localhost:7878/redoc`
 
 Swagger UI、ReDoc 及 `/openapi.json` 可直接访问。在
-Swagger UI 右上角点击 `Authorize`：`username` 填写 `web_client` 或 `feishu`，
-`password` 填写对应的 `jwt.web_client_secret_key` 或 `jwt.feishu_secret_key`。
+Swagger UI 右上角点击 `Authorize`：`client_id` 填写 channel（如 `web_client` 或 `feishu`），
+`client_secret` 填写对应的 `jwt.channels.<channel>.secret_key`，
+`Client credentials location` 保持 `Authorization header`；`username` 和 `password` 留空。
 Swagger 会调用 `/token` 校验密钥并签发带 channel `kid`、有效期
 由 `jwt.access_token_expire_seconds` 决定的 JWT，后续调试请求会自动携带该令牌。部署时必须使用 HTTPS，避免共享密钥在
 传输过程中泄露。
@@ -250,11 +256,17 @@ Compose 已配置相同入口。
 Compose 会启动六类容器：
 
 - `lark-token-manager`：飞书用户令牌管理服务
-- `backend`：Xpeech API、Agent 和工具执行服务，默认启动 4 个副本
+- `backend`：Xpeech API、Agent 和工具执行服务，默认启动 16 个副本
 - `scheduler`：单实例调度服务，独占 `schedule.db`，通过 Nginx 调用 backend 执行到期任务
-- `nginx`：后端 API 入口，按 `x-user-id` 将同一用户稳定分配到同一 backend
+- `nginx`：后端 API 入口，按 JWT `sub` 将同一用户稳定分配到同一 backend
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
 - `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
+
+Nginx 使用普通 `hash $user_id` 直接选择 DNS 解析出的副本。这里不能使用
+`consistent`：所有副本共用 `backend:8080` 名称时，它仍会在这些 IP 间轮询，
+导致 `/chat` 和 `/answer_question` 落到不同进程，无法唤醒等待中的问答。
+等待答案的状态保存在进程内存中；扩缩容或重建 backend 可能改变用户分配，
+应在进行中的对话结束后操作。
 
 先准备配置和环境变量：
 
@@ -276,11 +288,13 @@ docker compose up -d --build
 不依赖这两个端口：
 
 ```bash
-BACKEND_REPLICAS=4 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
+BACKEND_REPLICAS=16 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 ```
 
-Nginx 使用用户 ID 哈希按 `x-user-id` 分流。`/chat`、`/answer_question` 和文件请求都必须
-携带相同的 `x-user-id`；调整副本数或替换 backend 容器可能改变用户的映射，操作前应先等待
+Nginx 按 JWT `sub`（对外请求）或 `x-user-id`（内部请求）做一致性哈希分流；两者都没有时正常轮询。
+JWT 验签由 backend 负责。
+`/chat`、`/answer_question`、文件和技能请求必须使用用户 JWT，且 `sub` 保持一致；对外接口忽略 `x-user-id` 请求头。
+内部 JWT 仅用于服务鉴权，用户参数通过 `x-user-id` 直接传递。调整副本数或替换 backend 容器可能改变用户的映射，操作前应先等待
 正在进行的 SSE 会话结束。
 
 查看运行状态和日志：
@@ -304,11 +318,12 @@ docker compose up -d --force-recreate lark-token-manager backend scheduler nginx
 docker compose up -d --build --force-recreate backend
 ```
 
-后台定时任务由单实例 `scheduler` 管理，backend 通过内部 HTTP 创建、查询和取消任务。
-到期后 scheduler 携带 JWT 和 `x-user-id` 请求 `http://nginx:7878/internal/scheduled-run`，
+后台定时任务由单实例 `scheduler` 管理，backend 使用内部 JWT 通过 HTTP 创建、查询和取消任务。
+到期后 scheduler 携带内部 JWT 和 `x-user-id` 请求 `http://nginx:7878/internal/scheduled-run`，
 由用户对应的 backend 使用 `background=True` 执行，结果返回 scheduler 供飞书轮询。
-`/background_message` 经 Nginx 到达任意 backend，再由 backend 向 scheduler 领取消息，
-不需要绑定特定实例。Nginx 对所有 API 使用同一条哈希转发规则。
+`/background_message` 经 Nginx 到达任意 backend，backend 校验通道 JWT 并限制仅 Feishu 通道可领取，
+再使用内部 JWT 向 scheduler 领取消息，不需要绑定特定实例。
+Nginx 对所有 API 使用同一条哈希转发规则。
 
 数据库使用 `docker_data/session/schedule.db`。scheduler 以单实例运行，独占该数据库。
 调度期间需保持 Nginx/backend 可用，执行 HTTP 请求失败时会发送失败提示，不自动重试；
@@ -323,16 +338,18 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 需要从自有业务后端、机器人通道或其他服务完整接入聊天、SSE 事件、追问回调和文件下载时，
 请参阅 [后端接入说明](docs/backend-integration.md)。
 
-`/chat` 需要 Bearer JWT，并通过请求头传入用户 ID 和发送者用户名。JWT、用户 ID
-和发送者用户名都是必填项；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码。
+需要将现成聊天界面嵌入业务网站时，请参阅 [iframe 嵌入接入文档](docs/iframe-integration.md)。
+
+`/chat` 需要带用户 `sub` 的 Bearer JWT，并通过 `x-sender-name` 请求头传入发送者用户名。
+用户 ID 只取已验签 JWT 的 `sub`；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码。
 
 `user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、技能和 MCP 连接；`session_id`
 标识该用户的一次会话，用于隔离上下文、并发聊天和提问回答。同一个用户可以同时拥有多个会话。
-`web_client` 和 `feishu` 渠道可省略请求头 `x-session-id`，此时使用内部 `default` 主会话上下文；
-其他渠道必须传入。所有渠道都不能显式传 `default`，传入值必须是规范的小写连字符 UUIDv7。
+所有通道均必须传入非空请求头 `x-session-id`，只允许 `default`（主会话）或规范的小写连字符 UUIDv7；
+省略、空值或其他格式均返回 HTTP 422。
 仅 `session_id` 为 `default` 时，向模型提供后台任务工具
 `feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`。
-请求头使用 `x-user-id`，接口字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
+对外用户身份只使用 JWT `sub`；仅内部请求通过 `x-user-id` 传递用户。代码字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
 OAuth2 用户标识配置使用 `user_id_claim`。
 
 会话历史保存在 `session_history_path` 目录中，文件名固定为
@@ -367,7 +384,6 @@ UUIDv7 格式的 `session_id`，保存历史时直接复用此 ID；执行时间
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-user-id: demo-user" \
   -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"你好，介绍一下你自己"}]'
@@ -378,7 +394,6 @@ curl -N -X POST "http://localhost:7878/chat" \
 ```bash
 curl -N -X POST "http://localhost:7878/chat" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-user-id: demo-user" \
   -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"帮我看看这个文件"}]' \
@@ -452,7 +467,7 @@ session_schedule_path = "data/session/schedule.db"
 
 ## 统计接口
 
-统计接口使用与 `/chat` 相同的 Bearer JWT，统一位于 `/statistics`：
+统计接口使用以 `jwt.secret_key` 签发的内部 Bearer JWT，统一位于 `/statistics`：
 
 - `GET /statistics`：问答量、活跃用户、会话数、模型调用次数、Token 和平均耗时总览。
 - `GET /statistics/timeseries`：按 `hour`、`day`、`week` 或 `month` 返回使用趋势，默认使用
@@ -468,7 +483,7 @@ session_schedule_path = "data/session/schedule.db"
 
 ```bash
 curl "http://localhost:7878/statistics/records/latest?limit=20" \
-  -H "Authorization: Bearer <JWT>"
+  -H "Authorization: Bearer <INTERNAL_JWT>"
 ```
 
 ## 自定义工具
@@ -673,7 +688,7 @@ Web 客户端基于 React 和 Ant Design X，使用 FastAPI 认证代理访问 A
 
 登录后的管理员可从页面右上角的“设置”下拉框进入“数据大屏”，也可通过 `/api/statistics`、`/api/statistics/timeseries`、
 `/api/statistics/users`、`/api/statistics/sessions` 和 `/api/statistics/records*` 查询统计数据。
-Web 服务会签发短期后端 JWT，将请求及全部查询参数转发到后端对应的 `/statistics*` 接口。
+Web 服务会签发短期内部 JWT，将请求及全部查询参数转发到后端对应的 `/statistics*` 接口。
 普通用户不会显示大屏入口，直接访问统计代理也会返回 403。
 
 首次运行前构建前端：
@@ -812,143 +827,3 @@ userinfo_filter = 'select(.data.department == "R&D")'
 
 启动命令统一见[启动](#启动)章节。打开 `http://127.0.0.1:7939` 即可访问。
 新数据库的初始管理员为 `admin` / `admin123456`；
-
-### 网站嵌入浮动聊天组件
-
-业务网站通过 ES Module `embed.js` 接入聊天组件，无需对接 OAuth2。使用 `import()` 动态
-加载模块，不需要插入 `<script src>`，也不向 `window` 注册全局 API。登录成功后通过
-`setJWT()` 传入业务后端签发的 JWT，组件自动初始化并显示浮动按钮；点击按钮展开聊天窗口。
-退出登录时调用 `destroy()`，移除按钮和窗口，并清理会话。
-
-iframe 内聊天界面左上角的 **＋** 用于新建对话：点击后清空当前界面、取消当前回复并生成新的 UUIDv7
-会话 ID。每条嵌入聊天请求和表单回答都必须携带该 ID（`x-session-id` 请求头），同一对话内
-保持不变，后端按用户 ID 与会话 ID 隔离上下文。旧会话的后端记录不会被删除；关闭再打开窗口
-会保留当前对话，销毁组件后重新初始化会创建新的对话。
-
-嵌入功能默认可用，无需启用开关。在 Web 客户端配置中列出允许接入的业务网站来源
-（协议、域名、端口必须匹配，不包含路径）；未配置来源时不允许任何网站嵌入：
-
-```toml
-[web_client.embed]
-allowed_origins = ["https://portal.example.com", "http://localhost:3000"]
-```
-
-在业务网站的初始化代码中先动态加载一次模块，再在原有的登录成功、退出登录回调中调用
-组件方法。将模块地址替换为实际部署的 Web 客户端地址：
-
-```javascript
-const assistant = await import("https://assistant.example.com/embed.js");
-
-// 业务网站自行实现此接口：先验证当前登录身份，再为当前用户签发 JWT。
-async function loadAssistantJWT() {
-  const response = await fetch("/api/assistant/jwt", {
-    credentials: "same-origin",
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error("无法获取聊天登录凭证");
-  return (await response.json()).jwt;
-}
-
-// 每次登录只调用一次；首次连接和自动续期都会调用获取函数。
-function onLoginSuccess() {
-  assistant.setJWT(loadAssistantJWT);
-  // 自动初始化并显示浮动按钮，聊天窗口默认收起。
-}
-
-// 用户退出业务网站时调用。
-function onLogout() {
-  assistant.destroy();
-  // 继续执行业务网站原有的退出登录逻辑。
-}
-```
-
-浮动按钮的创建和点击事件均由组件自动处理，业务网站不需要创建按钮或绑定 DOM 事件。
-页面刷新后，如果业务网站恢复了登录状态，在模块加载完成后调用 `onLoginSuccess()`。
-单页应用退出时先调用 `destroy()`，下次登录再调用 `setJWT()`；浏览器会复用同一 URL 的模块实例。
-单独导入模块不会显示组件或请求会话，只有调用 `setJWT()` 才会初始化。
-必须遵循 `setJWT(...) → destroy() → setJWT(...)` 的顺序；初始化后再次调用 `setJWT()`
-会抛出异常，即使用户、通道或 JWT 完全相同。切换用户或通道必须先销毁组件，不能自动切换。
-自动续期的获取函数也只能返回同一用户、同一通道的 JWT；身份变化会报错，不会替换当前会话。
-
-组件提供以下方法：
-
-| 方法 | 行为 |
-| --- | --- |
-| `assistant.setJWT(jwtOrProvider)` | 传入 JWT 字符串，或返回 JWT 字符串的同步/异步函数；每次销毁前只允许设置一次 |
-| `assistant.hideButton()` | 隐藏浮动按钮，不关闭已打开的聊天窗口 |
-| `assistant.showButton()` | 显示浮动按钮，不自动打开聊天窗口 |
-| `assistant.open()` | 通过代码主动展开聊天 iframe，无需用户点击浮动按钮 |
-| `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
-| `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存身份并撤销已知 token |
-
-`setUserId()` 和 `setChannelName()` 已移除。`setJWT()` 的无效字符串参数会同步抛出异常，
-不初始化组件；验签失败、凭证过期或获取函数失败会显示错误并触发 `xpeech:error`。
-也可以直接调用 `assistant.setJWT(jwt)`，但组件无法签发新的业务 JWT；该凭证到期后
-必须先 `destroy()`，再用新 JWT 初始化。需要自动续期时应使用上述获取函数，业务后端接口
-应返回 `{ "jwt": "..." }` 并设置 `Cache-Control: no-store`。
-组件尚未初始化或已经销毁时，显示、隐藏、打开、关闭操作不会创建组件；销毁可以重复调用。
-
-JWT 必须由业务后端先验证网站当前用户的登录身份，再为该用户签发，不能直接采用浏览器提交的
-任意用户 ID。Header 的 `kid` 必须与服务端 `jwt.channels` 的自定义通道名一致，例如 `crm`
-对应 `[jwt.channels.crm]`，使用该通道的密钥签名。禁止使用 `web_client`、`feishu`、`internal`。
-通道名为 1–64 个字符，支持字母、数字、点、下划线、冒号和连字符，首字符须为字母或数字。
-Payload 的 `sub` 是实际用户 ID，必须为 1–128 字符的字符串，不自动去除空格或转换数字。
-`exp` 为必填的数值类型 Unix 秒时间戳；若包含 `nbf`、`iat`，也会校验时间有效性。
-签名算法和有效期统一使用全局 `jwt.algorithm`、`jwt.access_token_expire_seconds`；
-不要求或校验 `aud`，JWT 中的角色字段也不会授予权限。以下代码仅在业务后端运行，
-独立部署的业务后端需使用相同的全局时间、算法及通道密钥配置：
-
-```python
-from datetime import UTC, datetime, timedelta
-import jwt
-from xpeech.config.settings import settings
-
-
-def issue_assistant_jwt(current_user):
-    # current_user 由业务后端自己的登录认证取得。
-    channel_name = "crm"
-    return jwt.encode(
-        {
-            "sub": str(current_user.user_id),
-            "exp": datetime.now(UTC) + timedelta(seconds=settings.jwt.access_token_expire_seconds),
-        },
-        settings.jwt.channels[channel_name].secret_key,
-        algorithm=settings.jwt.algorithm,
-        headers={"kid": channel_name},
-    )
-```
-
-组件服务和聊天后端需配置相同的通道及密钥。聊天、表单回答和文件下载转发时，服务端使用
-会话绑定通道的密钥签名，JWT header 的 `kid` 原样使用完整通道名；密钥不传给浏览器。
-后续请求不能改用其他通道。
-带 `sub` 的用户 JWT 仅用于嵌入身份交换，聊天后端不会将其作为服务通道凭证接受，
-避免浏览器绕过嵌入服务，通过自选用户请求头或文件路径访问其他账号。
-
-SDK 使用 `credentials: omit` 向嵌入会话接口提交 `{ "jwt": "..." }`，不接受独立的
-`user_id` 或 `channel_name`。服务端按 `kid` 查找配置密钥，验签通过后才使用 `sub`
-查找或创建账号。换出的会话有效期取 JWT 剩余时间与全局 `jwt.access_token_expire_seconds`
-的较短者。
-SDK 通过校验来源和窗口的 `postMessage` 把随机会话 token 交给聊天 iframe，不传递原始业务 JWT。
-SDK 和 iframe 均只在内存中保存凭证，不写 Cookie、URL、
-localStorage 或 sessionStorage；请求通过 `Authorization: Bearer` 携带。
-会话过期前自动续期，页面刷新后重新初始化。
-
-接入错误会显示在聊天窗口中，同时触发业务页面的 `xpeech:error` 事件，详情为
-`event.detail.message`。关闭窗口不会退出登录；业务网站退出时必须调用 `destroy()`。
-若反向代理设置了 `X-Frame-Options` 或 CSP，必须同时允许业务网站嵌入；HTTPS 网站应通过
-HTTPS 加载组件。`/embed.js` 作为公开模块提供跨域加载响应头；嵌入会话接口仍按
-`allowed_origins` 限制来源。业务网站配置 CSP 时，需要允许从组件服务地址加载脚本、发起
-连接并嵌入 iframe。
-
-验签后的 JWT `sub` 直接对应 Web 客户端的实际账号 ID，不加前缀、不做哈希或来源隔离。
-已有账号会复用其资料和后端身份；账号不存在时自动创建普通用户，初始显示名称为用户 ID，
-密码为服务端随机值。聊天、表单和文件下载均使用这个实际用户 ID，因此与普通页面访问同一
-账号时使用相同的后端身份。用户 ID 格式与本地账号一致，允许字母、数字、下划线和
-`@ + -`，首字符之后也允许点号。
-
-普通账号和管理员账号均可通过嵌入接口登录，保留账号原有角色和权限；已停用账号不能登录。
-嵌入会话不能调用 `/api/auth/password` 修改自身密码；管理员账号仍保留用户管理权限。
-普通页面原有的密码登录不受影响。
-
-持有通道密钥的业务后端是受信任的身份签发方，必须保护密钥和 JWT 签发接口；浏览器仅接收
-签好的短期 JWT。来源白名单不能替代身份认证。不要把服务端密钥或管理员密码放入嵌入代码。

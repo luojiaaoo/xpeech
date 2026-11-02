@@ -3,7 +3,10 @@ from pathlib import Path
 from typing import ClassVar
 
 import httpx
+import jwt
 from fastapi.testclient import TestClient
+
+from xpeech.utils.internal_jwt import decode_internal_access_token
 
 web_client_app = import_module("xpeech.subapp.channel.web_client.app")
 proxy_routes = import_module("xpeech.subapp.channel.web_client.routes.proxy")
@@ -102,6 +105,11 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
     assert first_request["url"] == "http://backend.test/statistics/records/latest"
     assert first_request["params"] == [("limit", "20"), ("tag", "first"), ("tag", "second")]
     assert first_request["headers"]["authorization"].startswith("Bearer ")
-    assert first_request["headers"]["x-user-id"] == "admin"
     assert second_request["url"] == "http://backend.test/statistics/future/report"
     assert second_request["params"] == [("range", "week")]
+    for request in FakeAsyncClient.requests:
+        assert "x-user-id" not in request["headers"]
+        token = request["headers"]["authorization"].removeprefix("Bearer ")
+        claims = decode_internal_access_token(token)
+        assert set(claims) == {"exp"}
+        assert "kid" not in jwt.get_unverified_header(token)

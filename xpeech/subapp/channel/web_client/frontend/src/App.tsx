@@ -11,9 +11,10 @@ import {
 } from '@ant-design/icons';
 import { appApi, authApi } from './api';
 import { savePendingUserPrefix } from './pendingUserPrefix';
+import ChatWorkspace from './ChatWorkspace';
+import { EmbeddedLoading } from './ChatLoading';
 import type { AppConfig, User } from './types';
 
-const ChatPage = lazy(() => import('./ChatPage'));
 const LoginPage = lazy(() => import('./LoginPage'));
 const StatisticsDashboard = lazy(() => import('./StatisticsDashboard'));
 const UserManagement = lazy(() => import('./UserManagement'));
@@ -25,7 +26,7 @@ function PageFallback() {
 
 export default function App() {
   if (new URLSearchParams(window.location.search).get('embed') === '1') {
-    return <Suspense fallback={<PageFallback />}><EmbeddedApp /></Suspense>;
+    return <Suspense fallback={<EmbeddedLoading />}><EmbeddedApp /></Suspense>;
   }
   return <StandaloneApp />;
 }
@@ -161,8 +162,6 @@ function StandaloneApp() {
           <div className="header-heading">
             <span className="header-brand-mark">{Array.from(systemName.trim())[0]?.toUpperCase() || 'A'}</span>
             <Typography.Text strong className="header-brand-name">{systemName}</Typography.Text>
-            <span className="header-divider" />
-            <Typography.Title level={4}>AI 助手</Typography.Title>
           </div>
           <Space size={12} className="header-actions">
             <div className="header-user">
@@ -184,9 +183,7 @@ function StandaloneApp() {
           </Space>
         </Layout.Header>
         <Layout.Content className="app-main">
-          <Suspense fallback={<PageFallback />}>
-            <ChatPage systemName={systemName} />
-          </Suspense>
+          <ChatWorkspace key={user.id} systemName={systemName} />
         </Layout.Content>
         {user.is_admin ? (
           <Modal

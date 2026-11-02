@@ -45,7 +45,7 @@ services:
       <<: *common-environment
       XPEECH_TOKEN_MANAGER_URL: http://lark-token-manager:7883
     deploy:
-      replicas: ${BACKEND_REPLICAS:-4}
+      replicas: ${BACKEND_REPLICAS:-16}
     depends_on:
       lark-token-manager:
         condition: service_healthy
@@ -112,6 +112,7 @@ services:
       NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
     volumes:
       - ./docker/nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
+      - ./docker/nginx-jwt.js:/etc/nginx/jwt.js:ro
     init: true
     restart: unless-stopped
     healthcheck:
