@@ -69,7 +69,7 @@ def test_resource_tag_validation_is_consistent(channel_tags):
 @pytest.mark.parametrize("session_id", [None, UUID7_SESSION_ID])
 def test_custom_channel_can_get_token_and_use_business_endpoints(channels, session_id):
     client = TestClient(app)
-    response = client.post("/token", data={"username": "crm", "password": CRM_KEY})
+    response = client.post("/token", auth=("crm", CRM_KEY))
     assert response.status_code == 200
     token = response.json()["access_token"]
     assert jwt.get_unverified_header(token)["kid"] == "crm"
@@ -80,7 +80,7 @@ def test_custom_channel_can_get_token_and_use_business_endpoints(channels, sessi
     if session_id is not None:
         headers["x-session-id"] = session_id
     assert client.post("/answer_question", data={"answer": "ok"}, headers=headers).status_code == 200
-    assert client.get("/statistics", headers=headers).status_code == 403
+    assert client.get("/statistics", headers=headers).status_code == 401
     assert client.post("/internal/scheduled-run", headers=headers).status_code == 401
 
 

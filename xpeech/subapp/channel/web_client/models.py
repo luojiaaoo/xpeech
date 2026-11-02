@@ -3,7 +3,6 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from ....config.settings import settings
 from .dao import User
 
 USER_ID_PATTERN = r"^[\w@+-][\w.@+-]*$"
@@ -44,10 +43,6 @@ class WebConfig:
     database_path: Path
     static_dir: Path
     system_name: str
-    jwt_secret_key: str = field(
-        default_factory=lambda: settings.jwt.channels["web_client"].secret_key,
-        repr=False,
-    )
     cookie_name: str = "xpeech_session"
     oauth2: tuple[OAuth2WebConfig, ...] = field(default_factory=tuple)
     inject_prompt: InjectPromptWebConfig = field(default_factory=InjectPromptWebConfig)

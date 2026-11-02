@@ -1,6 +1,6 @@
 from fastapi import Depends
 
-from .auth import require_channel_jwt, require_internal_jwt, require_web_client_jwt
+from .auth import require_channel_jwt, require_internal_jwt
 from .auth import router as auth_router
 from .routes.chat import router as chat_router
 from .routes.files import router as files_router
@@ -15,5 +15,5 @@ app.include_router(files_router, dependencies=[Depends(require_channel_jwt)])
 app.include_router(chat_router, dependencies=[Depends(require_channel_jwt)])
 app.include_router(internal_router, dependencies=[Depends(require_internal_jwt)])
 app.include_router(skills_router, dependencies=[Depends(require_channel_jwt)])
-app.include_router(statistics_router, dependencies=[Depends(require_web_client_jwt)])
+app.include_router(statistics_router, dependencies=[Depends(require_internal_jwt)])
 app.include_router(public_file_router)

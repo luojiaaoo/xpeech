@@ -1,5 +1,7 @@
 import re
+import secrets
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any
@@ -16,6 +18,14 @@ def _channel_secret_key(channel: str) -> str:
     if configured is None:
         raise jwt.InvalidTokenError("Unknown channel JWT key ID")
     return configured.secret_key
+
+
+@dataclass(frozen=True)
+class ChannelTokenParams:
+    """Parameters for issuing a channel JWT."""
+
+    channel: str
+    lark_user_access_token: str | None = field(default=None, repr=False)
 
 
 class ChannelJWTAuth:
@@ -73,23 +83,21 @@ class ChannelJWTAuth:
     def __repr__(self) -> str:
         return f"ChannelJWTAuth(channel={self.channel!r}, exp={self.exp!r})"
 
-    @staticmethod
-    def create_token(
-        channel: str,
-        *,
-        secret_key: str | None = None,
-        now: datetime | None = None,
-        lark_user_access_token: str | None = None,
-    ) -> str:
-        """Sign a channel JWT using the shared algorithm and lifetime settings."""
-        if not isinstance(channel, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", channel) is None:
-            raise ValueError("Invalid channel JWT key ID")
-        if secret_key is None:
-            secret_key = _channel_secret_key(channel)
-        issued_at = now or datetime.now(UTC)
-        claims: dict[str, Any] = {
-            "exp": int((issued_at + timedelta(seconds=settings.jwt.access_token_expire_seconds)).timestamp()),
-        }
-        if lark_user_access_token is not None:
-            claims["lark_user_access_token"] = lark_user_access_token
-        return jwt.encode(claims, secret_key, algorithm=settings.jwt.algorithm, headers={"kid": channel})
+
+def create_token(params: ChannelTokenParams, *, secret_key4verify: str | None = None) -> str:
+    """Sign a channel JWT, optionally verifying the supplied channel secret first."""
+    channel = params.channel
+    if not isinstance(channel, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", channel) is None:
+        raise ValueError("Invalid channel JWT key ID")
+    secret_key = _channel_secret_key(channel)
+    if secret_key4verify is not None and not secrets.compare_digest(
+        secret_key4verify.encode("utf-8"), secret_key.encode("utf-8"),
+    ):
+        raise jwt.InvalidTokenError("Incorrect JWT secret")
+    issued_at = datetime.now(UTC)
+    claims: dict[str, Any] = {
+        "exp": int((issued_at + timedelta(seconds=settings.jwt.access_token_expire_seconds)).timestamp()),
+    }
+    if params.lark_user_access_token is not None:
+        claims["lark_user_access_token"] = params.lark_user_access_token
+    return jwt.encode(claims, secret_key, algorithm=settings.jwt.algorithm, headers={"kid": channel})

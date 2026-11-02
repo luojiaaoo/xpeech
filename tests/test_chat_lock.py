@@ -17,7 +17,7 @@ from xpeech.agent.server.dependencies import (
     settings,
 )
 from xpeech.agent.server.routes.chat import answer_question
-from xpeech.utils.channel_jwt import ChannelJWTAuth
+from xpeech.utils.channel_jwt import ChannelTokenParams, create_token
 
 UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 
@@ -72,7 +72,7 @@ def test_chat_initializes_all_tools_for_every_session(
     create = AsyncMock(return_value=SimpleNamespace(workspace=tmp_path, run=run))
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
     monkeypatch.setattr(settings.llm, "support_json_output", True)
-    token = ChannelJWTAuth.create_token("web_client", secret_key=settings.jwt.channels["web_client"].secret_key)
+    token = create_token(ChannelTokenParams("web_client"))
     headers = {
         "Authorization": f"Bearer {token}",
         "x-user-id": "user",
@@ -101,7 +101,7 @@ def test_chat_initializes_all_tools_for_every_session(
     ["default", "chat-1", "01234567-89ab-4def-8123-456789abcdef"],
 )
 def test_chat_rejects_non_uuidv7_session_ids(session_id):
-    token = ChannelJWTAuth.create_token("web_client", secret_key=settings.jwt.channels["web_client"].secret_key)
+    token = create_token(ChannelTokenParams("web_client"))
     response = TestClient(app).post(
         "/chat",
         headers={
@@ -123,7 +123,7 @@ def test_unsupported_json_output_returns_http_error_before_starting_stream(monke
     monkeypatch.setattr(settings.llm, "support_json_output", False)
     create = AsyncMock()
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
-    token = ChannelJWTAuth.create_token("web_client", secret_key=settings.jwt.channels["web_client"].secret_key)
+    token = create_token(ChannelTokenParams("web_client"))
     response = TestClient(app).post(
         "/chat",
         headers={

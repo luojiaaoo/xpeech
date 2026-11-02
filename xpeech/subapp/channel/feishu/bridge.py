@@ -20,7 +20,7 @@ from yarl import URL
 
 from ....agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
 from ....config.settings import settings
-from ....utils.channel_jwt import ChannelJWTAuth
+from ....utils.channel_jwt import ChannelTokenParams, create_token
 from ..helper import download_file as download_channel_file
 from ..helper import iter_chat_events, notify_question
 from ..schema import ChatEvent, ChatEventType, Message
@@ -50,12 +50,10 @@ class FeishuBridge(
         chat_url: str,
         app_id: str,
         app_secret: str,
-        jwt_secret_key: str | None = None,
     ):
         self.chat_url = chat_url
         self.app_id = app_id
         self.app_secret = app_secret
-        self.jwt_secret_key = jwt_secret_key if jwt_secret_key is not None else settings.jwt.channels["feishu"].secret_key
         self.session_update_message_id: dict[str, str] = {}
         self.channel = XpeechFeishuChannel(
             app_id=self.app_id,
@@ -99,7 +97,6 @@ class FeishuBridge(
             form_data,
             self.chat_url,
             "feishu",
-            secret_key=self.jwt_secret_key,
         )
         result = await self.channel.update_card(
             card_action_event.message_id,
@@ -130,7 +127,6 @@ class FeishuBridge(
                 messages,
                 str(URL(self.chat_url) / "chat"),
                 "feishu",
-                secret_key=self.jwt_secret_key,
             ):
                 if event.event == ChatEventType.SEND_FILE:
                     downloaded_file = await download_channel_file(
@@ -138,7 +134,6 @@ class FeishuBridge(
                         event.context,
                         self.chat_url,
                         "feishu",
-                        secret_key=self.jwt_secret_key,
                     )
                     result = await self.channel.send(
                         chat_id,
@@ -248,7 +243,7 @@ class FeishuBridge(
             str(URL(self.chat_url) / "background_message"),
             headers={
                 "authorization": (
-                    f"Bearer {ChannelJWTAuth.create_token('feishu', secret_key=self.jwt_secret_key)}"
+                    f"Bearer {create_token(ChannelTokenParams('feishu'))}"
                 )
             },
             params={"channel": BackgroundMessageChannel.FEISHU.value},
@@ -310,7 +305,6 @@ def run(chat_url: str) -> None:
                 chat_url=chat_url,
                 app_id=settings.feishu.app_id,
                 app_secret=settings.feishu.app_secret,
-                jwt_secret_key=settings.jwt.channels["feishu"].secret_key,
             ).start()
         )
     except KeyboardInterrupt:

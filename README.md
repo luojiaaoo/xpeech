@@ -69,7 +69,7 @@ uv run python -c "import secrets; print(secrets.token_hex(32))"
 
 ```toml
 [jwt]
-# 仅供 backend、scheduler 等内部服务互信
+# 仅供 backend、scheduler、Web 统计代理等内部服务互信
 secret_key = "replace-with-an-internal-random-value"
 algorithm = "HS256"
 access_token_expire_seconds = 60
@@ -86,8 +86,8 @@ secret_key = "replace-with-a-different-feishu-random-value"
 内部 token 不携带 `kid`，直接使用 `secret_key` 验签。channel token 的 header
 使用 `kid` 从 `jwt.channels` 选择同名通道的 `secret_key`，包括 `web_client` 和 `feishu`。
 聊天、追问、后台消息、文件、技能接口必须使用带 `kid` 的 channel JWT；
-`/statistics` 及其子接口只接受 `kid=web_client`。`/internal/scheduled-run` 和 scheduler
-服务的接口只使用内部密钥验签，不要求 `kid`。
+`/statistics` 及其子接口、`/internal/scheduled-run` 和 scheduler
+服务的接口使用内部 JWT，通过 `jwt.secret_key` 验签。
 
 自定义系统接入可在 `jwt.channels` 下配置独立通道，通道名就是 JWT header 的 `kid`：
 
@@ -99,7 +99,7 @@ channel_tags = ["crm", "sales"]
 
 所有通道密钥至少 32 个字符，必须与内部密钥及其他通道密钥互不相同；通道名不能使用
 `internal`。所有通道使用统一的 JWT 算法和有效期，支持业务接口，
-也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口仍仅接受 `web_client`，内部接口仍使用内部密钥。
+也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口和内部接口使用内部 JWT。
 通道的 `channel_tags` 由服务端配置确定，JWT payload 或会话元数据中的 `channel_tags` 不授予任何权限。
 省略通道 `channel_tags` 或配置 `[]` 时，该通道加载公共内建技能、公共 MCP，以及用户自己的全部技能。
 
@@ -160,8 +160,9 @@ uv run -m xpeech token_manager
 - ReDoc：`http://localhost:7878/redoc`
 
 Swagger UI、ReDoc 及 `/openapi.json` 可直接访问。在
-Swagger UI 右上角点击 `Authorize`：`username` 填写 `web_client` 或 `feishu`，
-`password` 填写对应的 `jwt.channels.web_client.secret_key` 或 `jwt.channels.feishu.secret_key`。
+Swagger UI 右上角点击 `Authorize`：`client_id` 填写 channel（如 `web_client` 或 `feishu`），
+`client_secret` 填写对应的 `jwt.channels.<channel>.secret_key`，
+`Client credentials location` 保持 `Authorization header`；`username` 和 `password` 留空。
 Swagger 会调用 `/token` 校验密钥并签发带 channel `kid`、有效期
 由 `jwt.access_token_expire_seconds` 决定的 JWT，后续调试请求会自动携带该令牌。部署时必须使用 HTTPS，避免共享密钥在
 传输过程中泄露。
@@ -456,7 +457,7 @@ session_schedule_path = "data/session/schedule.db"
 
 ## 统计接口
 
-统计接口使用与 `/chat` 相同的 Bearer JWT，统一位于 `/statistics`：
+统计接口使用以 `jwt.secret_key` 签发的内部 Bearer JWT，统一位于 `/statistics`：
 
 - `GET /statistics`：问答量、活跃用户、会话数、模型调用次数、Token 和平均耗时总览。
 - `GET /statistics/timeseries`：按 `hour`、`day`、`week` 或 `month` 返回使用趋势，默认使用
@@ -472,7 +473,7 @@ session_schedule_path = "data/session/schedule.db"
 
 ```bash
 curl "http://localhost:7878/statistics/records/latest?limit=20" \
-  -H "Authorization: Bearer <JWT>"
+  -H "Authorization: Bearer <INTERNAL_JWT>"
 ```
 
 ## 自定义工具
@@ -677,7 +678,7 @@ Web 客户端基于 React 和 Ant Design X，使用 FastAPI 认证代理访问 A
 
 登录后的管理员可从页面右上角的“设置”下拉框进入“数据大屏”，也可通过 `/api/statistics`、`/api/statistics/timeseries`、
 `/api/statistics/users`、`/api/statistics/sessions` 和 `/api/statistics/records*` 查询统计数据。
-Web 服务会签发短期后端 JWT，将请求及全部查询参数转发到后端对应的 `/statistics*` 接口。
+Web 服务会签发短期内部 JWT，将请求及全部查询参数转发到后端对应的 `/statistics*` 接口。
 普通用户不会显示大屏入口，直接访问统计代理也会返回 403。
 
 首次运行前构建前端：

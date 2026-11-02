@@ -1,13 +1,12 @@
-import secrets
 from typing import Annotated, Any
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2PasswordBearer
 from pydantic import BaseModel
 
 from ...config.settings import settings
-from ...utils.channel_jwt import ChannelJWTAuth
+from ...utils.channel_jwt import ChannelJWTAuth, ChannelTokenParams, create_token
 from ...utils.internal_jwt import decode_internal_access_token
 from .context import lark_user_access_token_var
 
@@ -15,8 +14,10 @@ router = APIRouter(tags=["auth"])
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="token",
     description=(
-        "Swagger UI 使用 channel 名称和对应 JWT 密钥换取一个有效期 "
-        f"{settings.jwt.access_token_expire_seconds} 秒的访问令牌。"
+        "Swagger UI 的 client_id 填写 channel，client_secret 填写对应的 secret_key，"
+        "Client credentials location 选择 Authorization header。username 和 password 留空。"
+        "换取的访问令牌有效期为 "
+        f"{settings.jwt.access_token_expire_seconds} 秒。"
     ),
 )
 
@@ -35,41 +36,34 @@ class AuthenticatedChannel(ChannelJWTAuth):
         return channel.channel_tags if channel is not None else []
 
 
-def _channel_keys() -> dict[str, str]:
-    return {name: channel.secret_key for name, channel in settings.jwt.channels.items()}
-
-
 @router.post("/token", response_model=TokenResponse, include_in_schema=False)
 async def issue_access_token(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     response: Response,
+    credentials: Annotated[HTTPBasicCredentials, Depends(HTTPBasic())],
 ) -> TokenResponse:
     """Validate a channel key and issue a channel token for Swagger UI."""
 
-    secret_key = _channel_keys().get(form_data.username)
-    if secret_key is None or not secrets.compare_digest(
-        form_data.password.encode("utf-8"),
-        secret_key.encode("utf-8"),
-    ):
+    try:
+        token = create_token(
+            ChannelTokenParams(channel=credentials.username),
+            secret_key4verify=credentials.password,
+        )
+    except (jwt.InvalidTokenError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect JWT secret",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+            headers={"WWW-Authenticate": "Basic"},
+        ) from None
 
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return TokenResponse(
-        access_token=ChannelJWTAuth.create_token(form_data.username, secret_key=secret_key),
+        access_token=token,
         token_type="bearer",
     )
 
 
-def _authenticate_channel_token(
-    token: str | None,
-    *,
-    web_client_only: bool = False,
-) -> AuthenticatedChannel:
+def _authenticate_channel_token(token: str | None) -> AuthenticatedChannel:
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -86,11 +80,6 @@ def _authenticate_channel_token(
                 )
             if not isinstance(lark_user_access_token, str):
                 raise jwt.InvalidTokenError("Invalid lark_user_access_token claim")
-        if web_client_only and auth.channel != "web_client":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This endpoint requires the web_client channel",
-            )
         return auth
     except jwt.InvalidTokenError:
         raise HTTPException(
@@ -107,16 +96,6 @@ async def require_channel_jwt(
 
     auth = _authenticate_channel_token(token)
     lark_user_access_token_var.set(auth.claims.get("lark_user_access_token"))
-    return auth
-
-
-async def require_web_client_jwt(
-    token: Annotated[str, Depends(oauth2_scheme)],
-) -> ChannelJWTAuth:
-    """Authenticate statistics callers using the Web channel's JWT."""
-
-    auth = _authenticate_channel_token(token, web_client_only=True)
-    lark_user_access_token_var.set(None)
     return auth
 
 

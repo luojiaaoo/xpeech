@@ -11,7 +11,7 @@ import httpx
 from httpx_sse import EventSource
 from yarl import URL
 
-from ...utils.channel_jwt import ChannelJWTAuth
+from ...utils.channel_jwt import ChannelTokenParams, create_token
 from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
@@ -37,11 +37,9 @@ def _backend_headers(
     user_id: str,
     channel: str,
     sender_name: str | None = None,
-    *,
-    secret_key: str | None = None,
 ) -> dict[str, str]:
     headers = {
-        "authorization": f"Bearer {ChannelJWTAuth.create_token(channel, secret_key=secret_key)}",
+        "authorization": f"Bearer {create_token(ChannelTokenParams(channel))}",
         "x-user-id": user_id,
     }
     if sender_name is not None:
@@ -59,7 +57,6 @@ async def open_chat_stream(
     *,
     files: Any = None,
     json_output: bool = False,
-    secret_key: str | None = None,
 ) -> ChatStream:
     """Open a streaming request to the backend chat endpoint."""
 
@@ -72,7 +69,7 @@ async def open_chat_stream(
 
     client = httpx.AsyncClient(timeout=None)
     try:
-        headers = _backend_headers(user_id, channel, sender_name, secret_key=secret_key)
+        headers = _backend_headers(user_id, channel, sender_name)
         headers.update({"Accept": "text/event-stream", "Cache-Control": "no-store"})
         response = await client.send(
             client.build_request(
@@ -94,8 +91,6 @@ async def iter_chat_events(
     messages: list[Message],
     chat_url: str,
     channel: str,
-    *,
-    secret_key: str | None = None,
 ) -> AsyncIterator[ChatEvent]:
     """Send channel messages to the chat endpoint and yield parsed SSE event dicts."""
 
@@ -138,7 +133,6 @@ async def iter_chat_events(
             ),
             chat_url,
             channel,
-            secret_key=secret_key,
             files=upload_files,
         )
         try:
@@ -183,8 +177,6 @@ async def submit_question(
     result: Any,
     chat_url: str,
     channel: str,
-    *,
-    secret_key: str | None = None,
 ) -> httpx.Response:
     """Submit a question answer and return the backend response without changing its status."""
 
@@ -193,7 +185,7 @@ async def submit_question(
     async with httpx.AsyncClient(timeout=30) as client:
         return await client.post(
             answer_url,
-            headers=_backend_headers(user_id, channel, secret_key=secret_key),
+            headers=_backend_headers(user_id, channel),
             data={"answer": answer},
         )
 
@@ -203,10 +195,8 @@ async def notify_question(
     result: Any,
     chat_url: str,
     channel: str,
-    *,
-    secret_key: str | None = None,
 ) -> None:
-    response = await submit_question(user_id, result, chat_url, channel, secret_key=secret_key)
+    response = await submit_question(user_id, result, chat_url, channel)
     response.raise_for_status()
 
 
@@ -215,8 +205,6 @@ async def fetch_file(
     path: str,
     api_base_url: str,
     channel: str,
-    *,
-    secret_key: str | None = None,
 ) -> httpx.Response:
     """Fetch a session file and return the backend response without changing its status."""
 
@@ -224,7 +212,7 @@ async def fetch_file(
     async with httpx.AsyncClient(timeout=None) as client:
         return await client.get(
             file_url,
-            headers=_backend_headers(user_id, channel, secret_key=secret_key),
+            headers=_backend_headers(user_id, channel),
             params={"path": path},
         )
 
@@ -234,10 +222,8 @@ async def download_file(
     path: str,
     api_base_url: str,
     channel: str,
-    *,
-    secret_key: str | None = None,
 ) -> DownloadedFile:
-    response = await fetch_file(user_id, path, api_base_url, channel, secret_key=secret_key)
+    response = await fetch_file(user_id, path, api_base_url, channel)
     response.raise_for_status()
 
     filename = _filename_from_content_disposition(response.headers.get("content-disposition")) or Path(path).name

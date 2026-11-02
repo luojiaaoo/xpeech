@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from xpeech.config.settings import JWTChannelConfig, settings
 from xpeech.subapp.channel import helper
 from xpeech.subapp.channel.schema import ChatEventType, Message, TextData
 from xpeech.utils.channel_jwt import ChannelJWTAuth
@@ -15,6 +16,7 @@ TEST_SECRET_KEY = "test-channel-key-that-is-at-least-32-bytes"
 
 @pytest.mark.asyncio
 async def test_backend_requests_use_channel_tokens_and_a_user_header(monkeypatch):
+    monkeypatch.setitem(settings.jwt.channels, TEST_CHANNEL, JWTChannelConfig(secret_key=TEST_SECRET_KEY))
     requests = []
     client_class = httpx.AsyncClient
 
@@ -25,10 +27,10 @@ async def test_backend_requests_use_channel_tokens_and_a_user_header(monkeypatch
     monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client_class(
         transport=httpx.MockTransport(respond), **kwargs,
     ))
-    stream = await helper.open_chat_stream("alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL, secret_key=TEST_SECRET_KEY)
+    stream = await helper.open_chat_stream("alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL)
     await stream.aclose()
-    await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL, secret_key=TEST_SECRET_KEY)
-    await helper.fetch_file("alice", "report.txt", "http://backend.test", TEST_CHANNEL, secret_key=TEST_SECRET_KEY)
+    await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL)
+    await helper.fetch_file("alice", "report.txt", "http://backend.test", TEST_CHANNEL)
     assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/sessions/alice/files"]
     for request in requests:
         assert request.headers["x-user-id"] == "alice"
