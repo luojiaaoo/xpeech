@@ -29,7 +29,7 @@ class ChannelTokenParams:
 
 
 class ChannelJWTAuth:
-    """Channel credential decoded once at construction, with live expiration checks."""
+    """Channel credential decoded and validated once at construction."""
 
     def __init__(self, token: str):
         channel = jwt.get_unverified_header(token).get("kid")
@@ -63,17 +63,6 @@ class ChannelJWTAuth:
     @property
     def exp(self) -> int:
         return int(self.claims["exp"])
-
-    @property
-    def is_expired(self) -> bool:
-        try:
-            jwt.decode(
-                self.token, self.secret_key, algorithms=[settings.jwt.algorithm],
-                options={"require": ["exp"], "verify_aud": False},
-            )
-        except jwt.ExpiredSignatureError:
-            return True
-        return False
 
     @property
     def claims(self) -> Mapping[str, Any]:

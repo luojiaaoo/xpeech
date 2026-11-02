@@ -27,7 +27,6 @@ def test_request_jwt_is_decoded_using_the_configured_channel_key():
     assert set(auth.claims) == {"exp"}
     assert auth.token == token
     assert auth.secret_key == KEY
-    assert not auth.is_expired
     assert token not in repr(auth)
     assert KEY not in repr(auth)
     assert ChannelJWTAuth(create_token(ChannelTokenParams("crm"))).channel == "crm"
@@ -71,24 +70,6 @@ def test_identity_is_decoded_at_initialization_and_properties_reuse_it(monkeypat
         assert auth.channel == "crm"
         assert auth.exp == int(auth.claims["exp"])
     assert decode.call_count == 1
-    assert not auth.is_expired
-    assert not auth.is_expired
-    assert decode.call_count == 3
-
-
-def test_credential_expiration_tracks_time_without_silently_replacing_the_token(monkeypatch):
-    auth = ChannelJWTAuth(_token())
-    token = auth.token
-    assert not auth.is_expired
-
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return datetime.fromtimestamp(auth.exp, UTC)
-
-    monkeypatch.setattr(jwt.api_jwt, "datetime", Clock)
-    assert auth.is_expired
-    assert auth.token == token
 
 
 def test_expired_credentials_are_rejected_at_initialization():
@@ -108,7 +89,6 @@ def test_expiration_property_follows_pyjwt_numeric_date_conversion():
     )
     auth = ChannelJWTAuth(token)
     assert auth.exp == expires_at
-    assert not auth.is_expired
 
 
 def test_token_issuance_keeps_optional_claims_isolated():
