@@ -7,14 +7,11 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .embedded-app > .chat-workspace { flex: 1; }
 .conversation-toolbar { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 12px 28px; border-bottom: 1px solid #edf0f5; }
 .conversation-heading { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.conversation-heading .ant-segmented { padding: 3px; background: #f4f6f9; }
-.conversation-heading .ant-segmented-item-label { display: flex; align-items: center; gap: 6px; padding-inline: 12px; }
 .conversation-title { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; white-space: nowrap; }
 .conversation-title .anticon { color: #3370ff; }
 .conversation-description { font-size: 12px; color: #86909c; white-space: nowrap; }
 .new-conversation-button { flex-shrink: 0; border-color: #dce5f5; color: #245bdb; box-shadow: none; }
 .conversation-panel { flex: 1; min-width: 0; min-height: 0; }
-.conversation-panel[hidden] { display: none; }
 .conversation-loading { max-width: 720px; margin: 24px auto; padding: 0 20px; }
 .chat-workspace-embedded .conversation-toolbar { min-height: 52px; padding: 9px 14px; }
 .app-shell { height: 100vh; height: 100dvh; overflow: hidden; }

@@ -35,12 +35,14 @@ def create_proxy_router(
     ) -> str | None:
         token = session_token(None, request.headers.get("authorization"))
         embedded = bool(token and token.startswith(EMBED_TOKEN_PREFIX))
+        if not embedded:
+            if session_id not in (None, DEFAULT_SESSION_ID):
+                raise HTTPException(422, "非嵌入聊天只支持主会话（default）")
+            return session_id
         if session_id is None:
-            if embedded:
-                raise HTTPException(422, "嵌入聊天必须提供 UUIDv7 格式的 x-session-id")
-            return None
+            raise HTTPException(422, "嵌入聊天必须提供 UUIDv7 格式的 x-session-id")
         try:
-            if embedded and session_id == DEFAULT_SESSION_ID:
+            if session_id == DEFAULT_SESSION_ID:
                 raise PathProtectionError("Explicit default session is not allowed")
             return validate_session_id(session_id)
         except PathProtectionError:

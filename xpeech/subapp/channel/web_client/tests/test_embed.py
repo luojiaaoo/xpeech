@@ -241,8 +241,8 @@ def test_two_embedded_conversations_forward_distinct_ids(client, monkeypatch):
     assert [call.kwargs["session_id"] for call in stream.await_args_list] == [SESSION_ID, SESSION_ID, second_id]
 
 
-@pytest.mark.parametrize("session_id", [None, "default", SESSION_ID, "018f0000-0000-7000-8000-000000000002"])
-def test_cookie_chat_and_answers_forward_main_or_temporary_session(client, monkeypatch, session_id):
+@pytest.mark.parametrize("session_id", [None, "default"])
+def test_cookie_chat_and_answers_forward_main_session(client, monkeypatch, session_id):
     secret = "web-client-test-key-at-least-64-characters-for-sha512-signing-tests"
     monkeypatch.setitem(settings.jwt.channels, "web_client", JWTChannelConfig(secret_key=secret))
     assert client.post("/api/auth/login", json={"user_id": "admin", "password": "admin123456"}).status_code == 200
@@ -264,6 +264,23 @@ def test_cookie_chat_and_answers_forward_main_or_temporary_session(client, monke
     assert client.post("/api/chat", headers=headers, data={"content": "[]"}).status_code == 200
     assert client.post("/api/answer_question", headers=headers, data={"answer": "yes"}).status_code == 200
     assert [request.url.path for request in calls] == ["/chat", "/answer_question"]
+
+
+@pytest.mark.parametrize("path", ["/api/chat", "/api/answer_question"])
+@pytest.mark.parametrize("session_id", [
+    SESSION_ID, "018f0000-0000-7000-8000-000000000002", "", "not-a-uuid",
+])
+def test_cookie_chat_and_answers_reject_non_main_sessions(client, monkeypatch, path, session_id):
+    assert client.post("/api/auth/login", json={"user_id": "admin", "password": "admin123456"}).status_code == 200
+    stream = AsyncMock()
+    answer = AsyncMock()
+    monkeypatch.setattr(proxy, "open_chat_stream", stream)
+    monkeypatch.setattr(proxy, "submit_question", answer)
+    response = client.post(path, headers={"x-session-id": session_id}, data={"content": "[]", "answer": "yes"})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "非嵌入聊天只支持主会话（default）"
+    stream.assert_not_awaited()
+    answer.assert_not_awaited()
 
 
 def test_origin_configuration_requires_exact_origins():
