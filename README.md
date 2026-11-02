@@ -309,11 +309,12 @@ docker compose up -d --force-recreate lark-token-manager backend scheduler nginx
 docker compose up -d --build --force-recreate backend
 ```
 
-后台定时任务由单实例 `scheduler` 管理，backend 通过内部 HTTP 创建、查询和取消任务。
+后台定时任务由单实例 `scheduler` 管理，backend 使用内部 JWT 通过 HTTP 创建、查询和取消任务。
 到期后 scheduler 携带 JWT 和 `x-user-id` 请求 `http://nginx:7878/internal/scheduled-run`，
 由用户对应的 backend 使用 `background=True` 执行，结果返回 scheduler 供飞书轮询。
-`/background_message` 经 Nginx 到达任意 backend，再由 backend 向 scheduler 领取消息，
-不需要绑定特定实例。Nginx 对所有 API 使用同一条哈希转发规则。
+`/background_message` 经 Nginx 到达任意 backend，backend 校验通道 JWT 并限制仅 Feishu 通道可领取，
+再使用内部 JWT 向 scheduler 领取消息，不需要绑定特定实例。
+Nginx 对所有 API 使用同一条哈希转发规则。
 
 数据库使用 `docker_data/session/schedule.db`。scheduler 以单实例运行，独占该数据库。
 调度期间需保持 Nginx/backend 可用，执行 HTTP 请求失败时会发送失败提示，不自动重试；

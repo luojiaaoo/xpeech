@@ -18,7 +18,7 @@ from lark_channel import (
 from loguru import logger
 from yarl import URL
 
-from ....agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
+from ....agent.server.schema import FeishuBackgroundMessage
 from ....config.settings import settings
 from ....utils.channel_jwt import ChannelTokenParams, create_token
 from ..helper import download_file as download_channel_file
@@ -246,7 +246,6 @@ class FeishuBridge(
                     f"Bearer {create_token(ChannelTokenParams('feishu'))}"
                 )
             },
-            params={"channel": BackgroundMessageChannel.FEISHU.value},
         )
         if response.status_code == 204:
             return False

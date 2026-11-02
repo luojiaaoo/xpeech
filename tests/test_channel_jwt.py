@@ -50,7 +50,7 @@ def test_token_issuance_rejects_an_incorrect_secret_before_signing(monkeypatch, 
 
 
 def test_credential_properties_cannot_be_mutated_or_reissued_on_access():
-    auth = ChannelJWTAuth(_token(), KEY)
+    auth = ChannelJWTAuth(_token())
     token = auth.token
     for name, value in (("channel", "erp"), ("exp", 0), ("token", "replacement"), ("secret_key", "other")):
         with pytest.raises(AttributeError):
@@ -65,7 +65,7 @@ def test_identity_is_decoded_at_initialization_and_properties_reuse_it(monkeypat
     token = _token()
     decode = Mock(wraps=jwt.decode)
     monkeypatch.setattr(channel_jwt.jwt, "decode", decode)
-    auth = ChannelJWTAuth(token, KEY)
+    auth = ChannelJWTAuth(token)
     assert decode.call_count == 1
     for _ in range(3):
         assert auth.channel == "crm"
@@ -77,7 +77,7 @@ def test_identity_is_decoded_at_initialization_and_properties_reuse_it(monkeypat
 
 
 def test_credential_expiration_tracks_time_without_silently_replacing_the_token(monkeypatch):
-    auth = ChannelJWTAuth(_token(), KEY)
+    auth = ChannelJWTAuth(_token())
     token = auth.token
     assert not auth.is_expired
 
@@ -97,7 +97,7 @@ def test_expired_credentials_are_rejected_at_initialization():
         algorithm=settings.jwt.algorithm, headers={"kid": "crm"},
     )
     with pytest.raises(jwt.ExpiredSignatureError):
-        ChannelJWTAuth(token, KEY)
+        ChannelJWTAuth(token)
 
 
 def test_expiration_property_follows_pyjwt_numeric_date_conversion():
@@ -106,22 +106,25 @@ def test_expiration_property_follows_pyjwt_numeric_date_conversion():
         {"exp": str(expires_at)}, KEY,
         algorithm=settings.jwt.algorithm, headers={"kid": "crm"},
     )
-    auth = ChannelJWTAuth(token, KEY)
+    auth = ChannelJWTAuth(token)
     assert auth.exp == expires_at
     assert not auth.is_expired
 
 
 def test_token_issuance_keeps_optional_claims_isolated():
-    feishu_claim = ChannelJWTAuth(_token(lark_user_access_token="user-access-token"), KEY)
-    plain = ChannelJWTAuth(_token(), KEY)
+    feishu_claim = ChannelJWTAuth(_token(lark_user_access_token="user-access-token"))
+    plain = ChannelJWTAuth(_token())
     assert set(plain.claims) == {"exp"}
     assert feishu_claim.claims["lark_user_access_token"] == "user-access-token"
 
 
 def test_invalid_signature_and_unknown_channel_are_rejected():
-    token = _token()
+    token = jwt.encode(
+        {"exp": 9999999999}, "a-different-signing-key-at-least-32-characters",
+        algorithm=settings.jwt.algorithm, headers={"kid": "crm"},
+    )
     with pytest.raises(jwt.InvalidTokenError):
-        ChannelJWTAuth(token, "a-different-signing-key-at-least-32-characters")
+        ChannelJWTAuth(token)
     token = jwt.encode(
         {"exp": 9999999999}, KEY,
         algorithm=settings.jwt.algorithm, headers={"kid": "unknown-channel"},

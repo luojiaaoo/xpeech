@@ -94,7 +94,7 @@ def test_internal_and_channel_tokens_use_shared_jwt_settings(monkeypatch, algori
     channel_token = create_token(ChannelTokenParams("test"))
     after = datetime.now(UTC)
     internal_claims = decode_internal_access_token(internal_token, secret_key=internal_secret)
-    channel_claims = ChannelJWTAuth(channel_token, secret_key="c" * 64).claims
+    channel_claims = ChannelJWTAuth(channel_token).claims
 
     assert jwt.get_unverified_header(internal_token)["alg"] == algorithm
     assert jwt.get_unverified_header(channel_token)["alg"] == algorithm
@@ -107,7 +107,7 @@ def test_access_token_can_carry_lark_user_access_token():
     token = create_token(ChannelTokenParams(TEST_CHANNEL, lark_user_access_token="u-request-token"))
 
     assert (
-        ChannelJWTAuth(token, secret_key=TEST_CHANNEL_KEY).claims[
+        ChannelJWTAuth(token).claims[
             "lark_user_access_token"
         ]
         == "u-request-token"
@@ -115,15 +115,16 @@ def test_access_token_can_carry_lark_user_access_token():
 
 
 @pytest.mark.parametrize("lark_user_access_token", [123, False, {}, []])
-def test_api_rejects_invalid_lark_user_access_token_claim(lark_user_access_token):
+@pytest.mark.parametrize("channel", ["feishu", "web_client", TEST_CHANNEL])
+def test_api_rejects_invalid_lark_user_access_token_claim(channel, lark_user_access_token):
     token = jwt.encode(
         {
             "exp": datetime.now(UTC) + timedelta(seconds=60),
             "lark_user_access_token": lark_user_access_token,
         },
-        settings.jwt.channels["feishu"].secret_key,
+        settings.jwt.channels[channel].secret_key,
         algorithm=settings.jwt.algorithm,
-        headers={"kid": "feishu"},
+        headers={"kid": channel},
     )
     response = TestClient(app).post(
         "/answer_question",
@@ -211,7 +212,7 @@ def test_channel_access_token_only_requires_expiration():
     token = create_token(ChannelTokenParams(TEST_CHANNEL))
     after = datetime.now(UTC)
 
-    claims = ChannelJWTAuth(token, secret_key=TEST_CHANNEL_KEY).claims
+    claims = ChannelJWTAuth(token).claims
 
     assert int((now + timedelta(seconds=60)).timestamp()) <= claims["exp"] <= int((after + timedelta(seconds=60)).timestamp())
     assert jwt.get_unverified_header(token)["alg"] == "HS256"
@@ -249,10 +250,13 @@ def test_api_rejects_lark_user_token_in_internal_jwt():
 
 
 def test_one_channel_key_cannot_impersonate_another_channel():
-    token = create_token(ChannelTokenParams("feishu"))
+    token = jwt.encode(
+        {"exp": 9999999999}, settings.jwt.channels["feishu"].secret_key,
+        algorithm=settings.jwt.algorithm, headers={"kid": "web_client"},
+    )
 
     with pytest.raises(jwt.InvalidTokenError):
-        ChannelJWTAuth(token, secret_key=settings.jwt.channels["web_client"].secret_key).claims
+        ChannelJWTAuth(token)
 
 
 @pytest.mark.parametrize(
@@ -326,8 +330,9 @@ def test_api_rejects_channel_token_without_kid(secret_key):
     assert response.status_code == 401
 
 
-def test_web_channel_key_cannot_supply_lark_user_token():
-    token = create_token(ChannelTokenParams("web_client", lark_user_access_token="must-be-feishu-scoped"))
+@pytest.mark.parametrize("channel", ["feishu", "web_client", TEST_CHANNEL])
+def test_backend_accepts_lark_user_token_from_any_configured_channel(channel):
+    token = create_token(ChannelTokenParams(channel, lark_user_access_token="u-request-token"))
 
     response = TestClient(app).post(
         "/answer_question",
@@ -338,7 +343,7 @@ def test_web_channel_key_cannot_supply_lark_user_token():
         },
     )
 
-    assert response.status_code == 401
+    assert response.status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -465,7 +470,7 @@ def test_token_endpoint_issues_channel_jwt_for_docs(channel):
     assert token_response.headers["cache-control"] == "no-store"
     assert token_response.json()["token_type"] == "bearer"
     token = token_response.json()["access_token"]
-    claims = ChannelJWTAuth(token, secret_key=keys[channel]).claims
+    claims = ChannelJWTAuth(token).claims
     assert jwt.get_unverified_header(token)["kid"] == channel
     assert set(claims) == {"exp"}
 
@@ -486,7 +491,7 @@ def test_token_endpoint_issues_channel_jwt_for_docs(channel):
         ("POST", "/chat"),
         ("POST", "/chat_sync"),
         ("POST", "/answer_question"),
-        ("GET", "/background_message?channel=feishu"),
+        ("GET", "/background_message"),
         ("GET", "/sessions/test/files?path=result.txt"),
         ("GET", "/skills"),
         ("POST", "/skills/import?user_id=test"),

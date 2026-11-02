@@ -31,12 +31,11 @@ class ChannelTokenParams:
 class ChannelJWTAuth:
     """Channel credential decoded once at construction, with live expiration checks."""
 
-    def __init__(self, token: str, secret_key: str | None = None):
+    def __init__(self, token: str):
         channel = jwt.get_unverified_header(token).get("kid")
         if not isinstance(channel, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", channel) is None:
             raise jwt.InvalidTokenError("Invalid channel JWT key ID")
-        if secret_key is None:
-            secret_key = _channel_secret_key(channel)
+        secret_key = _channel_secret_key(channel)
         try:
             claims = jwt.decode(
                 token, secret_key, algorithms=[settings.jwt.algorithm],

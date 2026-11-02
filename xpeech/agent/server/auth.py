@@ -73,13 +73,8 @@ def _authenticate_channel_token(token: str | None) -> AuthenticatedChannel:
     try:
         auth = AuthenticatedChannel(token)
         lark_user_access_token = auth.claims.get("lark_user_access_token")
-        if lark_user_access_token is not None:
-            if auth.channel != "feishu":
-                raise jwt.InvalidTokenError(
-                    "lark_user_access_token is only valid in a Feishu channel token"
-                )
-            if not isinstance(lark_user_access_token, str):
-                raise jwt.InvalidTokenError("Invalid lark_user_access_token claim")
+        if lark_user_access_token is not None and not isinstance(lark_user_access_token, str):
+            raise jwt.InvalidTokenError("Invalid lark_user_access_token claim")
         return auth
     except jwt.InvalidTokenError:
         raise HTTPException(

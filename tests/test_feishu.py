@@ -243,7 +243,6 @@ async def test_background_poll_immediately_sends_markdown_card():
 
     client.get.assert_awaited_once()
     assert client.get.await_args.args == ("http://backend.test/background_message",)
-    assert client.get.await_args.kwargs["params"] == {"channel": "feishu"}
     assert client.get.await_args.kwargs["headers"]["authorization"].startswith("Bearer ")
     send.assert_awaited_once_with(
         to="ou_receiver",

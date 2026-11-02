@@ -77,6 +77,7 @@ Token 至少需要包含 `exp`；所有 JWT 共用 `[jwt]` 中的 `algorithm` �
 本文介绍的聊天、追问、后台消息、文件、技能接口都必须使用
 带有效 channel `kid` 的 JWT，不接受内部 JWT；`/statistics` 及其子接口只接受
 `kid=web_client`。`/internal/scheduled-run` 和 scheduler 服务的接口只使用内部密钥验签。
+后台消息的外部入口由 backend 校验 Feishu channel JWT，再使用内部 JWT 请求 scheduler。
 建议接入方在每次请求前签发新 Token，不要缓存到过期边界。
 
 Python 签发示例：
@@ -645,7 +646,7 @@ curl --get "http://localhost:7878/sessions/demo-user/files" \
 这一接口只用于自建飞书投递通道接收定时 Agent 任务的执行结果；普通聊天接入不需要调用。
 
 ```http
-GET /background_message?channel=feishu
+GET /background_message
 Authorization: Bearer <JWT>
 ```
 
@@ -659,7 +660,8 @@ Authorization: Bearer <JWT>
 }
 ```
 
-投递方收到消息后，应使用 `open_id` 将 `content` 发送给对应飞书用户，然后立即发起下一次长轮询。当前只支持 `channel=feishu`。
+投递方收到消息后，应使用 `open_id` 将 `content` 发送给对应飞书用户，然后立即发起下一次长轮询。
+通道由 JWT 确定，无需传入 `channel` 查询参数；当前仅允许 Feishu 通道领取消息。
 
 ## 10. 内置会话命令
 

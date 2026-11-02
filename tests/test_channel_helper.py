@@ -35,7 +35,7 @@ async def test_backend_requests_use_channel_tokens_and_a_user_header(monkeypatch
     for request in requests:
         assert request.headers["x-user-id"] == "alice"
         token = request.headers["authorization"].removeprefix("Bearer ")
-        auth = ChannelJWTAuth(token, TEST_SECRET_KEY)
+        auth = ChannelJWTAuth(token)
         assert auth.channel == TEST_CHANNEL
         assert set(auth.claims) == {"exp"}
 

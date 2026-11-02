@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
 from ...execute import execute_chat, execute_chat_stream
@@ -19,7 +19,6 @@ from ..dependencies import (
     user_id_header,
 )
 from ..schema import (
-    BackgroundMessageChannel,
     FeishuBackgroundMessage,
     InputContent,
 )
@@ -28,11 +27,16 @@ router = APIRouter()
 
 
 @router.get("/background_message", response_model=FeishuBackgroundMessage)
-async def poll_background_message(channel: BackgroundMessageChannel) -> FeishuBackgroundMessage | Response:
+async def poll_background_message(
+    auth: Annotated[AuthenticatedChannel, Depends(require_channel_jwt)],
+) -> FeishuBackgroundMessage | Response:
     """Any backend can long-poll the shared scheduler for a channel message."""
-    payload = await scheduler_request(
-        "GET", f"/background_message?channel={channel.value}", timeout=60,
-    )
+    if auth.channel != "feishu":
+        raise HTTPException(
+            status_code=403,
+            detail="Background messages are only available for the Feishu channel",
+        )
+    payload = await scheduler_request("GET", f"/background_message?channel={auth.channel}")
     if payload is None:
         return Response(status_code=204)
     return FeishuBackgroundMessage.model_validate(payload)

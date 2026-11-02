@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import jwt
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
@@ -62,11 +63,20 @@ def scheduler_http(monkeypatch):
     )
     client_class = httpx.AsyncClient
     transport = httpx.ASGITransport(app=scheduler_service.app)
+    requests = []
+
+    async def record_request(request):
+        requests.append(request)
+        decode_internal_access_token(request.headers["authorization"].removeprefix("Bearer "))
+
     monkeypatch.setattr(
         scheduler_client,
         "AsyncClient",
-        lambda **kwargs: client_class(transport=transport, **kwargs),
+        lambda **kwargs: client_class(
+            transport=transport, event_hooks={"request": [record_request]}, **kwargs,
+        ),
     )
+    return requests
 
 
 @pytest.fixture
@@ -362,6 +372,7 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
         user_id="session-1",
     )
     assert list_scheduled_tasks("session-1") == []
+    assert len(scheduler_http) == 5
 
 
 @pytest.mark.asyncio
@@ -566,9 +577,12 @@ async def test_background_message_long_poll_times_out_with_204(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_http, monkeypatch):
-    token = create_token(ChannelTokenParams("feishu"))
-    queue = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
+@pytest.mark.parametrize("app", [backend_app, scheduler_service.app])
+async def test_background_poll_uses_separate_external_and_internal_jwt(app, scheduler_http, monkeypatch):
+    token = create_token(ChannelTokenParams("feishu")) if app is backend_app else create_internal_access_token()
+    path = "/background_message" if app is backend_app else "/background_message?channel=feishu"
+    queue = FeishuBackgroundMessageQueue()
+    monkeypatch.setitem(background.BACKGROUND_MESSAGE_QUEUES, BackgroundMessageChannel.FEISHU, queue)
     queue.put_nowait(
         FeishuBackgroundMessage(
             open_id="ou_1",
@@ -579,11 +593,11 @@ async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_htt
     )
     monkeypatch.setattr(scheduler_service, "BACKGROUND_MESSAGE_LONG_POLL_SECONDS", 0.001)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=backend_app),
+        transport=httpx.ASGITransport(app=app),
         base_url="http://test",
         headers={"Authorization": f"Bearer {token}"},
     ) as client:
-        response = await client.get("/background_message?channel=feishu")
+        response = await client.get(path)
         assert response.status_code == 200
         assert response.json() == {
             "channel": "feishu",
@@ -592,8 +606,69 @@ async def test_direct_backend_proxies_background_poll_to_scheduler(scheduler_htt
             "schedule_type": "cron",
             "schedule_value": "0 9 * * *",
         }
-        response = await client.get("/background_message?channel=feishu")
+        response = await client.get(path)
         assert response.status_code == 204
+    assert len(scheduler_http) == (2 if app is backend_app else 0)
+    for request in scheduler_http:
+        assert request.url.params["channel"] == "feishu"
+
+
+@pytest.mark.asyncio
+async def test_background_poll_rejects_other_channels_without_consuming_messages(scheduler_http):
+    token = create_token(ChannelTokenParams("web_client"))
+    queue = background.BACKGROUND_MESSAGE_QUEUES[BackgroundMessageChannel.FEISHU]
+    message = FeishuBackgroundMessage(
+        open_id="ou_1",
+        content="completed",
+        schedule_type="cron",
+        schedule_value="0 9 * * *",
+    )
+    queue.put_nowait(message)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=backend_app), base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/background_message",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "Background messages are only available for the Feishu channel",
+    }
+    assert queue.get_nowait() == message
+    assert scheduler_http == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("app", [backend_app, scheduler_service.app])
+@pytest.mark.parametrize("token_kind", ["wrong-type", "expired", "wrong-key", "malformed"])
+async def test_background_poll_rejects_invalid_jwt(app, token_kind, scheduler_http):
+    path = "/background_message" if app is backend_app else "/background_message?channel=feishu"
+    if token_kind == "wrong-type":
+        token = create_internal_access_token() if app is backend_app else create_token(ChannelTokenParams("feishu"))
+    elif token_kind == "malformed":
+        token = "invalid-token"
+    else:
+        if token_kind == "wrong-key":
+            key = settings.jwt.channels["web_client"].secret_key
+        else:
+            key = settings.jwt.channels["feishu"].secret_key if app is backend_app else settings.jwt.secret_key
+        token = jwt.encode(
+            {"exp": 1 if token_kind == "expired" else 9999999999},
+            key, algorithm=settings.jwt.algorithm, headers={"kid": "feishu"} if app is backend_app else None,
+        )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        response = await client.get(
+            path,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert scheduler_http == []
 
 
 @pytest.mark.asyncio
@@ -621,6 +696,7 @@ async def test_only_scheduler_lifespan_starts_scheduling(tmp_path, monkeypatch):
         (scheduler_service.app, "GET", "/schedules"),
         (scheduler_service.app, "DELETE", "/schedules/job-1"),
         (scheduler_service.app, "GET", "/background_message?channel=feishu"),
+        (backend_app, "GET", "/background_message"),
         (backend_app, "POST", "/internal/scheduled-run"),
     ],
 )
@@ -632,9 +708,43 @@ async def test_scheduler_and_execution_endpoints_require_jwt(app, method, path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "method, path",
+    [
+        ("POST", "/schedules"),
+        ("GET", "/schedules"),
+        ("DELETE", "/schedules/job-1"),
+        ("GET", "/background_message?channel=feishu"),
+    ],
+)
+@pytest.mark.parametrize("token_kind", ["expired", "wrong-key", "malformed"])
+async def test_scheduler_rejects_invalid_internal_jwt(method, path, token_kind):
+    if token_kind == "malformed":
+        token = "invalid-token"
+    else:
+        key = settings.jwt.secret_key if token_kind == "expired" else settings.jwt.channels["feishu"].secret_key
+        token = jwt.encode(
+            {"exp": 1 if token_kind == "expired" else 9999999999},
+            key, algorithm=settings.jwt.algorithm,
+        )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=scheduler_service.app), base_url="http://test",
+    ) as client:
+        response = await client.request(
+            method, path, headers={"Authorization": f"Bearer {token}", "x-user-id": "alice"},
+        )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "app, method, path",
     [
+        (scheduler_service.app, "POST", "/schedules"),
         (scheduler_service.app, "GET", "/schedules"),
+        (scheduler_service.app, "DELETE", "/schedules/job-1"),
+        (scheduler_service.app, "GET", "/background_message?channel=feishu"),
         (backend_app, "POST", "/internal/scheduled-run"),
     ],
 )
@@ -668,12 +778,16 @@ async def test_scheduler_api_validates_context_and_time(tmp_path, scheduler_http
         "session_metadata": {"open_id": "ou_1"},
     }
     with pytest.raises(ValueError, match="future"):
-        await scheduler_client.scheduler_request("POST", "/schedules", "alice", payload=payload)
+        await scheduler_client.scheduler_request(
+            "POST", "/schedules", user_id="alice", payload=payload,
+        )
 
     payload["run_at"] = "2099-01-01T00:00:00+08:00"
     payload["channel"] = "web"
     with pytest.raises(httpx.HTTPStatusError) as error:
-        await scheduler_client.scheduler_request("POST", "/schedules", "alice", payload=payload)
+        await scheduler_client.scheduler_request(
+            "POST", "/schedules", user_id="alice", payload=payload,
+        )
     assert error.value.response.status_code == 422
     assert list_scheduled_tasks("alice") == []
 

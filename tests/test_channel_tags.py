@@ -84,12 +84,10 @@ def test_custom_channel_can_get_token_and_use_business_endpoints(channels, sessi
     assert client.post("/internal/scheduled-run", headers=headers).status_code == 401
 
 
-@pytest.mark.parametrize("claims", [{}, {"lark_user_access_token": "u-forbidden"}])
-def test_custom_channel_rejects_wrong_key_or_feishu_claim(channels, claims):
-    key = CRM_KEY if claims else ERP_KEY
+def test_custom_channel_rejects_wrong_key(channels):
     token = jwt.encode(
-        {"exp": datetime.now(UTC) + timedelta(seconds=60), **claims},
-        key,
+        {"exp": datetime.now(UTC) + timedelta(seconds=60)},
+        ERP_KEY,
         algorithm=settings.jwt.algorithm,
         headers={"kid": "crm"},
     )
