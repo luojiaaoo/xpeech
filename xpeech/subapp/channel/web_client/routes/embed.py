@@ -4,9 +4,10 @@ import re
 import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 import jwt
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from .....config.settings import settings
@@ -21,8 +22,8 @@ class EmbedSessionBody(BaseModel):
     jwt: str = Field(min_length=1, max_length=16384, repr=False)
 
 
-def verify_embed_jwt(token: str) -> tuple[str, str, datetime]:
-    """Only a verified business-server assertion may select the local user/channel."""
+def verify_embed_jwt(token: str) -> tuple[str, datetime]:
+    """Verify the configured channel and expiration of an embedding token."""
     try:
         header = jwt.get_unverified_header(token)
         channel_name = header.get("kid")
@@ -36,15 +37,8 @@ def verify_embed_jwt(token: str) -> tuple[str, str, datetime]:
             token,
             channel_auth.secret_key,
             algorithms=[settings.jwt.algorithm],
-            options={"require": ["sub", "exp"], "verify_aud": False},
+            options={"require": ["exp"], "verify_aud": False},
         )
-        user_id = claims["sub"]
-        if (
-            not isinstance(user_id, str)
-            or not 1 <= len(user_id) <= 128
-            or re.fullmatch(USER_ID_PATTERN, user_id) is None
-        ):
-            raise jwt.InvalidTokenError("Invalid subject")
         expires_at = claims["exp"]
         if (
             isinstance(expires_at, bool)
@@ -52,7 +46,7 @@ def verify_embed_jwt(token: str) -> tuple[str, str, datetime]:
             or not math.isfinite(expires_at)
         ):
             raise jwt.InvalidTokenError("Invalid expiration")
-        return user_id, channel_name, datetime.fromtimestamp(expires_at, UTC)
+        return channel_name, datetime.fromtimestamp(expires_at, UTC)
     except (jwt.InvalidTokenError, HTTPException, ValueError, TypeError, OverflowError, OSError):
         raise HTTPException(401, "嵌入 JWT 无效或已过期") from None
 
@@ -74,9 +68,14 @@ def create_embed_router(
             await dao.delete_session(hashlib.sha256(token.encode()).hexdigest())
 
     @router.post("/session")
-    async def create_session(request: Request, body: EmbedSessionBody, response: Response):
+    async def create_session(
+        request: Request,
+        body: EmbedSessionBody,
+        response: Response,
+        user_id: Annotated[str, Header(alias="X-USER-ID", min_length=1, max_length=128, pattern=USER_ID_PATTERN)],
+    ):
         require_origin(request)
-        user_id, channel_name, jwt_expires_at = verify_embed_jwt(body.jwt)
+        channel_name, jwt_expires_at = verify_embed_jwt(body.jwt)
         now = datetime.now(UTC)
         expires_at = min(jwt_expires_at, now + timedelta(seconds=settings.jwt.access_token_expire_seconds))
         expires_in = int((expires_at - now).total_seconds())

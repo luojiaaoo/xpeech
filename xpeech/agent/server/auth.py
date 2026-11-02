@@ -101,10 +101,6 @@ def _authenticate_channel_token(
             token,
             ChannelJWTAuth(kid, channel_keys[kid]),
         )
-        # Browser identity assertions share a channel key, but must never grant
-        # the service-level ability to choose arbitrary x-user-id/path values.
-        if "sub" in claims:
-            raise jwt.InvalidTokenError("A user identity JWT is not a backend channel token")
         lark_user_access_token = claims.get("lark_user_access_token")
         if lark_user_access_token is not None:
             if kid != "feishu":

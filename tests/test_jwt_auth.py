@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from xpeech.agent import execute as execute_module
+from xpeech.agent.loop import AgentLoop, QuestionEvent
 from xpeech.agent.server.api import app
 from xpeech.agent.server.context import get_lark_user_access_token
 from xpeech.agent.tools import sandbox
@@ -235,32 +236,29 @@ def test_channel_token_cannot_be_decoded_as_internal_token():
         decode_internal_access_token(token)
 
 
-@pytest.mark.parametrize("path, method", [
-    ("/answer_question", "POST"),
-    ("/chat", "POST"),
-    ("/sessions/bob/files?path=report.txt", "GET"),
-    ("/skills?user_id=bob", "GET"),
-])
-def test_user_identity_jwt_cannot_be_used_as_a_backend_channel_token(monkeypatch, path, method):
+@pytest.mark.parametrize("user_id", ["alice", "bob"])
+def test_channel_token_uses_user_id_header_without_subject(monkeypatch, user_id):
     monkeypatch.setitem(settings.jwt.channels, "crm", JWTChannelConfig(secret_key=TEST_CHANNEL_AUTH.secret_key))
-    token = jwt.encode(
-        {"sub": "alice", "exp": datetime.now(UTC) + timedelta(seconds=settings.jwt.access_token_expire_seconds)},
-        TEST_CHANNEL_AUTH.secret_key,
-        algorithm=settings.jwt.algorithm,
-        headers={"kid": "crm"},
-    )
-    response = TestClient(app).request(
-        method,
-        path,
-        data={"answer": "ok", "content": "[]"} if method == "POST" else None,
+    token = create_channel_access_token(ChannelJWTAuth("crm", TEST_CHANNEL_AUTH.secret_key))
+    assert set(decode_channel_access_token(token, ChannelJWTAuth("crm", TEST_CHANNEL_AUTH.secret_key))) == {"exp"}
+    session_id = "018f0000-0000-7000-8000-000000000001"
+    question = QuestionEvent(event=asyncio.Event())
+    monkeypatch.setattr(AgentLoop, "SESSION_QUESTION_EVENT", {(user_id, session_id): question})
+
+    response = TestClient(app).post(
+        "/answer_question",
+        data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-user-id": "bob",
-            "x-sender-name": "Bob",
-            "x-session-id": "018f0000-0000-7000-8000-000000000001",
+            "X-USER-ID": user_id,
+            "x-session-id": session_id,
         },
     )
-    assert response.status_code == 401
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Answer received"}
+    assert question.answer == "ok"
+    assert question.event.is_set()
 
 
 def test_api_rejects_lark_user_token_in_internal_jwt():
