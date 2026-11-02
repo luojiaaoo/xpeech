@@ -67,6 +67,7 @@ class ToolExecutor:
         user_id: str | None = None,
         sender_name: str | None = None,
         channel: str | None = None,
+        session_id: str | None = None,
     ) -> list[ToolExecutionResult]:
         """并发执行全部工具调用，并按原始顺序返回结构化结果。"""
 
@@ -94,6 +95,8 @@ class ToolExecutor:
                     kwargs["sender_name"] = sender_name
                 if model_info.has_channel:
                     kwargs["channel"] = channel
+                if model_info.has_session_id:
+                    kwargs["session_id"] = session_id
                 async with timeout_scope:
                     if not model_info.has_pydantic_param:
                         value = await tool_call_func(**kwargs)

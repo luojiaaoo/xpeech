@@ -1,10 +1,9 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from glob import escape
 from pathlib import Path
 from stat import S_ISDIR, S_ISREG
-from typing import Any, NoReturn
+from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode
 
 import yaml
@@ -13,14 +12,13 @@ from loguru import logger
 from ..exceptions import PathProtectionError
 from ..utils.file_io import LockedFile, ensure_path
 from ..utils.helper import LiteralDumper
-from ..utils.ids import validate_session_id
+from ..utils.ids import DEFAULT_SESSION_ID, validate_session_id
 from .prompt.helper import remove_system_messages
 
 
 @dataclass(frozen=True)
 class _HistoryFile:
     path: Path
-    user_id: str
     channel: str
     session_id: str
     not_interactive: bool
@@ -31,7 +29,7 @@ class _HistoryFile:
 class YamlHistoryRepository:
     """以带有可解析元数据的 YAML 文件持久化会话历史。"""
 
-    _FILE_KEYS = ("user_id", "channel", "type", "session_id")
+    _FILE_KEYS = ("channel", "type", "session_id")
     _SESSION_TYPE = "session"
     _NOT_INTERACTIVE_TYPE = "not_interactive"
 
@@ -45,24 +43,31 @@ class YamlHistoryRepository:
     @classmethod
     def _history_filename(
         cls,
-        user_id: str,
         session_id: str,
         *,
         channel: str,
         not_interactive: bool = False,
     ) -> str:
         """根据会话元数据生成规范的历史文件名。"""
-        if not user_id or not session_id or not channel:
-            raise PathProtectionError("History user_id, session_id, and channel must be non-empty")
+        if not session_id or not channel:
+            raise PathProtectionError("History session_id and channel must be non-empty")
         session_id = validate_session_id(session_id)
         history_type = cls._NOT_INTERACTIVE_TYPE if not_interactive else cls._SESSION_TYPE
         fields = (
-            ("user_id", user_id),
             ("channel", channel),
             ("type", history_type),
             ("session_id", session_id),
         )
         return f"{urlencode(fields, quote_via=quote, safe='')}.yaml"
+
+    def _user_history_dir(self, user_id: str) -> Path:
+        """将用户 ID 编码为单层目录名，隔离各用户的历史文件。"""
+        if not user_id:
+            raise PathProtectionError("History user_id must be non-empty")
+        directory = self._base_dir / quote(user_id, safe="").replace(".", "%2E")
+        if directory.is_symlink() or directory.is_junction():
+            raise PathProtectionError("History user directory must not be a link")
+        return ensure_path(directory)
 
     def _history_path(
         self,
@@ -74,135 +79,75 @@ class YamlHistoryRepository:
     ) -> Path:
         """生成普通会话或非交互任务的历史文件路径。"""
         filename = self._history_filename(
-            user_id,
             session_id,
             channel=channel,
             not_interactive=not_interactive,
         )
         if len(filename.encode()) > 255:
             raise PathProtectionError("Session history filename is too long")
-        return self._base_dir / filename
+        return self._user_history_dir(user_id) / filename
 
     def _maintain_history_files(
         self,
         *,
-        user_id: str | None = None,
-        protected_path: Path | None = None,
-        protected_session: tuple[str, str] | None = None,
+        user_id: str,
+        protected_session_id: str | None = None,
     ) -> list[_HistoryFile]:
-        """删除非法文件，并按用户保留不超过配置上限的历史文件。"""
-
-        def parse_history_path(path: Path, *, modified_ns: int, size_bytes: int) -> _HistoryFile:
-            """解析历史文件名，并当场删除文件名不合规的文件。"""
-
-            def delete_invalid_file() -> NoReturn:
-                path.unlink(missing_ok=True)
-                logger.info("Invalid session history file deleted path={}", path.name)
-                raise FileNotFoundError(path)
-
-            if path.suffix != ".yaml":
-                delete_invalid_file()
-            try:
-                fields = parse_qsl(path.stem, keep_blank_values=True, strict_parsing=True)
-            except ValueError:
-                delete_invalid_file()
-            if tuple(key for key, _value in fields) != self._FILE_KEYS:
-                delete_invalid_file()
-            values = dict(fields)
-            history_type = values["type"]
-            if (
-                not values["user_id"]
-                or not values["channel"]
-                or not values["session_id"]
-                or history_type not in {self._SESSION_TYPE, self._NOT_INTERACTIVE_TYPE}
-            ):
-                delete_invalid_file()
-            try:
-                session_id = validate_session_id(values["session_id"])
-            except PathProtectionError:
-                delete_invalid_file()
-            not_interactive = history_type == self._NOT_INTERACTIVE_TYPE
-            if path.name != self._history_filename(
-                values["user_id"],
-                session_id,
-                channel=values["channel"],
-                not_interactive=not_interactive,
-            ):
-                delete_invalid_file()
-            return _HistoryFile(
-                path=path,
-                user_id=values["user_id"],
-                channel=values["channel"],
-                session_id=session_id,
-                not_interactive=not_interactive,
-                modified_ns=modified_ns,
-                size_bytes=size_bytes,
-            )
-
+        """只清理当前用户的文件，优先保留 default 和当前会话。"""
         histories: list[_HistoryFile] = []
-        paths = self._base_dir.iterdir()
-        if user_id is not None:
-            encoded_user_id = escape(quote(user_id, safe=""))
-            paths = self._base_dir.glob(f"user_id={encoded_user_id}&channel=*&type=*&session_id=*.yaml")
-        for path in paths:
+        for path in self._user_history_dir(user_id).iterdir():
             try:
                 stat = path.lstat()
             except FileNotFoundError:
                 continue
             if S_ISDIR(stat.st_mode):
                 continue
-            if not S_ISREG(stat.st_mode):
-                path.unlink(missing_ok=True)
-                logger.info("Non-regular session history file deleted path={}", path.name)
-                continue
             try:
-                history = parse_history_path(
-                    path,
-                    modified_ns=stat.st_mtime_ns,
-                    size_bytes=stat.st_size,
-                )
-            except FileNotFoundError:
+                if not S_ISREG(stat.st_mode) or path.suffix != ".yaml":
+                    raise ValueError("Not a regular YAML file")
+                fields = parse_qsl(path.stem, keep_blank_values=True, strict_parsing=True)
+                values = dict(fields)
+                if tuple(key for key, _ in fields) != self._FILE_KEYS or values["type"] not in {
+                    self._SESSION_TYPE, self._NOT_INTERACTIVE_TYPE,
+                }:
+                    raise ValueError("Invalid history metadata")
+                not_interactive = values["type"] == self._NOT_INTERACTIVE_TYPE
+                if path.name != self._history_filename(
+                    values["session_id"],
+                    channel=values["channel"], not_interactive=not_interactive,
+                ):
+                    raise ValueError("Non-canonical history filename")
+            except (ValueError, PathProtectionError):
+                path.unlink(missing_ok=True)
+                logger.info("Invalid session history file deleted path={}", path.name)
                 continue
-            histories.append(history)
+            histories.append(_HistoryFile(
+                path=path,
+                channel=values["channel"],
+                session_id=values["session_id"],
+                not_interactive=not_interactive,
+                modified_ns=stat.st_mtime_ns,
+                size_bytes=stat.st_size,
+            ))
 
-        if protected_path is None and protected_session is not None:
-            protected_candidates = [
-                history for history in histories if (history.user_id, history.session_id) == protected_session
-            ]
-            if protected_candidates:
-                protected_path = max(
-                    protected_candidates,
-                    key=lambda item: (item.modified_ns, item.path.name),
-                ).path
-
-        by_user: dict[str, list[_HistoryFile]] = {}
-        for history in histories:
-            by_user.setdefault(history.user_id, []).append(history)
-
+        histories.sort(key=lambda history: (
+            history.session_id == DEFAULT_SESSION_ID
+            or history.session_id == protected_session_id,
+            history.modified_ns,
+            history.path.name,
+        ), reverse=True)
+        count = 0
         retained: list[_HistoryFile] = []
-        for user_histories in by_user.values():
-            ordered = sorted(
-                user_histories,
-                key=lambda item: (item.modified_ns, item.path.name),
-                reverse=True,
-            )
-            protected = next(
-                (history for history in ordered if history.path == protected_path),
-                None,
-            )
-            keep_count = self._max_files_per_user - int(protected is not None)
-            keep = ([protected] if protected is not None else []) + [
-                history for history in ordered if history is not protected
-            ][:keep_count]
-            keep_paths = {history.path for history in keep}
-            retained.extend(keep)
-            for history in ordered:
-                if history.path in keep_paths:
-                    continue
-                try:
-                    history.path.unlink()
-                except FileNotFoundError:
-                    continue
+        for history in histories:
+            if (
+                count < self._max_files_per_user
+                or history.session_id == DEFAULT_SESSION_ID
+                or history.session_id == protected_session_id
+            ):
+                count += 1
+                retained.append(history)
+            else:
+                history.path.unlink(missing_ok=True)
                 logger.info("Expired session history file deleted path={}", history.path.name)
         return retained
 
@@ -212,12 +157,18 @@ class YamlHistoryRepository:
         *,
         start_date: date | None = None,
         end_date: date | None = None,
+        current_session_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """按更新时间列出用户的普通会话和后台任务历史。"""
+        """按更新时间列出用户的历史，提供当前会话 ID 时将其排除。"""
 
         def build_session_list() -> list[dict[str, Any]]:
             sessions = []
-            for history in self._maintain_history_files(user_id=user_id):
+            for history in self._maintain_history_files(
+                user_id=user_id,
+                protected_session_id=current_session_id,
+            ):
+                if history.session_id == current_session_id:
+                    continue
                 updated_at = datetime.fromtimestamp(history.modified_ns / 1_000_000_000, UTC)
                 if start_date is not None and updated_at.date() < start_date:
                     continue
@@ -245,16 +196,23 @@ class YamlHistoryRepository:
 
         return await asyncio.to_thread(build_session_list)
 
-    async def load_session(self, user_id: str, session_id: str) -> list[dict[str, Any]]:
+    async def load_session(
+        self,
+        user_id: str,
+        session_id: str,
+        *,
+        current_session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """仅使用 list_sessions 返回的唯一会话 ID 读取历史。"""
         session_id = validate_session_id(session_id)
+        if session_id == current_session_id:
+            raise PathProtectionError("Cannot read the current session history")
         histories = await asyncio.to_thread(
             self._maintain_history_files,
-            protected_session=(user_id, session_id),
+            user_id=user_id,
+            protected_session_id=session_id,
         )
-        candidates = [
-            history for history in histories if history.user_id == user_id and history.session_id == session_id
-        ]
+        candidates = [history for history in histories if history.session_id == session_id]
         if not candidates:
             raise FileNotFoundError("Session history not found for the current user")
         history = max(candidates, key=lambda item: (item.modified_ns, item.path.name))
@@ -275,7 +233,7 @@ class YamlHistoryRepository:
             channel=channel,
             not_interactive=not_interactive,
         )
-        await asyncio.to_thread(self._maintain_history_files, protected_path=path)
+        await asyncio.to_thread(self._maintain_history_files, user_id=user_id, protected_session_id=session_id)
         if not path.is_file():
             return []
         return await self._load_path(path)
@@ -299,7 +257,7 @@ class YamlHistoryRepository:
         channel: str,
         not_interactive: bool = False,
     ) -> None:
-        """原子保存普通会话或非交互任务历史。"""
+        """原子保存普通会话或非交互任务的完整历史。"""
         path = self._history_path(
             user_id,
             session_id,

@@ -1,7 +1,7 @@
 import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -9,8 +9,11 @@ from pydantic import ValidationError
 from xpeech.agent.history import YamlHistoryRepository
 from xpeech.agent.prompt.helper import build_user_prompt
 from xpeech.agent.server.schema import InboundMessage, InputText
+from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.sessions import ListSessionsArgs, ReadSessionArgs, build_session_tools
+from xpeech.exceptions import PathProtectionError
+from xpeech.provider.schema import ToolCallRequest
 
 SESSION_IDS = [f"018f0000-0000-7000-8000-{index:012x}" for index in range(1, 10)]
 
@@ -25,13 +28,13 @@ async def test_lists_only_current_user_sessions_with_date_filters_and_pagination
     await repository.save("alice-other", SESSION_IDS[3], history, channel="feishu")
     await repository.save("alice~session~other", SESSION_IDS[4], history, channel="feishu")
     dates = {
-        f"user_id=alice&channel=feishu&type=session&session_id={SESSION_IDS[0]}.yaml": "2026-10-27T23:59:59+00:00",
-        f"user_id=alice&channel=web&type=session&session_id={SESSION_IDS[1]}.yaml": "2026-10-28T00:00:00+00:00",
-        f"user_id=alice&channel=feishu&type=not_interactive&session_id={SESSION_IDS[2]}.yaml": "2026-10-29T23:59:59+00:00",
+        f"channel=feishu&type=session&session_id={SESSION_IDS[0]}.yaml": "2026-10-27T23:59:59+00:00",
+        f"channel=web&type=session&session_id={SESSION_IDS[1]}.yaml": "2026-10-28T00:00:00+00:00",
+        f"channel=feishu&type=not_interactive&session_id={SESSION_IDS[2]}.yaml": "2026-10-29T23:59:59+00:00",
     }
     for filename, timestamp in dates.items():
         modified = datetime.fromisoformat(timestamp).timestamp()
-        os.utime(tmp_path / filename, (modified, modified))
+        os.utime(tmp_path / "alice" / filename, (modified, modified))
     list_sessions, _ = build_session_tools(user_id="alice", history_path=tmp_path)
 
     all_sessions = json.loads(await list_sessions(ListSessionsArgs()))
@@ -122,25 +125,39 @@ async def test_reads_uuid_session_by_session_id(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_list_globs_escape_user_ids_and_skip_unrelated_file_metadata(tmp_path, monkeypatch):
+async def test_list_cleans_only_current_user_files(tmp_path, monkeypatch):
     repository = YamlHistoryRepository(tmp_path)
     await repository.save("alice[1]", SESSION_IDS[0], [], channel="feishu")
     await repository.save("alice1", SESSION_IDS[1], [], channel="feishu")
     await repository.save("bob", SESSION_IDS[2], [], channel="feishu")
+    invalid_path = tmp_path / "notes.txt"
+    invalid_path.write_text("invalid", encoding="utf-8")
+    own_invalid_path = tmp_path / "alice%5B1%5D" / "notes.txt"
+    own_invalid_path.write_text("invalid", encoding="utf-8")
     original_stat = Path.stat
+    original_iterdir = Path.iterdir
+
+    def check_iterdir(path):
+        assert path == own_invalid_path.parent, "Only the current user directory may be scanned"
+        return original_iterdir(path)
 
     def check_stat(path, *args, **kwargs):
-        if path.name.startswith(("user_id=alice1&", "user_id=bob&")):
-            raise AssertionError("Unrelated histories must not be statted")
+        if path.name in {"alice1", "bob"} or path.parent.name in {"alice1", "bob"} or path == invalid_path:
+            raise AssertionError("Unrelated files must not be statted")
         return original_stat(path, *args, **kwargs)
 
     list_sessions, _read_session = build_session_tools(user_id="alice[1]", history_path=tmp_path)
     with monkeypatch.context() as patch:
         patch.setattr(Path, "stat", check_stat)
+        patch.setattr(Path, "iterdir", check_iterdir)
         result = json.loads(await list_sessions(ListSessionsArgs()))
     assert result["total"] == 1
     assert result["sessions"][0]["session_id"] == SESSION_IDS[0]
     assert result["sessions"][0]["channel"] == "feishu"
+    assert invalid_path.exists()
+    assert not own_invalid_path.exists()
+    assert len(list(tmp_path.iterdir())) == 4
+    assert len(list((tmp_path / "alice%5B1%5D").iterdir())) == 1
     with pytest.raises(ValidationError):
         ReadSessionArgs(session_id="*")
 
@@ -171,9 +188,10 @@ async def test_history_tools_cannot_read_another_user(tmp_path):
 async def test_history_tools_do_not_follow_symlinks(tmp_path):
     repository = YamlHistoryRepository(tmp_path)
     await repository.save("bob", SESSION_IDS[0], [{"role": "user", "content": "private"}], channel="feishu")
+    (tmp_path / "alice").mkdir()
     try:
-        (tmp_path / f"user_id=alice&channel=feishu&type=session&session_id={SESSION_IDS[1]}.yaml").symlink_to(
-            tmp_path / f"user_id=bob&channel=feishu&type=session&session_id={SESSION_IDS[0]}.yaml"
+        (tmp_path / "alice" / f"channel=feishu&type=session&session_id={SESSION_IDS[1]}.yaml").symlink_to(
+            tmp_path / "bob" / f"channel=feishu&type=session&session_id={SESSION_IDS[0]}.yaml"
         )
     except OSError as error:
         if getattr(error, "winerror", None) == 1314:
@@ -184,27 +202,30 @@ async def test_history_tools_do_not_follow_symlinks(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_read_session_deletes_legacy_filenames(tmp_path):
+async def test_read_session_ignores_legacy_filenames(tmp_path):
     legacy_path = tmp_path / "alice.yaml"
     legacy_path.write_text("- role: user\n  content: old question\n", encoding="utf-8")
     pre_channel_path = tmp_path / "alice~session~default.yaml"
     pre_channel_path.write_text("- role: user\n  content: old question\n", encoding="utf-8")
+    flat_path = tmp_path / f"user_id=alice&channel=web&type=session&session_id={SESSION_IDS[0]}.yaml"
+    flat_path.write_text("- role: user\n  content: flat history\n", encoding="utf-8")
     list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
 
     assert json.loads(await list_sessions(ListSessionsArgs()))["sessions"] == []
     with pytest.raises(FileNotFoundError):
-        await read_session(ReadSessionArgs(session_id="default"))
-    assert not legacy_path.exists()
-    assert not pre_channel_path.exists()
+        await read_session(ReadSessionArgs(session_id="default"), session_id=SESSION_IDS[0])
+    assert legacy_path.exists()
+    assert pre_channel_path.exists()
+    assert flat_path.exists()
 
     repository = YamlHistoryRepository(tmp_path)
     current_messages = [{"role": "user", "content": "current question"}]
     await repository.save("alice", "default", current_messages, channel="feishu")
-    sessions = json.loads(await list_sessions(ListSessionsArgs()))
+    sessions = json.loads(await list_sessions(ListSessionsArgs(), session_id=SESSION_IDS[0]))
     assert sessions["total"] == 1
     assert sessions["sessions"][0]["session_id"] == "default"
     assert sessions["sessions"][0]["channel"] == "feishu"
-    result = json.loads(await read_session(ReadSessionArgs(session_id="default")))
+    result = json.loads(await read_session(ReadSessionArgs(session_id="default"), session_id=SESSION_IDS[0]))
     assert result["messages"] == current_messages
 
 
@@ -223,6 +244,48 @@ def test_session_tool_schemas_do_not_allow_selecting_a_user(tmp_path):
     assert "session_id" in read_properties
     assert "channel" not in read_properties
     assert "history_id" not in read_properties
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current_session_id", ["default", SESSION_IDS[0]])
+async def test_history_tools_exclude_current_session_and_reject_direct_reads(tmp_path, current_session_id):
+    repository = YamlHistoryRepository(tmp_path)
+    for channel in ("web", "feishu"):
+        await repository.save("alice", current_session_id, [{"role": "user", "content": "current"}], channel=channel)
+    await repository.save("alice", SESSION_IDS[1], [{"role": "assistant", "content": "other answer"}], channel="web")
+    list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
+
+    page = json.loads(await list_sessions(ListSessionsArgs(limit=1), session_id=current_session_id))
+    assert page["total"] == 1
+    assert page["has_more"] is False
+    assert [session["session_id"] for session in page["sessions"]] == [SESSION_IDS[1]]
+    with pytest.raises(PathProtectionError, match="current session"):
+        await read_session(ReadSessionArgs(session_id=current_session_id), session_id=current_session_id)
+    other = json.loads(await read_session(ReadSessionArgs(session_id=SESSION_IDS[1]), session_id=current_session_id))
+    assert other["messages"] == [{"role": "assistant", "content": "other answer"}]
+
+
+@pytest.mark.asyncio
+async def test_executor_injects_current_session_id_and_ignores_spoofed_arguments(tmp_path):
+    repository = YamlHistoryRepository(tmp_path)
+    await repository.save("alice", SESSION_IDS[0], [{"role": "user", "content": "private current"}], channel="web")
+    list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
+    executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+
+    results = await executor.execute(
+        [
+            ToolCallRequest(id="list", name="list_sessions", arguments={"session_id": SESSION_IDS[1]}),
+            ToolCallRequest(id="read", name="read_session", arguments={"session_id": SESSION_IDS[0]}),
+        ],
+        {"list_sessions": list_sessions, "read_session": read_session},
+        session_id=SESSION_IDS[0],
+    )
+    assert results[0].succeeded
+    assert json.loads(results[0].value)["total"] == 0
+    assert not results[1].succeeded
+    assert "current session" in results[1].value
+    assert "private current" not in results[1].value
+    assert "session_id" not in as_tool(list_sessions)["function"]["parameters"]["properties"]
 
 
 @pytest.mark.asyncio
