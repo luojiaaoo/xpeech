@@ -14,13 +14,9 @@ iframe 页面只提供临时会话，右侧的 **＋ 新建会话** 用于创建
 保持不变，后端按用户 ID 与会话 ID 隔离上下文。旧会话的后端记录不会被删除；关闭再打开窗口
 会保留当前对话，销毁组件后重新初始化会创建新的对话。
 
-嵌入功能默认可用，无需启用开关。在 Web 客户端配置中列出允许接入的业务网站来源
-（协议、域名、端口必须匹配，不包含路径）；未配置来源时不允许任何网站嵌入：
-
-```toml
-[web_client.embed]
-allowed_origins = ["https://portal.example.com", "http://localhost:3000"]
-```
+嵌入功能默认可用，允许任意业务网站接入，无需启用开关或配置来源白名单。
+Web 客户端和 backend 均允许任意来源的 CORS 请求、请求方法及请求头；
+跨域调用使用 `Authorization: Bearer`，不使用跨域 Cookie。JWT 验签和账号权限校验仍然生效。
 
 在业务网站的初始化代码中先动态加载一次模块，再在原有的登录成功、退出登录回调中调用
 组件方法。将模块地址替换为实际部署的 Web 客户端地址：
@@ -125,8 +121,8 @@ localStorage 或 sessionStorage；请求通过 `Authorization: Bearer` 携带。
 接入错误会显示在聊天窗口中，同时触发业务页面的 `xpeech:error` 事件，详情为
 `event.detail.message`。关闭窗口不会退出登录；业务网站退出时必须调用 `destroy()`。
 若反向代理设置了 `X-Frame-Options` 或 CSP，必须同时允许业务网站嵌入；HTTPS 网站应通过
-HTTPS 加载组件。`/embed.js` 作为公开模块提供跨域加载响应头；嵌入会话接口仍按
-`allowed_origins` 限制来源。业务网站配置 CSP 时，需要允许从组件服务地址加载脚本、发起
+HTTPS 加载组件。`/embed.js` 作为公开模块提供跨域加载响应头；嵌入会话接口允许
+任意来源访问，但仍校验 JWT。业务网站配置 CSP 时，需要允许从组件服务地址加载脚本、发起
 连接并嵌入 iframe。
 
 验签后的 JWT `sub` 直接对应 Web 客户端的实际账号 ID，不加前缀、不做哈希或来源隔离。
@@ -140,10 +136,10 @@ HTTPS 加载组件。`/embed.js` 作为公开模块提供跨域加载响应头�
 普通页面原有的密码登录不受影响。
 
 持有通道密钥的业务后端是受信任的身份签发方，必须保护密钥和 JWT 签发接口；浏览器仅接收
-签好的短期 JWT。来源白名单不能替代身份认证。不要把服务端密钥或管理员密码放入嵌入代码。
+签好的短期 JWT。不要把服务端密钥或管理员密码放入嵌入代码。
 
-配置由 `web_client/config.py` 独立读取 `conf.toml` 中的 `[web_client.embed]`；
-也可用 `XPEECH_WEB_CLIENT__EMBED__ALLOWED_ORIGINS='["https://portal.example.com"]' 覆盖。
+旧的 `[web_client.embed].allowed_origins` 和
+`XPEECH_WEB_CLIENT__EMBED__ALLOWED_ORIGINS` 来源白名单配置已不再使用。
 
 验证命令（仓库根目录）：
 

@@ -14,7 +14,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from xpeech.config.settings import JWTChannelConfig, settings
-from xpeech.subapp.channel.web_client.config import EmbedConfig, EmbedSettings
 from xpeech.subapp.channel.helper import ChatStream
 from xpeech.subapp.channel.web_client.dao import WebClientDAO
 
@@ -35,7 +34,6 @@ def client(tmp_path: Path, monkeypatch):
     app = web.create_app(web.WebConfig(
         backend_url="http://backend.test", database_path=tmp_path / "users.db",
         static_dir=tmp_path / "missing", system_name="Assistant",
-        embed=EmbedConfig(allowed_origins=[ORIGIN, OTHER_ORIGIN]),
     ))
     with TestClient(app) as client:
         yield client
@@ -70,7 +68,7 @@ def test_existing_account_is_used_without_admin_cookie_privileges(client):
     result = login_embedded(client, "alice")
     assert result.status_code == 200
     assert "set-cookie" not in result.headers
-    assert result.headers["access-control-allow-origin"] == ORIGIN
+    assert result.headers["access-control-allow-origin"] == "*"
     assert result.headers["cache-control"] == "no-store"
     body = result.json()
     assert body["user"]["user_id"] == "alice"
@@ -89,7 +87,7 @@ def test_existing_account_is_used_without_admin_cookie_privileges(client):
     assert client.get("/api/auth/me").json()["user_id"] == "admin"
 
 
-def test_actual_user_id_is_shared_across_allowed_origins_and_refresh_revokes_old_token(client):
+def test_actual_user_id_is_shared_across_origins_and_refresh_revokes_old_token(client):
     alice = login_embedded(client).json()
     again = login_embedded(client, token=alice["token"]).json()
     bob = login_embedded(client, "bob").json()
@@ -105,33 +103,36 @@ def test_actual_user_id_is_shared_across_allowed_origins_and_refresh_revokes_old
         "Origin": ORIGIN, "Authorization": f"Bearer {again['token']}",
     }).status_code == 204
     assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {again['token']}"}).status_code == 401
-    for headers in ({}, {"Origin": "https://attacker.test"}):
+    for headers in ({}, {"Origin": "https://new-site.test"}):
         response = client.post("/api/auth/embed/session", json={"jwt": signed_identity()}, headers=headers)
-        assert response.status_code == 403
-        assert "access-control-allow-origin" not in response.headers
+        assert response.status_code == 200
+        assert response.json()["user"]["id"] == alice["user"]["id"]
+        assert client.delete("/api/auth/embed/session", headers={
+            **headers, "Authorization": f"Bearer {response.json()['token']}",
+        }).status_code == 204
 
 
-def test_cors_is_limited_to_embed_session_routes(client):
+@pytest.mark.parametrize("origin", [ORIGIN, OTHER_ORIGIN, "https://new-site.test", "http://localhost:3000"])
+def test_cors_allows_any_origin_method_and_headers(client, origin):
     assert "/api/auth/embed/session" in client.app.openapi()["paths"]
-    preflight = client.options("/api/auth/embed/session", headers={
-        "Origin": ORIGIN, "Access-Control-Request-Method": "POST",
-        "Access-Control-Request-Headers": "content-type,authorization",
-    })
-    assert preflight.status_code == 200
-    assert preflight.headers["access-control-allow-origin"] == ORIGIN
-    assert "access-control-allow-credentials" not in preflight.headers
-    denied = client.options("/api/auth/embed/session", headers={
-        "Origin": "https://attacker.test", "Access-Control-Request-Method": "POST",
-    })
-    assert denied.status_code == 400
-    assert "access-control-allow-origin" not in denied.headers
-    assert "access-control-allow-origin" not in client.get("/api/admin/users", headers={"Origin": ORIGIN}).headers
-    invalid = client.post("/api/auth/embed/session", json={"user_id": ""}, headers={"Origin": ORIGIN})
+    for path, method in (("/api/auth/embed/session", "POST"), ("/api/chat", "POST"), ("/api/admin/users/1", "PATCH")):
+        preflight = client.options(path, headers={
+            "Origin": origin, "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": "content-type,authorization,x-session-id,x-custom-header",
+        })
+        assert preflight.status_code == 200
+        assert preflight.headers["access-control-allow-origin"] == "*"
+        assert "x-custom-header" in preflight.headers["access-control-allow-headers"]
+        assert "access-control-allow-credentials" not in preflight.headers
+    protected = client.get("/api/admin/users", headers={"Origin": origin})
+    assert protected.status_code == 401
+    assert protected.headers["access-control-allow-origin"] == "*"
+    invalid = client.post("/api/auth/embed/session", json={"user_id": ""}, headers={"Origin": origin})
     assert invalid.status_code == 422
-    assert invalid.headers["access-control-allow-origin"] == ORIGIN
+    assert invalid.headers["access-control-allow-origin"] == "*"
     policy = client.get("/?embed=1").headers["content-security-policy"]
-    assert policy == f"frame-ancestors {ORIGIN} {OTHER_ORIGIN}"
-    sdk = client.get("/embed.js", headers={"Origin": ORIGIN})
+    assert policy == "frame-ancestors *"
+    sdk = client.get("/embed.js", headers={"Origin": origin})
     assert sdk.status_code == 200
     assert sdk.headers["content-type"].startswith("application/javascript")
     assert sdk.headers["access-control-allow-origin"] == "*"
@@ -142,15 +143,29 @@ def test_rejects_invalid_identity(client, user_id):
     assert login_embedded(client, user_id).status_code == 401
 
 
-def test_default_embed_requires_an_allowed_origin(tmp_path):
+def test_embed_works_without_origin_configuration(client):
+    response = login_embedded(client, origin="https://unconfigured.test")
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert client.get("/?embed=1").headers["content-security-policy"] == "frame-ancestors *"
+
+
+def test_invalid_jwt_is_rejected_from_any_origin(client):
+    response = client.post("/api/auth/embed/session", json={"jwt": "invalid"}, headers={
+        "Origin": "https://unconfigured.test",
+    })
+    assert response.status_code == 401
+    assert response.headers["access-control-allow-origin"] == "*"
+
+
+def test_default_embed_allows_any_frame_ancestor(tmp_path):
     app = web.create_app(web.WebConfig(
         backend_url="http://backend.test", database_path=tmp_path / "default.db",
         static_dir=tmp_path / "missing", system_name="Assistant",
     ))
     with TestClient(app) as client:
         assert "/api/auth/embed/session" in client.app.openapi()["paths"]
-        assert login_embedded(client).status_code == 403
-        assert client.get("/?embed=1").headers["content-security-policy"] == "frame-ancestors 'none'"
+        assert client.get("/?embed=1").headers["content-security-policy"] == "frame-ancestors *"
 
 
 def test_admin_account_can_sign_in_through_embedding(client):
@@ -281,27 +296,6 @@ def test_cookie_chat_and_answers_reject_non_main_sessions(client, monkeypatch, p
     assert response.json()["detail"] == "非嵌入聊天只支持主会话（default）"
     stream.assert_not_awaited()
     answer.assert_not_awaited()
-
-
-def test_origin_configuration_requires_exact_origins():
-    assert EmbedConfig().allowed_origins == []
-    for origins in (["*"], ["https://portal.test/path"], ["https://user@portal.test"], ["null"]):
-        with pytest.raises(ValueError):
-            EmbedConfig(allowed_origins=origins)
-    assert EmbedConfig(allowed_origins=["https://PORTAL.test:443/"]).allowed_origins == ["https://portal.test"]
-
-
-def test_web_only_embed_settings_read_toml_and_environment(tmp_path, monkeypatch):
-    config_module = import_module("xpeech.config.settings")
-    config_file = tmp_path / "embed.toml"
-    config_file.write_text(
-        '[web_client]\ndatabase_path = "users.db"\n'
-        '[web_client.embed]\nallowed_origins = ["https://PORTAL.test:443/"]\n',
-    )
-    monkeypatch.setattr(config_module, "conf_toml_path", str(config_file))
-    assert EmbedSettings().web_client.embed.allowed_origins == ["https://portal.test"]
-    monkeypatch.setenv("XPEECH_WEB_CLIENT__EMBED__ALLOWED_ORIGINS", '["https://override.test"]')
-    assert EmbedSettings().web_client.embed.allowed_origins == ["https://override.test"]
 
 
 def test_signed_user_ids_follow_backend_validation(client):

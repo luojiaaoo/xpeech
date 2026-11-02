@@ -29,6 +29,10 @@ Xpeech API 默认监听 `http://localhost:7878`。一次完整的聊天交互如
 | 字符编码 | UTF-8 |
 | OpenAPI | `/openapi.json`、`/docs`、`/redoc` |
 
+backend 默认允许任意来源的跨域请求，放开请求方法、请求头和响应头读取，支持浏览器直接调用。
+跨域调用使用 `Authorization: Bearer <JWT>`，不使用跨域 Cookie；JWT 仍由业务后端签发，
+浏览器只接收短期 Token，不持有签名密钥。服务到服务调用不受浏览器 CORS 限制。
+
 生产环境必须使用 HTTPS，并限制 API 只能被可信服务访问。
 
 Compose 部署默认由 Nginx 对外提供该 Base URL。Nginx 直接读取 JWT `sub` 做一致性哈希，

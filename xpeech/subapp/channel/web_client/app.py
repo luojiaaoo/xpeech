@@ -11,9 +11,7 @@ from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, st
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
-from starlette.types import Receive, Scope, Send
 
-from .config import EmbedSettings
 from .dao import User, WebClientDAO
 from .models import (
     InjectPromptWebConfig,
@@ -28,16 +26,6 @@ from .session import EMBED_TOKEN_PREFIX, session_token
 
 PBKDF2_ITERATIONS = 600_000
 XPEECH_FAVICON = Path(__file__).resolve().parents[4] / "assets" / "favicon.ico"
-
-
-class EmbedCORSMiddleware(CORSMiddleware):
-    """Apply the standard CORS handling only to the embedding-session endpoint."""
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"] == "/api/auth/embed/session":
-            await super().__call__(scope, receive, send)
-        else:
-            await self.app(scope, receive, send)
 
 
 def _configured_system_name() -> str:
@@ -83,21 +71,20 @@ def create_app(config: WebConfig) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS applies only to the embedding-session API, never to admin or OAuth APIs.
-    app.include_router(create_embed_router(config, dao, _password_hash))
+    app.include_router(create_embed_router(dao, _password_hash))
     app.add_middleware(
-        EmbedCORSMiddleware,
-        allow_origins=config.embed.allowed_origins,
-        allow_methods=["POST", "DELETE"],
-        allow_headers=["Content-Type", "Authorization"],
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["*"],
     )
 
     @app.middleware("http")
     async def embed_frame_policy(request: Request, call_next):
         response = await call_next(request)
         if request.query_params.get("embed") == "1":
-            ancestors = " ".join(config.embed.allowed_origins) or "'none'"
-            response.headers["Content-Security-Policy"] = f"frame-ancestors {ancestors}"
+            response.headers["Content-Security-Policy"] = "frame-ancestors *"
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -130,7 +117,6 @@ def create_app(config: WebConfig) -> FastAPI:
         return {
             "system_name": config.system_name,
             "inject_prompt": {"enabled": config.inject_prompt.enabled},
-            "embed": {"allowed_origins": config.embed.allowed_origins},
             "oauth2": [
                 {
                     "enabled": True,
@@ -258,7 +244,6 @@ def run(
             enabled=settings.web_client.inject_prompt.enabled,
             command_template=settings.web_client.inject_prompt.command_template,
         ),
-        embed=EmbedSettings().web_client.embed,
     )
     uvicorn.run(create_app(config), host=host, port=port)
 

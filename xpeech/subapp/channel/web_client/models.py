@@ -3,7 +3,6 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from .config import EmbedConfig
 from .dao import User
 
 USER_ID_PATTERN = r"^[\w@+-][\w.@+-]*$"
@@ -47,7 +46,6 @@ class WebConfig:
     cookie_name: str = "xpeech_session"
     oauth2: tuple[OAuth2WebConfig, ...] = field(default_factory=tuple)
     inject_prompt: InjectPromptWebConfig = field(default_factory=InjectPromptWebConfig)
-    embed: EmbedConfig = field(default_factory=EmbedConfig)
 
 
 class LoginBody(BaseModel):

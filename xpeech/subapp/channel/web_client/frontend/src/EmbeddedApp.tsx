@@ -24,9 +24,8 @@ export default function EmbeddedApp() {
   useEffect(() => {
     if (!config) return;
     const parentOrigin = new URLSearchParams(window.location.search).get('parent_origin');
-    if (window.parent === window || !parentOrigin
-        || !config.embed.allowed_origins.includes(parentOrigin)) {
-      setError('此站点未获准嵌入聊天');
+    if (window.parent === window || !parentOrigin || parentOrigin === 'null') {
+      setError('请通过网站嵌入组件打开聊天');
       return;
     }
     let active = true;

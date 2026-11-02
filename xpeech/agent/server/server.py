@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, PlainTextResponse
+from starlette.middleware.cors import CORSMiddleware
 
 from ...utils.logging import configure_logging
 from ..record import create_db_and_tables, record_engine
@@ -46,3 +47,10 @@ async def well_known():
 
 
 app.add_middleware(ContextASGIMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)

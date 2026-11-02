@@ -19,7 +19,6 @@ export interface AppConfig {
     enabled: boolean;
   };
   oauth2: OAuth2Provider[];
-  embed: { allowed_origins: string[] };
 }
 
 export interface OAuth2QrLogin {

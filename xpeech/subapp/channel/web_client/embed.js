@@ -110,7 +110,7 @@ function createFrame() {
   frameTimer = setTimeout(function () {
     if (!frameReady) {
       removeFrame();
-      report(new Error("聊天页面未能加载，请检查前端构建和嵌入来源配置"));
+      report(new Error("聊天页面未能加载，请检查前端构建和服务地址"));
     }
   }, 20000);
 }

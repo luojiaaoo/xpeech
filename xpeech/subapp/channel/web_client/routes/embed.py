@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .....config.settings import settings
 from .....utils.channel_jwt import UserJWTAuth
 from ..dao import DuplicateUserIdError, WebClientDAO
-from ..models import WebConfig, public_user
+from ..models import public_user
 from ..session import EMBED_TOKEN_PREFIX, embedded_channel, session_token
 
 
@@ -43,15 +43,9 @@ def verify_embed_jwt(token: str) -> tuple[str, str, datetime]:
 
 
 def create_embed_router(
-    config: WebConfig, dao: WebClientDAO, password_hash: Callable[[str], str],
+    dao: WebClientDAO, password_hash: Callable[[str], str],
 ) -> APIRouter:
     router = APIRouter(prefix="/api/auth/embed")
-
-    def require_origin(request: Request) -> str:
-        origin = request.headers.get("origin", "")
-        if origin not in config.embed.allowed_origins:
-            raise HTTPException(403, "不允许此站点嵌入")
-        return origin
 
     async def revoke(request: Request) -> None:
         token = session_token(None, request.headers.get("authorization"))
@@ -60,7 +54,6 @@ def create_embed_router(
 
     @router.post("/session")
     async def create_session(request: Request, body: EmbedSessionBody, response: Response):
-        require_origin(request)
         user_id, channel_name, jwt_expires_at = verify_embed_jwt(body.jwt)
         now = datetime.now(UTC)
         expires_at = min(jwt_expires_at, now + timedelta(seconds=settings.jwt.access_token_expire_seconds))
@@ -93,7 +86,6 @@ def create_embed_router(
 
     @router.delete("/session", status_code=204)
     async def delete_session(request: Request):
-        require_origin(request)
         await revoke(request)
 
     return router
