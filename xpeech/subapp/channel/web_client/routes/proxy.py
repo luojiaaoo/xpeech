@@ -200,7 +200,6 @@ def create_proxy_router(
                 upstream_url,
                 headers={
                     "authorization": f"Bearer {create_internal_access_token()}",
-                    "x-user-id": user.user_id,
                 },
                 params=request.query_params.multi_items(),
             )
