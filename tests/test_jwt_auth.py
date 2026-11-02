@@ -15,6 +15,7 @@ from xpeech.agent.server.api import app
 from xpeech.agent.server.context import get_lark_user_access_token
 from xpeech.agent.tools import sandbox
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, settings
+from xpeech.utils import internal_jwt
 from xpeech.utils.channel_jwt import ChannelJWTAuth, ChannelTokenParams, create_token
 from xpeech.utils.internal_jwt import (
     create_internal_access_token,
@@ -69,9 +70,11 @@ def test_jwt_config_rejects_reused_signing_keys(first, second):
         JWTConfig.model_validate(config)
 
 
-def test_access_token_is_valid_for_exactly_one_minute():
+def test_access_token_is_valid_for_exactly_one_minute(monkeypatch):
     now = datetime.now(UTC)
-    token = create_internal_access_token(secret_key=TEST_SECRET_KEY, now=now)
+    monkeypatch.setattr(internal_jwt, "datetime", SimpleNamespace(now=lambda tz: now))
+    monkeypatch.setattr(settings.jwt, "secret_key", TEST_SECRET_KEY)
+    token = create_internal_access_token()
     claims = jwt.decode(
         token,
         TEST_SECRET_KEY,
@@ -88,18 +91,19 @@ def test_internal_and_channel_tokens_use_shared_jwt_settings(monkeypatch, algori
     monkeypatch.setattr(settings.jwt, "access_token_expire_seconds", 30)
     now = datetime.now(UTC)
     internal_secret = "i" * 64
+    monkeypatch.setattr(settings.jwt, "secret_key", internal_secret)
     monkeypatch.setitem(settings.jwt.channels, "test", JWTChannelConfig(secret_key="c" * 64))
 
-    internal_token = create_internal_access_token(secret_key=internal_secret, now=now)
+    internal_token = create_internal_access_token()
     channel_token = create_token(ChannelTokenParams("test"))
     after = datetime.now(UTC)
-    internal_claims = decode_internal_access_token(internal_token, secret_key=internal_secret)
+    internal_claims = decode_internal_access_token(internal_token)
     channel_claims = ChannelJWTAuth(channel_token).claims
 
     assert jwt.get_unverified_header(internal_token)["alg"] == algorithm
     assert jwt.get_unverified_header(channel_token)["alg"] == algorithm
     expected_expiry = int((now + timedelta(seconds=30)).timestamp())
-    assert internal_claims["exp"] == expected_expiry
+    assert expected_expiry <= internal_claims["exp"] <= int((after + timedelta(seconds=30)).timestamp())
     assert expected_expiry <= channel_claims["exp"] <= int((after + timedelta(seconds=30)).timestamp())
 
 
@@ -194,13 +198,14 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
 
 
 def test_expired_access_token_is_rejected():
-    token = create_internal_access_token(
-        secret_key=TEST_SECRET_KEY,
-        now=datetime.now(UTC) - timedelta(seconds=61),
+    token = jwt.encode(
+        {"exp": datetime.now(UTC) - timedelta(seconds=1)},
+        settings.jwt.secret_key,
+        algorithm=settings.jwt.algorithm,
     )
 
     try:
-        decode_internal_access_token(token, secret_key=TEST_SECRET_KEY)
+        decode_internal_access_token(token)
     except jwt.ExpiredSignatureError:
         pass
     else:
