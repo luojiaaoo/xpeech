@@ -71,7 +71,7 @@ def test_chat_sync_returns_collected_events(fake_runner):
     ]
     assert fake_runner.created == {
         "user_id": "user",
-        "kwargs": {"not_interactive": True, "channel_tags": []},
+        "kwargs": {"not_interactive": True, "channel_tag": None},
     }
     [message] = fake_runner.messages
     assert message.session_id == UUID7_SESSION_ID
@@ -130,7 +130,7 @@ def test_chat_sync_initializes_non_interactive_tools_for_every_session(
     )
 
     assert response.status_code == 200
-    assert fake_runner.created["kwargs"] == {"not_interactive": True, "channel_tags": []}
+    assert fake_runner.created["kwargs"] == {"not_interactive": True, "channel_tag": None}
 
 
 def test_chat_sync_passes_json_output_flag(monkeypatch, fake_runner):

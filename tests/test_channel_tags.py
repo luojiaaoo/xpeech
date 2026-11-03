@@ -7,6 +7,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app
 from xpeech.agent.skills import skill as skill_module
@@ -23,8 +24,8 @@ UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 def channels(monkeypatch):
     channels = {
         **settings.jwt.channels,
-        "crm": JWTChannelConfig(secret_key=CRM_KEY, channel_tags=["crm", "sales"]),
-        "erp": JWTChannelConfig(secret_key=ERP_KEY, channel_tags=["erp"]),
+        "crm": JWTChannelConfig(secret_key=CRM_KEY, channel_tag="crm"),
+        "erp": JWTChannelConfig(secret_key=ERP_KEY, channel_tag="erp"),
     }
     monkeypatch.setattr(settings.jwt, "channels", channels)
     return channels
@@ -33,7 +34,7 @@ def channels(monkeypatch):
 @pytest.mark.parametrize("name", ["internal", "", "bad name"])
 def test_custom_channels_reject_reserved_or_invalid_names(name):
     config = settings.jwt.model_dump()
-    config["channels"] = {name: {"secret_key": CRM_KEY, "channel_tags": ["crm"]}}
+    config["channels"] = {name: {"secret_key": CRM_KEY, "channel_tag": "crm"}}
 
     with pytest.raises(ValueError, match="channel names"):
         JWTConfig.model_validate(config)
@@ -43,7 +44,7 @@ def test_custom_channels_reject_reserved_or_invalid_names(name):
 def test_custom_channel_cannot_reuse_builtin_key(key_source):
     config = settings.jwt.model_dump()
     secret_key = config["secret_key"] if key_source == "internal" else config["channels"][key_source]["secret_key"]
-    config["channels"]["crm"] = {"secret_key": secret_key, "channel_tags": ["crm"]}
+    config["channels"]["crm"] = {"secret_key": secret_key, "channel_tag": "crm"}
 
     with pytest.raises(ValueError, match="distinct values"):
         JWTConfig.model_validate(config)
@@ -51,7 +52,7 @@ def test_custom_channel_cannot_reuse_builtin_key(key_source):
 
 def test_custom_channels_cannot_share_keys():
     config = settings.jwt.model_dump()
-    config["channels"] = {name: {"secret_key": CRM_KEY, "channel_tags": [name]} for name in ["crm", "erp"]}
+    config["channels"] = {name: {"secret_key": CRM_KEY, "channel_tag": name} for name in ["crm", "erp"]}
     with pytest.raises(ValueError, match="distinct values"):
         JWTConfig.model_validate(config)
 
@@ -59,11 +60,26 @@ def test_custom_channels_cannot_share_keys():
 @pytest.mark.parametrize("channel_tags", ["crm", None, [1], [""], ["bad tag"], ["*"]])
 def test_resource_tag_validation_is_consistent(channel_tags):
     with pytest.raises(ValueError):
-        JWTChannelConfig(secret_key=CRM_KEY, channel_tags=channel_tags)
-    with pytest.raises(ValueError):
         MCPServerSettings(command="demo", channel_tags=channel_tags)
     with pytest.raises(ValueError):
         skill_module.SkillMetadata(name="demo", description="Demo", channel_tags=channel_tags)
+
+
+@pytest.mark.parametrize("channel_tag", [None, "crm", "sales.apac:team-1_v2", "a" * 64])
+def test_jwt_channel_accepts_one_optional_tag(channel_tag):
+    channel = JWTChannelConfig(secret_key=CRM_KEY, channel_tag=channel_tag)
+    assert channel.channel_tag == channel_tag
+
+
+@pytest.mark.parametrize("channel_tag", [[], ["crm"], ["crm", "sales"], 1, "", "bad tag", "*", "a" * 65])
+def test_jwt_channel_rejects_lists_and_invalid_tags(channel_tag):
+    with pytest.raises(ValueError):
+        JWTChannelConfig(secret_key=CRM_KEY, channel_tag=channel_tag)
+
+
+def test_jwt_channel_rejects_plural_tags_config():
+    with pytest.raises(ValueError, match="Extra inputs"):
+        JWTChannelConfig(secret_key=CRM_KEY, channel_tags=["crm", "sales"])
 
 
 @pytest.mark.parametrize("session_id", ["default", UUID7_SESSION_ID])
@@ -97,7 +113,7 @@ def test_custom_channel_rejects_wrong_key(channels):
     assert response.status_code == 401
 
 
-def test_skill_api_filters_using_server_channel_tags(
+def test_skill_api_filters_using_server_channel_tag(
     channels,
     monkeypatch,
     tmp_path,
@@ -108,7 +124,8 @@ def test_skill_api_filters_using_server_channel_tags(
         ("public", []),
         ("crm-skill", ["crm"]),
         ("erp-skill", ["erp"]),
-        ("shared", ["sales", "erp"]),
+        ("shared", ["crm", "erp"]),
+        ("sales-skill", ["sales"]),
     ]:
         skill_file = tmp_path / "builtin" / name / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
@@ -137,15 +154,17 @@ def test_skill_api_filters_using_server_channel_tags(
         assert response.status_code == 200
         return {skill["metadata"]["name"] for skill in response.json()}
 
-    assert visible_skills("crm", CRM_KEY, channel_tags=["erp"]) == user_skill_names | {"public", "crm-skill", "shared"}
+    assert visible_skills(
+        "crm", CRM_KEY, channel_tag="erp", channel_tags=["erp"]
+    ) == user_skill_names | {"public", "crm-skill", "shared"}
     assert visible_skills("erp", ERP_KEY) == user_skill_names | {"public", "erp-skill", "shared"}
     assert visible_skills(
         "web_client", settings.jwt.channels["web_client"].secret_key, channel_tags=["crm"]
     ) == user_skill_names | {"public"}
-    monkeypatch.setattr(settings.jwt.channels["web_client"], "channel_tags", ["crm"])
+    monkeypatch.setattr(settings.jwt.channels["web_client"], "channel_tag", "crm")
     assert visible_skills(
         "web_client", settings.jwt.channels["web_client"].secret_key
-    ) == user_skill_names | {"public", "crm-skill"}
+    ) == user_skill_names | {"public", "crm-skill", "shared"}
 
 
 @pytest.mark.asyncio
@@ -162,7 +181,7 @@ async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tm
 
 @pytest.mark.parametrize("path, not_interactive", [("/chat", False), ("/chat_sync", True)])
 @pytest.mark.parametrize("session_id", ["default", UUID7_SESSION_ID])
-def test_chat_passes_verified_channel_tags_to_registration(
+def test_chat_passes_verified_channel_tag_to_registration(
     channels,
     monkeypatch,
     tmp_path,
@@ -184,7 +203,12 @@ def test_chat_passes_verified_channel_tags_to_registration(
 
     monkeypatch.setattr(AgentRunner, "create", create)
     token = jwt.encode(
-        {"exp": datetime.now(UTC) + timedelta(seconds=60), "sub": "tag-user", "channel_tags": ["erp"]},
+        {
+            "exp": datetime.now(UTC) + timedelta(seconds=60),
+            "sub": "tag-user",
+            "channel_tag": "erp",
+            "channel_tags": ["erp"],
+        },
         CRM_KEY,
         algorithm=settings.jwt.algorithm,
         headers={"kid": "crm"},
@@ -197,10 +221,13 @@ def test_chat_passes_verified_channel_tags_to_registration(
     response = TestClient(app).post(
         path,
         headers=headers,
-        data={"content": '[{"text":"hello"}]', "session_metadata": '{"channel":"erp","channel_tags":"erp"}'},
+        data={
+            "content": '[{"text":"hello"}]',
+            "session_metadata": '{"channel":"erp","channel_tag":"erp","channel_tags":"erp"}',
+        },
     )
     assert response.status_code == 200
-    assert created == [("tag-user", {"not_interactive": not_interactive, "channel_tags": ["crm", "sales"]})]
+    assert created == [("tag-user", {"not_interactive": not_interactive, "channel_tag": "crm"})]
 
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
@@ -218,13 +245,15 @@ async def test_always_skill_channel_tags_only_restrict_builtins(monkeypatch, tmp
         assert prompt == ""
     else:
         assert "# CRM instructions" in prompt
-    loader = SkillsLoader(tmp_path, channel_tags=["crm"])
+    loader = SkillsLoader(tmp_path, channel_tag="crm")
     prompt = await loader.build_skills_prompt()
     assert "# CRM instructions" in prompt
     assert "channel_tags='crm'" in prompt
     skill = (await loader.list_skill_info())[0]
     assert skill.metadata.channel_tags == ["crm"]
     assert "channel_tags" not in skill.metadata.kwargs
+    system_prompt = await build_system_prompt(tmp_path, channel_tag="crm")
+    assert "# CRM instructions" in system_prompt["content"]
 
 
 @pytest.mark.parametrize("channel_tags_yaml", ["crm", "null", "[1]", "['']"])
@@ -237,11 +266,21 @@ async def test_invalid_skill_channel_tags_are_skipped(monkeypatch, tmp_path, cha
     assert await SkillsLoader(tmp_path).list_skill_info() == []
 
 
-@pytest.mark.parametrize("channel_tags, expected", [([], ["public"]), (["crm"], ["public", "crm", "shared"])])
+@pytest.mark.parametrize(
+    "channel_tag, expected",
+    [
+        (None, ["public"]),
+        ("crm", ["public", "crm", "shared"]),
+        ("erp", ["public", "erp", "shared"]),
+        ("sales", ["public"]),
+        ("cr", ["public"]),
+        ("CRM", ["public"]),
+    ],
+)
 @pytest.mark.parametrize("not_interactive", [False, True])
 @pytest.mark.asyncio
 async def test_mcp_only_registers_public_and_matching_servers(
-    monkeypatch, tmp_path, channel_tags, expected, not_interactive
+    monkeypatch, tmp_path, channel_tag, expected, not_interactive
 ):
     config = ToolConfig.model_validate(
         {
@@ -282,7 +321,7 @@ async def test_mcp_only_registers_public_and_matching_servers(
         provider=provider,
         workspace=tmp_path,
         config=config,
-        channel_tags=channel_tags,
+        channel_tag=channel_tag,
         not_interactive=not_interactive,
     )
     assert requested == registered == expected

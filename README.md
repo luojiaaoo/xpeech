@@ -95,14 +95,14 @@ secret_key = "replace-with-a-different-feishu-random-value"
 ```toml
 [jwt.channels.crm]
 secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
-channel_tags = ["crm", "sales"]
+channel_tag = "crm"
 ```
 
 所有通道密钥至少 32 个字符，必须与内部密钥及其他通道密钥互不相同；通道名不能使用
 `internal`。所有通道使用统一的 JWT 算法和有效期，支持业务接口，
 也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口和内部接口使用内部 JWT。
-通道的 `channel_tags` 由服务端配置确定，JWT payload 或会话元数据中的 `channel_tags` 不授予任何权限。
-省略通道 `channel_tags` 或配置 `[]` 时，该通道加载公共内建技能、公共 MCP，以及用户自己的全部技能。
+每个通道只绑定一个 `channel_tag`，由服务端配置确定，JWT payload 或会话元数据中的标签不授予任何权限。
+省略通道 `channel_tag` 时，该通道加载公共内建技能、公共 MCP，以及用户自己的全部技能。
 
 Skill 的 YAML frontmatter 和 MCP 配置都支持 `channel_tags`。标签筛选仅作用于内建技能和 MCP，
 用户工作区里的技能不受标签匹配限制，全部加载。内建技能和 MCP 省略 `channel_tags` 或配置 `[]` 表示公共资源；
@@ -126,7 +126,7 @@ channel_tags = ["crm"]
 
 标签筛选作用于内建技能的列表、系统提示词（含 `always` 技能）和 MCP 工具注册；
 它不是工作区文件的访问控制。同一 `user_id` 的工作区和历史仍然共享；需要系统间数据隔离时应使用独立的用户 ID。
-鉴权后的通道标签通过参数显式传递。MCP 在注册阶段按标签筛选，不匹配时不会建立连接；
+鉴权后的 `channel_tag` 以单个字符串或 `None` 显式传递到 Runner、技能加载和工具注册。MCP 在注册阶段按标签筛选，不匹配时不会建立连接；
 同步聊天和定时任务也在注册阶段跳过追问、创建/查看/取消调度等交互式工具。
 
 `not_interactive=True` 的同步聊天和定时任务也会从技能列表及系统提示词中跳过
@@ -597,7 +597,7 @@ tool_timeout = 120
 - `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
 - `enabled_tools`：允许注册的 MCP 原始工具名或通配模式，默认 `["*"]` 表示全部注册；`[]` 表示全部禁用。
 - `execution_request_tools`：需要用户确认的 MCP 原始工具名或通配模式，默认 `[]`；`["*"]` 表示所有已启用工具都需要确认。例如 `["write_*", "delete_*"]`。
-- `channel_tags`：专属系统标签，省略或 `[]` 表示公共 MCP；命中当前 JWT 通道任一标签才连接并注册。
+- `channel_tags`：专属系统标签列表，省略或 `[]` 表示公共 MCP；当前 JWT 通道的 `channel_tag` 命中列表中的任一标签才连接并注册。
 - `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
 
 `command` 和 `url` 只能二选一。`command_authorization_token` 仅适用于远程 MCP，每次

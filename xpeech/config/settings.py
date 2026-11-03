@@ -21,7 +21,7 @@ from pydantic_settings import (
 )
 
 from ..provider.schema import LLMParameters
-from ..utils.channel_tags import normalize_channel_tags
+from ..utils.channel_tag import normalize_channel_tags, validate_channel_tag
 from ..utils.file_io import ensure_path
 
 if Path(".env").exists():
@@ -167,17 +167,17 @@ class LarkCLIConfig(BaseModel):
 
 
 class JWTChannelConfig(BaseModel):
-    """A JWT channel and the resource channel tags it grants."""
+    """A JWT channel and its single optional resource tag."""
 
     model_config = ConfigDict(extra="forbid")
 
     secret_key: str = Field(min_length=32, repr=False)
-    channel_tags: list[str] = Field(default_factory=list)
+    channel_tag: str | None = None
 
-    @field_validator("channel_tags")
+    @field_validator("channel_tag")
     @classmethod
-    def validate_channel_tags(cls, value: list[str]) -> list[str]:
-        return normalize_channel_tags(value)
+    def validate_channel_tag(cls, value: str | None) -> str | None:
+        return validate_channel_tag(value) if value is not None else None
 
 
 class JWTConfig(BaseModel):
@@ -195,7 +195,7 @@ class JWTConfig(BaseModel):
         invalid_names: list[str] = []
         for name in channel_names:
             try:
-                normalize_channel_tags([name])
+                validate_channel_tag(name)
             except ValueError:
                 invalid_names.append(name)
             else:

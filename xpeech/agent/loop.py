@@ -56,7 +56,7 @@ class AgentLoop:
         tools: list[str],
         summary_tokens: int,
         max_iterations: int,
-        channel_tags: list[str] | None = None,
+        channel_tag: str | None = None,
     ):
         """初始化模型提供方、会话组件和循环配置。"""
         self.provider = provider
@@ -64,7 +64,7 @@ class AgentLoop:
         self.tools = tools
         self.summary_tokens = summary_tokens
         self.max_iterations = max_iterations
-        self.channel_tags = channel_tags if channel_tags is not None else []
+        self.channel_tag = channel_tag
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
         self.history = YamlHistoryRepository(
             settings.path.session_history_path,
@@ -322,7 +322,7 @@ class AgentLoop:
             messages_yaml,
             await build_system_prompt(
                 workspace=self.workspace,
-                channel_tags=self.channel_tags,
+                channel_tag=self.channel_tag,
                 not_interactive=not_interactive,
             ),
         )

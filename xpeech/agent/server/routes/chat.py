@@ -60,7 +60,7 @@ async def chat(
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
     async for event in execute_chat_stream(
         user_id,
-        channel_tags=channel.channel_tags,
+        channel_tag=channel.channel_tag,
         content=content,
         sender_name=sender_name,
         channel=channel.channel,
@@ -90,7 +90,7 @@ async def chat_sync(
     """接收用户消息，阻塞运行 Agent，并一次性返回合并后的全部事件。"""
     result = await execute_chat(
         user_id,
-        channel_tags=channel.channel_tags,
+        channel_tag=channel.channel_tag,
         content=content,
         sender_name=sender_name,
         channel=channel.channel,

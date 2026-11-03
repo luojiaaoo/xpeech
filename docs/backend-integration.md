@@ -67,7 +67,7 @@ secret_key = "replace-with-a-distinct-feishu-secret-at-least-32-characters"
 
 [jwt.channels.crm]
 secret_key = "replace-with-a-distinct-crm-secret-at-least-32-characters"
-channel_tags = ["crm"]
+channel_tag = "crm"
 ```
 
 | 项 | 约定 |
@@ -80,7 +80,7 @@ channel_tags = ["crm"]
 
 `jwt.secret_key` 仅供 backend、scheduler 等内部服务互信。内部 JWT 不带 `kid` 或 `sub`，不能调用本文的聊天、答题、文件、技能接口；`/statistics` 及其子接口、内部调度接口也不属于外部通道的权限范围。
 
-通道标签由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。无标签的内建技能/MCP 为公共资源；有标签的资源只有与通道标签存在交集时才展示或注册。用户工作区内的技能全部加载，不受该标签匹配限制。
+每个通道只绑定一个 `channel_tag`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能/MCP 使用 `channel_tags` 列表，无标签的资源为公共资源；有标签的资源只有在列表包含当前通道的 `channel_tag` 时才展示或注册。用户工作区内的技能全部加载，不受该标签匹配限制。
 
 ### 2.2 方式 A：本地签发（业务系统推荐）
 

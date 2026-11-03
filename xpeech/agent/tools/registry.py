@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config.settings import ToolConfig, settings
-from ...utils.channel_tags import channel_tags_allow_access
+from ...utils.channel_tag import channel_tag_allows_access
 from .browser_preview import build_browser_preview_tool
 from .document import build_document_tool
 from .execution_request import build_execution_request_tool, execution_request_schema
@@ -25,7 +25,7 @@ async def register_tools(
     workspace: Path,
     config: ToolConfig,
     not_interactive: bool = False,
-    channel_tags: list[str] | None = None,
+    channel_tag: str | None = None,
 ) -> None:
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
     read_image, read_video, read_file, write_file, edit_file = build_file_tools(
@@ -71,7 +71,7 @@ async def register_tools(
             provider.register_function_tool(tool)
 
     for server_name, server_config in config.mcp_servers.items():
-        if not channel_tags_allow_access(server_config.channel_tags, channel_tags or []):
+        if not channel_tag_allows_access(server_config.channel_tags, channel_tag):
             continue
         registration = await get_session_mcp_registration_from_config(
             user_id,

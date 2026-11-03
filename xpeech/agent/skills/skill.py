@@ -10,7 +10,7 @@ import yaml
 from loguru import logger
 from pydantic import BaseModel, Field, computed_field, field_validator
 
-from ...utils.channel_tags import channel_tags_allow_access, normalize_channel_tags
+from ...utils.channel_tag import channel_tag_allows_access, normalize_channel_tags
 from ...utils.file_io import LockedFile, ensure_path_async
 from ..server.context import get_lark_user_access_token
 
@@ -126,12 +126,12 @@ class SkillsLoader:
         self,
         workspace: Path | None,
         *,
-        channel_tags: list[str] | None = None,
+        channel_tag: str | None = None,
         not_interactive: bool = False,
     ):
         self.workspace_skills = workspace / "skills" if workspace is not None else None
         self.builtin_skills = BUILTIN_SKILLS_DIR
-        self.channel_tags = channel_tags if channel_tags is not None else []
+        self.channel_tag = channel_tag
         self.not_interactive = not_interactive
 
     async def _skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
@@ -178,7 +178,7 @@ class SkillsLoader:
                 continue
             if self.not_interactive and metadata.name in INTERACTIVE_SKILL_NAMES:
                 continue
-            if source == "builtin" and not channel_tags_allow_access(metadata.channel_tags, self.channel_tags):
+            if source == "builtin" and not channel_tag_allows_access(metadata.channel_tags, self.channel_tag):
                 continue
             if metadata.name in seen_names:
                 logger.warning("Skipping duplicate skill '{}' at '{}'", metadata.name, skill_file)

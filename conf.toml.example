@@ -28,10 +28,10 @@ secret_key = "replace-with-a-different-web-channel-secret-key"
 secret_key = "replace-with-a-different-feishu-channel-secret"
 
 # Custom channels use their name as the JWT header kid and an independent key.
-# Tags are granted by this server-side configuration, not by JWT claims.
+# Each channel binds to one optional tag, configured here rather than in JWT claims.
 # [jwt.channels.crm]
 # secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
-# channel_tags = ["crm"]
+# channel_tag = "crm"
 
 [web_client]
 database_path = "data/web_client/users.db"
@@ -123,7 +123,7 @@ connect_timeout = 30
 tool_timeout = 120
 
 # [tool.mcpServers.my-api]
-# channel_tags = ["crm"] # Omit or use [] for a public MCP; any matching channel tag grants access.
+# channel_tags = ["crm"] # Omit or use [] for a public MCP; the channel's tag must match one entry.
 # url = "https://mcp.example.com/sse"
 # transport = "sse" # stdio / sse / streamable-http
 # command_authorization_token = "curl --fail --silent 'https://auth.example.com/token?user_id=${user_id}'"

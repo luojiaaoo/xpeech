@@ -74,7 +74,7 @@ async def list_skills(
 ) -> list[SkillInfo]:
     """返回内置技能，以及 JWT 用户可用的 SKILL 列表。"""
     workspace = _user_workspace(user_id)
-    return await SkillsLoader(workspace, channel_tags=channel.channel_tags).list_skill_info()
+    return await SkillsLoader(workspace, channel_tag=channel.channel_tag).list_skill_info()
 
 
 @router.post("/import", response_model=SkillInfo, status_code=status.HTTP_201_CREATED)

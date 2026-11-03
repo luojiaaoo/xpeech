@@ -28,16 +28,16 @@ class TokenResponse(BaseModel):
 
 
 class AuthenticatedChannel(ChannelJWTAuth):
-    """Verified channel identity and its server-configured channel tags."""
+    """Verified channel identity and its server-configured resource tag."""
 
     @property
-    def channel_tags(self) -> list[str]:
+    def channel_tag(self) -> str | None:
         channel = settings.jwt.channels.get(self.channel)
-        return channel.channel_tags if channel is not None else []
+        return channel.channel_tag if channel is not None else None
 
 
 class AuthenticatedUser(UserJWTAuth, AuthenticatedChannel):
-    """Verified user identity with server-configured channel tags."""
+    """Verified user identity with a server-configured resource tag."""
 
 
 @router.post("/token", response_model=TokenResponse, include_in_schema=False)

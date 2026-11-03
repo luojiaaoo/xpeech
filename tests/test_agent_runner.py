@@ -89,10 +89,10 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     create_templates.assert_awaited_once_with(runner.workspace)
     register_tools.assert_awaited_once()
     assert set(register_tools.await_args.kwargs) == {
-        "user_id", "provider", "workspace", "config", "not_interactive", "channel_tags",
+        "user_id", "provider", "workspace", "config", "not_interactive", "channel_tag",
     }
     assert register_tools.await_args.kwargs["not_interactive"] is False
-    assert register_tools.await_args.kwargs["channel_tags"] == []
+    assert register_tools.await_args.kwargs["channel_tag"] is None
     assert len(FakeAgentLoop.instances) == 1
     assert FakeAgentLoop.instances[0].messages == [message]
     assert FakeAgentLoop.instances[0].not_interactive_values == [False]
@@ -141,7 +141,7 @@ async def test_runner_requires_async_factory(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_runner_can_run_without_interaction(tmp_path: Path, runner_dependencies):
     runner = await AgentRunner.create(
-        "session-1", config=make_config(tmp_path), not_interactive=True, channel_tags=["crm"],
+        "session-1", config=make_config(tmp_path), not_interactive=True, channel_tag="crm",
     )
     message = InboundMessage(
         user_id="session-1",
@@ -159,8 +159,8 @@ async def test_runner_can_run_without_interaction(tmp_path: Path, runner_depende
     assert FakeAgentLoop.instances[0].not_interactive_values == [True]
     register_tools = runner_dependencies[2]
     assert register_tools.await_args.kwargs["not_interactive"] is True
-    assert register_tools.await_args.kwargs["channel_tags"] == ["crm"]
-    assert FakeAgentLoop.instances[0].kwargs["channel_tags"] == ["crm"]
+    assert register_tools.await_args.kwargs["channel_tag"] == "crm"
+    assert FakeAgentLoop.instances[0].kwargs["channel_tag"] == "crm"
 
 
 @pytest.mark.asyncio
