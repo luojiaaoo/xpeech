@@ -1,7 +1,7 @@
-"""返回执行请求标记的占位工具，以及执行确认表单。"""
+"""按需请求执行确认的工具包装器，以及执行确认表单。"""
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any
 
@@ -38,8 +38,16 @@ def build_execution_question(tool_name: str, arguments: dict[str, Any], descript
     ).model_dump_json()
 
 
-def build_execution_request_tool(function: Callable) -> Callable:
-    """创建同名占位工具：只返回标记，真实函数留给 Agent 确认后执行。"""
+def build_execution_request_tool(
+    function: Callable,
+    requires_confirmation: Callable[[str], bool | Awaitable[bool]] | None = None,
+) -> Callable:
+    """创建同名工具，默认返回标记，交由 Agent 询问用户后执行。
+
+    requires_confirmation 接收包含 execution_description 和原工具参数的 JSON
+    字符串（仅包含调用时提供的字段），支持同步或异步函数。返回 True 时询问用户，
+    False 时直接执行原函数；异常或非 bool 返回值按工具错误处理，不执行原函数。
+    """
     model_info = get_tool_model_cls(function)
     if EXECUTION_DESCRIPTION in model_info.model_cls.model_fields:
         raise ValueError(f"Tool already defines reserved parameter: {EXECUTION_DESCRIPTION}")
@@ -49,13 +57,26 @@ def build_execution_request_tool(function: Callable) -> Callable:
         execution_description=(str, Field(description=_DESCRIPTION, min_length=1, pattern=r"\S")),
     )
 
-    async def execution_request(args) -> str:
-        return EXECUTION_REQUEST
+    execution_function = ensure_async(function)
+    check_confirmation = ensure_async(requires_confirmation) if requires_confirmation is not None else None
+
+    async def execution_request(args) -> Any:
+        if check_confirmation is None:
+            return EXECUTION_REQUEST
+        needs_confirmation = await check_confirmation(args.model_dump_json(exclude_unset=True))
+        if not isinstance(needs_confirmation, bool):
+            raise TypeError("requires_confirmation must return a bool")
+        if needs_confirmation:
+            return EXECUTION_REQUEST
+
+        arguments = args.model_dump(exclude={EXECUTION_DESCRIPTION}, exclude_unset=True)
+        original_args = (model_info.model_cls(**arguments),) if model_info.has_pydantic_param else ()
+        return await execution_function(*original_args)
 
     execution_request.__name__ = function.__name__
-    execution_request.__annotations__ = {"args": model_cls, "return": str}
+    execution_request.__annotations__ = {"args": model_cls, "return": Any}
     execution_request.__doc__ = f"{function.__doc__ or function.__name__}\n\n{_DESCRIPTION}"
-    execution_request.execution_function = ensure_async(function)
+    execution_request.execution_function = execution_function
     return execution_request
 
 

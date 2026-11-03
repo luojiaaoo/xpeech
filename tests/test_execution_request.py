@@ -84,6 +84,78 @@ async def test_placeholder_returns_marker_without_running_original_function(tmp_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("async_check", [False, True])
+@pytest.mark.parametrize("needs_confirmation", [False, True])
+async def test_optional_confirmation_check_receives_json_and_controls_prompt(tmp_path, async_check, needs_confirmation):
+    checks = []
+    executions = []
+
+    def check(payload: str) -> bool:
+        checks.append(json.loads(payload))
+        return needs_confirmation
+
+    async def async_checker(payload: str) -> bool:
+        return check(payload)
+
+    def shell(args: CommandArgs):
+        """Execute a command."""
+        executions.append(args)
+        return "command output"
+
+    current_provider = provider()
+    current_provider.register_function_tool(
+        build_execution_request_tool(shell, requires_confirmation=async_checker if async_check else check)
+    )
+    arguments = {"command": "echo hello", "execution_description": "输出 hello"}
+    call = ToolCallRequest(id="1", name="shell", arguments=arguments)
+    events = []
+    async for event in stream_for(tmp_path, current_provider, [call], []):
+        events.append(event)
+        if event["event"] == "question":
+            assert executions == []
+            await answer({"decision": "confirm"})
+
+    assert checks == [arguments]
+    assert [event["event"] for event in events] == (
+        ["tool_call", "question", "tool_call_result"]
+        if needs_confirmation
+        else ["tool_call", "tool_call_result"]
+    )
+    assert json.loads(events[-1]["context"])[0][2] == "command output"
+    [args] = executions
+    assert type(args) is CommandArgs
+    assert args.command == "echo hello" and args.timeout_ms == 100
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("behavior", ["error", "timeout", "non_bool"])
+async def test_confirmation_check_failure_never_prompts_or_executes(tmp_path, behavior):
+    async def ping():
+        """Ping."""
+        pytest.fail("failed check executed the actual tool")
+
+    async def check(payload):
+        if behavior == "error":
+            raise RuntimeError("check failed")
+        if behavior == "timeout":
+            await asyncio.sleep(1)
+        return None
+
+    current_provider = provider()
+    current_provider.register_function_tool(build_execution_request_tool(ping, check))
+    call = ToolCallRequest(id="1", name="ping", arguments={"execution_description": "测试"})
+    events = [event async for event in stream_for(tmp_path, current_provider, [call], [], tool_timeout=0.05)]
+    assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
+    result = json.loads(events[-1]["context"])[0][2]
+    if behavior == "error":
+        assert result == "RuntimeError: check failed"
+    elif behavior == "timeout":
+        assert "timed out" in result
+    else:
+        assert result == "TypeError: requires_confirmation must return a bool"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("reply", "expected"),
     [
@@ -149,6 +221,7 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("conditional", [False, True])
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -157,13 +230,16 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
         {"command": "ok", "execution_description": "用途", "timeout_ms": -1},
     ],
 )
-async def test_invalid_request_never_prompts_or_executes(tmp_path, arguments):
+async def test_invalid_request_never_prompts_or_executes(tmp_path, arguments, conditional):
     async def shell(args: CommandArgs):
         """Execute a command."""
         pytest.fail("invalid request executed")
 
+    def check(payload):
+        pytest.fail("invalid request reached confirmation check")
+
     current_provider = provider()
-    current_provider.register_function_tool(build_execution_request_tool(shell))
+    current_provider.register_function_tool(build_execution_request_tool(shell, check if conditional else None))
     call = ToolCallRequest(id="1", name="shell", arguments=arguments)
     events = [event async for event in stream_for(tmp_path, current_provider, [call], [])]
     assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
@@ -257,8 +333,11 @@ async def test_confirmation_wait_does_not_consume_execution_timeout(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("needs_confirmation", [False, True])
 @pytest.mark.parametrize("behavior", ["error", "timeout", "large_result"])
-async def test_direct_execution_preserves_error_timeout_and_result_handling(tmp_path, behavior):
+async def test_direct_execution_preserves_error_timeout_and_result_handling(
+    tmp_path, behavior, needs_confirmation
+):
     async def ping():
         """Ping."""
         if behavior == "error":
@@ -268,7 +347,7 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(tmp_
         return "x" * 10_100
 
     current_provider = provider()
-    current_provider.register_function_tool(build_execution_request_tool(ping))
+    current_provider.register_function_tool(build_execution_request_tool(ping, lambda _: needs_confirmation))
     call = ToolCallRequest(id="1", name="ping", arguments={"execution_description": "测试"})
     history = []
     async for event in stream_for(tmp_path, current_provider, [call], history, tool_timeout=0.05):
@@ -280,14 +359,15 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(tmp_
             if behavior == "error":
                 assert result == "RuntimeError: test failure"
             elif behavior == "timeout":
-                assert "TimeoutError" in result
+                assert ("TimeoutError" if needs_confirmation else "timed out") in result
             else:
                 saved_path = result.split("Full result saved to: ")[1]
                 assert (tmp_path / saved_path).read_text() == "x" * 10_100
 
 
 @pytest.mark.asyncio
-async def test_mcp_placeholder_preserves_schema_and_only_sends_original_arguments(tmp_path):
+@pytest.mark.parametrize("needs_confirmation", [None, False, True])
+async def test_mcp_placeholder_preserves_schema_and_only_sends_original_arguments(tmp_path, needs_confirmation):
     remote_calls = []
 
     class Session:
@@ -326,7 +406,16 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
     assert parameters["additionalProperties"] is True
 
     current_provider = provider()
-    current_provider.register_mcp_tool(build_execution_request_tool(binding.func), tool_json=wrapped_schema)
+    checks = []
+
+    def check(payload):
+        checks.append(json.loads(payload))
+        return needs_confirmation
+
+    current_provider.register_mcp_tool(
+        build_execution_request_tool(binding.func, check if needs_confirmation is not None else None),
+        tool_json=wrapped_schema,
+    )
     call = ToolCallRequest(
         id="1",
         name="mcp_demo_echo",
@@ -343,6 +432,7 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
         elif event["event"] == "tool_call_result":
             assert json.loads(event["context"])[0][2] == "remote result"
     assert remote_calls == [("echo", {"text": "hello", "extra": 1})]
+    assert checks == ([] if needs_confirmation is None else [call.arguments])
 
 
 @pytest.mark.asyncio

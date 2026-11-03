@@ -642,17 +642,50 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `feishu_schedule_list` | 查看当前用户的定时任务 |
 | `feishu_schedule_cancel` | 取消当前用户拥有的定时任务 |
 
-`shell`、`baidu_search` 和 `bing_search` 已启用执行确认。模型调用时必须填写
+`shell` 已启用执行确认。模型调用时必须填写
 `execution_description`，说明本次具体要做什么及目的；界面会显示说明和实际执行参数，
 执行确认复用 `question` 事件和现有表单，展示说明、参数和“确认” / “取消”选项。
 回传字符串包含 `confirm` 且不包含 `cancel` 时才会运行原工具；包含 `cancel`、不含 `confirm` 或等待超过 300 秒均不会执行。
 等待确认不占用工具执行超时；非交互模式下，`registry.py` 不注册这些需要确认的工具。
 
-`xpeech/agent/tools/registry.py` 通过 `build_execution_request_tool(tool)` 注册同名占位函数，
-只返回 `EXECUTION_REQUEST` 标记。`loop.py` 检查 `execution.value` 后发出 `question` 事件，
+`xpeech/agent/tools/registry.py` 通过 `build_execution_request_tool(tool)` 注册同名包装函数，
+默认返回 `EXECUTION_REQUEST` 标记。`loop.py` 检查 `execution.value` 后发出 `question` 事件，
 用户确认后才调用保存的真实函数；执行器无需处理特殊异常或额外结果字段。
 Web 和飞书沿用现有 `/answer_question` 接口；后端直接检查整个回传字符串，不解析 JSON 或限定字段。
 MCP 通过各 Server 的 `execution_request_tools` 配置启用同样的确认流程；默认 `[]`。
+
+需要按本次调用决定是否询问时，可在注册代码中传入可选的 `requires_confirmation`：
+
+```python
+import json
+
+from xpeech.agent.tools.execution_request import build_execution_request_tool
+from xpeech.agent.tools.shell import build_shell_tools
+
+
+def requires_confirmation(payload: str) -> bool:
+    request = json.loads(payload)
+    # 仅 pwd 直接执行，其他命令均询问用户。
+    return request["command"] != "pwd"
+
+
+provider.register_function_tool(
+    build_execution_request_tool(
+        build_shell_tools(workspace=workspace),
+        requires_confirmation=requires_confirmation,
+    )
+)
+```
+
+回调接收 JSON 字符串，例如 `{"command":"pwd","execution_description":"查看当前目录"}`。
+`execution_description` 与原工具参数位于同一层，仅包含调用时提供并通过参数模型校验的字段，
+不补入未提供的默认参数。回调支持同步函数或 `async def`：返回 `True` 时询问用户，
+返回 `False` 时直接执行原工具；省略回调时每次都询问。回调抛出异常、超时或返回非 `bool`
+值时，按工具错误返回，原工具不会执行。
+
+直接执行时会移除 `execution_description`，仅把原工具参数传给原函数。
+MCP 包装也支持此回调，需在 `registry.py` 的 `build_execution_request_tool(tool_func, ...)`
+调用处传入；它是 Python 注册参数，不是 `conf.toml` 配置项。
 
 工具文本结果超过 `[tool].max_result_chars`（默认 10,000）时不会丢弃尾部内容：完整结果会以
 文本文件保存到当前用户 workspace 的 `tool-results/`，工具消息返回原始内容前缀、总字符数和
