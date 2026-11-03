@@ -1,13 +1,18 @@
+import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import mcp_client, registry
+from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.execution_request import EXECUTION_REQUEST
 from xpeech.agent.tools.helper import get_tool_model_cls
+from xpeech.agent.tools.shell import ShellArgs
 from xpeech.config.settings import ToolConfig
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
@@ -36,6 +41,118 @@ class FakeProvider:
     def register_mcp_tool(self, tool, *, tool_json):
         self.registered.append(tool.__name__)
         self.mcp_tools.append((tool_json, tool))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("returncode", "output", "expected"),
+    [
+        (0, b'{"decision":"allow"}', False),
+        (1, b'{"decision":"deny"}', True),
+        (0, b'{"decision":"deny"}', True),
+        (0, b'{"decision":"ask"}', True),
+        (0, b'{"decision":"indeterminate"}', True),
+        (3, b'{"decision":"allow"}', True),
+        (0, b"{}", True),
+        (0, b"[]", True),
+        (0, b"not json", True),
+        (0, b"\xff", True),
+    ],
+)
+async def test_shell_dcg_only_skips_confirmation_for_successful_allow(monkeypatch, returncode, output, expected):
+    process = SimpleNamespace(returncode=returncode, communicate=AsyncMock(return_value=(output, b"")))
+    spawn = AsyncMock(return_value=process)
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
+    command = "echo '目录'; $(some-command)"
+
+    assert await shell_module._shell_requires_confirmation(json.dumps({"command": command})) is expected
+
+    process.communicate.assert_awaited_once_with(command.encode("utf-8"))
+    argv = spawn.call_args.args
+    assert argv[:3] == ("dcg", "test", "--stdin")
+    assert command not in argv
+    assert argv[argv.index("--dialect") + 1] == "posix"
+    assert "system" in argv[argv.index("--with-packs") + 1].split(",")
+
+
+@pytest.mark.asyncio
+async def test_shell_dcg_missing_binary_requires_confirmation(monkeypatch):
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(side_effect=FileNotFoundError("dcg")))
+    assert await shell_module._shell_requires_confirmation('{"command":"pwd"}') is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_shell_dcg_stops_and_reaps_check_on_timeout_or_cancellation(monkeypatch, cancelled):
+    started = asyncio.Event()
+
+    async def communicate(_command):
+        started.set()
+        await asyncio.Event().wait()
+
+    process = SimpleNamespace(returncode=None, communicate=communicate, kill=Mock(), wait=AsyncMock())
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(shell_module, "SHELL_CHECK_TIMEOUT", 1 if cancelled else 0.01)
+    task = asyncio.create_task(shell_module._shell_requires_confirmation('{"command":"pwd"}'))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    if cancelled:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        assert await task is True
+    process.kill.assert_called_once_with()
+    process.wait.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("not_interactive", [False, True])
+@pytest.mark.parametrize("decision", ["allow", "deny"])
+async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch, not_interactive, decision):
+    executions = []
+
+    async def shell(args: ShellArgs):
+        """Execute a test command."""
+        executions.append(args)
+        return "shell output"
+
+    monkeypatch.setattr(registry, "build_shell_tools", lambda **_kwargs: shell)
+    process = SimpleNamespace(
+        returncode=0 if decision == "allow" else 1,
+        communicate=AsyncMock(return_value=(json.dumps({"decision": decision}).encode(), b"")),
+    )
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    provider = FakeProvider()
+    await registry.register_tools(
+        user_id="shell-dcg-test",
+        provider=provider,
+        workspace=tmp_path,
+        config=ToolConfig(),
+        not_interactive=not_interactive,
+    )
+    command = "pwd" if decision == "allow" else "dd if=/dev/zero of=/dev/sda"
+    [result] = [
+        result
+        async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+            [
+                ToolCallRequest(
+                    id="1", name="shell", arguments={"command": command, "execution_description": "测试检查"}
+                )
+            ],
+            provider.function_tools,
+        )
+    ]
+    process.communicate.assert_awaited_once_with(command.encode())
+    if decision == "allow":
+        assert result.succeeded and result.value == "shell output"
+        [args] = executions
+        assert type(args) is ShellArgs and args.command == command
+    else:
+        assert executions == []
+        if not_interactive:
+            assert not result.succeeded and "拒绝执行" in result.value
+        else:
+            assert result.succeeded and result.value == EXECUTION_REQUEST
 
 
 @pytest.mark.asyncio
@@ -111,9 +228,6 @@ async def test_registers_supported_default_and_mcp_tools(
     ]
     if not_interactive:
         interactive_names = {
-            "shell",
-            "baidu_search",
-            "bing_search",
             "ask_user_question",
             "feishu_schedule",
             "feishu_schedule_list",
@@ -121,11 +235,22 @@ async def test_registers_supported_default_and_mcp_tools(
         }
         expected_tools = [name for name in expected_tools if name not in interactive_names]
     assert provider.registered == expected_tools + [tool.__name__ for _, tool in mcp_tools]
-    for name in ("shell", "baidu_search", "bing_search"):
-        if not_interactive:
-            assert name not in provider.function_tools
-        else:
-            assert "execution_description" in get_tool_model_cls(provider.function_tools[name]).model_cls.model_fields
+    assert "execution_description" in get_tool_model_cls(provider.function_tools["shell"]).model_cls.model_fields
+    for name in ("baidu_search", "bing_search"):
+        assert "execution_description" not in get_tool_model_cls(provider.function_tools[name]).model_cls.model_fields
+    [result] = [
+        result
+        async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+            [ToolCallRequest(id="shell-1", name="shell", arguments={"execution_description": "测试"})],
+            provider.function_tools,
+        )
+    ]
+    if not_interactive:
+        assert not result.succeeded
+        assert "拒绝执行" in result.value
+    else:
+        assert result.succeeded
+        assert result.value == EXECUTION_REQUEST
     assert provider.mcp_tools == mcp_tools
     assert registration_calls == [(("session-1", "demo", config.mcp_servers["demo"]), {"workspace": tmp_path})]
 
@@ -300,7 +425,7 @@ async def test_mcp_confirmation_selection_at_registration(
             not_interactive=not_interactive,
         )
         tools = {name: tool for name, tool in provider.default_tools.items() if name.startswith("mcp_")}
-        registered_names = enabled_names - expected_confirmation if not_interactive else enabled_names
+        registered_names = enabled_names
         assert set(tools) == {mcp_client._mcp_tool_name("demo", name) for name in registered_names}
         for name in sorted(registered_names):
             tool_name = mcp_client._mcp_tool_name("demo", name)
@@ -316,12 +441,17 @@ async def test_mcp_confirmation_selection_at_registration(
                     {tool_name: tools[tool_name].func},
                 )
             ]
-            assert result.succeeded
             if needs_confirmation:
-                assert result.value == EXECUTION_REQUEST
+                if not_interactive:
+                    assert not result.succeeded
+                    assert "拒绝执行" in result.value
+                else:
+                    assert result.succeeded
+                    assert result.value == EXECUTION_REQUEST
                 assert len(calls) == previous_calls
                 assert "execution_description" in parameters["required"]
             else:
+                assert result.succeeded
                 assert result.value == name
                 assert calls[-1] == (name, {})
 

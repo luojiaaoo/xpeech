@@ -41,12 +41,15 @@ def build_execution_question(tool_name: str, arguments: dict[str, Any], descript
 def build_execution_request_tool(
     function: Callable,
     requires_confirmation: Callable[[str], bool | Awaitable[bool]] | None = None,
+    *,
+    not_interactive: bool = False,
 ) -> Callable:
     """创建同名工具，默认返回标记，交由 Agent 询问用户后执行。
 
     requires_confirmation 接收包含 execution_description 和原工具参数的 JSON
     字符串（仅包含调用时提供的字段），支持同步或异步函数。返回 True 时询问用户，
     False 时直接执行原函数；异常或非 bool 返回值按工具错误处理，不执行原函数。
+    not_interactive=True 时，凡是需要确认的调用均直接拒绝，不询问用户。
     """
     model_info = get_tool_model_cls(function)
     if EXECUTION_DESCRIPTION in model_info.model_cls.model_fields:
@@ -61,12 +64,14 @@ def build_execution_request_tool(
     check_confirmation = ensure_async(requires_confirmation) if requires_confirmation is not None else None
 
     async def execution_request(args) -> Any:
-        if check_confirmation is None:
-            return EXECUTION_REQUEST
-        needs_confirmation = await check_confirmation(args.model_dump_json(exclude_unset=True))
-        if not isinstance(needs_confirmation, bool):
-            raise TypeError("requires_confirmation must return a bool")
+        needs_confirmation = True
+        if check_confirmation is not None:
+            needs_confirmation = await check_confirmation(args.model_dump_json(exclude_unset=True))
+            if not isinstance(needs_confirmation, bool):
+                raise TypeError("requires_confirmation must return a bool")
         if needs_confirmation:
+            if not_interactive:
+                raise PermissionError("非交互模式下无法获取用户确认，拒绝执行该工具。")
             return EXECUTION_REQUEST
 
         arguments = args.model_dump(exclude={EXECUTION_DESCRIPTION}, exclude_unset=True)

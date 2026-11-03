@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import platform
 import re
@@ -19,6 +20,7 @@ from .helper import is_direct_python_pip_exec, safe_resolve_workspace_path
 
 DEFAULT_EXEC_TIMEOUT_MS = 120_000
 MAX_EXEC_TIMEOUT_MS = 240_000
+SHELL_CHECK_TIMEOUT = 5.0
 DENY_PATTERNS = [
     r"\brm\s+-[rf]{1,2}\b",  # rm -r, rm -rf, rm -fr
     r"\bdel\s+/[fq]\b",  # del /f, del /q
@@ -71,6 +73,46 @@ class ShellCommandResult:
     stderr: bytes
     returncode: int | None
     timed_out: bool = False
+
+
+async def _shell_requires_confirmation(payload: str) -> bool:
+    """用 dcg 检查 Bash；仅明确允许的命令免确认，检查失败时退回用户确认。"""
+    command = json.loads(payload).get("command")
+    if not isinstance(command, str) or not command.strip():
+        return True
+
+    process = None
+    try:
+        async with asyncio.timeout(SHELL_CHECK_TIMEOUT):
+            process = await asyncio.create_subprocess_exec(
+                "dcg",
+                "test",
+                "--stdin",
+                "--dialect",
+                "posix",
+                "--with-packs",
+                "core.filesystem,core.git,system",
+                "--format",
+                "json",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await process.communicate(command.encode("utf-8"))
+        if process.returncode != 0:
+            return True
+        result = json.loads(stdout)
+        return not (isinstance(result, dict) and result.get("decision") == "allow")
+    except (OSError, TimeoutError, ValueError) as exc:
+        logger.warning("Shell dcg check unavailable; requiring user confirmation: {}", exc)
+        return True
+    finally:
+        if process is not None and process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
 
 
 def _is_benign_device_path(path: str) -> bool:

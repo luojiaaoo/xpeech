@@ -42,6 +42,9 @@ Shell 工具只支持 Linux，并依赖 bubblewrap 沙盒。Debian/Ubuntu 可这
 sudo apt-get install bubblewrap
 ```
 
+Shell 危险命令检查还需要安装 [dcg](https://gitee.com/luojiaaoo/destructive_command_guard/releases/tag/v0.16.0)
+并加入 backend 的 `PATH`。Docker 镜像已包含 dcg，无需额外安装。
+
 提前安装内置技能依赖：
 
 ```bash
@@ -616,7 +619,7 @@ MCP 连接按 `user_id` 隔离。同一用户在最后一次会话请求或 MCP 
 
 `execution_request_tools` 在 `enabled_tools` 筛选后生效，不会启用原本被禁用的工具。
 命中的工具会增加必填的 `execution_description` 参数，并通过 `question` 表单等待用户确认；
-说明字段不会传给 MCP 服务器。非交互模式不注册这些工具，其余 MCP 工具照常注册。
+说明字段不会传给 MCP 服务器。非交互模式仍注册这些工具，需要确认的调用会直接拒绝执行。
 
 ## 内置工具
 
@@ -642,17 +645,31 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `feishu_schedule_list` | 查看当前用户的定时任务 |
 | `feishu_schedule_cancel` | 取消当前用户拥有的定时任务 |
 
-`shell` 已启用执行确认。模型调用时必须填写
+`shell` 已接入本地 dcg 危险命令检查：明确允许的命令直接执行，命中危险规则或无法完成检查的命令需要用户确认。
+模型调用时必须填写
 `execution_description`，说明本次具体要做什么及目的；界面会显示说明和实际执行参数，
 执行确认复用 `question` 事件和现有表单，展示说明、参数和“确认” / “取消”选项。
 回传字符串包含 `confirm` 且不包含 `cancel` 时才会运行原工具；包含 `cancel`、不含 `confirm` 或等待超过 300 秒均不会执行。
-等待确认不占用工具执行超时；非交互模式下，`registry.py` 不注册这些需要确认的工具。
+等待确认不占用工具执行超时；非交互模式下，需要确认的调用会直接拒绝执行，不发起询问。
 
 `xpeech/agent/tools/registry.py` 通过 `build_execution_request_tool(tool)` 注册同名包装函数，
 默认返回 `EXECUTION_REQUEST` 标记。`loop.py` 检查 `execution.value` 后发出 `question` 事件，
 用户确认后才调用保存的真实函数；执行器无需处理特殊异常或额外结果字段。
 Web 和飞书沿用现有 `/answer_question` 接口；后端直接检查整个回传字符串，不解析 JSON 或限定字段。
 MCP 通过各 Server 的 `execution_request_tools` 配置启用同样的确认流程；默认 `[]`。
+
+Shell 检查依赖 [Destructive Command Guard（dcg）](https://github.com/Dicklesworthstone/destructive_command_guard)。
+本地运行需在 backend 所在环境安装 `dcg` 二进制并放入 `PATH`。
+Dockerfile 从 [Gitee 镜像](https://gitee.com/luojiaaoo/destructive_command_guard/releases/tag/v0.16.0)
+安装 dcg v0.16.0，支持 x86_64 和 aarch64，并在安装前校验发布文件的 SHA-256；
+可通过构建参数 `DCG_VERSION` 指定版本。
+Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook，也不会通过 dcg 执行待检命令。
+检查函数 `_shell_requires_confirmation` 位于 `shell.py`，由 `registry.py` 注册为确认判断回调。
+它启用 `core.filesystem`、`core.git` 和 `system` 规则，覆盖危险删除、破坏性 Git 操作、
+`dd` 写设备、格式化、分区修改及危险权限、服务操作。规则存在放行例外，覆盖范围以 dcg 规则为准。
+仅当 dcg 正常退出且 JSON 中 `decision` 为 `allow` 时免确认；其余结果、未安装、检查超过 5 秒
+或返回格式异常均退回用户确认。非交互模式下，这些需要确认的调用会直接拒绝。
+用户确认后，命令仍须通过 `shell.py` 既有黑名单、工作区检查和 bwrap 沙盒限制。
 
 需要按本次调用决定是否询问时，可在注册代码中传入可选的 `requires_confirmation`：
 
@@ -673,6 +690,7 @@ provider.register_function_tool(
     build_execution_request_tool(
         build_shell_tools(workspace=workspace),
         requires_confirmation=requires_confirmation,
+        not_interactive=not_interactive,
     )
 )
 ```
@@ -682,6 +700,10 @@ provider.register_function_tool(
 不补入未提供的默认参数。回调支持同步函数或 `async def`：返回 `True` 时询问用户，
 返回 `False` 时直接执行原工具；省略回调时每次都询问。回调抛出异常、超时或返回非 `bool`
 值时，按工具错误返回，原工具不会执行。
+
+`not_interactive` 默认为 `False`。设置为 `True` 时，回调返回 `True` 会直接拒绝执行，
+返回 `False` 仍直接执行，不发出 `question` 事件；省略回调则所有调用均需要确认，因而全部拒绝。
+`registry.py` 会把当前会话的 `not_interactive` 传给 Shell 和需要确认的 MCP 包装器。
 
 直接执行时会移除 `execution_description`，仅把原工具参数传给原函数。
 MCP 包装也支持此回调，需在 `registry.py` 的 `build_execution_request_tool(tool_func, ...)`

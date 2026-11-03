@@ -56,9 +56,27 @@ RUN sed -i \
     apt-get update && \
     apt-get -o Acquire::https::Verify-Peer=false update && \
     apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bubblewrap cron curl ffmpeg git jq zip tzdata && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bubblewrap cron curl ffmpeg git jq zip tzdata xz-utils && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+ARG DCG_VERSION=0.16.0
+RUN DCG_ARCH="$(uname -m)" && \
+    case "$DCG_ARCH" in \
+        x86_64) DCG_TARGET="x86_64-unknown-linux-musl" ;; \
+        aarch64) DCG_TARGET="aarch64-unknown-linux-gnu" ;; \
+        *) echo "Unsupported dcg architecture: $DCG_ARCH" >&2; exit 1 ;; \
+    esac && \
+    DCG_ASSET="dcg-${DCG_TARGET}.tar.xz" && \
+    DCG_RELEASE_URL="https://gitee.com/luojiaaoo/destructive_command_guard/releases/download/v${DCG_VERSION}" && \
+    DCG_TMP_DIR="$(mktemp -d)" && \
+    curl -fsSL --retry 3 "${DCG_RELEASE_URL}/${DCG_ASSET}" -o "${DCG_TMP_DIR}/${DCG_ASSET}" && \
+    curl -fsSL --retry 3 "${DCG_RELEASE_URL}/${DCG_ASSET}.sha256" -o "${DCG_TMP_DIR}/${DCG_ASSET}.sha256" && \
+    (cd "$DCG_TMP_DIR" && sha256sum -c "${DCG_ASSET}.sha256") && \
+    tar -xJf "${DCG_TMP_DIR}/${DCG_ASSET}" -C "$DCG_TMP_DIR" && \
+    install -m 0755 "${DCG_TMP_DIR}/dcg" /usr/local/bin/dcg && \
+    rm -rf "$DCG_TMP_DIR" && \
+    dcg --version
 
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then NODE_ARCH="arm64"; else NODE_ARCH="x64"; fi && \

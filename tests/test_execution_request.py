@@ -62,13 +62,14 @@ async def answer(value):
 
 
 @pytest.mark.asyncio
-async def test_placeholder_returns_marker_without_running_original_function(tmp_path):
+@pytest.mark.parametrize("not_interactive", [False, True])
+async def test_placeholder_returns_marker_without_running_original_function(tmp_path, not_interactive):
     async def shell(args: CommandArgs):
         """Execute a command."""
         pytest.fail("placeholder executed the actual command")
 
     current_provider = provider()
-    current_provider.register_function_tool(build_execution_request_tool(shell))
+    current_provider.register_function_tool(build_execution_request_tool(shell, not_interactive=not_interactive))
     call = ToolCallRequest(
         id="1", name="shell", arguments={"command": "echo hello", "execution_description": "输出 hello"}
     )
@@ -79,14 +80,21 @@ async def test_placeholder_returns_marker_without_running_original_function(tmp_
             {"shell": current_provider.default_tools["shell"].func},
         )
     ]
-    assert result.succeeded
-    assert result.value == EXECUTION_REQUEST
+    if not_interactive:
+        assert not result.succeeded
+        assert "PermissionError" in result.value and "拒绝执行" in result.value
+    else:
+        assert result.succeeded
+        assert result.value == EXECUTION_REQUEST
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("async_check", [False, True])
 @pytest.mark.parametrize("needs_confirmation", [False, True])
-async def test_optional_confirmation_check_receives_json_and_controls_prompt(tmp_path, async_check, needs_confirmation):
+@pytest.mark.parametrize("not_interactive", [False, True])
+async def test_optional_confirmation_check_receives_json_and_controls_prompt(
+    tmp_path, async_check, needs_confirmation, not_interactive
+):
     checks = []
     executions = []
 
@@ -104,7 +112,11 @@ async def test_optional_confirmation_check_receives_json_and_controls_prompt(tmp
 
     current_provider = provider()
     current_provider.register_function_tool(
-        build_execution_request_tool(shell, requires_confirmation=async_checker if async_check else check)
+        build_execution_request_tool(
+            shell,
+            requires_confirmation=async_checker if async_check else check,
+            not_interactive=not_interactive,
+        )
     )
     arguments = {"command": "echo hello", "execution_description": "输出 hello"}
     call = ToolCallRequest(id="1", name="shell", arguments=arguments)
@@ -112,16 +124,23 @@ async def test_optional_confirmation_check_receives_json_and_controls_prompt(tmp
     async for event in stream_for(tmp_path, current_provider, [call], []):
         events.append(event)
         if event["event"] == "question":
+            assert not not_interactive
             assert executions == []
             await answer({"decision": "confirm"})
 
     assert checks == [arguments]
     assert [event["event"] for event in events] == (
         ["tool_call", "question", "tool_call_result"]
-        if needs_confirmation
+        if needs_confirmation and not not_interactive
         else ["tool_call", "tool_call_result"]
     )
-    assert json.loads(events[-1]["context"])[0][2] == "command output"
+    result = json.loads(events[-1]["context"])[0][2]
+    if needs_confirmation and not_interactive:
+        assert "PermissionError" in result and "拒绝执行" in result
+        assert executions == []
+        assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
+        return
+    assert result == "command output"
     [args] = executions
     assert type(args) is CommandArgs
     assert args.command == "echo hello" and args.timeout_ms == 100
@@ -367,7 +386,10 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("needs_confirmation", [None, False, True])
-async def test_mcp_placeholder_preserves_schema_and_only_sends_original_arguments(tmp_path, needs_confirmation):
+@pytest.mark.parametrize("not_interactive", [False, True])
+async def test_mcp_placeholder_preserves_schema_and_only_sends_original_arguments(
+    tmp_path, needs_confirmation, not_interactive
+):
     remote_calls = []
 
     class Session:
@@ -413,7 +435,9 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
         return needs_confirmation
 
     current_provider.register_mcp_tool(
-        build_execution_request_tool(binding.func, check if needs_confirmation is not None else None),
+        build_execution_request_tool(
+            binding.func, check if needs_confirmation is not None else None, not_interactive=not_interactive
+        ),
         tool_json=wrapped_schema,
     )
     call = ToolCallRequest(
@@ -425,13 +449,23 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
             "execution_description": "测试 MCP 调用",
         },
     )
+    denied = not_interactive and needs_confirmation is not False
+    events = []
     async for event in stream_for(tmp_path, current_provider, [call], []):
+        events.append(event)
         if event["event"] == "question":
+            assert not not_interactive
             assert remote_calls == []
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
-            assert json.loads(event["context"])[0][2] == "remote result"
-    assert remote_calls == [("echo", {"text": "hello", "extra": 1})]
+            result = json.loads(event["context"])[0][2]
+            if denied:
+                assert "PermissionError" in result and "拒绝执行" in result
+            else:
+                assert result == "remote result"
+    if not_interactive:
+        assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
+    assert remote_calls == ([] if denied else [("echo", {"text": "hello", "extra": 1})])
     assert checks == ([] if needs_confirmation is None else [call.arguments])
 
 

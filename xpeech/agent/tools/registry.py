@@ -14,7 +14,7 @@ from .question import ask_user_question
 from .research import build_research_tools
 from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .sessions import build_session_tools
-from .shell import build_shell_tools
+from .shell import _shell_requires_confirmation, build_shell_tools
 from .web import baidu_search, bing_search, web_fetch
 
 
@@ -39,8 +39,13 @@ async def register_tools(
     for tool in (read_file, write_file, edit_file):
         provider.register_function_tool(tool)
 
-    if not not_interactive:
-        provider.register_function_tool(build_execution_request_tool(build_shell_tools(workspace=workspace)))
+    provider.register_function_tool(
+        build_execution_request_tool(
+            build_shell_tools(workspace=workspace),
+            requires_confirmation=_shell_requires_confirmation,
+            not_interactive=not_interactive,
+        )
+    )
     provider.register_function_tool(web_fetch)
     for tool in (baidu_search, bing_search):
         provider.register_function_tool(tool)
@@ -83,8 +88,6 @@ async def register_tools(
                 fnmatchcase(tool_func.mcp_original_name, pattern)
                 for pattern in server_config.execution_request_tools
             ):
-                if not_interactive:
-                    continue
-                tool_func = build_execution_request_tool(tool_func)
+                tool_func = build_execution_request_tool(tool_func, not_interactive=not_interactive)
                 tool_json = execution_request_schema(tool_json)
             provider.register_mcp_tool(tool_func, tool_json=tool_json)
