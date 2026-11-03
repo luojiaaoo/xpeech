@@ -9,7 +9,7 @@ from loguru import logger
 
 from ..schema import ChatEvent, ChatEventType
 from .config import FEISHU_STREAM_UPDATE_INTERVAL_SECONDS
-from .formatting import OUTPUT_EVENT_TYPES
+from .formatting import OUTPUT_EVENT_TYPES, ensure_markdown
 
 
 @dataclass
@@ -121,7 +121,7 @@ class FeishuDeliveryMixin:
             await self.channel.update_card_element_content(
                 card_id,
                 "main",
-                accumulated,
+                ensure_markdown(accumulated),
                 sequence=seq,
             )
             last_sent = accumulated
@@ -133,7 +133,7 @@ class FeishuDeliveryMixin:
             await self.channel.update_card_element_content(
                 card_id,
                 "main",
-                accumulated,
+                ensure_markdown(accumulated),
                 sequence=seq,
             )
 

@@ -1,4 +1,5 @@
 import asyncio
+from html import unescape
 from pathlib import Path
 from time import time
 from types import SimpleNamespace
@@ -219,6 +220,17 @@ def test_background_task_card_contains_result_content():
             ]
         },
     }
+
+
+def test_background_task_card_escapes_dynamic_markup():
+    raw = '**结果**\n[链接](https://example.test)\n<rss>甲 &amp; 乙</rss>'
+    card = build_feishu_background_task_card(raw, schedule_type="<cron>", schedule_value="<expression>")
+    metadata, result = card["body"]["elements"]
+    for element in (metadata, result):
+        assert "<" not in element["content"] and ">" not in element["content"]
+    assert unescape(result["content"]) == raw
+    assert unescape(metadata["content"]) == "**调度类型**：<cron>\n**调度表达式**：`<expression>`"
+    assert "**结果**" in result["content"] and "[链接](https://example.test)" in result["content"]
 
 
 @pytest.mark.asyncio
@@ -738,6 +750,38 @@ async def test_streaming_thinking_uses_custom_card(monkeypatch: pytest.MonkeyPat
     finish_streaming_card.assert_awaited_once_with("card_thinking", sequence=2)
     update_card.assert_not_awaited()
     assert "feishu_oc_chat" not in bridge.session_update_message_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", [ChatEventType.THINKING, ChatEventType.ASSISTANT])
+@pytest.mark.parametrize("interval", [0, 60])
+async def test_streaming_cards_escape_split_markup_in_updates_and_final_flush(monkeypatch, event_type, interval):
+    tokens = ['**结果**\n[链接](https://example.test)\n<', 'rss>甲 &', 'amp; 乙</rss>']
+
+    async def chunks():
+        for token in tokens:
+            yield token
+
+    monkeypatch.setattr(feishu_delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", interval)
+    monkeypatch.setattr(feishu_delivery.asyncio, "sleep", AsyncMock())
+    channel = SimpleNamespace(
+        create_card_instance=AsyncMock(return_value="stream-card"),
+        send_card_by_reference=AsyncMock(return_value=SendResult(success=True, message_id="stream-message")),
+        update_card_element_content=AsyncMock(),
+        finish_streaming_card=AsyncMock(),
+    )
+    bridge = _bridge_with_channel(channel)
+    message, iter_content = bridge._format_chat_event(ChatEvent(event=event_type, context=chunks()))
+    await bridge.send("oc_chat", message, iter_content)
+
+    updates = [call.args[2] for call in channel.update_card_element_content.await_args_list]
+    assert len(updates) == (len(tokens) if interval == 0 else 1)
+    assert all("<" not in content and ">" not in content for content in updates)
+    assert unescape(updates[-1]) == "".join(tokens)
+    assert "**结果**" in updates[-1] and "[链接](https://example.test)" in updates[-1]
+    if interval == 0:
+        assert [unescape(content) for content in updates] == ["".join(tokens[:i]) for i in range(1, 4)]
+    channel.finish_streaming_card.assert_awaited_once_with("stream-card", sequence=len(updates) + 1)
 
 
 @pytest.mark.asyncio

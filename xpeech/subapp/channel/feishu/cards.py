@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ....agent.tools.question import validate_question_json
+from .formatting import ensure_markdown, plain_text
 
 FINISH_CARD_CONTENT = {
     "schema": "2.0",
@@ -30,10 +31,6 @@ FINISH_CARD_CONTENT = {
 }
 
 
-def plain_text(content: str) -> dict[str, str]:
-    return {"tag": "plain_text", "content": content}
-
-
 def build_feishu_background_task_card(
     content: str,
     schedule_type: str,
@@ -51,7 +48,7 @@ def build_feishu_background_task_card(
             "elements": [
                 {
                     "tag": "markdown",
-                    "content": (
+                    "content": ensure_markdown(
                         f"**调度类型**：{schedule_type}\n"
                         f"**调度表达式**：`{schedule_value}`"
                     ),
@@ -61,7 +58,7 @@ def build_feishu_background_task_card(
                 },
                 {
                     "tag": "markdown",
-                    "content": content,
+                    "content": ensure_markdown(content),
                     "text_align": "left",
                     "text_size": "normal",
                     "margin": "0px 0px 0px 0px",

@@ -2,10 +2,27 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from html import escape
 from typing import Any, NotRequired, TypedDict
 
 from ..schema import ChatEvent, ChatEventType
-from .cards import plain_text
+
+
+def plain_text(content: str) -> dict[str, str]:
+    return {"tag": "plain_text", "content": content}
+
+
+def ensure_markdown(content: str, max_chars: int | None = None) -> str:
+    """保留 Markdown，转义动态文本中的 XML/HTML，避免被解析为飞书标签。"""
+    content = escape(content, quote=False)
+    if max_chars is not None and len(content) > max_chars:
+        content = content[:max(0, max_chars - 1)]
+        # 截断时不保留残缺的 HTML 实体。
+        last_entity = content.rfind("&")
+        if last_entity > content.rfind(";"):
+            content = content[:last_entity]
+        content += "…"
+    return content
 
 
 class OutputEventType(TypedDict):
@@ -124,7 +141,7 @@ class FeishuEventFormatter:
         output = OUTPUT_EVENT_TYPES[event.event]
         content = output["content"]
         text = content if isinstance(content, str) else self._format_chat_event_content(event)
-        text = self._truncate(text, output.get("max_chars"))
+        text = ensure_markdown(text, output.get("max_chars"))
         element = {
             "tag": "markdown",
             "margin": "0px 0px 0px 0px",

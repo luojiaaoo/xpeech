@@ -162,6 +162,41 @@ async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(mon
 
 
 @pytest.mark.asyncio
+async def test_rss_batch_results_are_escaped_before_card_updates(monkeypatch):
+    bridge = bridge_with_channel()
+    channel = bridge.channel
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    rss = '<?xml version="1.0"?><rss><channel><title>A &amp; B</title></channel></rss>'
+
+    async def reject_raw_markup(_card_id, _element_id, content, *, sequence):
+        assert "<" not in content and ">" not in content
+
+    channel.update_card_element_content.side_effect = reject_raw_markup
+
+    async def assistant_text():
+        yield "All RSS results received"
+
+    async def events(*_args):
+        yield tool_event(
+            ChatEventType.TOOL_CALL,
+            [[str(i), "web_fetch", {"url": "https://example.test/rss"}] for i in range(10)],
+        )
+        for i in range(10):
+            yield tool_event(ChatEventType.TOOL_CALL_RESULT, [[str(i), "web_fetch", rss, 0]])
+        yield ChatEvent(event=ChatEventType.ASSISTANT, context=assistant_text())
+
+    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    await bridge.consume([message()])
+
+    updates = [call for call in channel.update_card_element_content.await_args_list if call.args[0] == "tools-card"]
+    assert len(updates) == 10
+    assert all("&lt;rss&gt;" in call.args[2] for call in updates)
+    channel.update_card_element_content.assert_any_await(
+        "assistant-card", "main", "All RSS results received", sequence=1,
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_tool_card_stream_is_finished_when_consumption_fails_or_is_cancelled(monkeypatch, cancel):
     bridge = bridge_with_channel()

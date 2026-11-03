@@ -1,4 +1,5 @@
 import json
+from html import unescape
 
 import pytest
 
@@ -44,6 +45,48 @@ def test_tool_results_are_stream_data_without_a_separate_card_format():
     assert ChatEventType.TOOL_CALL_RESULT not in OUTPUT_EVENT_TYPES
     assert formatter._format_chat_event(event) is None
     assert formatter._format_tool_event(event) == "**shell**\nresult"
+
+
+@pytest.mark.parametrize("raw", [
+    '<?xml version="1.0"?><rss><channel><title>A &amp; B</title></channel></rss>',
+    '<feed xmlns="http://www.w3.org/2005/Atom"><title>新闻</title></feed>',
+    '<html><body><![CDATA[<at id="all">test</at>]]></body></html>',
+])
+def test_tool_card_displays_markup_as_text_without_changing_tool_results(raw):
+    formatter = FeishuEventFormatter()
+    event = tool_event(ChatEventType.TOOL_CALL_RESULT, [["id", "web_fetch", raw, 0]])
+    result_text = formatter._format_tool_event(event)
+    assert result_text == "**web_fetch**\n" + raw
+    message, _ = formatter._format_chat_event(ChatEvent(event=ChatEventType.TOOL_CALL, context=result_text))
+    content = message["card"]["body"]["elements"][0]["elements"][0]["content"]
+    assert "<" not in content and ">" not in content
+    assert unescape(content) == result_text
+    assert json.loads(event.context)[0][2] == raw
+
+
+def test_tool_card_truncation_keeps_html_entities_complete(monkeypatch):
+    monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, {
+        **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL], "max_chars": 8,
+    })
+    message, _ = FeishuEventFormatter()._format_chat_event(
+        ChatEvent(event=ChatEventType.TOOL_CALL, context="<&" * 100),
+    )
+    content = message["card"]["body"]["elements"][0]["elements"][0]["content"]
+    assert len(content) <= 8
+    assert content == "&lt;…"
+
+
+@pytest.mark.parametrize("event_type", [ChatEventType.ERROR, ChatEventType.COMMAND, ChatEventType.TOKEN_USAGE])
+def test_non_streaming_card_escapes_dynamic_markup_and_preserves_markdown(event_type):
+    formatter = FeishuEventFormatter()
+    raw = '**标题**\n[链接](https://example.test)\n<rss>甲 &amp; 乙</rss>'
+    context = json.dumps({"tokens": raw}) if event_type == ChatEventType.TOKEN_USAGE else raw
+    event = ChatEvent(event=event_type, context=context)
+    message, _ = formatter._format_chat_event(event)
+    content = message["card"]["body"]["elements"][0]["content"]
+    assert "<" not in content and ">" not in content
+    assert unescape(content) == formatter._format_chat_event_content(event)
+    assert "**标题**" in content and "[链接](https://example.test)" in content
 
 
 def test_truncation_limits_are_configured_in_output_event_types(monkeypatch):
