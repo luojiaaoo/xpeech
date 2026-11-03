@@ -55,8 +55,7 @@ const STYLE_GUIDES = {
       task: '- [ ]'
     },
     strikethrough: '~~text~~',
-    autoLinks: '<https://url>'
-    },
+    autoLinks: '<https://url>',
     tables: '| column | column | '
   },
   consistent: {
