@@ -26,6 +26,12 @@ def named_tool(name: str):
     return tool
 
 
+@pytest.fixture(autouse=True)
+def stub_unrelated_shell_builder(monkeypatch):
+    # Registry/MCP tests do not require the Linux-only shell implementation.
+    monkeypatch.setattr(registry, "build_shell_tools", lambda **_kwargs: named_tool("shell"))
+
+
 class FakeProvider:
     def __init__(self) -> None:
         self.support_image = False
@@ -65,7 +71,7 @@ async def test_shell_dcg_only_skips_confirmation_for_successful_allow(monkeypatc
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
     command = "echo '目录'; $(some-command)"
 
-    assert await shell_module._shell_requires_confirmation(json.dumps({"command": command})) is expected
+    assert await shell_module.shell_requires_confirmation(json.dumps({"command": command})) is expected
 
     process.communicate.assert_awaited_once_with(command.encode("utf-8"))
     argv = spawn.call_args.args
@@ -78,7 +84,7 @@ async def test_shell_dcg_only_skips_confirmation_for_successful_allow(monkeypatc
 @pytest.mark.asyncio
 async def test_shell_dcg_missing_binary_requires_confirmation(monkeypatch):
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(side_effect=FileNotFoundError("dcg")))
-    assert await shell_module._shell_requires_confirmation('{"command":"pwd"}') is True
+    assert await shell_module.shell_requires_confirmation('{"command":"pwd"}') is True
 
 
 @pytest.mark.asyncio
@@ -93,7 +99,7 @@ async def test_shell_dcg_stops_and_reaps_check_on_timeout_or_cancellation(monkey
     process = SimpleNamespace(returncode=None, communicate=communicate, kill=Mock(), wait=AsyncMock())
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
     monkeypatch.setattr(shell_module, "SHELL_CHECK_TIMEOUT", 1 if cancelled else 0.01)
-    task = asyncio.create_task(shell_module._shell_requires_confirmation('{"command":"pwd"}'))
+    task = asyncio.create_task(shell_module.shell_requires_confirmation('{"command":"pwd"}'))
     await asyncio.wait_for(started.wait(), timeout=1)
     if cancelled:
         task.cancel()
@@ -174,7 +180,7 @@ async def test_registers_supported_default_and_mcp_tools(
     monkeypatch.setattr(registry, "build_file_message_tools", lambda **_kwargs: named_tool("send_file"))
     monkeypatch.setattr(registry, "ask_user_question", named_tool("ask_user_question"))
 
-    registration = object()
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo")
     registration_calls = []
 
     async def get_registration(*args, **kwargs):
@@ -187,12 +193,12 @@ async def test_registers_supported_default_and_mcp_tools(
         for name in ("mcp_demo_echo", "mcp_demo_ping")
     ]
 
-    async def collect_tools(current_registration):
-        assert current_registration is registration
-        for tool_json, tool_func in mcp_tools:
-            yield tool_json, tool_func, tool_func.__name__
+    async def collect_tools():
+        registration._session = object()
+        registration._bindings = [mcp_client.MCPToolBinding(schema=schema, func=func) for schema, func in mcp_tools]
+        return registration._bindings
 
-    monkeypatch.setattr(registry, "collect_mcp_tool", collect_tools)
+    monkeypatch.setattr(registration, "_get_tool_bindings", collect_tools)
     provider = FakeProvider()
     config = ToolConfig.model_validate({"mcpServers": {"demo": {"command": "demo"}}})
 
@@ -203,6 +209,7 @@ async def test_registers_supported_default_and_mcp_tools(
         config=config,
         not_interactive=not_interactive,
     )
+    await registration.start_tool_discovery()
 
     assert "read_image" not in provider.registered
     expected_tools = [
@@ -225,6 +232,7 @@ async def test_registers_supported_default_and_mcp_tools(
         "feishu_schedule",
         "feishu_schedule_list",
         "feishu_schedule_cancel",
+        "query_mcp_status",
     ]
     if not_interactive:
         interactive_names = {
@@ -311,6 +319,10 @@ async def test_mcp_functions_call_the_bound_server_with_original_schema_and_argu
             workspace=tmp_path,
             config=config,
         )
+        await asyncio.gather(*(
+            registration.start_tool_discovery()
+            for registration in mcp_client.MCP_CONNECTIONS["mcp-binding-test"].values()
+        ))
 
         mcp_tools = {name: tool for name, tool in provider.default_tools.items() if name.startswith("mcp_")}
         assert set(mcp_tools) == {"mcp_alpha_echo", "mcp_alpha_ping", "mcp_beta_echo"}
@@ -424,8 +436,12 @@ async def test_mcp_confirmation_selection_at_registration(
             config=config,
             not_interactive=not_interactive,
         )
+        await asyncio.gather(*(
+            registration.start_tool_discovery()
+            for registration in mcp_client.MCP_CONNECTIONS["mcp-confirmation-test"].values()
+        ))
         tools = {name: tool for name, tool in provider.default_tools.items() if name.startswith("mcp_")}
-        registered_names = enabled_names
+        registered_names = enabled_names - expected_confirmation if not_interactive else enabled_names
         assert set(tools) == {mcp_client._mcp_tool_name("demo", name) for name in registered_names}
         for name in sorted(registered_names):
             tool_name = mcp_client._mcp_tool_name("demo", name)
@@ -465,3 +481,214 @@ async def test_mcp_confirmation_selection_at_registration(
             assert "execution_description" not in binding.schema["function"]["parameters"]["properties"]
     finally:
         await mcp_client.close_session_mcp_connections("mcp-confirmation-test")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_check", [False, True])
+@pytest.mark.parametrize("needs_confirmation", [False, True])
+@pytest.mark.parametrize("not_interactive", [False, True])
+async def test_register_mcp_bindings_passes_confirmation_callback(
+    tmp_path, async_check, needs_confirmation, not_interactive,
+):
+    session = SimpleNamespace(
+        list_tools=AsyncMock(return_value=SimpleNamespace(tools=[{
+            "name": "echo",
+            "inputSchema": {
+                "type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"],
+            },
+        }])),
+        call_tool=AsyncMock(return_value={"content": [{"type": "text", "text": "echo result"}]}),
+    )
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo")
+    registration._session = session
+    task = registration.start_tool_discovery()
+    await task
+    check = (AsyncMock if async_check else Mock)(return_value=needs_confirmation)
+    provider = FakeProvider()
+    mcp_client.register_mcp_bindings(
+        task,
+        registration=registration,
+        provider=provider,
+        execution_request_tools=["echo"],
+        not_interactive=not_interactive,
+        requires_confirmation=check,
+    )
+    [(schema, tool)] = provider.mcp_tools
+    arguments = {"text": "hello", "execution_description": "测试回调"}
+    [result] = [result async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+        [ToolCallRequest(id="1", name="mcp_demo_echo", arguments=arguments)], {tool.__name__: tool},
+    )]
+    check.assert_called_once()
+    assert json.loads(check.call_args.args[0]) == arguments
+    if async_check:
+        check.assert_awaited_once()
+    assert "execution_description" in schema["function"]["parameters"]["required"]
+    if needs_confirmation:
+        session.call_tool.assert_not_called()
+        if not_interactive:
+            assert not result.succeeded and "拒绝执行" in result.value
+        else:
+            assert result.succeeded and result.value == EXECUTION_REQUEST
+    else:
+        assert result.succeeded and result.value == "echo result"
+        session.call_tool.assert_awaited_once_with("echo", arguments={"text": "hello"})
+    await registration.aclose()
+
+
+@pytest.mark.asyncio
+async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(tmp_path, monkeypatch):
+    release_slow = asyncio.Event()
+    started = {name: asyncio.Event() for name in ("slow", "fast")}
+    attempts = []
+
+    class Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[{"name": "echo"}, {"name": "disabled"}])
+
+    async def run_connection(registration, ready, close_event):
+        name = registration.config.server_name
+        attempts.append(name)
+        started[name].set()
+        try:
+            if name == "slow":
+                await release_slow.wait()
+            registration._session = Session()
+            ready.set_result(None)
+            await close_event.wait()
+        finally:
+            registration._session = None
+
+    monkeypatch.setattr(mcp_client.MCPServerRegistration, "_run_connection", run_connection)
+    config = ToolConfig.model_validate({"mcpServers": {
+        "slow": {"command": "demo", "enabled_tools": ["echo"], "description": "查询客户订单"},
+        "fast": {"command": "demo", "enabled_tools": ["echo"], "description": "查询商品信息"},
+        "private": {"command": "demo", "channel_tags": ["private"], "description": "查询内部薪资"},
+    }})
+    providers = [FakeProvider(), FakeProvider()]
+    try:
+        for provider in providers:
+            await asyncio.wait_for(registry.register_tools(
+                user_id="background-test", provider=provider, workspace=tmp_path, config=config,
+            ), timeout=1)
+        await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started.values())), timeout=1)
+        registrations = list(mcp_client.MCP_CONNECTIONS["background-test"].values())
+        fast = next(registration for registration in registrations if registration.config.server_name == "fast")
+        await asyncio.wait_for(fast.start_tool_discovery(), timeout=1)
+
+        [result] = [result async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+            [ToolCallRequest(id="status", name="query_mcp_status", arguments={})], providers[0].function_tools,
+        )]
+        assert result.succeeded
+        status = json.loads(result.value)["servers"]
+        assert set(status) == {"slow", "fast"}
+        assert status["slow"]["status"] == "connecting"
+        assert status["slow"]["description"] == "查询客户订单"
+        assert status["fast"]["status"] == "ready"
+        assert status["fast"]["description"] == "查询商品信息"
+        assert status["fast"]["tools"] == ["mcp_fast_echo"]
+        for provider in providers:
+            assert [tool.__name__ for _, tool in provider.mcp_tools] == ["mcp_fast_echo"]
+
+        release_slow.set()
+        await asyncio.wait_for(asyncio.gather(*(registration.start_tool_discovery() for registration in registrations)), 1)
+        for provider in providers:
+            assert [tool.__name__ for _, tool in provider.mcp_tools] == ["mcp_fast_echo", "mcp_slow_echo"]
+            assert json.loads(await provider.function_tools["query_mcp_status"]())["servers"]["slow"]["status"] == "ready"
+
+        cached_provider = FakeProvider()
+        await registry.register_tools(
+            user_id="background-test", provider=cached_provider, workspace=tmp_path, config=config,
+        )
+        assert len(cached_provider.mcp_tools) == 2
+        assert sorted(attempts) == ["fast", "slow"]
+
+        slow = next(registration for registration in registrations if registration.config.server_name == "slow")
+        await slow.aclose()
+        slow._start_retry_cooldown(ConnectionError("connection closed"))
+        unavailable_provider = FakeProvider()
+        await registry.register_tools(
+            user_id="background-test", provider=unavailable_provider, workspace=tmp_path, config=config,
+        )
+        assert [tool.__name__ for _, tool in unavailable_provider.mcp_tools] == ["mcp_fast_echo"]
+        status = json.loads(await unavailable_provider.function_tools["query_mcp_status"]())["servers"]
+        assert status["slow"]["status"] == "unavailable"
+    finally:
+        await mcp_client.close_session_mcp_connections("background-test")
+
+
+@pytest.mark.asyncio
+async def test_mcp_status_tool_is_not_registered_without_servers(tmp_path):
+    provider = FakeProvider()
+    await registry.register_tools(user_id="no-mcp", provider=provider, workspace=tmp_path, config=ToolConfig())
+    assert "query_mcp_status" not in provider.function_tools
+    assert provider.mcp_tools == []
+
+
+@pytest.mark.asyncio
+async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeypatch):
+    release = asyncio.Event()
+
+    class Session:
+        async def list_tools(self):
+            await release.wait()
+            return SimpleNamespace(tools=[{"name": "echo"}, {"name": "ping"}])
+
+    async def connect(registration):
+        registration._session = Session()
+
+    async def upstream():
+        if False:
+            yield
+
+    monkeypatch.setattr(mcp_client.MCPServerRegistration, "_connect", connect)
+    provider = LiteLLMProvider(
+        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    )
+    completion = Mock(side_effect=lambda **_kwargs: upstream())
+    monkeypatch.setattr(provider._retry_client, "acompletion", completion)
+    chats_scheduled_mid_registration = []
+    register_mcp_tool = provider.register_mcp_tool
+
+    def register_and_schedule_chat(tool, *, tool_json):
+        register_mcp_tool(tool, tool_json=tool_json)
+        if tool.__name__ == "mcp_demo_echo":
+            # Schedule chat after the first insertion; it must only run once
+            # the synchronous registration callback has published both tools.
+            chats_scheduled_mid_registration.append(asyncio.create_task(provider.chat(messages=[])))
+
+    monkeypatch.setattr(provider, "register_mcp_tool", register_and_schedule_chat)
+    config = ToolConfig.model_validate({"mcpServers": {
+        "demo": {"command": "demo", "description": "查询模型评测、对比模型能力和成本"},
+    }})
+    try:
+        await registry.register_tools(user_id="next-model-call", provider=provider, workspace=tmp_path, config=config)
+        first = await provider.chat(messages=[])
+        assert "query_mcp_status" in first.mapping_tool_call_funcs
+        status_schema = next(
+            tool for tool in completion.call_args.kwargs["tools"]
+            if tool["function"]["name"] == "query_mcp_status"
+        )
+        assert "demo" in status_schema["function"]["description"]
+        assert "查询模型评测、对比模型能力和成本" in status_schema["function"]["description"]
+        assert "是否需要等待" in status_schema["function"]["description"]
+        assert "mcp_demo_echo" not in first.mapping_tool_call_funcs
+        assert "mcp_demo_echo" not in {tool["function"]["name"] for tool in completion.call_args.kwargs["tools"]}
+        assert [chunk async for chunk in first.iter_mix_chunks] == []
+
+        release.set()
+        [registration] = mcp_client.MCP_CONNECTIONS["next-model-call"].values()
+        await asyncio.wait_for(registration.start_tool_discovery(), timeout=1)
+        assert len(chats_scheduled_mid_registration) == 1
+        [concurrent] = await asyncio.gather(*chats_scheduled_mid_registration)
+        assert {"mcp_demo_echo", "mcp_demo_ping"} <= concurrent.mapping_tool_call_funcs.keys()
+        assert {"mcp_demo_echo", "mcp_demo_ping"} <= {
+            tool["function"]["name"] for tool in completion.call_args.kwargs["tools"]
+        }
+        assert [chunk async for chunk in concurrent.iter_mix_chunks] == []
+        second = await provider.chat(messages=[])
+        assert "mcp_demo_echo" in second.mapping_tool_call_funcs
+        assert "mcp_demo_echo" in {tool["function"]["name"] for tool in completion.call_args.kwargs["tools"]}
+        assert "mcp_demo_echo" not in first.mapping_tool_call_funcs
+        assert [chunk async for chunk in second.iter_mix_chunks] == []
+    finally:
+        await mcp_client.close_session_mcp_connections("next-model-call")

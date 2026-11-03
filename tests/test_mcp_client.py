@@ -74,6 +74,7 @@ def test_tls_verification_can_be_disabled_from_config():
         {
             "mcpServers": {
                 "test": {
+                    "description": "查询客户资料和订单",
                     "url": "https://example.test/mcp",
                     "command_authorization_token": "token-helper --user $user_id",
                     "headers": {"Authorization": "Bearer ${authorization_token}"},
@@ -89,6 +90,7 @@ def test_tls_verification_can_be_disabled_from_config():
     )
 
     assert registration.config.verify_tls is False
+    assert registration.config.description == "查询客户资料和订单"
     assert registration.config.connect_timeout == 45
     assert registration.config.command_authorization_token == "token-helper --user $user_id"
     assert registration.config.headers == {"Authorization": "Bearer ${authorization_token}"}
@@ -466,3 +468,156 @@ async def test_terminated_connection_does_not_reconnect_during_cooldown(
     assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
     assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
     assert reconnect_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_background_discovery_reports_failure_and_retries_after_cooldown(monkeypatch):
+    monkeypatch.setattr(mcp_client, "MCP_RECONNECT_DELAY_SECONDS", 60)
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo")
+    attempts = 0
+
+    class Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[])
+
+    async def connect():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ConnectionError("secret-authorization-token")
+        registration._session = Session()
+
+    monkeypatch.setattr(registration, "_connect", connect)
+    assert registration.get_status()["status"] == "disconnected"
+    task = registration.start_tool_discovery()
+    assert registration.start_tool_discovery() is task
+    assert registration.get_status()["status"] == "connecting"
+    assert await task == []
+    status = registration.get_status()
+    assert status["status"] == "unavailable"
+    assert status["error"] == "ConnectionError"
+    assert 0 < status["retry_after_seconds"] <= 60
+    assert "secret-authorization-token" not in str(status)
+    assert registration.start_tool_discovery() is task
+    assert attempts == 1
+
+    registration._retry_after = asyncio.get_running_loop().time() - 1
+    await registration.start_tool_discovery()
+    assert attempts == 2
+    assert registration.get_status()["status"] == "ready"
+    assert registration.get_status()["error"] is None
+    assert registration.get_status()["tool_count"] == 0
+    await registration.aclose()
+    await registration.start_tool_discovery()
+    assert attempts == 3
+    assert registration.get_status()["status"] == "ready"
+    await registration.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["connecting", "discovering"])
+@pytest.mark.parametrize("close_all", [False, True])
+async def test_closing_session_cancels_background_discovery(monkeypatch, phase, close_all):
+    await mcp_client.close_all_mcp_connections()
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    class Session:
+        async def list_tools(self):
+            started.set()
+            await asyncio.Event().wait()
+
+    async def run_connection(registration, ready, close_event):
+        try:
+            if phase == "connecting":
+                started.set()
+                await asyncio.Event().wait()
+            registration._session = Session()
+            ready.set_result(None)
+            await close_event.wait()
+        finally:
+            stopped.set()
+            registration._session = None
+
+    monkeypatch.setattr(mcp_client.MCPServerRegistration, "_run_connection", run_connection)
+    registration = await mcp_client.get_session_mcp_registration_from_config(
+        "closing-test", "demo", MCPServerSettings(command="demo"),
+    )
+    task = registration.start_tool_discovery()
+    await asyncio.wait_for(started.wait(), timeout=1)
+    close = mcp_client.close_all_mcp_connections() if close_all else mcp_client.close_session_mcp_connections("closing-test")
+    await asyncio.wait_for(close, timeout=1)
+    assert task.cancelled()
+    assert stopped.is_set()
+    assert registration._owner_task is None
+    assert registration._session is None
+    assert registration.get_status()["status"] == "disconnected"
+    assert "closing-test" not in mcp_client.MCP_CONNECTIONS
+    assert await asyncio.wait_for(registration.start_tool_discovery(), timeout=0.2) == []
+    assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
+    assert registration._owner_task is None
+
+
+@pytest.mark.asyncio
+async def test_late_failure_from_old_session_does_not_close_new_session(monkeypatch):
+    started = asyncio.Event()
+    fail = asyncio.Event()
+
+    class OldSession:
+        async def call_tool(self, _name, arguments):
+            started.set()
+            await fail.wait()
+            raise ConnectionError("old connection closed")
+
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo")
+    registration._session = OldSession()
+    call = asyncio.create_task(registration.call_tool("echo", {}))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    new_session = object()
+    registration._session = new_session
+    fail.set()
+    assert await call == "(MCP server is temporarily unavailable)"
+    assert registration._session is new_session
+    assert registration._retry_after is None
+    await registration.aclose()
+
+
+@pytest.mark.asyncio
+async def test_discovery_after_tool_reconnect_uses_new_session_schemas(monkeypatch):
+    attempts = 0
+
+    class Session:
+        def __init__(self, version):
+            self.version = version
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[{"name": f"version_{self.version}"}])
+
+    async def run_connection(registration, ready, close_event):
+        nonlocal attempts
+        attempts += 1
+        session = Session(attempts)
+        registration._session = session
+        ready.set_result(None)
+        try:
+            await close_event.wait()
+        finally:
+            if registration._session is session:
+                registration._session = None
+
+    monkeypatch.setattr(mcp_client.MCPServerRegistration, "_run_connection", run_connection)
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo")
+    try:
+        first = await registration.start_tool_discovery()
+        assert [binding.func.__name__ for binding in first] == ["mcp_demo_version_1"]
+        registration._start_retry_cooldown(ConnectionError("connection closed"))
+        await registration.aclose()
+        registration._retry_after = asyncio.get_running_loop().time() - 1
+        # A previously registered tool can reconnect before the next runner
+        # asks for discovery. It must not cause the old schemas to be reused.
+        await registration._ensure_session()
+        second = await registration.start_tool_discovery()
+        assert [binding.func.__name__ for binding in second] == ["mcp_demo_version_2"]
+        assert attempts == 2
+    finally:
+        await registration.aclose()

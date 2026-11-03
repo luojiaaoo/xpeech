@@ -551,12 +551,17 @@ def echo(message: Message):
 
 ## MCP 工具
 
-可以在 `conf.toml` 的 `[tool.mcpServers.<name>]` 下配置 MCP Server。启动会话时，Xpeech 会连接这些 Server、发现可用工具，并把它们注册为 Agent 默认工具。
+可以在 `conf.toml` 的 `[tool.mcpServers.<name>]` 下配置 MCP Server。启动会话时，Xpeech 会在后台并发连接这些 Server、发现可用工具，首次对话无需等待 MCP 连接。每个 Server 就绪后，其工具会自动注册，并从后续模型调用开始可用。同一用户的并发会话共享连接和工具发现任务。
+
+Agent 可调用无参数的 `query_mcp_status` 工具，立即查询当前通道允许访问的 MCP 状态。返回的 `servers` 按配置名称列出 `description`、`status`（`connecting`、`ready`、`unavailable`、`disconnected`）、`transport`、`tool_count`、`tools`、`retry_after_seconds` 和 `error`。`error` 仅包含异常类型；查询不会等待连接或发起网络请求。连接失败后冷却 120 秒，冷却结束后的新会话可在后台重试。
+
+每个 MCP 可配置 `description` 说明用途。当前通道可访问的服务名称和用途会直接写入 `query_mcp_status` 的工具描述，模型从首次请求起就能判断是否需要等待某个 MCP，无需先完成连接或调用状态查询。状态查询结果也会返回用途说明。服务名称、用途、状态和工具均先按 `channel_tag` 筛选；未匹配的 MCP 不会连接或展示。未配置 MCP 或筛选后为空时，不注册 `query_mcp_status`。
 
 stdio Server 示例：
 
 ```toml
 [tool.mcpServers.filesystem]
+description = "读写工作区文件；任务需要本地文件操作时可等待此服务就绪"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 enabled_tools = ["*"]
@@ -568,6 +573,7 @@ tool_timeout = 30
 
 ```toml
 [tool.mcpServers.my-api]
+description = "查询 CRM 客户资料和订单；客户、订单相关任务可等待此服务就绪"
 url = "https://mcp.example.com/sse"
 transport = "sse"
 command_authorization_token = "curl --fail --silent 'https://auth.example.com/token?user_id=${user_id}'"
@@ -591,6 +597,7 @@ tool_timeout = 120
 
 字段说明：
 
+- `description`：可选的服务用途说明，默认空字符串。供模型在连接完成前判断当前任务是否需要等待此服务。
 - `command` / `args`：启动 stdio MCP Server 的命令和参数。
 - `url`：连接远程 MCP Server。`/sse` 结尾的地址使用 SSE transport，其他地址默认使用 streamable HTTP。
 - `transport`：可选，显式指定 `stdio`、`sse` 或 `streamable-http`。省略时按 `command` 或 URL 自动判断。
@@ -611,7 +618,7 @@ tool_timeout = 120
 `${authorization_token}`。后两者由 `command_authorization_token` 的 stdout 提供。其他 MCP 配置不做
 运行时字符串替换。
 
-MCP 连接按 `user_id` 隔离。同一用户在最后一次会话请求或 MCP 工具调用后的 10 分钟内复用连接；
+MCP 连接按 `user_id` 隔离。同一用户在最后一次成功连接、工具发现或 MCP 工具调用后的 20 分钟内复用连接；
 空闲超时后自动关闭，不同用户不会共享连接。
 
 注册后的工具名会加上 `mcp_<server>_` 前缀，例如 `filesystem` Server 暴露的 `read_file` 会注册为 `mcp_filesystem_read_file`。
@@ -619,7 +626,7 @@ MCP 连接按 `user_id` 隔离。同一用户在最后一次会话请求或 MCP 
 
 `execution_request_tools` 在 `enabled_tools` 筛选后生效，不会启用原本被禁用的工具。
 命中的工具会增加必填的 `execution_description` 参数，并通过 `question` 表单等待用户确认；
-说明字段不会传给 MCP 服务器。非交互模式仍注册这些工具，需要确认的调用会直接拒绝执行。
+说明字段不会传给 MCP 服务器。非交互模式下，未提供 `requires_confirmation` 回调时，这些工具会在注册阶段被过滤；提供回调时，按每次调用的判断决定直接执行或拒绝执行。
 
 ## 内置工具
 
@@ -664,7 +671,7 @@ Dockerfile 从 [Gitee 镜像](https://gitee.com/luojiaaoo/destructive_command_gu
 安装 dcg v0.16.0，支持 x86_64 和 aarch64，并在安装前校验发布文件的 SHA-256；
 可通过构建参数 `DCG_VERSION` 指定版本。
 Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook，也不会通过 dcg 执行待检命令。
-检查函数 `_shell_requires_confirmation` 位于 `shell.py`，由 `registry.py` 注册为确认判断回调。
+检查函数 `shell_requires_confirmation` 位于 `shell.py`，由 `registry.py` 注册为确认判断回调。
 它启用 `core.filesystem`、`core.git` 和 `system` 规则，覆盖危险删除、破坏性 Git 操作、
 `dd` 写设备、格式化、分区修改及危险权限、服务操作。规则存在放行例外，覆盖范围以 dcg 规则为准。
 仅当 dcg 正常退出且 JSON 中 `decision` 为 `allow` 时免确认；其余结果、未安装、检查超过 5 秒
@@ -707,12 +714,13 @@ provider.register_function_tool(
 值时，按工具错误返回，原工具不会执行。
 
 `not_interactive` 默认为 `False`。设置为 `True` 时，回调返回 `True` 会直接拒绝执行，
-返回 `False` 仍直接执行，不发出 `question` 事件；省略回调则所有调用均需要确认，因而全部拒绝。
+返回 `False` 仍直接执行，不发出 `question` 事件。此时必须提供 `requires_confirmation`，
+否则在构造包装器时抛出 `ValueError`，提示“请在注册的时候就屏蔽掉，而不是在运行时屏蔽”。
 `registry.py` 会把当前会话的 `not_interactive` 传给 Shell 和需要确认的 MCP 包装器。
 
 直接执行时会移除 `execution_description`，仅把原工具参数传给原函数。
-MCP 包装也支持此回调，需在 `registry.py` 的 `build_execution_request_tool(tool_func, ...)`
-调用处传入；它是 Python 注册参数，不是 `conf.toml` 配置项。
+MCP 包装也支持此回调，需在 `registry.py` 的 `register_mcp_bindings` 注册参数中传入；
+它是 Python 注册参数，不是 `conf.toml` 配置项。非交互模式下未提供回调时，需要确认的 MCP 工具不会注册。
 
 工具文本结果超过 `[tool].max_result_chars`（默认 10,000）时不会丢弃尾部内容：完整结果会以
 文本文件保存到当前用户 workspace 的 `tool-results/`，工具消息返回原始内容前缀、总字符数和

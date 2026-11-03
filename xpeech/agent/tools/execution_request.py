@@ -49,8 +49,14 @@ def build_execution_request_tool(
     requires_confirmation 接收包含 execution_description 和原工具参数的 JSON
     字符串（仅包含调用时提供的字段），支持同步或异步函数。返回 True 时询问用户，
     False 时直接执行原函数；异常或非 bool 返回值按工具错误处理，不执行原函数。
-    not_interactive=True 时，凡是需要确认的调用均直接拒绝，不询问用户。
+    not_interactive=True 时必须提供 requires_confirmation；无回调的工具应在注册时过滤。
+    回调判断需要确认的调用直接拒绝，不询问用户。
     """
+    if not_interactive and requires_confirmation is None:
+        raise ValueError(
+            "not_interactive=True 时必须提供 requires_confirmation；"
+            "请在注册的时候就屏蔽掉，而不是在运行时屏蔽"
+        )
     model_info = get_tool_model_cls(function)
     if EXECUTION_DESCRIPTION in model_info.model_cls.model_fields:
         raise ValueError(f"Tool already defines reserved parameter: {EXECUTION_DESCRIPTION}")

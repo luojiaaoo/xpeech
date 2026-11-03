@@ -1,5 +1,7 @@
 """Custom JWT channels select public and matching Skill/MCP resources."""
 
+import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -278,10 +280,15 @@ async def test_invalid_skill_channel_tags_are_skipped(monkeypatch, tmp_path, cha
     ],
 )
 @pytest.mark.parametrize("not_interactive", [False, True])
+@pytest.mark.parametrize("include_public", [False, True])
 @pytest.mark.asyncio
 async def test_mcp_only_registers_public_and_matching_servers(
-    monkeypatch, tmp_path, channel_tag, expected, not_interactive
+    monkeypatch, tmp_path, channel_tag, expected, not_interactive, include_public
 ):
+    async def shell():
+        return "unused"
+
+    monkeypatch.setattr(registry, "build_shell_tools", lambda **_kwargs: shell)
     config = ToolConfig.model_validate(
         {
             "mcpServers": {
@@ -292,28 +299,36 @@ async def test_mcp_only_registers_public_and_matching_servers(
             }
         }
     )
+    if not include_public:
+        config.mcp_servers.pop("public")
+        expected = [name for name in expected if name != "public"]
     requested = []
     registered = []
+    function_tools = []
+    for name, server_config in config.mcp_servers.items():
+        server_config.description = f"purpose-{name}"
 
     async def get_registration(user_id, name, server_config, **kwargs):
         requested.append(name)
-        return name
-
-    async def collect_tools(registration):
         async def tool():
-            return registration
+            return name
 
-        yield {"function": {"name": registration}}, tool, registration
+        task = asyncio.get_running_loop().create_future()
+        task.set_result([mcp_client.MCPToolBinding(schema={"function": {"name": name}}, func=tool)])
+        return SimpleNamespace(
+            config=server_config,
+            start_tool_discovery=lambda: task,
+            get_status=lambda: {"status": "ready"},
+        )
 
     def register_mcp_tool(_tool, *, tool_json):
         registered.append(tool_json["function"]["name"])
 
     monkeypatch.setattr(registry, "get_session_mcp_registration_from_config", get_registration)
-    monkeypatch.setattr(registry, "collect_mcp_tool", collect_tools)
     provider = SimpleNamespace(
         support_image=False,
         support_video=False,
-        register_function_tool=lambda _tool: None,
+        register_function_tool=function_tools.append,
         register_mcp_tool=register_mcp_tool,
     )
     await registry.register_tools(
@@ -325,6 +340,14 @@ async def test_mcp_only_registers_public_and_matching_servers(
         not_interactive=not_interactive,
     )
     assert requested == registered == expected
+    status_tool = next((tool for tool in function_tools if tool.__name__ == "query_mcp_status"), None)
+    if not expected:
+        assert status_tool is None
+        return
+    assert status_tool is not None
+    assert set(json.loads(await status_tool())["servers"]) == set(expected)
+    for name in config.mcp_servers:
+        assert (f"purpose-{name}" in status_tool.__doc__) is (name in expected)
 
 
 def test_mcp_preserves_channel_tags_in_registration_and_cache_key():

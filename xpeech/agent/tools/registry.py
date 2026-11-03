@@ -1,4 +1,4 @@
-from fnmatch import fnmatchcase
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -6,15 +6,20 @@ from ...config.settings import ToolConfig, settings
 from ...utils.channel_tag import channel_tag_allows_access
 from .browser_preview import build_browser_preview_tool
 from .document import build_document_tool
-from .execution_request import build_execution_request_tool, execution_request_schema
+from .execution_request import build_execution_request_tool
 from .file_message import build_file_message_tools
 from .filesystem import build_file_tools
-from .mcp_client import collect_mcp_tool, get_session_mcp_registration_from_config
+from .mcp_client import (
+    MCPServerRegistration,
+    build_mcp_status_tool,
+    get_session_mcp_registration_from_config,
+    register_mcp_bindings,
+)
 from .question import ask_user_question
 from .research import build_research_tools
 from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .sessions import build_session_tools
-from .shell import _shell_requires_confirmation, build_shell_tools
+from .shell import shell_requires_confirmation, build_shell_tools
 from .web import baidu_search, bing_search, web_fetch
 
 
@@ -42,7 +47,7 @@ async def register_tools(
     provider.register_function_tool(
         build_execution_request_tool(
             build_shell_tools(workspace=workspace),
-            requires_confirmation=_shell_requires_confirmation,
+            requires_confirmation=shell_requires_confirmation,
             not_interactive=not_interactive,
         )
     )
@@ -74,6 +79,7 @@ async def register_tools(
         for tool in (feishu_schedule, feishu_schedule_list, feishu_schedule_cancel):
             provider.register_function_tool(tool)
 
+    registrations: dict[str, MCPServerRegistration] = {}
     for server_name, server_config in config.mcp_servers.items():
         if not channel_tag_allows_access(server_config.channel_tags, channel_tag):
             continue
@@ -83,11 +89,21 @@ async def register_tools(
             server_config,
             workspace=workspace,
         )
-        async for tool_json, tool_func, _ in collect_mcp_tool(registration):
-            if any(
-                fnmatchcase(tool_func.mcp_original_name, pattern)
-                for pattern in server_config.execution_request_tools
-            ):
-                tool_func = build_execution_request_tool(tool_func, not_interactive=not_interactive)
-                tool_json = execution_request_schema(tool_json)
-            provider.register_mcp_tool(tool_func, tool_json=tool_json)
+        registrations[server_name] = registration
+
+    if registrations:
+        provider.register_function_tool(build_mcp_status_tool(registrations=registrations))
+    for server_name, registration in registrations.items():
+        server_config = config.mcp_servers[server_name]
+        task = registration.start_tool_discovery()
+        register_bindings = partial(
+            register_mcp_bindings,
+            registration=registration,
+            provider=provider,
+            execution_request_tools=server_config.execution_request_tools,
+            not_interactive=not_interactive,
+        )
+        if task.done():
+            register_bindings(task)
+        else:
+            task.add_done_callback(register_bindings)

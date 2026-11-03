@@ -98,6 +98,7 @@ class MCPServerSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    description: str = Field(default="", description="服务用途，供模型在连接完成前判断是否需要等待")
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] | None = None

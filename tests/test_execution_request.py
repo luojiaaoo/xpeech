@@ -65,14 +65,13 @@ async def answer(value):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("not_interactive", [False, True])
-async def test_placeholder_returns_marker_without_running_original_function(tmp_path, not_interactive):
+async def test_placeholder_returns_marker_without_running_original_function(tmp_path):
     async def shell(args: CommandArgs):
         """Execute a command."""
         pytest.fail("placeholder executed the actual command")
 
     current_provider = provider()
-    current_provider.register_function_tool(build_execution_request_tool(shell, not_interactive=not_interactive))
+    current_provider.register_function_tool(build_execution_request_tool(shell))
     call = ToolCallRequest(
         id="1", name="shell", arguments={"command": "echo hello", "execution_description": "输出 hello"}
     )
@@ -83,12 +82,21 @@ async def test_placeholder_returns_marker_without_running_original_function(tmp_
             {"shell": current_provider.default_tools["shell"].func},
         )
     ]
-    if not_interactive:
-        assert not result.succeeded
-        assert "PermissionError" in result.value and "拒绝执行" in result.value
-    else:
-        assert result.succeeded
-        assert result.value == EXECUTION_REQUEST
+    assert result.succeeded
+    assert result.value == EXECUTION_REQUEST
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"not_interactive": True},
+    {"not_interactive": True, "requires_confirmation": None},
+])
+def test_noninteractive_wrapper_requires_confirmation_callback_at_registration(kwargs):
+    async def ping():
+        """Ping."""
+        pytest.fail("registration must not execute the tool")
+
+    with pytest.raises(ValueError, match="请在注册的时候就屏蔽掉，而不是在运行时屏蔽"):
+        build_execution_request_tool(ping, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -471,6 +479,12 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
     def check(payload):
         checks.append(json.loads(payload))
         return needs_confirmation
+
+    if not_interactive and needs_confirmation is None:
+        with pytest.raises(ValueError, match="请在注册的时候就屏蔽掉，而不是在运行时屏蔽"):
+            build_execution_request_tool(binding.func, not_interactive=True)
+        assert remote_calls == []
+        return
 
     current_provider.register_mcp_tool(
         build_execution_request_tool(

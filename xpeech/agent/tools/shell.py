@@ -46,7 +46,7 @@ class ShellCommandResult:
     timed_out: bool = False
 
 
-async def _shell_requires_confirmation(payload: str) -> bool:
+async def shell_requires_confirmation(payload: str) -> bool:
     """用 dcg 检查 Bash；仅明确允许的命令免确认，检查失败时退回用户确认。"""
     command = json.loads(payload).get("command")
     if not isinstance(command, str) or not command.strip():

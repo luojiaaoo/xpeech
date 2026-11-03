@@ -16,7 +16,7 @@ import json
 import os
 import re
 import shutil
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field as dataclass_field
 from fnmatch import fnmatchcase
@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ...config.settings import MCPServerSettings
 from ...utils.command_template import execute_command_template
+from .execution_request import build_execution_request_tool, execution_request_schema
 
 
 _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset(
@@ -405,6 +406,7 @@ class MCPServerConfig:
     tool_timeout: float = 30.0
     connect_timeout: float = MCP_CONNECT_TIMEOUT_SECONDS
     channel_tags: list[str] = dataclass_field(default_factory=list)
+    description: str = ""
 
     def __post_init__(self) -> None:
         if not self.command and not self.url:
@@ -433,18 +435,80 @@ class MCPServerRegistration:
     _owner_task: asyncio.Task[None] | None = dataclass_field(default=None, init=False, repr=False)
     _close_event: asyncio.Event | None = dataclass_field(default=None, init=False, repr=False)
     _retry_after: float | None = dataclass_field(default=None, init=False, repr=False)
+    _discovery_task: asyncio.Task[list[MCPToolBinding]] | None = dataclass_field(
+        default=None, init=False, repr=False
+    )
+    _last_error: str | None = dataclass_field(default=None, init=False, repr=False)
+    _retired: bool = dataclass_field(default=False, init=False, repr=False)
+
+    def retire(self) -> None:
+        """Prevent stale agent references from reopening an evicted registration."""
+        self._retired = True
+        self._bindings = None
+
+    def start_tool_discovery(self) -> asyncio.Task[list[MCPToolBinding]]:
+        """Start shared background discovery without waiting for the server."""
+        task = self._discovery_task
+        if not self._retired and task is not None and not task.cancelled():
+            if not task.done() or self._retry_delay() > 0:
+                return task
+            if self._bindings is not None and self._retry_after is None and self._session is not None:
+                return task
+        if self._session is None and self._retry_after is None:
+            self._bindings = None
+
+        async def discover() -> list[MCPToolBinding]:
+            return [
+                MCPToolBinding(schema=schema, func=func)
+                async for schema, func, _ in collect_mcp_tool(self)
+            ]
+
+        self._discovery_task = asyncio.create_task(
+            discover(), name=f"mcp-{self.config.server_name}-discovery"
+        )
+        return self._discovery_task
+
+    def get_status(self) -> dict[str, Any]:
+        """Read connection/discovery state without performing MCP I/O."""
+        task = self._discovery_task
+        retry_delay = self._retry_delay()
+        if self._retired:
+            status = "disconnected"
+        elif retry_delay > 0:
+            status = "unavailable"
+        elif task is not None and not task.done():
+            status = "connecting"
+        elif self._session is not None and self._bindings is not None:
+            status = "ready"
+        else:
+            status = "disconnected"
+        tools = [binding.func.__name__ for binding in self._bindings or []] if status == "ready" else []
+        return {
+            "description": self.config.description,
+            "status": status,
+            "transport": self.config.transport,
+            "tool_count": len(tools),
+            "tools": tools,
+            "retry_after_seconds": round(retry_delay, 1),
+            "error": self._last_error,
+        }
 
     def _retry_delay(self) -> float:
         if self._retry_after is None:
             return 0.0
         return max(0.0, self._retry_after - asyncio.get_running_loop().time())
 
-    def _start_retry_cooldown(self) -> None:
+    def _start_retry_cooldown(self, exc: BaseException | None = None) -> None:
         self._retry_after = asyncio.get_running_loop().time() + MCP_RECONNECT_DELAY_SECONDS
         self._bindings = []
+        if exc is not None:
+            # Exception messages can contain credentials or authorization headers.
+            self._last_error = type(exc).__name__
 
     async def _get_tool_bindings(self) -> list[MCPToolBinding]:
         async with self._lock:
+            if self._retired:
+                return []
             if self._bindings is not None:
                 if self._retry_delay() > 0:
                     return self._bindings
@@ -457,15 +521,17 @@ class MCPServerRegistration:
                 self._retry_after = None
 
             try:
-                await self._connect()
+                if self._session is None:
+                    await self._connect()
                 self._bindings = await self._discover_tool_bindings()
+                self._last_error = None
                 await _refresh_session_expiry(self.user_id)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 # Skip this MCP for conversations during the cooldown instead
                 # of making every conversation wait for the same failure.
-                self._start_retry_cooldown()
+                self._start_retry_cooldown(exc)
                 # anyio may report transport shutdown as a BaseExceptionGroup.
                 # Cleanup must not replace the original connection failure.
                 try:
@@ -488,7 +554,7 @@ class MCPServerRegistration:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self._start_retry_cooldown()
+            self._start_retry_cooldown(exc)
             with suppress(BaseException):
                 await self.aclose()
             logger.exception(
@@ -499,9 +565,12 @@ class MCPServerRegistration:
             )
             return "(MCP server is temporarily unavailable)"
 
+        session = self._session
+        if session is None or self._retired:
+            return "(MCP server is temporarily unavailable)"
         try:
             result = await asyncio.wait_for(
-                self._session.call_tool(tool_name, arguments=dict(arguments)),
+                session.call_tool(tool_name, arguments=dict(arguments)),
                 timeout=self.config.tool_timeout,
             )
             await _refresh_session_expiry(self.user_id)
@@ -532,8 +601,11 @@ class MCPServerRegistration:
                     type(exc).__name__,
                     MCP_RECONNECT_DELAY_SECONDS,
                 )
-                await self.aclose()
-                self._start_retry_cooldown()
+                if self._session is session:
+                    # Publish cooldown before yielding so another caller cannot
+                    # start a reconnect while this connection is shutting down.
+                    self._start_retry_cooldown(exc)
+                    await self.aclose()
                 return "(MCP server is temporarily unavailable)"
             logger.exception(
                 "MCP tool '{}.{}' failed: {}: {}",
@@ -545,6 +617,11 @@ class MCPServerRegistration:
             return f"(MCP tool call failed: {type(exc).__name__})"
 
     async def aclose(self) -> None:
+        discovery_task = self._discovery_task
+        if discovery_task is not None and discovery_task is not asyncio.current_task():
+            if not discovery_task.done():
+                discovery_task.cancel()
+                await asyncio.gather(discovery_task, return_exceptions=True)
         owner_task = self._owner_task
         close_event = self._close_event
         self._owner_task = None
@@ -556,6 +633,8 @@ class MCPServerRegistration:
             await owner_task
 
     async def _ensure_session(self) -> None:
+        if self._retired:
+            raise _MCPReconnectCooldownError("MCP registration has been retired")
         retry_delay = self._retry_delay()
         if retry_delay > 0:
             raise _MCPReconnectCooldownError(
@@ -563,6 +642,8 @@ class MCPServerRegistration:
             )
         if self._session is None:
             async with self._lock:
+                if self._retired:
+                    raise _MCPReconnectCooldownError("MCP registration has been retired")
                 retry_delay = self._retry_delay()
                 if retry_delay > 0:
                     raise _MCPReconnectCooldownError(
@@ -573,6 +654,10 @@ class MCPServerRegistration:
 
     async def _connect(self) -> None:
         await self.aclose()
+        if self._retired:
+            raise _MCPReconnectCooldownError("MCP registration has been retired")
+        # A replacement session may expose different tools and schemas.
+        self._bindings = None
         loop = asyncio.get_running_loop()
         ready: asyncio.Future[None] = loop.create_future()
         close_event = asyncio.Event()
@@ -584,7 +669,10 @@ class MCPServerRegistration:
         self._close_event = close_event
         try:
             await asyncio.wait_for(ready, timeout=self.config.connect_timeout)
+            if self._retired:
+                raise _MCPReconnectCooldownError("MCP registration has been retired")
             self._retry_after = None
+            self._last_error = None
             await _refresh_session_expiry(self.user_id)
         except BaseException:
             close_event.set()
@@ -603,6 +691,7 @@ class MCPServerRegistration:
     ) -> None:
         cfg = self.config
         workspace = Path(cfg.workspace).expanduser().resolve() if cfg.workspace else None
+        session = None
         try:
             async with AsyncExitStack() as stack:
                 from mcp import ClientSession, StdioServerParameters, types
@@ -680,11 +769,12 @@ class MCPServerRegistration:
         except BaseException as exc:
             if not ready.done():
                 ready.set_exception(exc)
-            elif not isinstance(exc, asyncio.CancelledError):
-                self._start_retry_cooldown()
+            elif self._owner_task is asyncio.current_task() and not isinstance(exc, asyncio.CancelledError):
+                self._start_retry_cooldown(exc)
                 logger.exception("MCP server '{}' connection owner failed", cfg.server_name)
         finally:
-            self._session = None
+            if self._session is session:
+                self._session = None
             if self._owner_task is asyncio.current_task():
                 self._owner_task = None
                 self._close_event = None
@@ -768,6 +858,7 @@ class MCPServerRegistration:
 def create_mcp_registration(
     *,
     server_name: str,
+    description: str = "",
     workspace: str | Path | None = None,
     command: str | None = None,
     args: Sequence[str] | None = None,
@@ -791,6 +882,7 @@ def create_mcp_registration(
     return MCPServerRegistration(
         MCPServerConfig(
             server_name=sanitized_server_name,
+            description=description,
             workspace=str(Path(workspace).expanduser().resolve()) if workspace is not None else None,
             command=command,
             args=tuple(args or ()),
@@ -817,6 +909,7 @@ def create_mcp_registration_from_config(
 ) -> MCPServerRegistration:
     return create_mcp_registration(
         server_name=server_name,
+        description=config.description,
         workspace=workspace,
         command=config.command,
         args=config.args,
@@ -842,6 +935,7 @@ def _hashable_mapping(value: Mapping[str, str] | None) -> tuple[tuple[str, str],
 def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
     return (
         config.server_name,
+        config.description,
         config.workspace,
         config.command,
         config.args,
@@ -915,6 +1009,8 @@ async def _expire_session(user_id: str, handle: asyncio.TimerHandle) -> None:
             return
         registrations = MCP_CONNECTIONS.pop(user_id, {})
         _SESSION_EXPIRY_HANDLES.pop(user_id, None)
+        for registration in registrations.values():
+            registration.retire()
 
     logger.info(
         "MCP session '{}' expired after {}s without successful MCP activity",
@@ -930,6 +1026,8 @@ async def _expire_session(user_id: str, handle: asyncio.TimerHandle) -> None:
 async def close_session_mcp_connections(user_id: str) -> None:
     async with _mcp_connections_lock():
         registrations = MCP_CONNECTIONS.pop(user_id, {})
+        for registration in registrations.values():
+            registration.retire()
         expiry_handle = _SESSION_EXPIRY_HANDLES.pop(user_id, None)
         if expiry_handle is not None:
             expiry_handle.cancel()
@@ -946,6 +1044,8 @@ async def close_all_mcp_connections() -> None:
             for session_connections in MCP_CONNECTIONS.values()
             for registration in session_connections.values()
         ]
+        for registration in registrations:
+            registration.retire()
         MCP_CONNECTIONS.clear()
         for handle in _SESSION_EXPIRY_HANDLES.values():
             handle.cancel()
@@ -974,3 +1074,62 @@ async def collect_mcp_tool(
 
     for binding in bindings:
         yield binding.schema, binding.func, binding.func.__name__
+
+
+def get_mcp_status(registrations: Mapping[str, MCPServerRegistration]) -> dict[str, Any]:
+    """Return a non-blocking snapshot of the MCP servers visible to this agent."""
+    return {"servers": {name: registration.get_status() for name, registration in registrations.items()}}
+
+
+def build_mcp_status_tool(*, registrations: Mapping[str, MCPServerRegistration]):
+    async def query_mcp_status() -> str:
+        """查询 MCP 状态及可用工具。connecting 表示后台连接中；ready 后工具会自动出现在后续模型调用中。
+
+        根据配置的服务用途判断当前任务是否需要等待相关 MCP；不依赖其能力时可继续处理任务。
+        本工具立即返回，不等待连接；unavailable 的 retry_after_seconds 表示下次对话可重试前的冷却时间。
+        """
+        return json.dumps(get_mcp_status(registrations), ensure_ascii=False)
+
+    if registrations:
+        descriptions = {
+            name: registration.config.description or "未配置用途说明"
+            for name, registration in registrations.items()
+        }
+        query_mcp_status.__doc__ = (
+            f"{inspect.cleandoc(query_mcp_status.__doc__)}\n\n"
+            f"当前通道的 MCP 服务及用途：\n{json.dumps(descriptions, ensure_ascii=False)}"
+        )
+    return query_mcp_status
+
+
+def register_mcp_bindings(
+    task: asyncio.Task[list[MCPToolBinding]],
+    *,
+    registration: MCPServerRegistration,
+    provider: Any,
+    execution_request_tools: list[str],
+    not_interactive: bool,
+    requires_confirmation: Callable[[str], bool | Awaitable[bool]] | None = None,
+) -> None:
+    if task.cancelled():
+        return
+    bindings = task.result()
+    if registration.get_status()["status"] != "ready":
+        return
+    # Keep this callback synchronous: chat must see either none or all of this
+    # server's tools, with schemas and callables drawn from the same snapshot.
+    for binding in bindings:
+        tool_json, tool_func = binding.schema, binding.func
+        if any(
+            fnmatchcase(tool_func.mcp_original_name, pattern)
+            for pattern in execution_request_tools
+        ):
+            if not_interactive and requires_confirmation is None:
+                continue
+            tool_func = build_execution_request_tool(
+                tool_func,
+                requires_confirmation=requires_confirmation,
+                not_interactive=not_interactive,
+            )
+            tool_json = execution_request_schema(tool_json)
+        provider.register_mcp_tool(tool_func, tool_json=tool_json)
