@@ -45,7 +45,7 @@ class BingSearchArgs(BaseModel):
 async def web_fetch(args: WebFetchArgs) -> str:
     """Fetch a webpage over HTTP and extract its main content and comments as Markdown, including links and tables.
     Set include_images=true when image links and alt text are useful for the task.
-    Does not launch a browser or execute JavaScript. Returns plain text, Markdown, XML (including RSS), and JSON directly.
+    Does not launch a browser or execute JavaScript. Returns plain text, Markdown, XML (including RSS/Atom), and JSON directly.
     """
 
     is_valid, error_msg = validate_url_target(args.url)
@@ -78,6 +78,7 @@ def _response_to_markdown(response: requests.Response, *, include_images: bool =
     if (content_type.startswith("text/") and content_type != "text/html") or content_type in {
         "application/xml",
         "application/rss+xml",
+        "application/atom+xml",
         "application/json",
     }:
         return response.text

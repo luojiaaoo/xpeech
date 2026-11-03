@@ -116,6 +116,19 @@ def test_web_fetch_preserves_text(data, content_type, url, expected):
     assert result == expected
 
 
+@pytest.mark.parametrize("content_type", ["application/atom+xml", "application/atom+xml; charset=utf-8"])
+def test_web_fetch_preserves_atom_feed(content_type):
+    feed = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<feed xmlns="http://www.w3.org/2005/Atom">'
+        '<title>订阅更新</title><entry><title>文章标题</title>'
+        '<link href="https://example.test/article"/>'
+        '<content type="html">&lt;p&gt;文章正文&lt;/p&gt;</content></entry></feed>'
+    )
+    result = web._response_to_markdown(make_response(feed.encode("utf-8"), content_type))
+    assert result == feed
+
+
 @pytest.mark.parametrize("content_type", ["application/pdf", "application/octet-stream", "image/png"])
 def test_web_fetch_rejects_binary_content(content_type):
     with pytest.raises(ValueError, match="Unsupported content type"):
