@@ -260,17 +260,23 @@ async def test_mcp_only_registers_public_and_matching_servers(
         requested.append(name)
         return name
 
-    def register_tool(tool_type="function"):
-        if tool_type == "mcp":
+    async def collect_tools(registration):
+        async def tool():
+            return registration
 
-            async def register(registration):
-                registered.append(registration)
+        yield {"function": {"name": registration}}, tool, registration
 
-            return register
-        return lambda *args, **kwargs: None
+    def register_mcp_tool(_tool, *, tool_json):
+        registered.append(tool_json["function"]["name"])
 
     monkeypatch.setattr(registry, "get_session_mcp_registration_from_config", get_registration)
-    provider = SimpleNamespace(support_image=False, support_video=False, register_tool=register_tool)
+    monkeypatch.setattr(registry, "collect_mcp_tool", collect_tools)
+    provider = SimpleNamespace(
+        support_image=False,
+        support_video=False,
+        register_function_tool=lambda _tool: None,
+        register_mcp_tool=register_mcp_tool,
+    )
     await registry.register_tools(
         user_id="tag-user",
         provider=provider,

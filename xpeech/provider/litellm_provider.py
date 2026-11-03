@@ -1,13 +1,12 @@
 import functools
 from collections.abc import AsyncIterator, Callable
-from typing import Any, Literal
+from typing import Any
 
 import litellm
 from fastapi import HTTPException, status
 from pydantic import BaseModel
 
 from ..agent.tools.helper import as_tool, get_custom_tool_func
-from ..agent.tools.mcp_client import MCPServerRegistration, collect_mcp_tool
 from ..utils.helper import ensure_async
 from .helper import LiteLLMRetryClient
 from .schema import (
@@ -75,6 +74,8 @@ class LiteLLMProvider:
     def _build_function_tool(
         self,
         func_: Callable[[type[BaseModel] | None], str | list],
+        *,
+        tool_json: dict[str, Any] | None = None,
     ) -> RegisteredTool:
         def format_result(rt) -> str | list:
             if isinstance(rt, str) or (isinstance(rt, list) and all("type" in item for item in rt)):  # 必须是合法的消息
@@ -91,37 +92,26 @@ class LiteLLMProvider:
 
         return RegisteredTool(
             func=wrapper,
-            tool_json=as_tool(func_),
+            tool_json=as_tool(func_) if tool_json is None else tool_json,
         )
 
-    def _register_function_tool(
+    def register_function_tool(
         self,
         func_: Callable[[type[BaseModel] | None], str | list],
     ) -> None:
-        registered_tool = self._build_function_tool(func_)
-        self.default_tools[func_.__name__] = registered_tool
+        """注册普通函数工具，从函数生成 schema。"""
 
-    async def _register_mcp_tools(
+        self.default_tools[func_.__name__] = self._build_function_tool(func_)
+
+    def register_mcp_tool(
         self,
-        registration: MCPServerRegistration,
+        func_: Callable[[type[BaseModel] | None], str | list],
+        *,
+        tool_json: dict[str, Any],
     ) -> None:
-        async for tool_json, tool_func, tool_func_name in collect_mcp_tool(registration):
-            self.default_tools[tool_func_name] = RegisteredTool(
-                func=tool_func,
-                tool_json=tool_json,
-            )
+        """注册已绑定的 MCP 函数，保留服务器提供的 schema。"""
 
-    def register_tool(
-        self,
-        tool_type: Literal["function", "mcp"] = "function",
-    ):
-        """Return a function or MCP tool registrar."""
-
-        if tool_type == "function":
-            return self._register_function_tool
-        if tool_type == "mcp":
-            return self._register_mcp_tools
-        raise ValueError(f"Unsupported tool type: {tool_type}")
+        self.default_tools[func_.__name__] = self._build_function_tool(func_, tool_json=tool_json)
 
     async def _parse_tools(self, funcs: list[Callable[[type[BaseModel] | None], str | list]]) -> ToolRegistry:
         """解析普通函数工具。"""

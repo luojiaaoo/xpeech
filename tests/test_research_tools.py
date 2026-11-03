@@ -76,7 +76,7 @@ async def test_search_runs_through_provider_and_executor(tmp_path, monkeypatch, 
         api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters()
     )
     for tool in build_research_tools(tmp_path):
-        provider.register_tool()(tool)
+        provider.register_function_tool(tool)
     assert set(provider.default_tools) == {"arxiv_search", "arxiv_download"}
     search_schema = provider.default_tools["arxiv_search"].tool_json["function"]
     assert search_schema["parameters"]["properties"]["max_results"]["maximum"] == 20

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-import xpeech.provider.litellm_provider as litellm_provider_module
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, RegisteredTool, ToolCallChunk, ToolCallRequest
 
@@ -26,8 +25,7 @@ def test_chat_exposes_llm_parameter_overrides_as_one_object():
     assert "top_p" not in parameters
     assert "reasoning_effort" not in parameters
     assert "remove_interactive_tool" not in parameters
-    assert "is_interactive" not in inspect.signature(LiteLLMProvider._register_function_tool).parameters
-    assert "is_interactive" not in inspect.signature(LiteLLMProvider._register_mcp_tools).parameters
+    assert "is_interactive" not in inspect.signature(LiteLLMProvider.register_function_tool).parameters
 
 
 @pytest.mark.asyncio
@@ -52,9 +50,9 @@ async def test_registered_tools_keep_schema_and_callable():
         """Return the event-loop thread identifier."""
         return str(threading.get_ident())
 
-    assert provider.register_tool()(interactive_tool) is None
-    assert provider.register_tool()(non_interactive_tool) is None
-    assert provider.register_tool()(async_tool) is None
+    assert provider.register_function_tool(interactive_tool) is None
+    assert provider.register_function_tool(non_interactive_tool) is None
+    assert provider.register_function_tool(async_tool) is None
 
     assert set(provider.default_tools) == {"interactive_tool", "non_interactive_tool", "async_tool"}
     assert all(isinstance(tool, RegisteredTool) for tool in provider.default_tools.values())
@@ -65,18 +63,11 @@ async def test_registered_tools_keep_schema_and_callable():
 
 
 @pytest.mark.asyncio
-async def test_mcp_tools_keep_schema_and_callable(monkeypatch: pytest.MonkeyPatch):
+async def test_mcp_tools_keep_schema_and_callable():
     async def mcp_tool() -> str:
         return "ok"
 
-    async def collect_tools(_registration):
-        yield (
-            {"type": "function", "function": {"name": "mcp_tool"}},
-            mcp_tool,
-            "mcp_tool",
-        )
-
-    monkeypatch.setattr(litellm_provider_module, "collect_mcp_tool", collect_tools)
+    tool_json = {"type": "function", "function": {"name": "mcp_tool"}}
     provider = LiteLLMProvider(
         api_key="test",
         api_base="https://example.test",
@@ -84,11 +75,12 @@ async def test_mcp_tools_keep_schema_and_callable(monkeypatch: pytest.MonkeyPatc
         parameters=LLMParameters(),
     )
 
-    result = await provider.register_tool("mcp")(object())
+    result = provider.register_mcp_tool(mcp_tool, tool_json=tool_json)
 
     assert result is None
-    assert provider.default_tools["mcp_tool"].func is mcp_tool
-    assert provider.default_tools["mcp_tool"].tool_json["function"]["name"] == "mcp_tool"
+    assert provider.default_tools["mcp_tool"].func.__wrapped__ is mcp_tool
+    assert provider.default_tools["mcp_tool"].tool_json is tool_json
+    assert await provider.default_tools["mcp_tool"].func() == "ok"
 
 
 @pytest.mark.asyncio
@@ -122,8 +114,8 @@ async def test_chat_uses_all_registered_tools():
         parameters=LLMParameters(),
     )
     provider._retry_client = RetryClient()
-    provider.register_tool()(interactive_tool)
-    provider.register_tool()(regular_tool)
+    provider.register_function_tool(interactive_tool)
+    provider.register_function_tool(regular_tool)
 
     response = await provider.chat(
         messages=[{"role": "user", "content": "hello"}],
