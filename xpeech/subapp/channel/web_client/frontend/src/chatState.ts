@@ -1,4 +1,4 @@
-import type { ChatEvent, ChatMessage, ToolCallInfo } from './types';
+import type { ChatEvent, ChatMessage, ToolCallInfo, ToolCallResult } from './types';
 
 let messageId = 0;
 const key = (role: string) => `${role}_${++messageId}`;
@@ -45,50 +45,58 @@ export function finishChatTurn(messages: ChatMessage[]): ChatMessage[] {
   return summarize(finished);
 }
 
-function toolEntries(context: string): unknown[][] | null {
-  try {
-    const entries: unknown = JSON.parse(context);
-    if (!Array.isArray(entries) || !entries.every((entry) => (
-      Array.isArray(entry) && entry.length >= 3 && typeof entry[0] === 'string' && typeof entry[1] === 'string'
-    ))) return null;
-    return entries;
-  } catch {
-    return null;
+function isToolCallResult(payload: unknown): payload is ToolCallResult {
+  return typeof payload === 'object' && payload !== null && !Array.isArray(payload)
+    && 'id' in payload && typeof payload.id === 'string'
+    && 'name' in payload && typeof payload.name === 'string'
+    && 'result' in payload
+    && 'duration_seconds' in payload && typeof payload.duration_seconds === 'number'
+    && Number.isFinite(payload.duration_seconds) && payload.duration_seconds >= 0;
+}
+
+function updateToolCall(messages: ChatMessage[], toolCall: ToolCallInfo): void {
+  const start = turnStart(messages);
+  const index = messages.findLastIndex((item, i) => i >= start && item.toolCall?.id === toolCall.id);
+  if (index >= 0) {
+    messages[index] = { ...messages[index], toolCall: { ...messages[index].toolCall, ...toolCall } };
+  } else {
+    messages.push({ key: key('tool'), role: 'tool', content: '', toolCall });
   }
 }
 
 function applyToolEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[] {
   const next = finishStreams(messages);
-  const entries = toolEntries(event.context);
   const isResult = event.event === 'tool_call_result';
-  if (!entries) {
-    return [...next, {
-      key: key('tool'), role: 'tool', content: '',
-      toolCall: {
-        id: key('unknown'), name: isResult ? '工具结果' : '工具调用',
-        ...(isResult ? { output: event.context } : { input: event.context }),
-        status: isResult ? 'completed' : 'running',
-      },
-    }];
+  let payload: unknown;
+  try {
+    payload = JSON.parse(event.context);
+  } catch {
+    payload = null;
   }
-  const start = turnStart(next);
-  for (const [id, name, value, duration] of entries) {
-    const toolId = id as string;
-    const toolName = name as string;
-    const index = next.findLastIndex((item, i) => i >= start && item.toolCall?.id === toolId);
-    const toolCall: ToolCallInfo = {
-      ...(index >= 0 ? next[index].toolCall : undefined),
-      id: toolId,
-      name: toolName,
-      ...(isResult ? { output: value } : { input: value }),
+  if (isResult) {
+    if (isToolCallResult(payload)) {
+      updateToolCall(next, {
+        id: payload.id, name: payload.name, output: payload.result,
+        status: 'completed', durationSeconds: payload.duration_seconds,
+      });
+      return next;
+    }
+  } else if (Array.isArray(payload) && payload.every((entry) => (
+    Array.isArray(entry) && entry.length >= 3 && typeof entry[0] === 'string' && typeof entry[1] === 'string'
+  ))) {
+    for (const [id, name, input] of payload) {
+      updateToolCall(next, { id, name, input, status: 'running' });
+    }
+    return next;
+  }
+  return [...next, {
+    key: key('tool'), role: 'tool', content: '',
+    toolCall: {
+      id: key('unknown'), name: isResult ? '工具结果' : '工具调用',
+      ...(isResult ? { output: event.context } : { input: event.context }),
       status: isResult ? 'completed' : 'running',
-      ...(isResult && typeof duration === 'number' && Number.isFinite(duration) && duration >= 0
-        ? { durationSeconds: duration } : {}),
-    };
-    if (index >= 0) next[index] = { ...next[index], toolCall };
-    else next.push({ key: key('tool'), role: 'tool', content: '', toolCall });
-  }
-  return next;
+    },
+  }];
 }
 
 export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[] {

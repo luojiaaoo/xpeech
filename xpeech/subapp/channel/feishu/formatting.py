@@ -214,17 +214,29 @@ class FeishuEventFormatter:
         is_result = event.event == ChatEventType.TOOL_CALL_RESULT
         limit = output.get("max_result_chars" if is_result else "max_argument_chars")
         try:
-            entries = json.loads(event.context)
+            payload = json.loads(event.context)
         except (json.JSONDecodeError, TypeError):
-            entries = None
-        if not isinstance(entries, list) or not all(
-            isinstance(entry, list) and len(entry) >= 3 and isinstance(entry[1], str) for entry in entries
+            return self._truncate(str(event.context), limit)
+        if is_result:
+            if (
+                not isinstance(payload, dict)
+                or not {"id", "name", "result", "duration_seconds"}.issubset(payload)
+                or not isinstance(payload["id"], str)
+                or not isinstance(payload["name"], str)
+            ):
+                return self._truncate(str(event.context), limit)
+            name = self._truncate(payload["name"], output.get("max_argument_chars"))
+            value = payload["result"]
+            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            return f"**{name}**\n{self._truncate(text, limit)}"
+        if not isinstance(payload, list) or not all(
+            isinstance(entry, list) and len(entry) >= 3 and isinstance(entry[1], str) for entry in payload
         ):
             return self._truncate(str(event.context), limit)
         lines = []
-        for _, name, value, *_ in entries:
+        for _, name, value, *_ in payload:
             text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
             name = self._truncate(name, output.get("max_argument_chars"))
             text = self._truncate(text, limit)
-            lines.append(f"**{name}**\n{text}" if is_result else f"{name} {text}")
-        return ("\n\n" if is_result else " | ").join(lines)
+            lines.append(f"{name} {text}")
+        return " | ".join(lines)

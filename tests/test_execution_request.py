@@ -134,7 +134,7 @@ async def test_optional_confirmation_check_receives_json_and_controls_prompt(
         if needs_confirmation and not not_interactive
         else ["tool_call", "tool_call_result"]
     )
-    result = json.loads(events[-1]["context"])[0][2]
+    result = json.loads(events[-1]["context"])["result"]
     if needs_confirmation and not_interactive:
         assert "PermissionError" in result and "拒绝执行" in result
         assert executions == []
@@ -165,7 +165,7 @@ async def test_confirmation_check_failure_never_prompts_or_executes(tmp_path, be
     call = ToolCallRequest(id="1", name="ping", arguments={"execution_description": "测试"})
     events = [event async for event in stream_for(tmp_path, current_provider, [call], [], tool_timeout=0.05)]
     assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
-    result = json.loads(events[-1]["context"])[0][2]
+    result = json.loads(events[-1]["context"])["result"]
     if behavior == "error":
         assert result == "RuntimeError: check failed"
     elif behavior == "timeout":
@@ -222,21 +222,21 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
             await answer(reply)
 
     assert [event["event"] for event in events] == ["tool_call", "question", "tool_call_result"]
-    [result] = json.loads(events[-1]["context"])
-    assert result[:2] == ["shell-1", "shell"]
-    assert history[-1]["content"] == result[2]
+    result = json.loads(events[-1]["context"])
+    assert (result["id"], result["name"]) == ("shell-1", "shell")
+    assert history[-1]["content"] == result["result"]
     assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
     if expected == "confirmed":
-        assert result[2] == "command output"
+        assert result["result"] == "command output"
         [args] = executions
         assert type(args) is CommandArgs
         assert args.command == "echo hello" and args.timeout_ms == 100
     elif expected == "cancelled":
         assert executions == []
-        assert "取消" in result[2]
+        assert "取消" in result["result"]
     else:
         assert executions == []
-        assert "格式异常" in result[2]
+        assert "格式异常" in result["result"]
 
 
 @pytest.mark.asyncio
@@ -262,7 +262,7 @@ async def test_invalid_request_never_prompts_or_executes(tmp_path, arguments, co
     call = ToolCallRequest(id="1", name="shell", arguments=arguments)
     events = [event async for event in stream_for(tmp_path, current_provider, [call], [])]
     assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
-    assert "ValidationError" in json.loads(events[-1]["context"])[0][2]
+    assert "ValidationError" in json.loads(events[-1]["context"])["result"]
 
 
 @pytest.mark.asyncio
@@ -277,7 +277,7 @@ async def test_timeout_does_not_execute(tmp_path, monkeypatch):
     current_provider.register_function_tool(build_execution_request_tool(ping))
     call = ToolCallRequest(id="1", name="ping", arguments={"execution_description": "测试连通性"})
     events = [event async for event in stream_for(tmp_path, current_provider, [call], [])]
-    assert "超时" in json.loads(events[-1]["context"])[0][2]
+    assert "超时" in json.loads(events[-1]["context"])["result"]
     assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
 
 
@@ -303,11 +303,11 @@ async def test_multiple_requests_are_confirmed_individually(tmp_path):
             assert executions == []
             await answer({"decision": "cancel" if len(questions) == 1 else "confirm"})
         elif event["event"] == "tool_call_result":
-            results.extend(json.loads(event["context"]))
+            results.append(json.loads(event["context"]))
     assert len(questions) == 2
     assert executions == ["ping"]
-    assert "取消" in results[0][2]
-    assert results[1][2] == "pong"
+    assert "取消" in results[0]["result"]
+    assert results[1]["result"] == "pong"
 
 
 @pytest.mark.asyncio
@@ -348,7 +348,7 @@ async def test_confirmation_wait_does_not_consume_execution_timeout(tmp_path):
             await asyncio.sleep(0.03)
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
-            assert json.loads(event["context"])[0][2] == "pong"
+            assert json.loads(event["context"])["result"] == "pong"
 
 
 @pytest.mark.asyncio
@@ -373,7 +373,7 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(
         if event["event"] == "question":
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
-            result = json.loads(event["context"])[0][2]
+            result = json.loads(event["context"])["result"]
             assert history[-1]["content"] == result
             if behavior == "error":
                 assert result == "RuntimeError: test failure"
@@ -458,7 +458,7 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
             assert remote_calls == []
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
-            result = json.loads(event["context"])[0][2]
+            result = json.loads(event["context"])["result"]
             if denied:
                 assert "PermissionError" in result and "拒绝执行" in result
             else:
@@ -479,7 +479,7 @@ async def test_existing_ask_user_question_still_returns_user_answer(tmp_path):
         if event["event"] == "question":
             await answer({"name": "Alice"})
         elif event["event"] == "tool_call_result":
-            assert json.loads(json.loads(event["context"])[0][2]) == {"name": "Alice"}
+            assert json.loads(json.loads(event["context"])["result"]) == {"name": "Alice"}
 
 
 def test_placeholder_schema_keeps_original_constraints_and_hides_injected_context():

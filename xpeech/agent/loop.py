@@ -229,14 +229,14 @@ class AgentLoop:
                     result = "执行确认回复格式异常，工具未执行。"
 
                 append_tool_result_messages_yaml(tool_call, result)
-                tool_call_result = (tool_call.id, tool_call.name, result, duration_seconds)
+                tool_result_content = result
 
             elif tool_call.name == "send_file" and success:
                 # 发送文件
                 logger.info("Sending file {}", result)
                 yield {"event": "send_file", "context": result}
                 append_tool_result_messages_yaml(tool_call, result)
-                tool_call_result = (tool_call.id, tool_call.name, f"已发送：{result}", duration_seconds)
+                tool_result_content = f"已发送：{result}"
             elif tool_call.name == "ask_user_question" and success:
                 # 等待用户输入
                 logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
@@ -256,12 +256,18 @@ class AgentLoop:
                 duration_seconds = time.perf_counter() - question_start_time
                 answer = question_event.answer
                 append_tool_result_messages_yaml(tool_call, answer)
-                tool_call_result = (tool_call.id, tool_call.name, answer, duration_seconds)
+                tool_result_content = answer
             else:
                 append_tool_result_messages_yaml(tool_call, result)
-                tool_call_result = (tool_call.id, tool_call.name, result, duration_seconds)
+                tool_result_content = result
 
-            yield {"event": "tool_call_result", "context": json.dumps([tool_call_result])}
+            tool_call_result = {
+                "id": tool_call.id,
+                "name": tool_call.name,
+                "result": tool_result_content,
+                "duration_seconds": duration_seconds,
+            }
+            yield {"event": "tool_call_result", "context": json.dumps(tool_call_result)}
 
         # 如果包含_meta属性，则把这类消息转成user消息
         if with_metas:

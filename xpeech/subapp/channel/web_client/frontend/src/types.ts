@@ -155,6 +155,13 @@ export interface ChatEvent {
   context: string;
 }
 
+export interface ToolCallResult {
+  id: string;
+  name: string;
+  result: unknown;
+  duration_seconds: number;
+}
+
 export interface ToolCallInfo {
   id: string;
   name: string;

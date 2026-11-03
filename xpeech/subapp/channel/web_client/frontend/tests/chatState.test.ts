@@ -1,21 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { appendChatEvent, finishChatTurn, startChatTurn } from '../src/chatState.ts';
-import type { ChatEvent } from '../src/types.ts';
+import type { ChatEvent, ToolCallResult } from '../src/types.ts';
 
 function apply(events: ChatEvent[], initial = startChatTurn([], '帮我做个海报')) {
   return events.reduce(appendChatEvent, initial);
 }
 
 const event = (type: ChatEvent['event'], context = ''): ChatEvent => ({ event: type, context });
-const tools = (type: 'tool_call' | 'tool_call_result', rows: unknown[][]) => event(type, JSON.stringify(rows));
+const tools = (type: 'tool_call', rows: unknown[][]) => event(type, JSON.stringify(rows));
+const toolResult = (result: ToolCallResult) => event('tool_call_result', JSON.stringify(result));
 
 test('preserves assistant, thinking and tool order across multiple model calls', () => {
   const messages = finishChatTurn(apply([
     event('thinking', '先读技能'), event('thinking_end'),
     event('assistant', '我先读取'), event('assistant', '技能。'), event('assistant_end'),
     tools('tool_call', [['read-1', 'read_file', { path: '/skill.md' }]]),
-    tools('tool_call_result', [['read-1', 'read_file', '技能内容', 0.015]]),
+    toolResult({ id: 'read-1', name: 'read_file', result: '技能内容', duration_seconds: 0.015 }),
     event('thinking', '现在生成海报'), event('thinking_end'),
     event('assistant', '海报已生成。'), event('assistant_end'),
     event('token_usage', '{"会话时长":"2秒"}'),
@@ -32,7 +33,10 @@ test('preserves assistant, thinking and tool order across multiple model calls',
 
 test('pairs parallel calls by ID when names match and results arrive out of order', () => {
   const started = apply([tools('tool_call', [['a', 'read_file', { path: '/a' }], ['b', 'read_file', { path: '/b' }]])]);
-  const messages = appendChatEvent(started, tools('tool_call_result', [['b', 'read_file', 'B', 0], ['a', 'read_file', 'A', 1.2]]));
+  const partial = appendChatEvent(started, toolResult({ id: 'b', name: 'read_file', result: 'B', duration_seconds: 0 }));
+  assert.equal(partial.find((item) => item.toolCall?.id === 'a')?.toolCall?.status, 'running');
+  assert.equal(partial.find((item) => item.toolCall?.id === 'b')?.toolCall?.status, 'completed');
+  const messages = appendChatEvent(partial, toolResult({ id: 'a', name: 'read_file', result: 'A', duration_seconds: 1.2 }));
   assert.deepEqual(messages.filter((item) => item.toolCall).map((item) => item.toolCall), [
     { id: 'a', name: 'read_file', input: { path: '/a' }, output: 'A', durationSeconds: 1.2, status: 'completed' },
     { id: 'b', name: 'read_file', input: { path: '/b' }, output: 'B', durationSeconds: 0, status: 'completed' },
@@ -53,11 +57,13 @@ test('marks missing results as unconfirmed when a stream ends and keeps partial 
 
 test('keeps per-turn usage and copy text separate when tool IDs are reused', () => {
   const first = finishChatTurn(apply([
-    tools('tool_call', [['a', 'read_file', {}]]), tools('tool_call_result', [['a', 'read_file', 'first', 1]]),
+    tools('tool_call', [['a', 'read_file', {}]]),
+    toolResult({ id: 'a', name: 'read_file', result: 'first', duration_seconds: 1 }),
     event('assistant', '第一轮'), event('token_usage', '{"会话时长":"1秒"}'),
   ]));
   const second = finishChatTurn(apply([
-    tools('tool_call', [['a', 'read_file', {}]]), tools('tool_call_result', [['a', 'read_file', 'second', 2]]),
+    tools('tool_call', [['a', 'read_file', {}]]),
+    toolResult({ id: 'a', name: 'read_file', result: 'second', duration_seconds: 2 }),
     event('assistant', '第二轮'), event('token_usage', '{"会话时长":"2秒"}'),
   ], startChatTurn(first, '再试一次')));
   assert.deepEqual(second.filter((item) => item.toolCall).map((item) => item.toolCall?.output), ['first', 'second']);
@@ -67,15 +73,29 @@ test('keeps per-turn usage and copy text separate when tool IDs are reused', () 
 });
 
 test('handles a result without a call and preserves null and structured results', () => {
-  const messages = apply([tools('tool_call_result', [['a', 'read_file', null, 0], ['b', 'search', { found: [] }, 0.5]])]);
+  const messages = apply([
+    toolResult({ id: 'a', name: 'read_file', result: null, duration_seconds: 0 }),
+    toolResult({ id: 'b', name: 'search', result: { found: [] }, duration_seconds: 0.5 }),
+    toolResult({ id: 'c', name: 'search', result: ['item'], duration_seconds: 0.1 }),
+  ]);
   assert.equal(messages[1].toolCall?.output, null);
   assert.deepEqual(messages[2].toolCall?.output, { found: [] });
+  assert.deepEqual(messages[3].toolCall?.output, ['item']);
 });
 
 test('preserves malformed tool payloads instead of crashing or silently dropping them', () => {
   for (const context of ['not json', '{}', '[[1,"bad",{}]]']) {
     const messages = apply([event('tool_call', context)]);
     assert.equal(messages.at(-1)?.toolCall?.input, context);
+  }
+  for (const context of [
+    'not json', '{}', '["id","read_file","old format",0]', '[["id","read_file","old format",0]]',
+    '{"id":1,"name":"echo","result":"bad","duration_seconds":0}',
+    '{"id":"id","name":"echo","duration_seconds":0}',
+    '{"id":"id","name":"echo","result":"bad","duration_seconds":-1}',
+  ]) {
+    const messages = apply([event('tool_call_result', context)]);
+    assert.equal(messages.at(-1)?.toolCall?.output, context);
   }
 });
 
@@ -94,7 +114,7 @@ test('renders one final summary after files and forms and retains usage without 
 test('does not merge text across a tool boundary when stream-end events are missing', () => {
   const messages = apply([
     event('assistant', '准备读取'), tools('tool_call', [['a', 'read_file', {}]]),
-    tools('tool_call_result', [['a', 'read_file', 'ok', 1]]), event('assistant', '读取完成'),
+    toolResult({ id: 'a', name: 'read_file', result: 'ok', duration_seconds: 1 }), event('assistant', '读取完成'),
   ]);
   assert.deepEqual(messages.filter((item) => item.role === 'assistant').map((item) => item.content), ['准备读取', '读取完成']);
 });

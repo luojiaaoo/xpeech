@@ -307,11 +307,19 @@ data: {"event":"token_usage","context":"{\"上下文使用率\":\"12.34% (2k / 1
 | `assistant` | 纯文本增量片段 | 回复正文，按顺序拼接到当前正文段 |
 | `assistant_end` | `""` | 当前正文段结束；工具调用前后可能有多个正文段 |
 | `tool_call` | JSON 字符串：`[["<id>","<tool_name>",{参数对象}], ...]` | 一批工具调用 |
-| `tool_call_result` | JSON 字符串：`[["<id>","<tool_name>",结果,耗时秒数], ...]` | 一批工具结果；结果可能为文本或结构化内容 |
+| `tool_call_result` | JSON 字符串：`{"id":"<id>","name":"<tool_name>","result":结果,"duration_seconds":耗时秒数}` | 单次工具调用的结果；`result` 可能为文本或结构化内容 |
 | `question` | 问题表单的 JSON 字符串 | Agent 等待用户回答，原流保持打开，见第 5 节 |
 | `send_file` | 用户工作区相对路径 | 例如 `outputs/report.pdf`，通过 `/files` 下载，见第 6 节 |
 | `command` | 纯文本 | 内置命令回显或系统提示 |
 | `token_usage` | 指标的 JSON 字符串 | 通常含 `上下文使用率`、`会话时长`、`大模型请求次数`；常规对话的末尾统计 |
+
+`tool_call` 一次包含一批调用，`tool_call_result` 每个事件包含一个结果对象。例如，解析结果事件的 `context` 后得到：
+
+```json
+{"id": "call-1", "name": "shell", "result": "hello", "duration_seconds": 0.12}
+```
+
+`id` 为工具调用 ID，`name` 为工具名，`result` 为执行结果，`duration_seconds` 为耗时秒数。并行调用的结果按完成顺序逐条发送，可能与调用顺序不同；请使用 `id` 匹配对应调用并更新状态。
 
 **`send_file`、`ask_user_question` 的成功调用也会出现在 `tool_call_result` 中**：文件结果为 `已发送：<路径>`，追问结果为用户回答或超时默认答案。展示文件和问题表单时请使用专属事件，避免重复处理。
 
@@ -323,7 +331,7 @@ assistant → ... → assistant_end       （可选的中间说明）
 tool_call
   ├─ question → 等待回答              （可选）
   └─ send_file                        （可选）
-tool_call_result
+tool_call_result                     （每条结果一个事件，可能连续出现多次）
 assistant → ... → assistant_end       （后续回复）
 token_usage
 EOF                                  （本轮连接关闭）
@@ -779,8 +787,15 @@ async def run_chat(text: str) -> str:
                     print(f"\n[命令] {context}")
                 elif event_type == "token_usage":
                     print(f"\n[统计] {json.loads(context)}")
-                elif event_type in {"tool_call", "tool_call_result"}:
-                    print(f"\n[{event_type}] {json.loads(context)}")
+                elif event_type == "tool_call":
+                    for call_id, tool_name, arguments in json.loads(context):
+                        print(f"\n[工具调用] {call_id} {tool_name}: {arguments}")
+                elif event_type == "tool_call_result":
+                    tool_result = json.loads(context)
+                    print(
+                        f"\n[工具结果] {tool_result['id']} {tool_result['name']} "
+                        f"({tool_result['duration_seconds']:.2f}s): {tool_result['result']}"
+                    )
 
     return "".join(assistant_chunks)
 

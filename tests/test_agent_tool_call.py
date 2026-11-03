@@ -39,9 +39,10 @@ async def test_tool_results_are_sent_individually_as_tools_finish(tmp_path, fast
         async for event in agent_loop.tool_call(response, history, 0, "user", "session", "Alice"):
             events.append(event)
             if event["event"] == "tool_call_result":
-                [result] = json.loads(event["context"])
+                result = json.loads(event["context"])
+                assert set(result) == {"id", "name", "result", "duration_seconds"}
                 results.append(result)
-                if result[0] == "fast":
+                if result["id"] == "fast":
                     assert not release_slow.is_set()
                     assert [message["tool_call_id"] for message in history if message["role"] == "tool"] == ["fast"]
                     release_slow.set()
@@ -50,13 +51,15 @@ async def test_tool_results_are_sent_individually_as_tools_finish(tmp_path, fast
     if fast_name == "send_file":
         assert events[1] == {"event": "send_file", "context": "fast result"}
     first_result, second_result = results
-    assert first_result[:2] == ["fast", fast_name]
-    assert first_result[3] >= 0
+    assert (first_result["id"], first_result["name"]) == ("fast", fast_name)
+    assert first_result["duration_seconds"] >= 0
     if fast_name == "missing":
-        assert "not registered" in first_result[2]
+        assert "not registered" in first_result["result"]
     else:
-        assert "fast result" in first_result[2]
-    assert second_result[:3] == ["slow", "slow_tool", "slow result"]
+        assert "fast result" in first_result["result"]
+    assert (second_result["id"], second_result["name"], second_result["result"]) == (
+        "slow", "slow_tool", "slow result"
+    )
 
     assert [message["tool_call_id"] for message in history if message["role"] == "tool"] == ["fast", "slow"]
 

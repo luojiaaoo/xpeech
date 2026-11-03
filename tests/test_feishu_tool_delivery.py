@@ -69,17 +69,26 @@ async def test_each_tool_batch_has_its_own_collapsed_streaming_card(monkeypatch,
                 ["fast", "shell", {"command": "fast"}],
             ],
         )
-        yield tool_event(ChatEventType.TOOL_CALL_RESULT, [["fast", "shell", "fast result", 0]])
+        yield tool_event(
+            ChatEventType.TOOL_CALL_RESULT,
+            {"id": "fast", "name": "shell", "result": "fast result", "duration_seconds": 0},
+        )
         first = channel.update_card_element_content.await_args
         assert first.args[:2] == ("tools-card", "main")
         assert "fast result" in first.args[2]
         assert "slow result" not in first.args[2]
-        yield tool_event(ChatEventType.TOOL_CALL_RESULT, [["slow", "shell", "slow result", 1]])
+        yield tool_event(
+            ChatEventType.TOOL_CALL_RESULT,
+            {"id": "slow", "name": "shell", "result": "slow result", "duration_seconds": 1},
+        )
         if with_assistant:
             yield ChatEvent(event=ChatEventType.ASSISTANT, context=assistant_text())
         yield tool_event(ChatEventType.TOOL_CALL, [["fast", "echo", {"text": "second round"}]])
         channel.finish_streaming_card.assert_any_await("tools-card", sequence=3)
-        yield tool_event(ChatEventType.TOOL_CALL_RESULT, [["fast", "echo", "second result", 0]])
+        yield tool_event(
+            ChatEventType.TOOL_CALL_RESULT,
+            {"id": "fast", "name": "echo", "result": "second result", "duration_seconds": 0},
+        )
 
     monkeypatch.setattr(bridge_module, "iter_chat_events", events)
     await bridge.consume([message()])
@@ -139,7 +148,12 @@ async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(mon
     progress = ToolProgress()
     await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [["id", "echo", "a" * 30]]), progress)
     await bridge.send_tool_progress(
-        "chat", tool_event(ChatEventType.TOOL_CALL_RESULT, [["id", "echo", "x" * 30, 0]]), progress
+        "chat",
+        tool_event(
+            ChatEventType.TOOL_CALL_RESULT,
+            {"id": "id", "name": "echo", "result": "x" * 30, "duration_seconds": 0},
+        ),
+        progress,
     )
 
     card = bridge.channel.create_card_instance.await_args.args[0]
@@ -182,7 +196,10 @@ async def test_rss_batch_results_are_escaped_before_card_updates(monkeypatch):
             [[str(i), "web_fetch", {"url": "https://example.test/rss"}] for i in range(10)],
         )
         for i in range(10):
-            yield tool_event(ChatEventType.TOOL_CALL_RESULT, [[str(i), "web_fetch", rss, 0]])
+            yield tool_event(
+                ChatEventType.TOOL_CALL_RESULT,
+                {"id": str(i), "name": "web_fetch", "result": rss, "duration_seconds": 0},
+            )
         yield ChatEvent(event=ChatEventType.ASSISTANT, context=assistant_text())
 
     monkeypatch.setattr(bridge_module, "iter_chat_events", events)

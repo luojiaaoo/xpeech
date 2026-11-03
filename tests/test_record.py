@@ -225,9 +225,11 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     completed_at = datetime.now(UTC)
 
     tool_result_event = next(event for event in events if event["event"] == "tool_call_result")
-    [[tool_call_id, tool_name, tool_value, duration_seconds]] = json.loads(tool_result_event["context"])
-    assert (tool_call_id, tool_name, tool_value) == ("call-1", "fake_tool", "tool result")
-    assert duration_seconds >= 0
+    tool_result = json.loads(tool_result_event["context"])
+    assert (tool_result["id"], tool_result["name"], tool_result["result"]) == (
+        "call-1", "fake_tool", "tool result"
+    )
+    assert tool_result["duration_seconds"] >= 0
     assert {"event": "assistant", "context": "final answer"} in events
     assert {"event": "assistant_end", "context": ""} in events
     assert '"大模型请求次数": "2"' in events[-1]["context"]
