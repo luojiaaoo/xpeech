@@ -1,10 +1,5 @@
 import asyncio
 import json
-from contextlib import nullcontext
-from datetime import UTC, datetime, timedelta
-from email.utils import format_datetime
-from types import SimpleNamespace
-from urllib.parse import urlencode
 from xml.etree import ElementTree
 
 import pytest
@@ -18,7 +13,6 @@ from xpeech.provider.schema import ToolCallRequest
 SEARCH_ARG_TYPES = {
     "baidu": web.BaiduSearchArgs,
     "bing": web.BingSearchArgs,
-    "news": web.NewsSearchArgs,
 }
 
 
@@ -182,12 +176,12 @@ def test_web_fetch_reports_empty_extraction(monkeypatch):
         {"max_results": 11},
         {"max_results": 1.5},
         {"max_results": True},
-        {"timelimit": "invalid"},
     ],
 )
-def test_web_search_rejects_invalid_arguments(kwargs):
+@pytest.mark.parametrize("engine", ["baidu", "bing"])
+def test_web_search_rejects_invalid_arguments(kwargs, engine):
     with pytest.raises(ValidationError):
-        web.NewsSearchArgs(**({"query": "test"} | kwargs))
+        SEARCH_ARG_TYPES[engine](**({"query": "test"} | kwargs))
 
 
 def rss_response(items):
@@ -197,18 +191,13 @@ def rss_response(items):
         entry = ElementTree.SubElement(channel, "item")
         for tag, key in [("title", "title"), ("link", "url"), ("description", "abstract")]:
             ElementTree.SubElement(entry, tag).text = item[key]
-        if "date" in item:
-            ElementTree.SubElement(entry, "pubDate").text = item["date"]
-        if "source" in item:
-            ElementTree.SubElement(entry, "{urn:bing-news}Source").text = item["source"]
-    return nullcontext(SimpleNamespace(content=ElementTree.tostring(root), raise_for_status=lambda: None))
+    return make_response(ElementTree.tostring(root), "application/rss+xml")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("engine", ["baidu", "bing", "news"])
+@pytest.mark.parametrize("engine", ["baidu", "bing"])
 async def test_web_search_routes_and_normalizes_results(engine, monkeypatch):
     calls = []
-    published = datetime.now(UTC).replace(microsecond=0)
     items = [
         {
             "title": f"标题 {index}",
@@ -216,8 +205,6 @@ async def test_web_search_routes_and_normalizes_results(engine, monkeypatch):
             "href": f"https://example.test/{index}",
             "abstract": "摘要",
             "body": "摘要",
-            "date": format_datetime(published),
-            "source": "示例媒体",
         }
         for index in range(3)
     ]
@@ -234,28 +221,18 @@ async def test_web_search_routes_and_normalizes_results(engine, monkeypatch):
 
     monkeypatch.setattr(web.requests, "get", get)
     tool = getattr(web, f"{engine}_search")
-    options = {"timelimit": "w"} if engine == "news" else {}
-    args = SEARCH_ARG_TYPES[engine](query=" 测试 ", max_results=2, **options)
+    args = SEARCH_ARG_TYPES[engine](query=" 测试 ", max_results=2)
     hits = json.loads(await tool(args))
     expected = [
         {"title": f"标题 {index}", "url": f"https://example.test/{index}", "abstract": "摘要", "rank": str(index + 1)}
         for index in range(2)
     ]
-    if engine == "news":
-        for hit in expected:
-            hit.update(date=published.isoformat(), publisher="示例媒体")
     assert hits == expected
     if engine == "baidu":
         assert calls == [("baidu", "测试", 2)]
-    elif engine == "bing":
+    else:
         assert calls == [("bing", "https://cn.bing.com/search", {
             "params": {"q": "测试", "format": "rss"},
-            "headers": {"User-Agent": web._WEB_USER_AGENT},
-            "timeout": (10, 10),
-        })]
-    else:
-        assert calls == [("bing", "https://www.bing.com/news/search", {
-            "params": {"q": "测试", "format": "rss", "cc": "us", "qft": 'sortbydate="1"'},
             "headers": {"User-Agent": web._WEB_USER_AGENT},
             "timeout": (10, 10),
         })]
@@ -273,13 +250,9 @@ async def test_split_search_tools_expose_independent_schemas_and_defaults(monkey
     result = json.loads(await web.bing_search(web.BingSearchArgs(query="test")))
     assert result[0]["url"] == "https://example.test"
     assert calls == [("https://cn.bing.com/search", {"q": "test", "format": "rss"})]
-    news_result = json.loads(await web.news_search(web.NewsSearchArgs(query="test")))
-    assert news_result[0]["url"] == "https://example.test"
-    assert calls[-1] == ("https://www.bing.com/news/search", {"q": "test", "format": "rss", "cc": "us"})
     for tool, properties in [
         (web.baidu_search, {"query", "max_results"}),
         (web.bing_search, {"query", "max_results"}),
-        (web.news_search, {"query", "max_results", "timelimit"}),
     ]:
         schema = as_tool(tool)["function"]
         assert schema["name"] == tool.__name__
@@ -287,7 +260,7 @@ async def test_split_search_tools_expose_independent_schemas_and_defaults(monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("engine", ["baidu", "bing", "news"])
+@pytest.mark.parametrize("engine", ["baidu", "bing"])
 async def test_web_search_empty_results(engine, monkeypatch):
     monkeypatch.setattr(web, "_baidu_search", lambda *_args: None)
     monkeypatch.setattr(web.requests, "get", lambda *_args, **_kwargs: rss_response([]))
@@ -297,7 +270,6 @@ async def test_web_search_empty_results(engine, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("engine,label", [("bing", "Bing"), ("news", "新闻")])
 @pytest.mark.parametrize("content", [
     b"<!doctype html><html><body>Bing homepage</body></html>",
     b"<html><body>Verify you are human</body></html>",
@@ -306,59 +278,14 @@ async def test_web_search_empty_results(engine, monkeypatch):
     b"",
     b"<rss />",
 ])
-async def test_search_rejects_invalid_feed_instead_of_reporting_empty_results(content, monkeypatch, engine, label):
+async def test_bing_search_rejects_invalid_feed_instead_of_reporting_empty_results(content, monkeypatch):
     monkeypatch.setattr(web.requests, "get", lambda *_args, **_kwargs: make_response(content, "text/html"))
-    with pytest.raises(RuntimeError, match=f"{label}搜索失败.*未返回有效 RSS"):
-        await getattr(web, f"{engine}_search")(SEARCH_ARG_TYPES[engine](query="test"))
+    with pytest.raises(RuntimeError, match="Bing搜索失败.*未返回有效 RSS"):
+        await web.bing_search(web.BingSearchArgs(query="test"))
 
 
 @pytest.mark.asyncio
-async def test_news_pins_country_and_preserves_filters(monkeypatch):
-    calls = []
-    now = datetime.now(UTC).replace(microsecond=0)
-    items = [
-        {"title": "old", "date": format_datetime(now - timedelta(days=2))},
-        {"title": "recent", "date": format_datetime(now - timedelta(hours=1))},
-        {"title": "other", "date": format_datetime(now - timedelta(hours=2))},
-    ]
-    for item in items:
-        item.update(url="https://example.test/article", abstract="summary", source="Example publisher")
-
-    def get(url, **kwargs):
-        calls.append((url, kwargs["params"]))
-        return rss_response(items)
-
-    monkeypatch.setattr(web.requests, "get", get)
-    result = json.loads(await web.news_search(web.NewsSearchArgs(query="今日热点新闻", timelimit="d", max_results=1)))
-
-    params = {"q": "今日热点新闻", "format": "rss", "cc": "us", "qft": 'sortbydate="1"'}
-    assert calls == [("https://www.bing.com/news/search", params)]
-    assert result == [{
-        "title": "recent",
-        "url": "https://example.test/article",
-        "abstract": "summary",
-        "date": (now - timedelta(hours=1)).isoformat(),
-        "publisher": "Example publisher",
-        "rank": "1",
-    }]
-
-
-@pytest.mark.asyncio
-async def test_news_reports_invalid_feed_without_repeating_identical_request(monkeypatch):
-    calls = []
-
-    def get(url, **kwargs):
-        calls.append(kwargs["params"])
-        return make_response(b"not XML", "text/html")
-
-    monkeypatch.setattr(web.requests, "get", get)
-    with pytest.raises(RuntimeError, match="新闻搜索失败.*未返回有效 RSS"):
-        await web.news_search(web.NewsSearchArgs(query="test"))
-    assert calls == [{"q": "test", "format": "rss", "cc": "us"}]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("engine,label", [("baidu", "百度"), ("bing", "Bing"), ("news", "新闻")])
+@pytest.mark.parametrize("engine,label", [("baidu", "百度"), ("bing", "Bing")])
 async def test_search_error_is_reported_as_failed_execution(tmp_path, monkeypatch, engine, label):
     def fail(*_args, **_kwargs):
         raise OSError("offline")
@@ -379,40 +306,7 @@ async def test_search_error_is_reported_as_failed_execution(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_news_filters_dates_before_limiting_and_unwraps_bing_links(monkeypatch):
-    now = datetime.now(UTC).replace(microsecond=0)
-    article_url = "https://example.test/article?a=1&b=2"
-    items = [
-        {"title": "old", "date": format_datetime(now - timedelta(days=40))},
-        {"title": "undated", "date": "invalid date"},
-        {"title": "recent", "date": format_datetime(now - timedelta(hours=1))},
-        {"title": "other", "date": format_datetime(now - timedelta(hours=2))},
-    ]
-    for item in items:
-        item.update(
-            url="https://www.bing.com/news/apiclick.aspx?" + urlencode({"url": article_url}),
-            abstract="summary",
-            source="Example publisher",
-        )
-    monkeypatch.setattr(web.requests, "get", lambda *_args, **_kwargs: rss_response(items))
-
-    result = json.loads(await web.news_search(web.NewsSearchArgs(query="test", timelimit="d", max_results=1)))
-
-    assert result == [{
-        "title": "recent",
-        "url": article_url,
-        "abstract": "summary",
-        "date": (now - timedelta(hours=1)).isoformat(),
-        "publisher": "Example publisher",
-        "rank": "1",
-    }]
-    unfiltered = json.loads(await web.news_search(web.NewsSearchArgs(query="test")))
-    assert len(unfiltered) == 4
-    assert unfiltered[1]["date"] == "invalid date"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("engine,label", [("baidu", "百度"), ("bing", "Bing"), ("news", "新闻")])
+@pytest.mark.parametrize("engine,label", [("baidu", "百度"), ("bing", "Bing")])
 async def test_web_search_timeout(monkeypatch, engine, label):
     async def hang(*_args):
         await asyncio.Event().wait()
