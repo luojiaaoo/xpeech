@@ -631,7 +631,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `write_file` | 向工作区写入文件 |
 | `edit_file` | 编辑工作区内的文件 |
 | `list_dir` | 列出工作区或内置技能目录内容 |
-| `shell` | 执行 Bash 命令（带工作区路径限制和 bwrap 沙盒） |
+| `shell` | 执行 Bash 命令（带显式拦截规则和 bwrap 沙盒） |
 | `web_fetch` | 使用 requests 抓取网页、Trafilatura 提取正文和评论并输出 Markdown，保留链接和表格；模型可通过 include_images 选择保留图片信息；支持 HTTP 重定向，不启动浏览器、不执行 JavaScript |
 | `baidu_search` | 使用百度搜索中文网页，返回标题、链接、摘要；支持条数限制，不支持时间过滤 |
 | `bing_search` | 使用必应 RSS 搜索网页，返回标题、链接、摘要；支持条数限制，不支持时间过滤 |
@@ -673,7 +673,8 @@ Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook�
 硬拦截规则集中在 `shell.py` 的 `SHELL_BLOCK_RULES` 字典中，key 为 `Callable[[str], bool]`，value 为提示词。
 判断函数接收命令字符串，返回 `True` 时拒绝执行，并将对应提示作为工具错误返回给模型。
 当前包括关机重启和 Python/pip 直调规则；新增规则只需添加“判断函数 → 提示词”映射。
-其余危险命令由 dcg 判断。执行前仍须通过 `shell.py` 的 Python/pip 直调检查、工作区路径检查和 bwrap 沙盒限制。
+其余危险命令由 dcg 判断。文件系统访问边界由 bwrap 的挂载隔离和只读挂载保证，
+Shell 不在宿主机上解析命令路径或拦截 `../`、`..\` 等路径文本。
 
 需要按本次调用决定是否询问时，可在注册代码中传入可选的 `requires_confirmation`：
 
@@ -722,24 +723,25 @@ MCP 包装也支持此回调，需在 `registry.py` 的 `build_execution_request
 `[tool].max_tool_timeout` 默认 300 秒，是每次工具调用的最终兜底上限。Shell、MCP 和网页抓取等
 工具会先应用各自的执行或网络超时；触及兜底上限时，执行器取消该调用并把失败结果返回 Agent。
 Shell 命令默认 120 秒超时，可在单次调用中通过 `timeout_ms` 指定，最大 240,000 毫秒；
-超时后会终止命令及同一进程组中的子进程，并把已产生的输出和超时状态返回 Agent。
+超时后会终止命令及本次沙盒内的所有子进程，并把已产生的输出和超时状态返回 Agent。
 
 ### 工具安全
 
-- **统一路径解析**：文件工具、文件发送工具和 Shell 绝对路径检查统一通过 `xpeech/agent/tools/helper.py` 解析路径；默认限制在工作区内，读取类操作可额外访问内置技能目录，写入和编辑仍只能落在工作区内
+- **统一路径解析**：文件工具和文件发送工具统一通过 `xpeech/agent/tools/helper.py` 解析路径；默认限制在工作区内，读取类操作可额外访问内置技能目录，写入和编辑仍只能落在工作区内；Shell 文件系统访问由 bwrap 限制
 - **预览目录隔离**：`create_browser_preview` 只能复制当前会话工作区内的目录或 HTML，每次写入 `<browser_preview_path>/<uuid>/`，请求子路径不能越出对应 UUID 目录
-- **Shell 沙盒**：Shell 命令通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离
+- **Shell 沙盒**：Shell 命令通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离；每次调用使用独立 PID 命名空间，并移除所有 Linux capabilities
 - **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到 `<workspace>/home`，不会在会话间共享可写状态
 - **关机重启硬拦截**：禁止执行 `shutdown`、`reboot`、`poweroff`，用户确认也不能放行
 - **危险命令检查**：其余危险命令由 dcg 判断；需要确认的命令在交互模式等待用户确认，非交互模式直接拒绝
 - **Python/pip 调用检查**：继续拦截直接执行 `python` / `pip`，要求通过 uv 运行
-- **路径遍历检测**：拦截包含 `..` 的路径操作
 
 ### 沙盒
 
 Shell 命令会在 bwrap 进程沙盒中执行：
 
 - 每个用户工作区会绑定为可读写目录，并作为命令工作目录；该用户的多个会话共享此工作区。
+- 每次调用启用 `--unshare-pid` 和 `--cap-drop ALL`，命令无法通过 `/proc` 查看其他调用的进程，也不保留挂载、切换用户等操作所需的 Linux capabilities。
+- 命令正常结束、超时或取消后，本次沙盒内所有进程都会被清理，包括通过 `nohup`、`&` 或 `setsid` 启动的后台进程；工作区文件仍保留。需要临时服务时，应在同一次调用中启动服务、完成访问并停止服务，不能依赖服务跨调用存活。
 - 内置技能目录以只读方式挂载，便于读取技能脚本和资源。
 - `/tmp` 和工作区父目录会使用临时文件系统隔离，避免命令看到其他工作区。
 - `/usr`、`/bin`、`/lib`、证书和 DNS 配置等系统路径以只读方式挂载，提供基础运行环境。

@@ -53,7 +53,7 @@ def _iter_sandbox_home_config_files() -> list[tuple[Path, Path]]:
     return config_files
 
 
-def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None = None) -> str:
+def wrap_command(command: str, workspace: str | Path) -> str:
     """Wrap a command in a bubblewrap sandbox."""
     workspace = Path(workspace).expanduser().resolve()
     workspace_python_env = workspace / ".venv"
@@ -61,7 +61,7 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
     user_id = get_user_id()
     workspace_skills = workspace / "skills"
 
-    args = ["bwrap", "--new-session", "--die-with-parent"]
+    args = ["bwrap", "--new-session", "--die-with-parent", "--unshare-pid", "--cap-drop", "ALL"]
 
     sandbox_env: dict[str, str | Path] = {
         "HOME": home,
@@ -72,7 +72,6 @@ def wrap_command(command: str, workspace: str | Path, env: dict[str, str] | None
         "NPM_CONFIG_PREFIX": home / ".npm-global",  # npm 全局安装目录
         "SHELL_USER_ID": user_id, # 注入 user_id，给插件使用
     }
-    sandbox_env.update(env or {})
     lark_user_access_token = get_lark_user_access_token()
     if lark_user_access_token:
         sandbox_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = lark_user_access_token

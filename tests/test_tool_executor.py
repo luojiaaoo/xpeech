@@ -110,13 +110,13 @@ class TestToolExecutor:
         "command",
         ["rm -rf ./test-dir", "dd if=input.bin of=output.bin", "mkfs --help"],
     )
-    def test_shell_guard_leaves_dangerous_command_decisions_to_dcg(self, tmp_path: Path, command: str):
-        assert _guard_command(command, tmp_path) == command
+    def test_shell_guard_leaves_dangerous_command_decisions_to_dcg(self, command: str):
+        assert _guard_command(command) == command
 
     @pytest.mark.parametrize("command", ["sudo reboot", "echo ready && poweroff", "/sbin/shutdown -h now", "REBOOT"])
-    def test_shell_guard_rejects_power_commands(self, tmp_path: Path, command: str):
+    def test_shell_guard_rejects_power_commands(self, command: str):
         with pytest.raises(RuntimeError, match="shutdown/reboot/poweroff are prohibited"):
-            _guard_command(command, tmp_path)
+            _guard_command(command)
 
     @pytest.mark.parametrize(
         "command",
@@ -132,18 +132,34 @@ class TestToolExecutor:
             "python 'unterminated",
         ],
     )
-    def test_shell_guard_still_rejects_direct_python_and_pip(self, tmp_path: Path, command: str):
+    def test_shell_guard_still_rejects_direct_python_and_pip(self, command: str):
         with pytest.raises(RuntimeError, match="run Python through 'uv run python/pip'"):
-            _guard_command(command, tmp_path)
+            _guard_command(command)
 
     @pytest.mark.parametrize(
         "command",
         ["uv run python --version", "uv pip install demo", 'echo "python3"', "command -v python3"],
     )
-    def test_shell_guard_allows_uv_and_python_references(self, tmp_path: Path, command: str):
-        assert _guard_command(command, tmp_path) == command
+    def test_shell_guard_allows_uv_and_python_references(self, command: str):
+        assert _guard_command(command) == command
 
-    def test_shell_guard_uses_configured_callable_and_message(self, tmp_path: Path, monkeypatch):
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "/usr/bin/ls /usr",
+            "printf data > /tmp/output.txt",
+            "echo ready > /dev/null",
+            "cat /dev/fd/0",
+            "cat ~/.npmrc",
+            "cat ../secret.txt",
+            r"cat ..\secret.txt",
+            'printf "%s" "/outside/workspace"',
+        ],
+    )
+    def test_shell_guard_leaves_path_access_to_sandbox(self, command: str):
+        assert _guard_command(command) == command
+
+    def test_shell_guard_uses_configured_callable_and_message(self, monkeypatch):
         checked_commands = []
 
         def is_blocked(command: str) -> bool:
@@ -156,13 +172,13 @@ class TestToolExecutor:
             "Custom command is prohibited.",
         )
         with pytest.raises(RuntimeError, match="Custom command is prohibited"):
-            _guard_command("env TEST=1 blocked_test_command", tmp_path)
+            _guard_command("env TEST=1 blocked_test_command")
         assert checked_commands == ["env TEST=1 blocked_test_command"]
 
-    def test_shell_guard_allows_format_url_query_parameter(self, tmp_path: Path):
+    def test_shell_guard_allows_format_url_query_parameter(self):
         command = 'curl -s "wttr.in/Wuhan?lang=zh&format=%l:+%c+%t+%h+%w"'
 
-        assert _guard_command(command, tmp_path) == command
+        assert _guard_command(command) == command
 
     def test_result_limit_is_global_not_mcp_specific(self):
         assert ToolConfig().max_result_chars == 10_000
@@ -190,7 +206,7 @@ class TestToolExecutor:
 
     @pytest.mark.asyncio
     async def test_shell_timeout_terminates_command_and_preserves_partial_output(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(sandbox, "wrap_command", lambda command, workspace, env=None: command)
+        monkeypatch.setattr(sandbox, "wrap_command", lambda command, workspace: command)
         logged_errors: list[str] = []
         monkeypatch.setattr(
             shell_module.logger,
@@ -220,7 +236,7 @@ class TestToolExecutor:
 
     @pytest.mark.asyncio
     async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(sandbox, "wrap_command", lambda command, workspace, env=None: command)
+        monkeypatch.setattr(sandbox, "wrap_command", lambda command, workspace: command)
 
         result = await _run_wrapped_command("printf done", tmp_path, timeout_ms=1_000)
 

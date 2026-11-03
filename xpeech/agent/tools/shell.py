@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import platform
-import re
 import shutil
 import signal
 import subprocess
@@ -15,9 +14,8 @@ from textwrap import dedent
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from ...exceptions import PathProtectionError
 from . import sandbox
-from .helper import is_direct_python_pip_exec, is_power_command, safe_resolve_workspace_path
+from .helper import is_direct_python_pip_exec, is_power_command
 
 DEFAULT_EXEC_TIMEOUT_MS = 120_000
 MAX_EXEC_TIMEOUT_MS = 240_000
@@ -28,30 +26,6 @@ SHELL_BLOCK_RULES: dict[Callable[[str], bool], str] = {
         "run Python through 'uv run python/pip' instead of calling 'python/pip' directly."
     ),
 }
-_WORKSPACE_BOUNDARY_NOTE = (
-    "\n\nNote: this is a hard policy boundary, not a transient failure. "
-    "Do NOT retry with shell tricks (symlinks, base64 piping, alternative "
-    "tools). Do NOT use absolute paths (e.g., "
-    "/usr/bin, /bin, /usr/local/bin) to bypass restrictions — these "
-    "will also be intercepted. Always invoke commands directly by name "
-    "(e.g., 'curl' instead of '/usr/bin/curl'). "
-    "If the user genuinely needs this resource, tell them you cannot "
-    "reach it under the current restrict policy"
-)
-
-_BENIGN_DEVICE_PATHS: frozenset[str] = frozenset(
-    {
-        "/dev/null",
-        "/dev/zero",
-        "/dev/full",
-        "/dev/random",
-        "/dev/urandom",
-        "/dev/stdin",
-        "/dev/stdout",
-        "/dev/stderr",
-        "/dev/tty",
-    }
-)
 
 
 class ShellArgs(BaseModel):
@@ -112,13 +86,6 @@ async def _shell_requires_confirmation(payload: str) -> bool:
             await process.wait()
 
 
-def _is_benign_device_path(path: str) -> bool:
-    """Return True for kernel device files that should never be workspace-blocked."""
-    if path in _BENIGN_DEVICE_PATHS:
-        return True
-    return path.startswith("/dev/fd/")
-
-
 async def _stop_process(process: asyncio.subprocess.Process) -> None:
     """Stop the isolated shell process group and reap the shell process."""
     if process.returncode is not None:
@@ -140,44 +107,13 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
-def _extract_absolute_paths(command: str) -> list[str]:
-    posix_paths = re.findall(r"(?:^|[\s|>'\"])(/[^\s\"'>;|<]+)", command)
-    home_paths = re.findall(r"(?:^|[\s>'\"])(~[^\s\"'>;|<]*)", command)
-    return posix_paths + home_paths
-
-
-def _guard_command(command: str, workspace: str | Path) -> str:
-    """硬拦截关机重启命令，并检查 Python/pip 调用方式和工作区路径。"""
+def _guard_command(command: str) -> str:
+    """Apply explicit block rules; filesystem access is enforced by bubblewrap."""
     cmd = command.strip()
 
     for check, message in SHELL_BLOCK_RULES.items():
         if check(cmd):
             raise RuntimeError(f"Command blocked by safety guard: {message}")
-
-    # 判断是否包含 ..\
-    if "..\\" in cmd or "../" in cmd:
-        raise PathProtectionError(
-            f"Command blocked by safety guard (path traversal ../ detected): {cmd}" + _WORKSPACE_BOUNDARY_NOTE
-        )
-    # 提取所有路径，判断是否在工作路径下
-    for path in _extract_absolute_paths(cmd):
-        try:
-            expanded = os.path.expandvars(path.strip())
-            resolved = safe_resolve_workspace_path(
-                expanded,
-                workspace,
-                protect_read_only_file=False,
-            )
-            if _is_benign_device_path(str(resolved)):
-                continue
-        except PathProtectionError:
-            raise PathProtectionError(
-                f"Command blocked by safety guard (a path outside the workspace was detected.): {path}"
-                + _WORKSPACE_BOUNDARY_NOTE
-            ) from None
-        except Exception:
-            logger.debug("Skipping path that could not be resolved by workspace guard: {}", path)
-            continue
 
     return cmd
 
@@ -185,10 +121,9 @@ def _guard_command(command: str, workspace: str | Path) -> str:
 async def _run_wrapped_command(
     command: str,
     workspace: Path,
-    env: dict[str, str] | None = None,
     timeout_ms: int = DEFAULT_EXEC_TIMEOUT_MS,
 ) -> ShellCommandResult:
-    wrapped_command = sandbox.wrap_command(command, workspace, env=env)
+    wrapped_command = sandbox.wrap_command(command, workspace)
     logger.info(f"Running wrapped command: {wrapped_command}")
     with tempfile.TemporaryFile(mode="w+b") as stdout_f, tempfile.TemporaryFile(mode="w+b") as stderr_f:
         process = await asyncio.create_subprocess_exec(
@@ -269,7 +204,7 @@ def build_shell_tools(workspace: str | Path):
         raise ValueError(f"Invalid workspace: {workspace}")
 
     async def shell(args: ShellArgs) -> str:
-        command = _guard_command(args.command, workspace)
+        command = _guard_command(args.command)
         await _ensure_workspace_uv_venv(workspace)
         result = await _run_wrapped_command(command, workspace, timeout_ms=args.timeout_ms)
         return _format_command_output(
@@ -282,14 +217,21 @@ def build_shell_tools(workspace: str | Path):
 
     shell.__doc__ = dedent(
         """
-            Execute a bash command and return the output.
+            Execute a bash command in the current workspace and return the output.
 
             Commands run on Linux inside a bubblewrap sandbox. The current
             workspace is isolated from other workspaces.
+
+            The workspace is writable; system paths and built-in skills are
+            read-only. Workspace files persist across calls; background
+            processes do not.
+
             Commands time out after 120 seconds by default; timeout_ms can
             request up to 240 seconds. On timeout, partial output is returned.
-            Python must be run through uv, for example:
+
+            Run Python and pip through uv:
             uv run python script.py
+            uv pip install package
         """
     ).lstrip()
     return shell

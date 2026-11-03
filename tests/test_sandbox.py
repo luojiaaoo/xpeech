@@ -1,4 +1,8 @@
+import asyncio
+import os
+import platform
 import shlex
+import shutil
 from pathlib import Path
 
 import pytest
@@ -8,6 +12,7 @@ from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR
 from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import safe_resolve_workspace_path
+from xpeech.agent.tools.shell import _run_wrapped_command
 from xpeech.exceptions import PathProtectionError
 
 
@@ -210,3 +215,64 @@ def test_wrap_command_selects_lark_skills_by_injected_token(tmp_path: Path) -> N
         str(skills_target / "lark-skills-token"),
     ) in token_binds
     assert not any(target == str(skills_target / "lark-cli-auth") for _, target in token_binds)
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux" or any(shutil.which(name) is None for name in ("bwrap", "bash", "setsid")),
+    reason="Requires Linux with bubblewrap, bash and setsid",
+)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("termination", ["exit", "timeout", "cancel"])
+async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    termination: str,
+) -> None:
+    workspace = tmp_path / "workspaces" / "current"
+    workspace.mkdir(parents=True)
+    config_home = tmp_path / "managed-home"
+    config_home.mkdir()
+    managed_config = config_home / ".audit-config"
+    managed_config.write_text("read-only config", encoding="utf-8")
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
+    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: [])
+    heartbeat = workspace / "heartbeat"
+    worker = "for ((i=0; i<40; i++)); do printf x >> heartbeat; sleep 0.05; done"
+    command = (
+        "readlink /proc/self/ns/pid > isolation.txt; "
+        "awk '/^CapEff:/ {print $2}' /proc/self/status >> isolation.txt; "
+        "if (printf modified > home/.audit-config) 2>/dev/null; then exit 1; fi; "
+        f"setsid bash -c {shlex.quote(worker)} & "
+        "while [ ! -s heartbeat ]; do sleep 0.01; done; "
+        "echo partial-output; "
+        + ("true" if termination == "exit" else "sleep 30")
+    )
+    task = asyncio.create_task(
+        _run_wrapped_command(command, workspace, timeout_ms=1_000 if termination == "timeout" else 10_000)
+    )
+    if termination == "cancel":
+        try:
+            async with asyncio.timeout(5):
+                while not heartbeat.exists() or heartbeat.stat().st_size == 0:
+                    if task.done():
+                        pytest.fail(f"Sandbox exited before starting background job: {task.result()}")
+                    await asyncio.sleep(0.01)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    else:
+        result = await task
+        assert result.timed_out is (termination == "timeout")
+        assert b"partial-output" in result.stdout
+        if termination == "exit":
+            assert result.returncode == 0
+
+    pid_namespace, capabilities = (workspace / "isolation.txt").read_text().splitlines()
+    assert pid_namespace != os.readlink("/proc/self/ns/pid")
+    assert int(capabilities, 16) == 0
+    assert managed_config.read_text(encoding="utf-8") == "read-only config"
+    await asyncio.sleep(0.1)
+    stopped_heartbeat = heartbeat.read_bytes()
+    await asyncio.sleep(0.2)
+    assert heartbeat.read_bytes() == stopped_heartbeat
