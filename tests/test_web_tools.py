@@ -91,6 +91,7 @@ async def test_web_fetch_includes_comments_and_optional_images(monkeypatch, incl
 
 def make_response(data: bytes, content_type: str, url: str = "https://example.test/download"):
     response = web.requests.Response()
+    response.status_code = 200
     response._content = data
     response.headers["Content-Type"] = content_type
     response.encoding = "utf-8"
@@ -306,9 +307,7 @@ async def test_web_search_empty_results(engine, monkeypatch):
     b"<rss />",
 ])
 async def test_search_rejects_invalid_feed_instead_of_reporting_empty_results(content, monkeypatch, engine, label):
-    monkeypatch.setattr(web.requests, "get", lambda *_args, **_kwargs: nullcontext(
-        SimpleNamespace(content=content, raise_for_status=lambda: None)
-    ))
+    monkeypatch.setattr(web.requests, "get", lambda *_args, **_kwargs: make_response(content, "text/html"))
     with pytest.raises(RuntimeError, match=f"{label}搜索失败.*未返回有效 RSS"):
         await getattr(web, f"{engine}_search")(SEARCH_ARG_TYPES[engine](query="test"))
 
@@ -350,7 +349,7 @@ async def test_news_reports_invalid_feed_without_repeating_identical_request(mon
 
     def get(url, **kwargs):
         calls.append(kwargs["params"])
-        return nullcontext(SimpleNamespace(content=b"not XML", raise_for_status=lambda: None))
+        return make_response(b"not XML", "text/html")
 
     monkeypatch.setattr(web.requests, "get", get)
     with pytest.raises(RuntimeError, match="新闻搜索失败.*未返回有效 RSS"):

@@ -9,6 +9,7 @@ from xml.etree import ElementTree
 import requests
 import trafilatura
 from baidusearch.baidusearch import search as _baidu_search
+from loguru import logger
 from pydantic import BaseModel, Field, StringConstraints
 
 from ...utils.security.network import validate_url_target
@@ -19,6 +20,7 @@ _WEB_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 _SEARCH_TIMEOUT_SECONDS = 20.0
+_RSS_RESPONSE_PREVIEW_CHARS = 200
 
 
 class WebFetchArgs(BaseModel):
@@ -154,10 +156,24 @@ def _fetch_bing_rss(url: str, params: dict[str, str], *, source: str) -> Element
         response.raise_for_status()
         try:
             root = ElementTree.fromstring(response.content)
-        except ElementTree.ParseError as error:
+            if root.tag != "rss" or root.find("channel") is None:
+                raise ValueError("Expected an RSS root with a channel element")
+        except (ElementTree.ParseError, ValueError) as error:
+            text = response.text
+            logger.warning(
+                "{} returned invalid RSS: status={} url={} content_type={} redirects={} "
+                "body_bytes={} parse_error={} body_head={!r} body_tail={!r}",
+                source,
+                response.status_code,
+                response.url,
+                response.headers.get("Content-Type", ""),
+                [(item.status_code, item.headers.get("Location", "")) for item in response.history],
+                len(response.content),
+                str(error),
+                text[:_RSS_RESPONSE_PREVIEW_CHARS],
+                text[-_RSS_RESPONSE_PREVIEW_CHARS:],
+            )
             raise ValueError(f"{source} 未返回有效 RSS，可能被重定向到首页或验证页，请稍后重试") from error
-    if root.tag != "rss" or root.find("channel") is None:
-        raise ValueError(f"{source} 未返回有效 RSS，可能被重定向到首页或验证页，请稍后重试")
     return root
 
 
