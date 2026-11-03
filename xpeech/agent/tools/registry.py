@@ -42,9 +42,8 @@ async def register_tools(
     if not not_interactive:
         provider.register_function_tool(build_execution_request_tool(build_shell_tools(workspace=workspace)))
     provider.register_function_tool(web_fetch)
-    if not not_interactive:
-        for tool in (baidu_search, bing_search):
-            provider.register_function_tool(build_execution_request_tool(tool))
+    for tool in (baidu_search, bing_search):
+        provider.register_function_tool(tool)
     for tool in build_research_tools(workspace=workspace):
         provider.register_function_tool(tool)
 
