@@ -228,7 +228,10 @@ class AgentLoop:
                     success = False
                     result = "执行确认回复格式异常，工具未执行。"
 
-            if tool_call.name == "send_file" and success:
+                append_tool_result_messages_yaml(tool_call, result)
+                tool_call_result = (tool_call.id, tool_call.name, result, duration_seconds)
+
+            elif tool_call.name == "send_file" and success:
                 # 发送文件
                 logger.info("Sending file {}", result)
                 yield {"event": "send_file", "context": result}
