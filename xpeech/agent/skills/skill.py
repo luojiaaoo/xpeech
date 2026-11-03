@@ -19,6 +19,7 @@ BUILTIN_SKILLS_DIR = Path(__file__).parent / "buildin"
 LARK_SKILLS_DIR_NAME = "lark-skills"
 LARK_TOKEN_SKILLS_DIR_NAME = "lark-skills-token"
 LARK_CLI_AUTH_SKILL_DIR_NAME = "lark-cli-auth"
+INTERACTIVE_SKILL_NAMES = {"ask-user-question"}
 FRONTMATTER_PATTERN = re.compile(r"^---\r?\n(.*?)\r?\n---(?:\r?\n|$)", re.DOTALL)
 
 
@@ -121,10 +122,17 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
 
-    def __init__(self, workspace: Path | None, *, channel_tags: list[str] | None = None):
+    def __init__(
+        self,
+        workspace: Path | None,
+        *,
+        channel_tags: list[str] | None = None,
+        not_interactive: bool = False,
+    ):
         self.workspace_skills = workspace / "skills" if workspace is not None else None
         self.builtin_skills = BUILTIN_SKILLS_DIR
         self.channel_tags = channel_tags if channel_tags is not None else []
+        self.not_interactive = not_interactive
 
     async def _skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
         """Return skill documents, with built-ins taking precedence."""
@@ -167,6 +175,8 @@ class SkillsLoader:
                 metadata = skill.metadata
             except ValueError as exc:
                 logger.warning("Skipping invalid skill '{}': {}", skill_file, exc)
+                continue
+            if self.not_interactive and metadata.name in INTERACTIVE_SKILL_NAMES:
                 continue
             if source == "builtin" and not channel_tags_allow_access(metadata.channel_tags, self.channel_tags):
                 continue

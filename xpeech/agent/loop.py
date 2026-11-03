@@ -264,7 +264,11 @@ class AgentLoop:
         # 拼接系统提示词
         messages_yaml = set_system_prompt(
             messages_yaml,
-            await build_system_prompt(workspace=self.workspace, channel_tags=self.channel_tags),
+            await build_system_prompt(
+                workspace=self.workspace,
+                channel_tags=self.channel_tags,
+                not_interactive=not_interactive,
+            ),
         )
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
         messages_yaml.append(

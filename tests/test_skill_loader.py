@@ -4,6 +4,7 @@ from xml.etree import ElementTree
 import pytest
 from pydantic import ValidationError
 
+from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.server.context import lark_user_access_token_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillInfo, SkillMetadata, SkillsLoader
@@ -43,6 +44,57 @@ def test_internal_builtin_skills_are_marked(skill_name: str):
 
     assert skill.metadata.internal is True
     assert skill.metadata.kwargs == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("not_interactive", [False, True])
+async def test_system_prompt_filters_builtin_interactive_skill(tmp_path: Path, not_interactive: bool):
+    prompt = await build_system_prompt(tmp_path, not_interactive=not_interactive)
+
+    assert ("<name>ask-user-question</name>" in prompt["content"]) is not not_interactive
+    assert ("### Skill: ask-user-question" in prompt["content"]) is not not_interactive
+    assert ("通过 `ask_user_question` 向用户追问" in prompt["content"]) is not not_interactive
+    assert "<name>memory</name>" in prompt["content"]
+    assert "### Skill: memory" in prompt["content"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["builtin", "workspace"])
+@pytest.mark.parametrize("always", [False, True])
+@pytest.mark.parametrize("not_interactive", [False, True])
+async def test_interactive_skill_filter_applies_to_list_and_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    always: bool,
+    not_interactive: bool,
+):
+    skill_dir = tmp_path / "builtin" if source == "builtin" else tmp_path / "skills" / "ask-user-question"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: ask-user-question\nalways: {str(always).lower()}\n---\n"
+        "# Interactive instructions\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [skill_dir] if source == "builtin" else [])
+    regular_dir = tmp_path / "skills" / "regular-skill"
+    regular_dir.mkdir(parents=True)
+    (regular_dir / "SKILL.md").write_text(
+        "---\nname: regular-skill\n---\n# Regular instructions\n", encoding="utf-8",
+    )
+    loader = SkillsLoader(tmp_path, not_interactive=not_interactive)
+
+    skills = await loader.list_skill_info()
+    names = {skill.metadata.name for skill in skills}
+    expected = {"regular-skill"}
+    if not not_interactive:
+        expected.add("ask-user-question")
+    assert names == expected
+
+    prompt = await loader.build_skills_prompt()
+    assert ("<name>ask-user-question</name>" in prompt) is not not_interactive
+    assert ("# Interactive instructions" in prompt) is (always and not not_interactive)
+    assert "<name>regular-skill</name>" in prompt
 
 
 @pytest.mark.parametrize(

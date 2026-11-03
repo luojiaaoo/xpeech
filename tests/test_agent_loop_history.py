@@ -20,8 +20,9 @@ def make_response(content: str) -> LLMResponse:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("json_output", [False, True])
 async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
-    async def build_test_system_prompt(workspace: Path, *, channel_tags):
+    async def build_test_system_prompt(workspace: Path, *, channel_tags, not_interactive):
         assert workspace == tmp_path
+        assert not_interactive is True
         return {"role": "system", "content": "system"}
 
     monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
@@ -92,8 +93,11 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     monkeypatch: pytest.MonkeyPatch,
     not_interactive: bool,
 ):
-    async def build_test_system_prompt(workspace: Path, *, channel_tags):
+    expected_not_interactive = not_interactive
+
+    async def build_test_system_prompt(workspace: Path, *, channel_tags, not_interactive):
         assert workspace == tmp_path
+        assert not_interactive is expected_not_interactive
         return {"role": "system", "content": "system"}
 
     monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)

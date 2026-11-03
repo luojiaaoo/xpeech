@@ -32,8 +32,9 @@ async def test_context_commands_continue_with_trailing_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def build_test_system_prompt(workspace: Path, *, channel_tags):
+    async def build_test_system_prompt(workspace: Path, *, channel_tags, not_interactive):
         assert workspace == tmp_path
+        assert not_interactive is False
         return {"role": "system", "content": "system"}
 
     monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
