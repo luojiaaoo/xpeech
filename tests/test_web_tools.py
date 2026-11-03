@@ -2,6 +2,7 @@ import asyncio
 import json
 from xml.etree import ElementTree
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -16,13 +17,35 @@ SEARCH_ARG_TYPES = {
 }
 
 
+@pytest.fixture
+def mock_http(monkeypatch):
+    client_type = httpx.AsyncClient
+    clients = []
+
+    def install(handler):
+        def make_client(**kwargs):
+            client = client_type(transport=httpx.MockTransport(handler), **kwargs)
+            clients.append(client)
+            return client
+
+        monkeypatch.setattr(web.httpx, "AsyncClient", make_client)
+        return clients
+
+    return install
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("include_images", [False, True])
-async def test_web_fetch_includes_comments_and_optional_images(monkeypatch, include_images):
+async def test_web_fetch_includes_comments_and_optional_images(mock_http, include_images):
     calls = []
 
-    class FakeResponse:
-        url = "https://example.com/page"
+    def respond(request):
+        calls.append(request)
+        assert request.headers["User-Agent"].startswith("Mozilla/5.0")
+        assert "zh-CN" in request.headers["Accept-Language"]
+        assert "text/markdown" in request.headers["Accept"]
+        assert request.extensions["timeout"]["connect"] == 10
+        assert request.extensions["timeout"]["read"] == 60
         content = (
             b"<html><head><title>Example</title></head><body><article><h1>Example</h1>"
             b"<p>This article explains a useful method and its practical applications. "
@@ -34,36 +57,9 @@ async def test_web_fetch_includes_comments_and_optional_images(monkeypatch, incl
             b"</div></body></html>"
         )
 
-        def __init__(self):
-            self.headers = {"Content-Type": "text/html; charset=utf-8"}
+        return make_response(content, "text/html; charset=utf-8")
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            calls.append("response_closed")
-
-        def raise_for_status(self):
-            calls.append("status_checked")
-
-    class FakeSession:
-        def __init__(self):
-            self.headers = {}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            calls.append("session_closed")
-
-        def get(self, url, **kwargs):
-            assert self.headers["User-Agent"].startswith("Mozilla/5.0")
-            assert "python-requests" not in self.headers["User-Agent"]
-            assert "zh-CN" in self.headers["Accept-Language"]
-            calls.append((url, kwargs))
-            return FakeResponse()
-
-    monkeypatch.setattr(web.requests, "Session", FakeSession)
+    clients = mock_http(respond)
 
     args = web.WebFetchArgs(url="https://example.com/page", include_images=include_images)
     result = await web.web_fetch(args)
@@ -72,25 +68,17 @@ async def test_web_fetch_includes_comments_and_optional_images(monkeypatch, incl
     assert "A reader comment discussing the results" in result
     assert ("![Research figure](https://example.test/figure.png)" in result) == include_images
     assert "include_images" in as_tool(web.web_fetch)["function"]["parameters"]["properties"]
-    assert calls == [
-        (
-            "https://example.com/page",
-            {"stream": True, "allow_redirects": True, "timeout": (10, 60)},
-        ),
-        "status_checked",
-        "response_closed",
-        "session_closed",
-    ]
+    assert [str(request.url) for request in calls] == ["https://example.com/page"]
+    assert clients[0].is_closed
 
 
 def make_response(data: bytes, content_type: str, url: str = "https://example.test/download"):
-    response = web.requests.Response()
-    response.status_code = 200
-    response._content = data
-    response.headers["Content-Type"] = content_type
-    response.encoding = "utf-8"
-    response.url = url
-    return response
+    return httpx.Response(
+        200,
+        content=data,
+        headers={"Content-Type": content_type},
+        request=httpx.Request("GET", url),
+    )
 
 
 @pytest.mark.parametrize(
@@ -209,7 +197,7 @@ def rss_response(items):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", ["baidu", "bing"])
-async def test_web_search_routes_and_normalizes_results(engine, monkeypatch):
+async def test_web_search_routes_and_normalizes_results(engine, monkeypatch, mock_http):
     calls = []
     items = [
         {
@@ -228,11 +216,14 @@ async def test_web_search_routes_and_normalizes_results(engine, monkeypatch):
 
     monkeypatch.setattr(web, "_baidu_search", baidu_search)
 
-    def get(url, **kwargs):
-        calls.append(("bing", url, kwargs))
+    def respond(request):
+        calls.append(("bing", str(request.url.copy_with(query=None)), dict(request.url.params)))
+        assert request.headers["User-Agent"] == web._WEB_USER_AGENT
+        assert request.extensions["timeout"]["connect"] == 10
+        assert request.extensions["timeout"]["read"] == 10
         return rss_response(items)
 
-    monkeypatch.setattr(web.requests, "get", get)
+    mock_http(respond)
     tool = getattr(web, f"{engine}_search")
     args = SEARCH_ARG_TYPES[engine](query=" 测试 ", max_results=2)
     hits = json.loads(await tool(args))
@@ -244,22 +235,18 @@ async def test_web_search_routes_and_normalizes_results(engine, monkeypatch):
     if engine == "baidu":
         assert calls == [("baidu", "测试", 2)]
     else:
-        assert calls == [("bing", "https://cn.bing.com/search", {
-            "params": {"q": "测试", "format": "rss"},
-            "headers": {"User-Agent": web._WEB_USER_AGENT},
-            "timeout": (10, 10),
-        })]
+        assert calls == [("bing", "https://cn.bing.com/search", {"q": "测试", "format": "rss"})]
 
 
 @pytest.mark.asyncio
-async def test_split_search_tools_expose_independent_schemas_and_defaults(monkeypatch):
+async def test_split_search_tools_expose_independent_schemas_and_defaults(mock_http):
     calls = []
 
-    def get(url, **kwargs):
-        calls.append((url, kwargs["params"]))
+    def respond(request):
+        calls.append((str(request.url.copy_with(query=None)), dict(request.url.params)))
         return rss_response([{"title": "Example", "url": "https://example.test", "abstract": "summary"}])
 
-    monkeypatch.setattr(web.requests, "get", get)
+    mock_http(respond)
     result = json.loads(await web.bing_search(web.BingSearchArgs(query="test")))
     assert result[0]["url"] == "https://example.test"
     assert calls == [("https://cn.bing.com/search", {"q": "test", "format": "rss"})]
@@ -274,9 +261,9 @@ async def test_split_search_tools_expose_independent_schemas_and_defaults(monkey
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", ["baidu", "bing"])
-async def test_web_search_empty_results(engine, monkeypatch):
+async def test_web_search_empty_results(engine, monkeypatch, mock_http):
     monkeypatch.setattr(web, "_baidu_search", lambda *_args: None)
-    monkeypatch.setattr(web.requests, "get", lambda *_args, **_kwargs: rss_response([]))
+    mock_http(lambda _request: rss_response([]))
     tool = getattr(web, f"{engine}_search")
     args = SEARCH_ARG_TYPES[engine](query="test")
     assert "未找到" in await tool(args)
@@ -291,20 +278,20 @@ async def test_web_search_empty_results(engine, monkeypatch):
     b"",
     b"<rss />",
 ])
-async def test_bing_search_rejects_invalid_feed_instead_of_reporting_empty_results(content, monkeypatch):
-    monkeypatch.setattr(web.requests, "get", lambda *_args, **_kwargs: make_response(content, "text/html"))
+async def test_bing_search_rejects_invalid_feed_instead_of_reporting_empty_results(content, mock_http):
+    mock_http(lambda _request: make_response(content, "text/html"))
     with pytest.raises(RuntimeError, match="Bing搜索失败.*未返回有效 RSS"):
         await web.bing_search(web.BingSearchArgs(query="test"))
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine,label", [("baidu", "百度"), ("bing", "Bing")])
-async def test_search_error_is_reported_as_failed_execution(tmp_path, monkeypatch, engine, label):
+async def test_search_error_is_reported_as_failed_execution(tmp_path, monkeypatch, mock_http, engine, label):
     def fail(*_args, **_kwargs):
         raise OSError("offline")
 
     monkeypatch.setattr(web, "_baidu_search", fail)
-    monkeypatch.setattr(web.requests, "get", fail)
+    mock_http(fail)
     executor = ToolExecutor(tmp_path, max_result_chars=10_000)
     name = f"{engine}_search"
     results = [
@@ -320,13 +307,64 @@ async def test_search_error_is_reported_as_failed_execution(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine,label", [("baidu", "百度"), ("bing", "Bing")])
-async def test_web_search_timeout(monkeypatch, engine, label):
-    async def hang(*_args):
+async def test_web_search_timeout(monkeypatch, mock_http, engine, label):
+    async def hang(*_args, **_kwargs):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(web.asyncio, "to_thread", hang)
+    clients = mock_http(hang)
     monkeypatch.setattr(web, "_SEARCH_TIMEOUT_SECONDS", 0.01)
     tool = getattr(web, f"{engine}_search")
     args = SEARCH_ARG_TYPES[engine](query="test")
     with pytest.raises(RuntimeError, match=f"{label}搜索失败：搜索超时"):
         await tool(args)
+    if engine == "bing":
+        assert clients[0].is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["web_fetch", "bing_search"])
+async def test_http_tools_follow_redirects(mock_http, tool_name):
+    paths = []
+
+    def respond(request):
+        paths.append(request.url.path)
+        if request.url.path != "/redirected/page":
+            return httpx.Response(302, headers={"Location": "https://redirected.example.com/redirected/page"})
+        if tool_name == "bing_search":
+            return rss_response([{"title": "Example", "url": "https://example.test", "abstract": "summary"}])
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/html"},
+            content=(
+                b"<html><head><title>Research update</title></head><body><article><h1>Research update</h1>"
+                b"<p>This article describes an important research result and its practical applications. "
+                b"The main text should remain readable after the page layout is removed.</p>"
+                b'<p>The results are explained in <a href="details">the report</a>, '
+                b"which includes methods, measurements, and reproducible examples.</p></article></body></html>"
+            ),
+        )
+
+    clients = mock_http(respond)
+    if tool_name == "web_fetch":
+        result = await web.web_fetch(web.WebFetchArgs(url="https://example.com/page"))
+        assert "[the report](https://redirected.example.com/details)" in result
+        assert paths == ["/page", "/redirected/page"]
+    else:
+        result = await web.bing_search(web.BingSearchArgs(query="test"))
+        assert json.loads(result)[0]["title"] == "Example"
+        assert paths == ["/search", "/redirected/page"]
+    assert clients[0].is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["web_fetch", "bing_search"])
+async def test_http_tools_report_http_errors_and_close_client(mock_http, tool_name):
+    clients = mock_http(lambda _request: httpx.Response(503))
+    if tool_name == "web_fetch":
+        with pytest.raises(httpx.HTTPStatusError, match="503"):
+            await web.web_fetch(web.WebFetchArgs(url="https://example.com/page"))
+    else:
+        with pytest.raises(RuntimeError, match="Bing搜索失败.*503"):
+            await web.bing_search(web.BingSearchArgs(query="test"))
+    assert clients[0].is_closed

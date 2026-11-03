@@ -1,9 +1,9 @@
 import asyncio
 import json
-from typing import Annotated, Any
+from typing import Annotated
 from xml.etree import ElementTree
 
-import requests
+import httpx
 import trafilatura
 from baidusearch.baidusearch import search as _baidu_search
 from loguru import logger
@@ -51,29 +51,25 @@ async def web_fetch(args: WebFetchArgs) -> str:
     is_valid, error_msg = validate_url_target(args.url)
     if not is_valid:
         return f"URL validation failed: {error_msg}"
-    return await asyncio.to_thread(_fetch_and_convert, args.url, include_images=args.include_images)
+    return await _fetch_and_convert(args.url, include_images=args.include_images)
 
 
-def _fetch_and_convert(url: str, *, include_images: bool = False) -> str:
-    with requests.Session() as session:
-        session.headers.update(
-            {
-                "User-Agent": _WEB_USER_AGENT,
-                "Accept": "text/markdown, text/html;q=0.9, text/plain;q=0.8, */*;q=0.1",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            }
-        )
-        with session.get(
-            url,
-            stream=True,
-            allow_redirects=True,
-            timeout=(WEB_CONNECT_TIMEOUT_SECONDS, WEB_READ_TIMEOUT_SECONDS),
-        ) as response:
-            response.raise_for_status()
-            return _response_to_markdown(response, include_images=include_images)
+async def _fetch_and_convert(url: str, *, include_images: bool = False) -> str:
+    async with httpx.AsyncClient(
+        headers={
+            "User-Agent": _WEB_USER_AGENT,
+            "Accept": "text/markdown, text/html;q=0.9, text/plain;q=0.8, */*;q=0.1",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        },
+        follow_redirects=True,
+        timeout=httpx.Timeout(WEB_READ_TIMEOUT_SECONDS, connect=WEB_CONNECT_TIMEOUT_SECONDS),
+    ) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        return await asyncio.to_thread(_response_to_markdown, response, include_images=include_images)
 
 
-def _response_to_markdown(response: requests.Response, *, include_images: bool = False) -> str:
+def _response_to_markdown(response: httpx.Response, *, include_images: bool = False) -> str:
     content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
     if (content_type.startswith("text/") and content_type != "text/html") or content_type in {
         "application/xml",
@@ -87,16 +83,17 @@ def _response_to_markdown(response: requests.Response, *, include_images: bool =
             f"Unsupported content type: {content_type}. Download documents and use read_doc_file instead."
         )
 
+    url = str(response.url)
     tree = trafilatura.load_html(response.content)
     if tree is None:
         raise ValueError(f"No readable HTML found at {response.url}")
     title = (tree.findtext(".//title") or "").strip()
     if not title:
-        metadata = trafilatura.extract_metadata(tree, default_url=response.url)
+        metadata = trafilatura.extract_metadata(tree, default_url=url)
         title = metadata.title if metadata else None
     content = trafilatura.extract(
         tree,
-        url=response.url,
+        url=url,
         output_format="markdown",
         favor_recall=True,
         include_links=True,
@@ -134,13 +131,13 @@ async def baidu_search(args: BaiduSearchArgs) -> str:
     return json.dumps(hits, ensure_ascii=False, indent=2)
 
 
-def _fetch_bing_rss(url: str, params: dict[str, str], *, source: str) -> ElementTree.Element:
-    with requests.get(
-        url,
-        params=params,
+async def _fetch_bing_rss(url: str, params: dict[str, str], *, source: str) -> ElementTree.Element:
+    async with httpx.AsyncClient(
         headers={"User-Agent": _WEB_USER_AGENT},
-        timeout=(WEB_CONNECT_TIMEOUT_SECONDS, WEB_CONNECT_TIMEOUT_SECONDS),
-    ) as response:
+        follow_redirects=True,
+        timeout=WEB_CONNECT_TIMEOUT_SECONDS,
+    ) as client:
+        response = await client.get(url, params=params)
         response.raise_for_status()
         try:
             root = ElementTree.fromstring(response.content)
@@ -169,32 +166,21 @@ async def bing_search(args: BingSearchArgs) -> str:
     """使用必应检索网页，返回标题、链接、摘要和排名。
     默认返回 5 条，最多 10 条，不支持时间过滤。需要正文时，用 web_fetch 读取结果链接。
     """
-    def search() -> list[dict[str, Any]]:
-        root = _fetch_bing_rss(
-            "https://cn.bing.com/search",
-            {"q": args.query, "format": "rss"},
-            source="Bing",
-        )
-        return [
+    try:
+        async with asyncio.timeout(_SEARCH_TIMEOUT_SECONDS):
+            root = await _fetch_bing_rss(
+                "https://cn.bing.com/search",
+                {"q": args.query, "format": "rss"},
+                source="Bing",
+            )
+        hits = [
             {
                 "title": item.findtext("title", ""),
                 "url": item.findtext("link", ""),
                 "abstract": item.findtext("description", ""),
-            }
-            for item in root.findall("./channel/item")[:args.max_results]
-        ]
-
-    try:
-        async with asyncio.timeout(_SEARCH_TIMEOUT_SECONDS):
-            items = await asyncio.to_thread(search)
-        hits = [
-            {
-                "title": item.get("title", ""),
-                "url": item.get("url", ""),
-                "abstract": item.get("abstract", ""),
                 "rank": str(index),
             }
-            for index, item in enumerate(items[:args.max_results], 1)
+            for index, item in enumerate(root.findall("./channel/item")[:args.max_results], 1)
         ]
     except TimeoutError as error:
         raise RuntimeError("Bing搜索失败：搜索超时，请稍后重试") from error
