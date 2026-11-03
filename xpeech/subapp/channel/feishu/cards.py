@@ -185,24 +185,6 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
     for field in form["fields"]:
         elements.extend(_feishu_field(field))
 
-    elements.extend(
-        [
-            _feishu_label("自定义"),
-            {
-                "tag": "input",
-                "placeholder": {
-                    "tag": "plain_text",
-                    "content": "请输入",
-                },
-                "default_value": "",
-                "width": "fill",
-                "required": False,
-                "name": "user_customization",
-                "margin": "0px 0px 0px 0px",
-            },
-        ]
-    )
-
     elements.append(
         {
             "tag": "column_set",

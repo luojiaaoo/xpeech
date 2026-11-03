@@ -22,6 +22,7 @@ from xpeech.agent.tools.mcp_client import create_mcp_registration
 from xpeech.agent.tools.question import QuestionArgs, ask_user_question, validate_question_json
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
+from xpeech.subapp.channel.feishu.cards import build_feishu_question_card
 
 
 class CommandArgs(BaseModel):
@@ -248,11 +249,14 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
             form = validate_question_json(event["context"])
             assert "输出 hello" in form["subtitle"]
             assert "echo hello" in form["subtitle"]
+            assert len(form["fields"]) == 1
             assert form["fields"][0]["name"] == "decision"
             assert form["fields"][0]["options"] == [
                 {"label": "确认", "value": "confirm"},
                 {"label": "取消", "value": "cancel"},
             ]
+            card = build_feishu_question_card(event["context"])
+            assert not any(element["tag"] == "input" for element in card["body"]["elements"][0]["elements"])
             await answer(reply)
 
     assert [event["event"] for event in events] == ["tool_call", "question", "tool_call_result"]
@@ -504,16 +508,35 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
 
 
 @pytest.mark.asyncio
-async def test_existing_ask_user_question_still_returns_user_answer(tmp_path):
+@pytest.mark.parametrize(
+    ("existing_names", "custom_name"),
+    [
+        (["name"], "user_customization"),
+        ([], "user_customization"),
+        (["user_customization", "user_customization_1"], "user_customization_2"),
+    ],
+)
+async def test_existing_ask_user_question_still_returns_user_answer(tmp_path, existing_names, custom_name):
     current_provider = provider()
     current_provider.register_function_tool(ask_user_question)
-    args = QuestionArgs(question=json.dumps({"fields": [{"name": "name", "label": "名称", "type": "input"}]}))
+    fields = [{"name": name, "label": "名称", "type": "input"} for name in existing_names]
+    args = QuestionArgs(question=json.dumps({"fields": fields}))
+    expected_context = ask_user_question(args)
     call = ToolCallRequest(id="1", name="ask_user_question", arguments=args.model_dump())
+    reply = {**dict.fromkeys(existing_names, "Alice"), custom_name: "补充内容"}
     async for event in stream_for(tmp_path, current_provider, [call], []):
         if event["event"] == "question":
-            await answer({"name": "Alice"})
+            assert event["context"] == expected_context
+            form = validate_question_json(event["context"])
+            assert [field["name"] for field in form["fields"]] == [*existing_names, custom_name]
+            assert form["fields"][-1]["type"] == "input"
+            assert form["fields"][-1]["label"] == "补充说明"
+            card = build_feishu_question_card(event["context"])
+            inputs = [element for element in card["body"]["elements"][0]["elements"] if element["tag"] == "input"]
+            assert [element["name"] for element in inputs] == [*existing_names, custom_name]
+            await answer(reply)
         elif event["event"] == "tool_call_result":
-            assert json.loads(json.loads(event["context"])["result"]) == {"name": "Alice"}
+            assert json.loads(json.loads(event["context"])["result"]) == reply
 
 
 def test_placeholder_schema_keeps_original_constraints_and_hides_injected_context():

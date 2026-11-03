@@ -77,7 +77,6 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
           ) : null}
         </Form.Item>
       ))}
-      {fields.length ? <Form.Item name="user_customization" label="其他说明"><Input /></Form.Item> : null}
       <Button type="primary" htmlType="submit" loading={submitting} disabled={answered}>
         {answered ? '已提交' : question?.submit_label || '提交'}
       </Button>
