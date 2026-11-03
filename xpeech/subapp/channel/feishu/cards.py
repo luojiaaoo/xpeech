@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from ....agent.tools.question import validate_question_json
+from ....utils.question import validate_confirm_question_json, validate_question_form_json
 from .formatting import ensure_markdown, plain_text
 
 FINISH_CARD_CONTENT = {
@@ -180,10 +181,39 @@ def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def build_feishu_question_card(question_context: str) -> dict[str, Any]:
-    form = validate_question_json(question_context)
+    try:
+        question = json.loads(question_context)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON 格式错误: {exc}") from exc
+    confirmation = isinstance(question, dict) and question.get("type") == "confirm"
+    if confirmation:
+        form = validate_confirm_question_json(question)
+    else:
+        form = validate_question_form_json(question)
     elements: list[dict[str, Any]] = []
-    for field in form["fields"]:
+    for field in form.get("fields", []):
         elements.extend(_feishu_field(field))
+
+    if confirmation:
+        buttons = [
+            {
+                "tag": "button",
+                "text": plain_text(label),
+                "type": "primary" if decision == "confirm" else "default",
+                "width": "default",
+                "behaviors": [{"type": "callback", "value": {"decision": decision}}],
+            }
+            for label, decision in (("确认", "confirm"), ("取消", "cancel"))
+        ]
+    else:
+        buttons = [{
+            "tag": "button",
+            "text": plain_text(form.get("submit_label") or "提交"),
+            "type": "primary",
+            "width": "default",
+            "form_action_type": "submit",
+            "name": "submit_question",
+        }]
 
     elements.append(
         {
@@ -193,24 +223,10 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
                 {
                     "tag": "column",
                     "width": "auto",
-                    "elements": [
-                        {
-                            "tag": "button",
-                            "text": plain_text(form.get("submit_label") or "提交"),
-                            "type": "primary",
-                            "width": "default",
-                            "form_action_type": "submit",
-                            "name": "submit_question",
-                        }
-                    ],
+                    "elements": [button],
                     "vertical_align": "top",
-                },
-                {
-                    "tag": "column",
-                    "width": "auto",
-                    "elements": [],
-                    "vertical_align": "top",
-                },
+                }
+                for button in buttons
             ],
         }
     )
@@ -232,7 +248,7 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
         "body": {
             "direction": "vertical",
             "padding": "12px 12px 12px 12px",
-            "elements": [
+            "elements": elements if confirmation else [
                 {
                     "tag": "form",
                     "elements": elements,

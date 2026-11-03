@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, DatePicker, Form, Input, Select, Typography, message } from 'antd';
+import { Button, DatePicker, Form, Input, Select, Space, Typography, message } from 'antd';
 import { answerQuestion } from './api';
 
 interface Field {
@@ -11,13 +11,22 @@ interface Field {
   options?: { label: string; value: string }[];
 }
 
-interface Question {
-  type: 'form';
+interface QuestionBase {
   title?: string;
   subtitle?: string;
+}
+
+interface FormQuestion extends QuestionBase {
+  type: 'form';
   submit_label?: string;
   fields: Field[];
 }
+
+interface ConfirmQuestion extends QuestionBase {
+  type: 'confirm';
+}
+
+type Question = FormQuestion | ConfirmQuestion;
 
 export default function QuestionForm({ context, sessionId }: { context: string; sessionId?: string }) {
   const [answered, setAnswered] = useState(false);
@@ -28,9 +37,12 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
   } catch {
     // Fall back to a free-text answer.
   }
-  const fields = question?.fields || [];
+  const confirmation = question?.type === 'confirm';
+  const fields = question?.type === 'confirm' ? [] : question?.fields || [];
+  const submitLabel = question?.type === 'confirm' ? '提交' : question?.submit_label || '提交';
 
   async function submit(values: Record<string, unknown>) {
+    if (answered || submitting) return;
     setSubmitting(true);
     try {
       const normalized = Object.fromEntries(
@@ -53,9 +65,9 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
 
   return (
     <Form layout="vertical" disabled={answered} onFinish={submit} className="question-form">
-      <Typography.Title level={5}>{question?.title || '需要补充信息'}</Typography.Title>
+      <Typography.Title level={5}>{question?.title || (confirmation ? '请确认' : '需要补充信息')}</Typography.Title>
       {question?.subtitle ? <Typography.Paragraph type="secondary">{question.subtitle}</Typography.Paragraph> : null}
-      {fields.length === 0 ? (
+      {!confirmation && (fields.length === 0 ? (
         <Form.Item name="answer"><Input.TextArea rows={3} placeholder="请输入回答" /></Form.Item>
       ) : fields.map((field) => (
         <Form.Item key={field.name} name={field.name} label={field.label} initialValue={field.default_value}>
@@ -76,10 +88,22 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
             />
           ) : null}
         </Form.Item>
-      ))}
-      <Button type="primary" htmlType="submit" loading={submitting} disabled={answered}>
-        {answered ? '已提交' : question?.submit_label || '提交'}
-      </Button>
+      )))}
+      {confirmation ? (
+        <Space>
+          <Button type="primary" onClick={() => submit({ decision: 'confirm' })} disabled={answered || submitting}>
+            确认
+          </Button>
+          <Button onClick={() => submit({ decision: 'cancel' })} disabled={answered || submitting}>
+            取消
+          </Button>
+          {answered ? <Typography.Text type="secondary">已提交</Typography.Text> : null}
+        </Space>
+      ) : (
+        <Button type="primary" htmlType="submit" loading={submitting} disabled={answered}>
+          {answered ? '已提交' : submitLabel}
+        </Button>
+      )}
     </Form>
   );
 }

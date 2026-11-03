@@ -1,7 +1,9 @@
+"""共享问题表单模型、校验与执行确认表单构造。"""
+
 import json
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 USER_TIMEOUT = 5 * 60
 
@@ -69,41 +71,43 @@ class QuestionForm(StrictBaseModel):
         return self
 
 
-QuestionFormAdapter = TypeAdapter(QuestionForm)
+class ConfirmQuestion(StrictBaseModel):
+    type: Literal["confirm"] = "confirm"
+    title: str = "请确认"
+    subtitle: str | None = None
 
 
-def validate_question_json(data: str | dict[str, Any]) -> dict[str, Any]:
+def validate_question_form_json(data: str | dict[str, Any]) -> dict[str, Any]:
+    """仅校验普通表单；省略 type 时默认为 form。"""
     try:
         raw_data = json.loads(data) if isinstance(data, str) else data
-        validated_data = QuestionFormAdapter.validate_python(raw_data)
-        return validated_data.model_dump()
+        return QuestionForm.model_validate(raw_data).model_dump()
     except json.JSONDecodeError as e:
         raise ValueError(f"JSON 格式错误: {str(e)}") from e
     except ValidationError as e:
         raise ValueError(f"问题表单 JSON 校验失败: {str(e)}") from e
 
 
-class QuestionArgs(StrictBaseModel):
-    question: str = Field(description="序列化为 JSON 字符串的完整表单对象，包含标题、副标题和问题字段列表")
-
-    def validate_and_format(self) -> str:
-        question = validate_question_json(self.question)
-        question["fields"].append(
-            InputField(
-                name="user_customization_input",
-                label="补充说明",
-                placeholder="填写其他想法或补充信息（选填）",
-            ).model_dump()
-        )
-        subtitle = question.get("subtitle")
-        timeout_hint = f"您有{USER_TIMEOUT}秒时间填写表单"
-        question["subtitle"] = f"{subtitle}\n{timeout_hint}" if subtitle else timeout_hint
-        return json.dumps(question, ensure_ascii=False, indent=4)
+def validate_confirm_question_json(data: str | dict[str, Any]) -> dict[str, Any]:
+    """仅校验确认问题；省略 type 时默认为 confirm。"""
+    try:
+        raw_data = json.loads(data) if isinstance(data, str) else data
+        return ConfirmQuestion.model_validate(raw_data).model_dump()
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON 格式错误: {str(e)}") from e
+    except ValidationError as e:
+        raise ValueError(f"确认问题 JSON 校验失败: {str(e)}") from e
 
 
-def ask_user_question(args: QuestionArgs) -> str:
-    """通过包含标题、副标题和问题列表的完整表单 JSON 向用户追问关键信息。
+def build_execution_question(tool_name: str, arguments: dict[str, Any], description: str) -> str:
+    """通过确认问题展示执行说明、参数和确认 / 取消按钮。"""
+    return ConfirmQuestion(
+        title=f"执行确认：{tool_name}",
+        subtitle=(
+            f"执行说明：{description}\n\n"
+            f"执行参数：\n{json.dumps(arguments, ensure_ascii=False, indent=2)}\n\n"
+            f"请在 {USER_TIMEOUT} 秒内确认；取消或超时均不会执行。"
+        ),
+    ).model_dump_json()
 
-    返回包含 type、title、subtitle、submit_label、fields 的完整表单 JSON 字符串。
-    """
-    return args.validate_and_format()
+

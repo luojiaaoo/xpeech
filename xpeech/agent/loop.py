@@ -14,6 +14,7 @@ from ..config.settings import settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import LLMResponse, ToolCallRequest
 from ..utils.helper import format_exception2llm, token_counter
+from ..utils.question import USER_TIMEOUT, build_execution_question
 from .compression import ConversationCompressor
 from .helper import strip_internal_message_metadata
 from .history import YamlHistoryRepository
@@ -29,10 +30,8 @@ from .tool_executor import TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS, ToolExecutor
 from .tools.execution_request import (
     EXECUTION_DESCRIPTION,
     EXECUTION_REQUEST,
-    build_execution_question,
 )
 from .tools.helper import get_tool_model_cls
-from .tools.question import USER_TIMEOUT
 
 
 @dataclass

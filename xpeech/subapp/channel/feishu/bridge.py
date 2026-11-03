@@ -92,6 +92,10 @@ class FeishuBridge(
     async def _on_card_action(self, card_action_event: CardActionEvent) -> None:
         user_id, _ = await self.get_user_identity(card_action_event.operator.open_id)
         form_data = card_action_event.action.form_value
+        if form_data is None:
+            button_data = card_action_event.action.value
+            if isinstance(button_data, dict) and button_data.get("decision") in ("confirm", "cancel"):
+                form_data = {"decision": button_data["decision"]}
         await notify_question(
             user_id,
             form_data,

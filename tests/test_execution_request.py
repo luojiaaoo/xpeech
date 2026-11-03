@@ -19,10 +19,11 @@ from xpeech.agent.tools.execution_request import (
 )
 from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.mcp_client import create_mcp_registration
-from xpeech.agent.tools.question import QuestionArgs, ask_user_question, validate_question_json
+from xpeech.agent.tools.ask_user_question import QuestionArgs, ask_user_question
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
 from xpeech.subapp.channel.feishu.cards import build_feishu_question_card
+from xpeech.utils.question import validate_confirm_question_json, validate_question_form_json
 
 
 class CommandArgs(BaseModel):
@@ -254,17 +255,18 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
         events.append(event)
         if event["event"] == "question":
             assert executions == []
-            form = validate_question_json(event["context"])
+            form = validate_confirm_question_json(event["context"])
             assert "输出 hello" in form["subtitle"]
             assert "echo hello" in form["subtitle"]
-            assert len(form["fields"]) == 1
-            assert form["fields"][0]["name"] == "decision"
-            assert form["fields"][0]["options"] == [
-                {"label": "确认", "value": "confirm"},
-                {"label": "取消", "value": "cancel"},
-            ]
+            assert form["type"] == "confirm"
+            assert "fields" not in form
             card = build_feishu_question_card(event["context"])
-            assert not any(element["tag"] == "input" for element in card["body"]["elements"][0]["elements"])
+            [actions] = card["body"]["elements"]
+            buttons = [column["elements"][0] for column in actions["columns"]]
+            assert [button["text"]["content"] for button in buttons] == ["确认", "取消"]
+            assert [button["behaviors"][0]["value"] for button in buttons] == [
+                {"decision": "confirm"}, {"decision": "cancel"},
+            ]
             await answer(reply)
 
     assert [event["event"] for event in events] == ["tool_call", "question", "tool_call_result"]
@@ -541,7 +543,7 @@ async def test_existing_ask_user_question_still_returns_user_answer(tmp_path, ex
     async for event in stream_for(tmp_path, current_provider, [call], []):
         if event["event"] == "question":
             assert event["context"] == expected_context
-            form = validate_question_json(event["context"])
+            form = validate_question_form_json(event["context"])
             assert [field["name"] for field in form["fields"]] == [*existing_names, custom_name]
             assert form["fields"][-1]["type"] == "input"
             assert form["fields"][-1]["label"] == "补充说明"

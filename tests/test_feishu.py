@@ -631,6 +631,24 @@ async def test_card_action_uses_typed_form_value(monkeypatch: pytest.MonkeyPatch
     update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["confirm", "cancel"])
+async def test_confirmation_button_callback_submits_decision(monkeypatch, decision):
+    notify_question = AsyncMock()
+    monkeypatch.setattr(feishu_bridge, "notify_question", notify_question)
+    update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_message"))
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    event = CardActionEvent(
+        message_id="om_message",
+        chat_id="oc_chat",
+        operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(tag="button", value={"decision": decision}),
+    )
+    await bridge._on_card_action(event)
+    notify_question.assert_awaited_once_with("E1001", {"decision": decision}, "http://backend.test", "feishu")
+    update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
+
+
 @pytest.mark.parametrize(
     "result",
     [

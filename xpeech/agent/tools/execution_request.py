@@ -1,6 +1,5 @@
-"""按需请求执行确认的工具包装器，以及执行确认表单。"""
+"""按需请求执行确认的工具包装器。"""
 
-import json
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any
@@ -9,33 +8,10 @@ from pydantic import Field, create_model
 
 from ...utils.helper import ensure_async
 from .helper import get_tool_model_cls
-from .question import USER_TIMEOUT, QuestionForm, QuestionOption, SelectField
 
 EXECUTION_DESCRIPTION = "execution_description"
 EXECUTION_REQUEST = "__xpeech_execution_request_7f3b9a62_d8e4_4c15_a0f7_6e92b1d83c54__"
 _DESCRIPTION = "说明本次执行具体要做什么以及目的。"
-
-
-def build_execution_question(tool_name: str, arguments: dict[str, Any], description: str) -> str:
-    """通过现有 question 表单展示执行说明、参数和确认 / 取消选项。"""
-    return QuestionForm(
-        title=f"执行确认：{tool_name}",
-        subtitle=(
-            f"执行说明：{description}\n\n"
-            f"执行参数：\n{json.dumps(arguments, ensure_ascii=False, indent=2)}\n\n"
-            f"请在 {USER_TIMEOUT} 秒内确认；取消或超时均不会执行。"
-        ),
-        fields=[
-            SelectField(
-                name="decision",
-                label="是否执行？",
-                options=[
-                    QuestionOption(label="确认", value="confirm"),
-                    QuestionOption(label="取消", value="cancel"),
-                ],
-            )
-        ],
-    ).model_dump_json()
 
 
 def build_execution_request_tool(
