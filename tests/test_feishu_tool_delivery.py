@@ -47,9 +47,15 @@ def message():
 
 
 @pytest.mark.asyncio
-async def test_all_batches_share_one_collapsed_streaming_card(monkeypatch):
+@pytest.mark.parametrize("with_assistant", [False, True])
+async def test_each_tool_batch_has_its_own_collapsed_streaming_card(monkeypatch, with_assistant):
     bridge = bridge_with_channel()
     channel = bridge.channel
+    channel.create_card_instance.side_effect = (
+        ["tools-card", "assistant-card", "second-tools-card"]
+        if with_assistant
+        else ["tools-card", "second-tools-card"]
+    )
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
 
     async def assistant_text():
@@ -69,14 +75,16 @@ async def test_all_batches_share_one_collapsed_streaming_card(monkeypatch):
         assert "fast result" in first.args[2]
         assert "slow result" not in first.args[2]
         yield tool_event(ChatEventType.TOOL_CALL_RESULT, [["slow", "shell", "slow result", 1]])
-        yield ChatEvent(event=ChatEventType.ASSISTANT, context=assistant_text())
+        if with_assistant:
+            yield ChatEvent(event=ChatEventType.ASSISTANT, context=assistant_text())
         yield tool_event(ChatEventType.TOOL_CALL, [["fast", "echo", {"text": "second round"}]])
+        channel.finish_streaming_card.assert_any_await("tools-card", sequence=3)
         yield tool_event(ChatEventType.TOOL_CALL_RESULT, [["fast", "echo", "second result", 0]])
 
     monkeypatch.setattr(bridge_module, "iter_chat_events", events)
     await bridge.consume([message()])
 
-    assert channel.create_card_instance.await_count == 2
+    assert channel.create_card_instance.await_count == (3 if with_assistant else 2)
     card = channel.create_card_instance.await_args_list[0].args[0]
     assert card["config"]["streaming_mode"] is True
     [panel] = card["body"]["elements"]
@@ -84,23 +92,31 @@ async def test_all_batches_share_one_collapsed_streaming_card(monkeypatch):
     assert panel["expanded"] is False
     assert "slow" in panel["header"]["title"]["content"]
     assert "fast" in panel["header"]["title"]["content"]
-    channel.patch_card_element.assert_awaited_once()
-    patch = channel.patch_card_element.await_args
-    assert patch.args[:2] == ("tools-card", "panel")
-    assert list(patch.args[2]) == ["header"]
-    title = patch.args[2]["header"]["title"]["content"]
-    assert all(text in title for text in ("slow", "fast", "echo", "second round"))
+    second_card = channel.create_card_instance.await_args_list[-1].args[0]
+    [second_panel] = second_card["body"]["elements"]
+    assert second_panel["tag"] == "collapsible_panel"
+    assert second_panel["expanded"] is False
+    title = second_panel["header"]["title"]["content"]
+    assert "echo" in title and "second round" in title
+    assert "slow" not in title and "fast" not in title
+    assert second_panel["elements"][0]["content"] == "执行中…"
+    channel.patch_card_element.assert_not_awaited()
     updates = [call for call in channel.update_card_element_content.await_args_list if call.args[0] == "tools-card"]
-    assert len(updates) == 4
-    assert [call.kwargs["sequence"] for call in updates] == [1, 2, 4, 5]
-    assert patch.kwargs["sequence"] == 3
-    assert all(text in updates[-1].args[2] for text in ("fast result", "slow result", "second result"))
+    assert len(updates) == 2
+    assert [call.kwargs["sequence"] for call in updates] == [1, 2]
+    assert all(text in updates[-1].args[2] for text in ("fast result", "slow result"))
+    assert "second result" not in updates[-1].args[2]
     assert "执行中…" not in updates[-1].args[2]
     assert sum(call.args == ("chat", "tools-card") for call in channel.send_card_by_reference.await_args_list) == 1
-    assert any(
-        call.args == ("tools-card",) and call.kwargs == {"sequence": 6}
-        for call in channel.finish_streaming_card.await_args_list
+    assert sum(
+        call.args == ("chat", "second-tools-card") for call in channel.send_card_by_reference.await_args_list
+    ) == 1
+    channel.update_card_element_content.assert_any_await(
+        "second-tools-card", "main", "**echo**\nsecond result", sequence=1
     )
+    channel.finish_streaming_card.assert_any_await("tools-card", sequence=3)
+    channel.finish_streaming_card.assert_any_await("second-tools-card", sequence=2)
+    assert channel.finish_streaming_card.await_count == (3 if with_assistant else 2)
 
 
 @pytest.mark.asyncio

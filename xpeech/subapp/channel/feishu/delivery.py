@@ -24,7 +24,7 @@ class FeishuDeliveryMixin:
     """发送普通卡片、流式卡片和可更新的飞书卡片。"""
 
     async def send_tool_progress(self, to: str, event: ChatEvent, progress: ToolProgress) -> None:
-        """每次收到工具事件时更新同一张折叠卡片。"""
+        """将当前轮的工具调用和结果更新到同一张折叠卡片。"""
         output = OUTPUT_EVENT_TYPES.get(ChatEventType.TOOL_CALL)
         if output is None:
             return
@@ -69,7 +69,7 @@ class FeishuDeliveryMixin:
             )
 
     async def finish_tool_progress(self, progress: ToolProgress) -> None:
-        """结束一轮对话的工具卡片流式更新。"""
+        """结束当前轮工具调用的卡片流式更新。"""
         if progress.card_id is not None:
             progress.sequence += 1
             await self.channel.finish_streaming_card(progress.card_id, sequence=progress.sequence)

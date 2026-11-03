@@ -130,6 +130,9 @@ class FeishuBridge(
                 "feishu",
             ):
                 if event.event in {ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT}:
+                    if event.event == ChatEventType.TOOL_CALL:
+                        await self.finish_tool_progress(tool_progress)
+                        tool_progress = ToolProgress()
                     await self.send_tool_progress(chat_id, event, tool_progress)
                     continue
                 if event.event == ChatEventType.SEND_FILE:
