@@ -669,7 +669,11 @@ Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook�
 `dd` 写设备、格式化、分区修改及危险权限、服务操作。规则存在放行例外，覆盖范围以 dcg 规则为准。
 仅当 dcg 正常退出且 JSON 中 `decision` 为 `allow` 时免确认；其余结果、未安装、检查超过 5 秒
 或返回格式异常均退回用户确认。非交互模式下，这些需要确认的调用会直接拒绝。
-用户确认后，命令仍须通过 `shell.py` 既有黑名单、工作区检查和 bwrap 沙盒限制。
+`shutdown`、`reboot`、`poweroff` 保留硬拦截，即使 dcg 放行或用户确认也不会执行。
+硬拦截规则集中在 `shell.py` 的 `SHELL_BLOCK_RULES` 字典中，key 为 `Callable[[str], bool]`，value 为提示词。
+判断函数接收命令字符串，返回 `True` 时拒绝执行，并将对应提示作为工具错误返回给模型。
+当前包括关机重启和 Python/pip 直调规则；新增规则只需添加“判断函数 → 提示词”映射。
+其余危险命令由 dcg 判断。执行前仍须通过 `shell.py` 的 Python/pip 直调检查、工作区路径检查和 bwrap 沙盒限制。
 
 需要按本次调用决定是否询问时，可在注册代码中传入可选的 `requires_confirmation`：
 
@@ -726,7 +730,9 @@ Shell 命令默认 120 秒超时，可在单次调用中通过 `timeout_ms` 指�
 - **预览目录隔离**：`create_browser_preview` 只能复制当前会话工作区内的目录或 HTML，每次写入 `<browser_preview_path>/<uuid>/`，请求子路径不能越出对应 UUID 目录
 - **Shell 沙盒**：Shell 命令通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离
 - **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到 `<workspace>/home`，不会在会话间共享可写状态
-- **Shell 黑名单**：禁止执行 `rm -rf`、`format`、`dd` 等危险命令
+- **关机重启硬拦截**：禁止执行 `shutdown`、`reboot`、`poweroff`，用户确认也不能放行
+- **危险命令检查**：其余危险命令由 dcg 判断；需要确认的命令在交互模式等待用户确认，非交互模式直接拒绝
+- **Python/pip 调用检查**：继续拦截直接执行 `python` / `pip`，要求通过 uv 运行
 - **路径遍历检测**：拦截包含 `..` 的路径操作
 
 ### 沙盒

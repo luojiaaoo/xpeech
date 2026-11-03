@@ -195,6 +195,11 @@ def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str
     return pydantic_function_tool(model_info.model_cls, name=tool_name, description=description)
 
 
+def is_power_command(cmd: str) -> bool:
+    """检测关机重启命令，供 Shell 硬拦截使用。"""
+    return bool(re.search(r"\b(shutdown|reboot|poweroff)\b", cmd, re.IGNORECASE))
+
+
 def is_direct_python_pip_exec(cmd: str) -> bool:
     """
     True  = 直接执行了 python/pip，应该拦截

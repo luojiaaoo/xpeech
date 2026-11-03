@@ -2,6 +2,7 @@ import asyncio
 import json
 from copy import deepcopy
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
@@ -10,6 +11,7 @@ from xpeech.agent import loop as loop_module
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.server.routes.chat import answer_question
 from xpeech.agent.tool_executor import ToolExecutor
+from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.execution_request import (
     EXECUTION_REQUEST,
     build_execution_request_tool,
@@ -86,6 +88,38 @@ async def test_placeholder_returns_marker_without_running_original_function(tmp_
     else:
         assert result.succeeded
         assert result.value == EXECUTION_REQUEST
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["shutdown -h now", "reboot", "poweroff"])
+@pytest.mark.parametrize("needs_confirmation", [False, True])
+async def test_power_commands_never_execute_even_after_confirmation(tmp_path, monkeypatch, command, needs_confirmation):
+    monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    initialize = AsyncMock()
+    execute = AsyncMock()
+    monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", initialize)
+    monkeypatch.setattr(shell_module, "_run_wrapped_command", execute)
+    current_provider = provider()
+    current_provider.register_function_tool(
+        build_execution_request_tool(shell_module.build_shell_tools(tmp_path), lambda _: needs_confirmation)
+    )
+    call = ToolCallRequest(
+        id="1", name="shell", arguments={"command": command, "execution_description": "测试硬拦截"}
+    )
+    events = []
+    async for event in stream_for(tmp_path, current_provider, [call], []):
+        events.append(event)
+        if event["event"] == "question":
+            await answer({"decision": "confirm"})
+    assert [event["event"] for event in events] == (
+        ["tool_call", "question", "tool_call_result"]
+        if needs_confirmation
+        else ["tool_call", "tool_call_result"]
+    )
+    assert "shutdown/reboot/poweroff are prohibited" in json.loads(events[-1]["context"])["result"]
+    initialize.assert_not_awaited()
+    execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

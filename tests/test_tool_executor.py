@@ -106,6 +106,59 @@ def test_tools_sharing_empty_model_keep_independent_names_and_descriptions():
 
 
 class TestToolExecutor:
+    @pytest.mark.parametrize(
+        "command",
+        ["rm -rf ./test-dir", "dd if=input.bin of=output.bin", "mkfs --help"],
+    )
+    def test_shell_guard_leaves_dangerous_command_decisions_to_dcg(self, tmp_path: Path, command: str):
+        assert _guard_command(command, tmp_path) == command
+
+    @pytest.mark.parametrize("command", ["sudo reboot", "echo ready && poweroff", "/sbin/shutdown -h now", "REBOOT"])
+    def test_shell_guard_rejects_power_commands(self, tmp_path: Path, command: str):
+        with pytest.raises(RuntimeError, match="shutdown/reboot/poweroff are prohibited"):
+            _guard_command(command, tmp_path)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "python --version",
+            "pip --version",
+            "python3.12 --version",
+            "pip3.12 --version",
+            "echo ready && python3 --version",
+            "sudo -u root python3 --version",
+            "env TEST=1 pip --version",
+            "uv run python --version && python3 --version",
+            "python 'unterminated",
+        ],
+    )
+    def test_shell_guard_still_rejects_direct_python_and_pip(self, tmp_path: Path, command: str):
+        with pytest.raises(RuntimeError, match="run Python through 'uv run python/pip'"):
+            _guard_command(command, tmp_path)
+
+    @pytest.mark.parametrize(
+        "command",
+        ["uv run python --version", "uv pip install demo", 'echo "python3"', "command -v python3"],
+    )
+    def test_shell_guard_allows_uv_and_python_references(self, tmp_path: Path, command: str):
+        assert _guard_command(command, tmp_path) == command
+
+    def test_shell_guard_uses_configured_callable_and_message(self, tmp_path: Path, monkeypatch):
+        checked_commands = []
+
+        def is_blocked(command: str) -> bool:
+            checked_commands.append(command)
+            return command.endswith("blocked_test_command")
+
+        monkeypatch.setitem(
+            shell_module.SHELL_BLOCK_RULES,
+            is_blocked,
+            "Custom command is prohibited.",
+        )
+        with pytest.raises(RuntimeError, match="Custom command is prohibited"):
+            _guard_command("env TEST=1 blocked_test_command", tmp_path)
+        assert checked_commands == ["env TEST=1 blocked_test_command"]
+
     def test_shell_guard_allows_format_url_query_parameter(self, tmp_path: Path):
         command = 'curl -s "wttr.in/Wuhan?lang=zh&format=%l:+%c+%t+%h+%w"'
 

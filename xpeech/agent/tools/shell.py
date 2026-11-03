@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from textwrap import dedent
@@ -16,21 +17,17 @@ from pydantic import BaseModel, Field
 
 from ...exceptions import PathProtectionError
 from . import sandbox
-from .helper import is_direct_python_pip_exec, safe_resolve_workspace_path
+from .helper import is_direct_python_pip_exec, is_power_command, safe_resolve_workspace_path
 
 DEFAULT_EXEC_TIMEOUT_MS = 120_000
 MAX_EXEC_TIMEOUT_MS = 240_000
 SHELL_CHECK_TIMEOUT = 5.0
-DENY_PATTERNS = [
-    r"\brm\s+-[rf]{1,2}\b",  # rm -r, rm -rf, rm -fr
-    r"\bdel\s+/[fq]\b",  # del /f, del /q
-    r"\brmdir\s+/s\b",  # rmdir /s
-    r"\b(mkfs|diskpart)\b",  # disk operations
-    r"\bdd\s+if=",  # dd
-    r">\s*/dev/sd",  # write to disk
-    r"\b(shutdown|reboot|poweroff)\b",  # system power
-    r":\(\)\s*\{.*\};\s*:",  # fork bomb
-]
+SHELL_BLOCK_RULES: dict[Callable[[str], bool], str] = {
+    is_power_command: "shutdown/reboot/poweroff are prohibited.",
+    is_direct_python_pip_exec: (
+        "run Python through 'uv run python/pip' instead of calling 'python/pip' directly."
+    ),
+}
 _WORKSPACE_BOUNDARY_NOTE = (
     "\n\nNote: this is a hard policy boundary, not a transient failure. "
     "Do NOT retry with shell tricks (symlinks, base64 piping, alternative "
@@ -150,21 +147,12 @@ def _extract_absolute_paths(command: str) -> list[str]:
 
 
 def _guard_command(command: str, workspace: str | Path) -> str:
-    """Guard a command string from code injection attacks."""
+    """硬拦截关机重启命令，并检查 Python/pip 调用方式和工作区路径。"""
     cmd = command.strip()
-    lower = cmd.lower()
 
-    # 正则判断
-    for pattern in DENY_PATTERNS:
-        if re.search(pattern, lower):
-            raise RuntimeError(f"Command blocked by deny pattern filter: {cmd}")
-
-    # 判断是否使用了 python 直接运行
-    if is_direct_python_pip_exec(cmd):
-        raise RuntimeError(
-            "Command blocked by safety guard: run Python through 'uv run python/pip' instead of calling "
-            "'python/pip' directly."
-        )
+    for check, message in SHELL_BLOCK_RULES.items():
+        if check(cmd):
+            raise RuntimeError(f"Command blocked by safety guard: {message}")
 
     # 判断是否包含 ..\
     if "..\\" in cmd or "../" in cmd:
