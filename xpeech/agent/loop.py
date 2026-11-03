@@ -13,7 +13,7 @@ from ..agent.server.schema import InputText
 from ..config.settings import settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import LLMResponse, ToolCallRequest
-from ..utils.helper import token_counter
+from ..utils.helper import format_exception2llm, token_counter
 from .compression import ConversationCompressor
 from .helper import strip_internal_message_metadata
 from .history import YamlHistoryRepository
@@ -25,7 +25,13 @@ from .prompt.helper import (
 from .prompt.system import build_system_prompt
 from .record import ConversationRecord, SqliteConversationRecordRepository
 from .server.schema import InboundMessage
-from .tool_executor import ToolExecutor
+from .tool_executor import TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS, ToolExecutor
+from .tools.execution_request import (
+    EXECUTION_DESCRIPTION,
+    EXECUTION_REQUEST,
+    build_execution_question,
+)
+from .tools.helper import get_tool_model_cls
 from .tools.question import USER_TIMEOUT
 
 
@@ -171,6 +177,56 @@ class AgentLoop:
                             "content": others,
                         }
                     )
+
+            if execution.value == EXECUTION_REQUEST and success:
+                execution_function = response.mapping_tool_call_funcs[tool_call.name].execution_function
+                arguments = {key: value for key, value in tool_call.arguments.items() if key != EXECUTION_DESCRIPTION}
+                question = build_execution_question(
+                    tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION]
+                )
+                # 等待用户确认本次执行。
+                logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
+                session_key = (user_id, session_id)
+                question_event = QuestionEvent(event=asyncio.Event())
+                self.SESSION_QUESTION_EVENT[session_key] = question_event
+                question_start_time = time.perf_counter()
+                timed_out = False
+                try:
+                    yield {"event": "question", "context": question}
+                    await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
+                    logger.info("User answered the question {}", question_event.answer)
+                except TimeoutError:
+                    timed_out = True
+                    logger.warning("User timeout answering the question")
+                finally:
+                    self.SESSION_QUESTION_EVENT.pop(session_key, None)
+                # 覆盖方法调用的时间，遵守实际用户回答耗时
+                duration_seconds = time.perf_counter() - question_start_time
+                decision = question_event.answer
+                if not timed_out and "confirm" in decision and "cancel" not in decision:
+                    execution_start_time = time.perf_counter()
+                    try:
+                        model_info = get_tool_model_cls(execution_function)
+                        args = (model_info.model_cls(**arguments),) if model_info.has_pydantic_param else ()
+                        async with asyncio.timeout(self.tool_executor._max_tool_timeout):
+                            result = await execution_function(*args)
+                            if isinstance(result, str) and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS:
+                                result = await self.tool_executor._limit_text(
+                                    tool_call, result, self.tool_executor._max_result_chars
+                                )
+                    except Exception as exc:  # noqa: BLE001 - tool failures are returned to the model
+                        success = False
+                        result = format_exception2llm(exc)
+                    duration_seconds += time.perf_counter() - execution_start_time
+                elif timed_out:
+                    success = False
+                    result = "用户确认超时，工具未执行。"
+                elif "cancel" in decision:
+                    success = False
+                    result = "用户取消执行，工具未执行。"
+                else:
+                    success = False
+                    result = "执行确认回复格式异常，工具未执行。"
 
             if tool_call.name == "send_file" and success:
                 # 发送文件

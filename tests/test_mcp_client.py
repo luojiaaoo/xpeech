@@ -8,6 +8,43 @@ from xpeech.agent.tools import mcp_client
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("patterns", "expected"),
+    [
+        ([], set()),
+        (["*"], {"read_file", "write_file", "delete_record", "tool.with.dots"}),
+        (["read_file"], {"read_file"}),
+        (["read_*", "write_*"], {"read_file", "write_file"}),
+        (["write_?ile"], {"write_file"}),
+        (["[rw]*"], {"read_file", "write_file"}),
+        (["tool.*"], {"tool.with.dots"}),
+        (["READ_*"], set()),
+        (["mcp_demo_read_file"], set()),
+        (["mcp_demo_*"], set()),
+    ],
+)
+async def test_enabled_tools_match_original_names_with_globs(patterns, expected):
+    names = {"read_file", "write_file", "delete_record", "tool.with.dots"}
+
+    class Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[
+                {"name": name, "inputSchema": {"type": "object", "properties": {}}}
+                for name in sorted(names)
+            ])
+
+    registration = mcp_client.create_mcp_registration(
+        server_name="demo", command="demo", enabled_tools=patterns,
+    )
+    registration._session = Session()
+    bindings = await registration._discover_tool_bindings()
+    assert {binding.func.mcp_original_name for binding in bindings} == expected
+    assert {binding.func.__name__ for binding in bindings} == {
+        mcp_client._mcp_tool_name("demo", name) for name in expected
+    }
+
+
 def test_supports_the_three_mcp_transports():
     cases = [
         ({"command": "server"}, "stdio"),

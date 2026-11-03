@@ -1,0 +1,78 @@
+"""返回执行请求标记的占位工具，以及执行确认表单。"""
+
+import json
+from collections.abc import Callable
+from copy import deepcopy
+from typing import Any
+
+from pydantic import Field, create_model
+
+from ...utils.helper import ensure_async
+from .helper import get_tool_model_cls
+from .question import USER_TIMEOUT, QuestionForm, QuestionOption, SelectField
+
+EXECUTION_DESCRIPTION = "execution_description"
+EXECUTION_REQUEST = "__xpeech_execution_request_7f3b9a62_d8e4_4c15_a0f7_6e92b1d83c54__"
+_DESCRIPTION = "说明本次执行具体要做什么以及目的。"
+
+
+def build_execution_question(tool_name: str, arguments: dict[str, Any], description: str) -> str:
+    """通过现有 question 表单展示执行说明、参数和确认 / 取消选项。"""
+    return QuestionForm(
+        title=f"执行确认：{tool_name}",
+        subtitle=(
+            f"执行说明：{description}\n\n"
+            f"执行参数：\n{json.dumps(arguments, ensure_ascii=False, indent=2)}\n\n"
+            f"请在 {USER_TIMEOUT} 秒内确认；取消或超时均不会执行。"
+        ),
+        fields=[
+            SelectField(
+                name="decision",
+                label="是否执行？",
+                options=[
+                    QuestionOption(label="确认", value="confirm"),
+                    QuestionOption(label="取消", value="cancel"),
+                ],
+            )
+        ],
+    ).model_dump_json()
+
+
+def build_execution_request_tool(function: Callable) -> Callable:
+    """创建同名占位工具：只返回标记，真实函数留给 Agent 确认后执行。"""
+    model_info = get_tool_model_cls(function)
+    if EXECUTION_DESCRIPTION in model_info.model_cls.model_fields:
+        raise ValueError(f"Tool already defines reserved parameter: {EXECUTION_DESCRIPTION}")
+    model_cls = create_model(
+        f"{function.__name__}ExecutionArgs",
+        __base__=model_info.model_cls,
+        execution_description=(str, Field(description=_DESCRIPTION, min_length=1, pattern=r"\S")),
+    )
+
+    async def execution_request(args) -> str:
+        return EXECUTION_REQUEST
+
+    execution_request.__name__ = function.__name__
+    execution_request.__annotations__ = {"args": model_cls, "return": str}
+    execution_request.__doc__ = f"{function.__doc__ or function.__name__}\n\n{_DESCRIPTION}"
+    execution_request.execution_function = ensure_async(function)
+    return execution_request
+
+
+def execution_request_schema(tool_json: dict[str, Any]) -> dict[str, Any]:
+    """给 MCP 原始 schema 增加说明字段，保留其余约束且不修改服务器缓存。"""
+    schema = deepcopy(tool_json)
+    function = schema["function"]
+    parameters = function.setdefault("parameters", {"type": "object", "properties": {}})
+    properties = parameters.setdefault("properties", {})
+    if EXECUTION_DESCRIPTION in properties:
+        raise ValueError(f"Tool already defines reserved parameter: {EXECUTION_DESCRIPTION}")
+    properties[EXECUTION_DESCRIPTION] = {
+        "type": "string",
+        "description": _DESCRIPTION,
+        "minLength": 1,
+        "pattern": r"\S",
+    }
+    parameters.setdefault("required", []).append(EXECUTION_DESCRIPTION)
+    function["description"] = f"{function.get('description', '')}\n\n{_DESCRIPTION}".strip()
+    return schema

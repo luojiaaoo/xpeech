@@ -107,6 +107,7 @@ class MCPServerSettings(BaseModel):
     headers: dict[str, str] | None = None
     verify_tls: bool = Field(default=True, validation_alias="verify_tls")
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")
+    execution_request_tools: list[str] = Field(default_factory=list)
     tool_timeout: float = Field(default=30.0, validation_alias="tool_timeout")
     connect_timeout: float = Field(default=30.0, gt=0, validation_alias="connect_timeout")
     channel_tags: list[str] = Field(default_factory=list)

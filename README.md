@@ -557,6 +557,7 @@ stdio Server 示例：
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 enabled_tools = ["*"]
+execution_request_tools = ["write_*", "edit_*"]
 tool_timeout = 30
 ```
 
@@ -594,7 +595,8 @@ tool_timeout = 120
 - `command_authorization_token`：连接远程 MCP Server 前执行的取 token 命令，stdout 作为 `authorization_token`。
 - `headers`：远程 MCP Server 的请求头，支持按用户替换占位符。
 - `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
-- `enabled_tools`：允许注册的 MCP 工具名，`["*"]` 表示全部注册。
+- `enabled_tools`：允许注册的 MCP 原始工具名或通配模式，默认 `["*"]` 表示全部注册；`[]` 表示全部禁用。
+- `execution_request_tools`：需要用户确认的 MCP 原始工具名或通配模式，默认 `[]`；`["*"]` 表示所有已启用工具都需要确认。例如 `["write_*", "delete_*"]`。
 - `channel_tags`：专属系统标签，省略或 `[]` 表示公共 MCP；命中当前 JWT 通道任一标签才连接并注册。
 - `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
 
@@ -609,7 +611,12 @@ tool_timeout = 120
 MCP 连接按 `user_id` 隔离。同一用户在最后一次会话请求或 MCP 工具调用后的 10 分钟内复用连接；
 空闲超时后自动关闭，不同用户不会共享连接。
 
-注册后的工具名会加上 `mcp_<server>_` 前缀，例如 `filesystem` Server 暴露的 `read_file` 会注册为 `mcp_filesystem_read_file`。`enabled_tools` 可以填写 MCP 原始工具名，也可以填写加前缀后的工具名。
+注册后的工具名会加上 `mcp_<server>_` 前缀，例如 `filesystem` Server 暴露的 `read_file` 会注册为 `mcp_filesystem_read_file`。
+`enabled_tools` 和 `execution_request_tools` 均只匹配 MCP 原始工具名，支持 `*`、`?`、`[abc]`，区分大小写。
+
+`execution_request_tools` 在 `enabled_tools` 筛选后生效，不会启用原本被禁用的工具。
+命中的工具会增加必填的 `execution_description` 参数，并通过 `question` 表单等待用户确认；
+说明字段不会传给 MCP 服务器。非交互模式不注册这些工具，其余 MCP 工具照常注册。
 
 ## 内置工具
 
@@ -634,6 +641,18 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `feishu_schedule` | 为当前飞书会话创建单次或周期后台定时任务 |
 | `feishu_schedule_list` | 查看当前用户的定时任务 |
 | `feishu_schedule_cancel` | 取消当前用户拥有的定时任务 |
+
+`shell`、`baidu_search` 和 `bing_search` 已启用执行确认。模型调用时必须填写
+`execution_description`，说明本次具体要做什么及目的；界面会显示说明和实际执行参数，
+执行确认复用 `question` 事件和现有表单，展示说明、参数和“确认” / “取消”选项。
+回传字符串包含 `confirm` 且不包含 `cancel` 时才会运行原工具；包含 `cancel`、不含 `confirm` 或等待超过 300 秒均不会执行。
+等待确认不占用工具执行超时；非交互模式下，`registry.py` 不注册这些需要确认的工具。
+
+`xpeech/agent/tools/registry.py` 通过 `build_execution_request_tool(tool)` 注册同名占位函数，
+只返回 `EXECUTION_REQUEST` 标记。`loop.py` 检查 `execution.value` 后发出 `question` 事件，
+用户确认后才调用保存的真实函数；执行器无需处理特殊异常或额外结果字段。
+Web 和飞书沿用现有 `/answer_question` 接口；后端直接检查整个回传字符串，不解析 JSON 或限定字段。
+MCP 通过各 Server 的 `execution_request_tools` 配置启用同样的确认流程；默认 `[]`。
 
 工具文本结果超过 `[tool].max_result_chars`（默认 10,000）时不会丢弃尾部内容：完整结果会以
 文本文件保存到当前用户 workspace 的 `tool-results/`，工具消息返回原始内容前缀、总字符数和

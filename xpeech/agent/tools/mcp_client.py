@@ -19,6 +19,7 @@ import shutil
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field as dataclass_field
+from fnmatch import fnmatchcase
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal
@@ -694,8 +695,6 @@ class MCPServerRegistration:
             timeout=self.config.tool_timeout,
         )
         tool_defs = _iter_tools(tools_result)
-        enabled_tools = set(self.config.enabled_tools)
-        allow_all = "*" in enabled_tools
         bindings: list[MCPToolBinding] = []
 
         for tool_def in tool_defs:
@@ -703,7 +702,7 @@ class MCPServerRegistration:
             if not original_name:
                 continue
             wrapped_name = _mcp_tool_name(self.config.server_name, str(original_name))
-            if not allow_all and original_name not in enabled_tools and wrapped_name not in enabled_tools:
+            if not any(fnmatchcase(str(original_name), pattern) for pattern in self.config.enabled_tools):
                 continue
 
             description = _get_attr_or_key(tool_def, "description") or f"MCP tool {original_name}"
@@ -749,6 +748,7 @@ class MCPServerRegistration:
             return await self.call_tool(original_name, arguments)
 
         call_mcp_tool.__name__ = wrapped_name
+        call_mcp_tool.mcp_original_name = original_name
         call_mcp_tool.__qualname__ = wrapped_name
         call_mcp_tool.__doc__ = description
         call_mcp_tool.__annotations__ = {"args": model_cls, "return": str | list[dict[str, Any]]}

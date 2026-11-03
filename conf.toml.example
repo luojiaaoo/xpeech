@@ -109,7 +109,8 @@ browser_preview_path = "data/browser_preview"
 # [tool.mcpServers.filesystem]
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
-# enabled_tools = ["*"]
+# enabled_tools = ["*"] # 按 MCP 原始工具名匹配，支持 *、?、[abc]，例如 ["read_*", "write_?"]
+# execution_request_tools = ["write_*", "edit_*"] # 支持通配符 *、?、[abc]；["*"] 表示全部，[] 表示不启用
 # connect_timeout = 30
 # tool_timeout = 120
 
@@ -117,6 +118,7 @@ browser_preview_path = "data/browser_preview"
 transport = "streamable-http"
 url = "https://xsct.ai/mcp"
 enabled_tools = ["*"]
+execution_request_tools = [] # 按 MCP 原始工具名匹配，例如 ["write_*", "delete_*"]
 connect_timeout = 30
 tool_timeout = 120
 
@@ -128,6 +130,7 @@ tool_timeout = 120
 # headers = { Authorization = "Bearer ${authorization_token}", X-User-ID = "$user_id" }
 # verify_tls = false # 仅用于自签名证书；生产环境优先安装并信任内部 CA
 # enabled_tools = ["*"]
+# execution_request_tools = ["*"]
 # connect_timeout = 30
 # tool_timeout = 120
 

@@ -1,3 +1,4 @@
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -5,6 +6,7 @@ from ...config.settings import ToolConfig, settings
 from ...utils.channel_tags import channel_tags_allow_access
 from .browser_preview import build_browser_preview_tool
 from .document import build_document_tool
+from .execution_request import build_execution_request_tool, execution_request_schema
 from .file_message import build_file_message_tools
 from .filesystem import build_file_tools
 from .mcp_client import collect_mcp_tool, get_session_mcp_registration_from_config
@@ -37,10 +39,12 @@ async def register_tools(
     for tool in (read_file, write_file, edit_file):
         provider.register_function_tool(tool)
 
-    provider.register_function_tool(build_shell_tools(workspace=workspace))
+    if not not_interactive:
+        provider.register_function_tool(build_execution_request_tool(build_shell_tools(workspace=workspace)))
     provider.register_function_tool(web_fetch)
-    for tool in (baidu_search, bing_search):
-        provider.register_function_tool(tool)
+    if not not_interactive:
+        for tool in (baidu_search, bing_search):
+            provider.register_function_tool(build_execution_request_tool(tool))
     for tool in build_research_tools(workspace=workspace):
         provider.register_function_tool(tool)
 
@@ -76,4 +80,12 @@ async def register_tools(
             workspace=workspace,
         )
         async for tool_json, tool_func, _ in collect_mcp_tool(registration):
+            if any(
+                fnmatchcase(tool_func.mcp_original_name, pattern)
+                for pattern in server_config.execution_request_tools
+            ):
+                if not_interactive:
+                    continue
+                tool_func = build_execution_request_tool(tool_func)
+                tool_json = execution_request_schema(tool_json)
             provider.register_mcp_tool(tool_func, tool_json=tool_json)
