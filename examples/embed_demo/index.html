@@ -22,6 +22,7 @@
     #status { font-size: 14px; margin-top: 20px; }
     textarea, input { width: 100%; padding: 12px; border: 1px solid #dfe5ef; border-radius: 9px; font: inherit; }
     #replies { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .test-notice { padding: 16px; border: 1px solid #f2cc7a; border-radius: 9px; background: #fff8e6; color: #775414; }
     @media (max-width: 600px) { main { margin: 24px auto; padding: 16px; } article { padding: 24px; } }
   </style>
 </head>
@@ -30,20 +31,25 @@
     <span class="tag">XPEECH · 本地接入演示</span>
     <h1>你的 AI 助手已接入</h1>
     <p>点击右下角的聊天按钮，或使用下方按钮展开对话。关闭窗口后，再次打开可继续当前会话。</p>
+    <p class="test-notice"><strong>仅供本地测试：正式接入必须从业务后端获取 JWT，签名密钥只能保存在后端，不能放在前端。</strong>
+      这里开放通道和 Key 输入只是为了方便测试；填写的 Key 会通过 POST 发送到本地演示后端，由后端签发 JWT 后返回，浏览器不签名。</p>
+    <form id="connection">
     <dl>
       <dt><label for="service">聊天前端 URL</label></dt>
       <dd>
-        <form id="connection">
           <input id="service" type="url" required placeholder="http://localhost:7939/" disabled>
-          <button id="connect" type="submit" disabled>连接 / 重新连接</button>
-        </form>
       </dd>
-      <dt>通道</dt><dd id="channel">—</dd>
+      <dt><label for="channel">通道（JWT kid）</label></dt>
+      <dd><input id="channel" required maxlength="64" placeholder="crm" disabled></dd>
+      <dt><label for="secret-key">签名 Key（仅供测试）</label></dt>
+      <dd><input id="secret-key" type="password" autocomplete="off" placeholder="留空使用后端配置的原通道密钥；更换通道时请填写" disabled></dd>
       <dt>演示用户</dt><dd id="user">—</dd>
       <dt>发送者名称</dt><dd id="sender">—</dd>
       <dt>助手标题</dt><dd id="assistant-title">—</dd>
       <dt>会话元数据</dt><dd id="metadata">—</dd>
     </dl>
+    <button id="connect" type="submit" disabled>连接 / 重新连接</button>
+    </form>
     <button id="open" disabled>打开聊天</button>
     <button id="toggle" class="secondary" disabled>退出演示登录</button>
     <label for="prompt">主页面交互内容</label>
@@ -63,6 +69,8 @@
     const replies = document.querySelector('#replies');
     const service = document.querySelector('#service');
     const connect = document.querySelector('#connect');
+    const channel = document.querySelector('#channel');
+    const secretKey = document.querySelector('#secret-key');
     let assistant;
     let senderName;
     let assistantTitle;
@@ -72,14 +80,21 @@
     window.addEventListener('xpeech:error', event => {
       status.textContent = `连接失败：${event.detail.message}`;
     });
-    async function loadJWT() {
-      const response = await fetch('/api/assistant/jwt', { credentials: 'same-origin', cache: 'no-store' });
-      if (!response.ok) throw new Error('获取登录凭证失败');
-      const { jwt } = await response.json();
+    async function loadJWT(credentials) {
+      // Test-only: production must obtain JWTs from the business backend without sending a signing key.
+      const response = await fetch('/api/assistant/jwt', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials),
+      });
+      const { jwt, error } = await response.json();
+      if (!response.ok) throw new Error(error || '获取登录凭证失败');
       return jwt;
     }
     function login() {
-      assistant.init(loadJWT, senderName, assistantTitle, sessionMetadata);
+      // Freeze these test parameters for renewal until the next connection/login.
+      const credentials = { channel: channel.value.trim(), secret_key: secretKey.value };
+      assistant.init(() => loadJWT(credentials), senderName, assistantTitle, sessionMetadata);
       assistant.onReply(({ content }) => {
         const reply = document.createElement('p');
         reply.textContent = `模型回复：${content}`;
@@ -101,7 +116,7 @@
         return;
       }
       connectionVersion++;
-      service.disabled = connect.disabled = true;
+      service.disabled = channel.disabled = secretKey.disabled = connect.disabled = true;
       open.disabled = fill.disabled = sync.disabled = toggle.disabled = true;
       loggedIn = false;
       assistant?.destroy();
@@ -118,7 +133,7 @@
         assistant = undefined;
         status.textContent = `连接失败：${error.message}。请修改地址后重新连接。`;
       } finally {
-        service.disabled = connect.disabled = false;
+        service.disabled = channel.disabled = secretKey.disabled = connect.disabled = false;
       }
     }
     try {
@@ -129,7 +144,7 @@
       assistantTitle = config.title;
       sessionMetadata = config.session_metadata;
       service.value = config.assistant_url;
-      document.querySelector('#channel').textContent = config.channel;
+      channel.value = config.channel;
       document.querySelector('#user').textContent = config.user_id;
       document.querySelector('#sender').textContent = config.sender_name;
       document.querySelector('#assistant-title').textContent = config.title;
