@@ -27,6 +27,65 @@ var frameTimer = null;
 var needsRetry = false;
 var drag = null;
 var suppressLauncherClick = false;
+var interactionSession = null;
+var requestSequence = 0;
+var pendingRequests = new Map();
+var replyListeners = new Set();
+
+function rejectRequests(message, sentOnly = false) {
+  pendingRequests.forEach(function (pending, id) {
+    if (sentOnly && !pending.sent) return;
+    clearTimeout(pending.timer);
+    pendingRequests.delete(id);
+    pending.reject(new Error(message));
+  });
+}
+function flushRequests() {
+  if (!frame || !interactionSession || !verifiedJWT) return;
+  pendingRequests.forEach(function (pending) {
+    if (pending.sent) return;
+    pending.sent = true;
+    pending.sessionId = interactionSession;
+    frame.contentWindow.postMessage(Object.assign({}, pending.data, { session_id: interactionSession }), origin);
+  });
+}
+function requestInteraction(method, text, options = {}) {
+  if (!identityConfigured) return Promise.reject(new Error('请先调用 init()'));
+  if (typeof text !== 'string' || (method === 'chatSync' && !text.trim())) {
+    return Promise.reject(new TypeError('text 必须为字符串，聊天消息不能为空'));
+  }
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    return Promise.reject(new TypeError('options 必须为对象'));
+  }
+  var timeout = options.timeoutMs === undefined ? (method === 'chatSync' ? 300000 : 30000) : options.timeoutMs;
+  if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 2147483647) {
+    return Promise.reject(new TypeError('timeoutMs 必须为有效的正数'));
+  }
+  if (options.jsonOutput !== undefined && typeof options.jsonOutput !== 'boolean') {
+    return Promise.reject(new TypeError('jsonOutput 必须为布尔值'));
+  }
+  return new Promise(function (resolve, reject) {
+    var id = String(++requestSequence);
+    var pending = {
+      data: { type: 'xpeech:request', request_id: id, method: method, text: text, json_output: options.jsonOutput },
+      resolve: resolve, reject: reject, sent: false, sessionId: null,
+      timer: setTimeout(function () {
+        pendingRequests.delete(id);
+        reject(new Error('iframe 交互超时'));
+      }, timeout)
+    };
+    pendingRequests.set(id, pending);
+    ensureConnected();
+    flushRequests();
+  });
+}
+function setInput(text, options) { return requestInteraction('setInput', text, options); }
+function chatSync(text, options) { return requestInteraction('chatSync', text, options); }
+function onReply(listener) {
+  if (typeof listener !== 'function') throw new TypeError('listener 必须为函数');
+  replyListeners.add(listener);
+  return function () { replyListeners.delete(listener); };
+}
 
 function initialize() {
   if (host) return;
@@ -156,12 +215,15 @@ function showStatus(text) {
 function report(error) {
   needsRetry = true;
   var detail = error instanceof Error ? error.message : String(error);
+  rejectRequests(detail);
   showStatus("连接失败：" + detail + "。请点击按钮重试。");
   window.dispatchEvent(new CustomEvent("xpeech:error", { detail: { message: detail } }));
 }
 function removeFrame() {
   clearTimeout(frameTimer);
   frameReady = false;
+  interactionSession = null;
+  rejectRequests('聊天窗口已关闭');
   if (frame) frame.remove();
   frame = null;
 }
@@ -194,11 +256,33 @@ function onMessage(event) {
   var data = event.data;
   if (!data || typeof data !== "object") return;
   if (data.type === "xpeech:ready") {
+    interactionSession = null;
+    rejectRequests('聊天页面已重新加载', true);
     frameReady = true;
     clearTimeout(frameTimer);
     deliver();
   } else if (data.type === "xpeech:authenticated") {
     if (verifiedJWT) status.hidden = true;
+  } else if (data.type === "xpeech:interaction-ready" && typeof data.session_id === 'string') {
+    if (interactionSession && interactionSession !== data.session_id) rejectRequests('会话已切换', true);
+    interactionSession = data.session_id;
+    flushRequests();
+  } else if (data.type === "xpeech:interaction-unavailable" && data.session_id === interactionSession) {
+    interactionSession = null;
+    rejectRequests('会话已切换或关闭', true);
+  } else if (data.type === "xpeech:response") {
+    var pending = pendingRequests.get(data.request_id);
+    if (!pending || !pending.sent || data.session_id !== pending.sessionId) return;
+    clearTimeout(pending.timer);
+    pendingRequests.delete(data.request_id);
+    if (typeof data.error === 'string') pending.reject(new Error(data.error));
+    else pending.resolve(data.result);
+  } else if (data.type === "xpeech:reply" && data.session_id === interactionSession && typeof data.content === 'string') {
+    var reply = { session_id: data.session_id, content: data.content, request_id: data.request_id ?? null };
+    replyListeners.forEach(function (listener) {
+      try { listener(reply); } catch (error) { console.error('Xpeech onReply callback failed', error); }
+    });
+    window.dispatchEvent(new CustomEvent('xpeech:reply', { detail: reply }));
   } else if (data.type === "xpeech:expired") {
     refresh();
   } else if (data.type === "xpeech:error") {
@@ -351,6 +435,7 @@ function destroy() {
   channelName = null;
   needsRetry = false;
   removeFrame();
+  replyListeners.clear();
   window.removeEventListener("message", onMessage);
   window.removeEventListener("resize", keepInViewport);
   if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
@@ -359,4 +444,4 @@ function destroy() {
   host = root = panel = launcher = closeButton = body = status = null;
 }
 
-export { init, hideButton, showButton, open, close, destroy };
+export { init, hideButton, showButton, open, close, destroy, setInput, chatSync, onReply };

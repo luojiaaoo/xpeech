@@ -24,7 +24,7 @@ proxy = import_module("xpeech.subapp.channel.web_client.routes.proxy")
 ORIGIN = "https://portal.example.test"
 SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 NEXT_SESSION_ID = "018f0000-0000-7000-8000-000000000002"
-EMBED_PATHS = ["/api/auth/embed", "/api/chat", "/api/answer_question", "/api/files"]
+EMBED_PATHS = ["/api/auth/embed", "/api/chat", "/api/chat_sync", "/api/answer_question", "/api/files"]
 
 
 @pytest.fixture
@@ -60,7 +60,7 @@ def bearer(token=None, **extra):
 
 
 def send(client, path, headers):
-    if path == "/api/chat":
+    if path in ("/api/chat", "/api/chat_sync"):
         return client.post(path, headers=headers, data={"content": "[]"})
     if path == "/api/answer_question":
         return client.post(path, headers=headers, data={"answer": "yes"})
@@ -182,18 +182,23 @@ def test_business_jwt_is_forwarded_unchanged_for_chat_answers_and_files(client, 
         claims = jwt.decode(backend_token, secret, algorithms=[settings.jwt.algorithm])
         assert claims["sub"] == user_id
         assert jwt.get_unverified_header(backend_token)["kid"] == name
+        if request.url.path == "/chat_sync":
+            assert request.headers["accept"] == "application/json"
+            assert unquote(request.headers["x-sender-name"]) == "张三"
+            assert request.headers["x-session-id"] == SESSION_ID
+            return httpx.Response(200, json=[{"event": "assistant", "context": "hello"}])
         return httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n')
 
     async_client = httpx.AsyncClient
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: async_client(**kwargs, transport=httpx.MockTransport(backend)))
     for path in EMBED_PATHS[1:]:
         assert send(client, path, headers).status_code == 200
-    assert [request.url.path for request in calls] == ["/chat", "/answer_question", "/files"]
+    assert [request.url.path for request in calls] == ["/chat", "/chat_sync", "/answer_question", "/files"]
     assert unquote(calls[0].headers["x-sender-name"]) == "张三"
     assert calls[0].headers["x-session-id"] == calls[1].headers["x-session-id"] == SESSION_ID
 
 
-@pytest.mark.parametrize("path", ["/api/chat", "/api/answer_question"])
+@pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync", "/api/answer_question"])
 @pytest.mark.parametrize("session_id", [None, "", "default", "invalid", "018f0000-0000-4000-8000-000000000001", SESSION_ID.upper()])
 def test_embedded_requests_require_canonical_uuidv7(client, monkeypatch, path, session_id):
     monkeypatch.setattr(proxy.httpx, "AsyncClient", Mock(side_effect=AssertionError("Must not contact backend")))
@@ -213,15 +218,16 @@ def test_two_embedded_conversations_keep_distinct_ids(client, monkeypatch):
     assert [call.kwargs["session_id"] for call in stream.await_args_list] == [SESSION_ID, SESSION_ID, NEXT_SESSION_ID]
 
 
+@pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync"])
 @pytest.mark.parametrize("sender", [None, "", "%20", "%FF"])
-def test_embedded_sender_name_is_required_and_validated(client, monkeypatch, sender):
+def test_embedded_sender_name_is_required_and_validated(client, monkeypatch, sender, path):
     stream = stream_mock(monkeypatch)
     headers = bearer()
     if sender is None:
         headers.pop("x-sender-name")
     else:
         headers["x-sender-name"] = sender
-    assert send(client, "/api/chat", headers).status_code == 422
+    assert send(client, path, headers).status_code == 422
     stream.assert_not_awaited()
 
 
@@ -310,14 +316,14 @@ def test_local_cookie_login_still_signs_backend_jwt_for_main_session(client, mon
     headers = {"x-channel-name": "crm"}
     if session_id is not None:
         headers["x-session-id"] = session_id
-    for path in ("/api/chat", "/api/answer_question"):
+    for path in ("/api/chat", "/api/chat_sync", "/api/answer_question"):
         assert send(client, path, headers).status_code == 200
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert client.post("/api/auth/logout").status_code == 204
     assert client.get("/api/auth/me").status_code == 401
 
 
-@pytest.mark.parametrize("path", ["/api/chat", "/api/answer_question"])
+@pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync", "/api/answer_question"])
 @pytest.mark.parametrize("session_id", [SESSION_ID, "not-a-uuid"])
 def test_local_cookie_requests_only_allow_main_session(client, path, session_id):
     assert client.post("/api/auth/login", json={"user_id": "admin", "password": "admin123456"}).status_code == 200

@@ -16,6 +16,8 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   const calls: { url: string; init: RequestInit }[] = [];
   const frames: Element[] = [];
   const listeners = new Map<string, Function[]>();
+  const timers = new Map<number, { callback: Function; delay: number }>();
+  let timerId = 0;
   class Element {
     hidden = false;
     removed = false;
@@ -76,7 +78,11 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
       return new Response(JSON.stringify(resultFor(sub)));
     },
     setInterval: () => assert.fail('The SDK must not poll website globals'),
-    setTimeout: () => 1, clearTimeout() {},
+    setTimeout: (callback: Function, delay: number) => {
+      timers.set(++timerId, { callback, delay });
+      return timerId;
+    },
+    clearTimeout: (id: number) => { timers.delete(id); },
   });
   function message(data: any, origin = 'https://assistant.test', source = frames.at(-1)?.contentWindow) {
     for (const handler of listeners.get('message') || []) handler({ data, origin, source });
@@ -87,8 +93,8 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { init: Function; hideButton: Function; showButton: Function; open: Function; close: Function; destroy: Function };
-  return { window, context, frames, calls, hosts, sent, message, listeners, api };
+  const api = module.namespace as { init: Function; hideButton: Function; showButton: Function; open: Function; close: Function; destroy: Function; setInput: Function; chatSync: Function; onReply: Function };
+  return { window, context, frames, calls, hosts, sent, message, listeners, timers, api };
 }
 
 test('loading the SDK creates no UI or requests until init and leaves website globals alone', async () => {
@@ -99,7 +105,7 @@ test('loading the SDK creates no UI or requests until init and leaves website gl
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['close', 'destroy', 'hideButton', 'init', 'open', 'showButton']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['chatSync', 'close', 'destroy', 'hideButton', 'init', 'onReply', 'open', 'setInput', 'showButton']);
 });
 
 test('init validates the original JWT without exchanging it and only delivers to its own iframe', async () => {
@@ -355,4 +361,103 @@ test('destroy discards pending JWT provider results without sending a request', 
   await tick();
   assert.equal(app.calls.length, 0);
   assert.equal(app.frames.length, 0);
+});
+
+test('interaction requests wait for the composer and correlate responses from the trusted frame', async () => {
+  const app = await runtime();
+  await assert.rejects(app.api.chatSync('hello'), /init/);
+  app.api.init(jwtFor(), 'Alice');
+  const input = app.api.setInput('draft');
+  const chat = app.api.chatSync('hello', { jsonOutput: true });
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:authenticated' });
+  assert.equal(app.sent.length, 1);
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' }, 'https://attacker.test');
+  assert.equal(app.sent.length, 1);
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const commands = app.sent.slice(1).map(item => item.data);
+  assert.deepEqual(commands.map(data => data.method), ['setInput', 'chatSync']);
+  assert.equal(commands[1].json_output, true);
+  assert.equal(commands[0].session_id, 'first');
+  assert.notEqual(commands[0].request_id, commands[1].request_id);
+  let settled = false;
+  input.then(() => { settled = true; });
+  const inputResponse = { type: 'xpeech:response', request_id: commands[0].request_id, session_id: 'first', result: { session_id: 'first' } };
+  app.message(inputResponse, 'https://attacker.test');
+  app.message(inputResponse, 'https://assistant.test', {});
+  app.message({ ...inputResponse, session_id: 'other' });
+  await tick();
+  assert.equal(settled, false);
+  const events = [{ event: 'assistant', context: 'answer' }];
+  app.message({ type: 'xpeech:response', request_id: commands[1].request_id, session_id: 'first', result: { events } });
+  assert.deepEqual((await chat).events, events);
+  app.message(inputResponse);
+  assert.equal((await input).session_id, 'first');
+  app.api.destroy();
+});
+
+test('reply subscriptions filter frames and sessions and can be removed', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const replies: any[] = [];
+  const unsubscribe = app.api.onReply((reply: any) => replies.push(reply));
+  const reply = { type: 'xpeech:reply', session_id: 'first', content: '你好', request_id: null };
+  app.message(reply, 'https://attacker.test');
+  app.message(reply, 'https://assistant.test', {});
+  app.message({ ...reply, session_id: 'old' });
+  assert.equal(replies.length, 0);
+  app.message(reply);
+  assert.equal(replies[0].content, '你好');
+  assert.equal(replies[0].session_id, 'first');
+  unsubscribe();
+  app.message(reply);
+  assert.equal(replies.length, 1);
+  app.api.destroy();
+});
+
+test('interaction errors, conversation changes and destroy reject pending promises', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  await assert.rejects(app.api.chatSync(''), /不能为空/);
+  await assert.rejects(app.api.chatSync('hello', { jsonOutput: 'yes' }), /jsonOutput/);
+  await assert.rejects(app.api.setInput('hello', { timeoutMs: -1 }), /timeoutMs/);
+  const busy = app.api.chatSync('hello');
+  const busyCheck = assert.rejects(busy, /正在回复/);
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: app.sent.at(-1)!.data.request_id, error: '正在回复' });
+  await busyCheck;
+  const switched = assert.rejects(app.api.chatSync('hello'), /会话已切换/);
+  app.message({ type: 'xpeech:interaction-unavailable', session_id: 'first' });
+  await switched;
+  const queued = assert.rejects(app.api.setInput('draft'), /关闭/);
+  app.api.destroy();
+  await queued;
+});
+
+test('timed out requests are discarded, renewal preserves active requests, and destroy clears timers', async () => {
+  const app = await runtime();
+  app.api.init(async () => jwtFor(), 'Alice');
+  const timeout = assert.rejects(app.api.setInput('draft', { timeoutMs: 17 }), /超时/);
+  [...app.timers.values()].find(timer => timer.delay === 17)!.callback();
+  await timeout;
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  assert.equal(app.sent.filter(item => item.data.type === 'xpeech:request').length, 0);
+  const result = app.api.chatSync('hello');
+  const request = app.sent.at(-1)!.data;
+  app.message({ type: 'xpeech:expired' });
+  await tick();
+  app.message({ type: 'xpeech:authenticated' });
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: request.request_id, result: { events: [] } });
+  assert.equal((await result).events.length, 0);
+  app.api.destroy();
+  // Fake timers do not automatically remove themselves on firing.
+  assert.ok([...app.timers.values()].every(timer => timer.delay === 17));
 });

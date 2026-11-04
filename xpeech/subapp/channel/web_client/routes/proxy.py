@@ -55,6 +55,7 @@ def create_proxy_router(
     RequestBackendAuth = Annotated[BackendAuthParams, Depends(request_backend_auth)]
 
     @router.post("/chat")
+    @router.post("/chat_sync")
     async def proxy_chat(
         request: Request,
         content: Annotated[str, Form()],
@@ -68,7 +69,7 @@ def create_proxy_router(
             bool,
             Form(
                 description='为大模型请求添加 response_format={"type":"json_object"}，不修改提示词；'
-                "模型未配置支持 JSON 输出时返回 HTTP 400，成功响应仍使用 SSE 流"
+                "模型未配置支持 JSON 输出时返回 HTTP 400"
             ),
         ] = False,
     ):
@@ -105,20 +106,24 @@ def create_proxy_router(
                     ),
                 )
             )
+        synchronous = request.url.path.endswith("/chat_sync")
         chat_stream = await open_chat_stream(
             backend_auth,
             sender_name,
             content,
             json.dumps(metadata, ensure_ascii=False),
-            str(URL(backend_url) / "chat"),
+            str(URL(backend_url) / ("chat_sync" if synchronous else "chat")),
             files=upload_data,
             json_output=json_output,
             session_id=session_id,
+            accept="application/json" if synchronous else "text/event-stream",
         )
         upstream = chat_stream.response
-        if upstream.status_code >= 400:
-            body = await upstream.aread()
-            await chat_stream.aclose()
+        if synchronous or upstream.status_code >= 400:
+            try:
+                body = await upstream.aread()
+            finally:
+                await chat_stream.aclose()
             return Response(
                 body,
                 status_code=upstream.status_code,

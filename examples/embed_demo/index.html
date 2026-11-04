@@ -20,6 +20,8 @@
     button.secondary { color: #18213d; background: #edf1f8; }
     button:disabled { opacity: .5; cursor: wait; }
     #status { font-size: 14px; margin-top: 20px; }
+    textarea { width: 100%; padding: 12px; border: 1px solid #dfe5ef; border-radius: 9px; font: inherit; }
+    #replies { white-space: pre-wrap; overflow-wrap: anywhere; }
     @media (max-width: 600px) { main { margin: 24px auto; padding: 16px; } article { padding: 24px; } }
   </style>
 </head>
@@ -38,12 +40,21 @@
     </dl>
     <button id="open" disabled>打开聊天</button>
     <button id="toggle" class="secondary" disabled>退出演示登录</button>
+    <label for="prompt">主页面交互内容</label>
+    <textarea id="prompt" rows="3">请介绍一下你能做什么</textarea>
+    <button id="fill" class="secondary" disabled>填入对话输入框</button>
+    <button id="sync" disabled>同步发送</button>
+    <div id="replies" aria-live="polite"></div>
     <p id="status" role="status">正在加载聊天组件…</p>
   </article></main>
   <script type="module">
     const status = document.querySelector('#status');
     const open = document.querySelector('#open');
     const toggle = document.querySelector('#toggle');
+    const fill = document.querySelector('#fill');
+    const sync = document.querySelector('#sync');
+    const prompt = document.querySelector('#prompt');
+    const replies = document.querySelector('#replies');
     let assistant;
     let senderName;
     let assistantTitle;
@@ -60,8 +71,14 @@
     }
     function login() {
       assistant.init(loadJWT, senderName, assistantTitle, sessionMetadata);
+      assistant.onReply(({ content }) => {
+        const reply = document.createElement('p');
+        reply.textContent = `模型回复：${content}`;
+        replies.appendChild(reply);
+      });
       loggedIn = true;
       open.disabled = false;
+      fill.disabled = sync.disabled = false;
       toggle.textContent = '退出演示登录';
       status.textContent = '演示用户已登录，聊天组件自动获取并续签凭证。';
     }
@@ -80,11 +97,30 @@
       document.querySelector('#metadata').textContent = JSON.stringify(config.session_metadata);
       assistant = await import(new URL('/embed.js', config.assistant_url).href);
       open.addEventListener('click', () => assistant.open());
+      fill.addEventListener('click', async () => {
+        try {
+          assistant.open();
+          await assistant.setInput(prompt.value);
+          status.textContent = '已填入输入框，等待用户发送。';
+        } catch (error) { status.textContent = error.message; }
+      });
+      sync.addEventListener('click', async () => {
+        sync.disabled = true;
+        status.textContent = '正在等待同步回复…';
+        try {
+          assistant.open();
+          const { events } = await assistant.chatSync(prompt.value);
+          const failure = events.find(event => event.event === 'error');
+          status.textContent = failure ? `同步交互失败：${failure.context}` : '同步交互完成，回复已回传主页面。';
+        } catch (error) { status.textContent = error.message; }
+        finally { sync.disabled = !loggedIn; }
+      });
       toggle.addEventListener('click', () => {
         if (loggedIn) {
           assistant.destroy();
           loggedIn = false;
           open.disabled = true;
+          fill.disabled = sync.disabled = true;
           toggle.textContent = '重新登录演示';
           status.textContent = '已退出演示登录，聊天组件已销毁。';
         } else login();

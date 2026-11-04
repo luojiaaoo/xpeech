@@ -88,3 +88,38 @@ test('question answers require backend acknowledgement and report missing waiter
   await assert.rejects(api.answerQuestion('yes', 'default'), /JWT expired/);
   assert.equal(expired, 1);
 });
+
+test('synchronous chat forwards authentication, session, metadata and JSON mode and returns all events', async () => {
+  let response = Response.json([{ event: 'assistant', context: 'answer' }]);
+  let expired = 0;
+  const calls: { url: string; init: RequestInit }[] = [];
+  const context = vm.createContext({
+    Headers, FormData, Event,
+    window: { dispatchEvent() { expired++; } },
+    fetch: async (url: string, init: RequestInit) => { calls.push({ url, init }); return response; },
+  });
+  const source = stripTypeScriptTypes(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(() => { throw new Error('Only type imports are expected'); });
+  await module.evaluate();
+  const api = module.namespace as { setEmbeddedJWT: Function; chatSync: Function };
+  api.setEmbeddedJWT('business.jwt.signature', '张三', { source: 'portal' });
+  const controller = new AbortController();
+  const events = await api.chatSync('hello', [], { sessionId: 'session', signal: controller.signal, jsonOutput: true });
+  assert.equal(events[0].context, 'answer');
+  const { url, init } = calls[0];
+  assert.equal(url, '/api/chat_sync');
+  assert.equal(init.credentials, 'omit');
+  assert.equal(init.signal, controller.signal);
+  assert.equal((init.headers as Headers).get('authorization'), 'Bearer business.jwt.signature');
+  assert.equal((init.headers as Headers).get('x-session-id'), 'session');
+  assert.equal((init.headers as Headers).get('x-sender-name'), encodeURIComponent('张三'));
+  assert.equal((init.body as FormData).get('json_output'), 'true');
+  assert.deepEqual(JSON.parse((init.body as FormData).get('content') as string), [{ text: 'hello' }]);
+  assert.deepEqual(JSON.parse((init.body as FormData).get('session_metadata') as string), { source: 'portal' });
+  response = new Response('busy', { status: 409 });
+  await assert.rejects(api.chatSync('hello'), /busy/);
+  response = new Response('expired', { status: 401 });
+  await assert.rejects(api.chatSync('hello'), /expired/);
+  assert.equal(expired, 1);
+});

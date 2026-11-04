@@ -20,6 +20,7 @@ async def open_chat_stream(
     files: Any = None,
     json_output: bool = False,
     session_id: str | None = None,
+    accept: str = "text/event-stream",
 ) -> ChatStream:
     data = {"session_metadata": session_metadata, "content": content}
     if json_output:
@@ -27,7 +28,7 @@ async def open_chat_stream(
     headers = _backend_headers(auth, sender_name)
     headers.update({
         "x-session-id": session_id or DEFAULT_SESSION_ID,
-        "Accept": "text/event-stream",
+        "Accept": accept,
         "Cache-Control": "no-store",
     })
     client = httpx.AsyncClient(timeout=None)

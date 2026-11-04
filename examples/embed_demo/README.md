@@ -2,6 +2,7 @@
 
 用一个本地 HTTP 服务给固定演示用户签发短期 JWT，通过远端 `embed.js` 加载浮动聊天组件。
 支持自动续签、展开聊天，以及退出后重新登录。仅使用 Python 标准库，无需安装项目依赖。
+页面还演示 `setInput()` 填入输入框、`chatSync()` 同步发送，以及 `onReply()` 将每条模型回复显示在主页面。
 
 在仓库根目录创建 `data/embed-demo/config.json`（该目录已被 Git 忽略）：
 

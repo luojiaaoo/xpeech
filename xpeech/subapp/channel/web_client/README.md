@@ -71,6 +71,9 @@ function onLogout() {
 | `assistant.showButton()` | 显示浮动按钮，不自动打开聊天窗口 |
 | `assistant.open()` | 通过代码主动展开聊天 iframe，无需用户点击浮动按钮 |
 | `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
+| `assistant.setInput(text, { timeoutMs? } = {})` | 替换当前对话输入框内容（允许空字符串清空），不自动发送；返回 `Promise<{ session_id }>` |
+| `assistant.chatSync(text, { jsonOutput?, timeoutMs? } = {})` | 在当前会话调用 `/api/chat_sync`，显示对话并返回 `Promise<{ session_id, events }>` |
+| `assistant.onReply(callback)` | 订阅每条完整模型回复，返回取消订阅函数 |
 | `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存中的身份和 JWT，不发送服务端撤销请求 |
 
 `setUserId()` 和 `setChannelName()` 已移除。`init()` 的无效字符串参数会同步抛出异常，
@@ -79,6 +82,57 @@ function onLogout() {
 必须先 `destroy()`，再用新 JWT 初始化。需要自动续期时应使用上述获取函数，业务后端接口
 应返回 `{ "jwt": "..." }` 并设置 `Cache-Control: no-store`。
 组件尚未初始化或已经销毁时，显示、隐藏、打开、关闭操作不会创建组件；销毁可以重复调用。
+
+### 主页面与 iframe 双向交互
+
+调用 `init(...)` 后即可使用以下接口，SDK 会等待认证和输入框就绪再投递请求。
+`setInput()` 和 `chatSync()` 不会自动展开窗口；需要展示时调用 `open()`。
+
+```javascript
+// 包括用户在 iframe 手动聊天、主页面调用 chatSync 产生的回复。
+const unsubscribe = assistant.onReply(({ session_id, content, request_id }) => {
+  console.log("模型回复", session_id, content);
+  // 手动聊天的 request_id 为 null；chatSync 回复带对应交互请求 ID。
+});
+
+assistant.open();
+await assistant.setInput("请帮我分析当前订单"); // 用户可以继续编辑再发送
+
+try {
+  const { session_id, events } = await assistant.chatSync("总结当前订单的风险", {
+    jsonOutput: false,
+    timeoutMs: 300000,
+  });
+  // events 是后端原始事件数组，例如 [{ event: "assistant", context: "..." }]。
+  console.log(session_id, events);
+} catch (error) {
+  console.error("同步交互失败", error);
+}
+
+// 不再需要接收回复时调用；destroy() 也会清除全部 onReply 订阅。
+unsubscribe();
+```
+
+回复还会通过主页面的 `window` 派发 `CustomEvent("xpeech:reply")`，其 `detail`
+与 `onReply` 参数相同。选择一种订阅方式即可，避免重复处理。
+流式文本在一条回复结束时合并回传，一轮工具调用产生多条模型回复时分别通知；
+思考内容、工具事件、token 统计和出错时尚未完成的回复不作为模型回复通知。
+同步请求的回复在后端返回全部事件后逐条通知。
+
+`chatSync()` 使用当前临时会话、JWT、发送者名称及初始化时的 `sessionMetadata`，
+保留输入框草稿和待发送附件，不携带这些附件。它使用后端的非交互模式，不等待用户填写问题表单。
+`jsonOutput: true` 原样转发 JSON 输出选项，需模型配置支持；不支持时返回 HTTP 400。
+当前会话正在回复时，新同步调用会拒绝，调用方可稍后重试。
+HTTP 错误会拒绝 Promise；HTTP 200 返回的 `error` 事件保留在 `events` 中，调用方应自行检查。
+
+`setInput` 默认等待 30 秒，`chatSync` 默认等待 5 分钟，可通过 `timeoutMs` 调整。
+超时只停止主页面等待，不代表后端执行已取消，请勿据此自动重复提交。
+未初始化、认证失败、会话切换、页面重载或销毁时，相应 Promise 会拒绝；JWT 自动续期不切换会话。
+双方都校验 `postMessage` 的 origin 和窗口来源，请求和响应还使用 `request_id`、`session_id` 关联。
+
+Web Client 同时提供 `POST /api/chat_sync`，与 `/api/chat` 使用相同的 multipart 字段
+（`content`、`session_metadata`、`files`、`json_output`）和认证 / 会话请求头，
+成功时返回完整 JSON 事件数组；嵌入请求仍必须提供合法 UUIDv7 的 `x-session-id` 和 `x-sender-name`。
 
 JWT 必须由业务后端先验证网站当前用户的登录身份，再为该用户签发，不能直接采用浏览器提交的
 任意用户 ID。Header 的 `kid` 必须与服务端 `jwt.channels` 的自定义通道名一致，例如 `crm`

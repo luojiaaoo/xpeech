@@ -199,20 +199,20 @@ function parseEventBlock(block: string): ChatEvent | null {
   }
 }
 
-export async function streamChat(
-  text: string, files: File[], onEvent: (event: ChatEvent) => void,
-  options: { sessionId?: string; signal?: AbortSignal } = {},
-) {
+type ChatOptions = { sessionId?: string; signal?: AbortSignal; jsonOutput?: boolean };
+
+async function sendChat(path: string, text: string, files: File[], options: ChatOptions) {
   const form = new FormData();
   form.set('content', JSON.stringify(text.trim() ? [{ text: text.trim() }] : []));
   if (memoryJWT) form.set('session_metadata', JSON.stringify(memorySessionMetadata));
+  if (options.jsonOutput) form.set('json_output', 'true');
   files.forEach((file) => form.append('files', file, file.name));
   const headers = authHeaders();
   if (memorySenderName !== null) {
     headers.set('x-sender-name', encodeURIComponent(memorySenderName));
   }
   if (options.sessionId) headers.set('x-session-id', options.sessionId);
-  const response = await fetch('/api/chat', {
+  const response = await fetch(path, {
     method: 'POST', body: form,
     credentials: memoryJWT ? 'omit' : 'same-origin', headers, signal: options.signal,
   });
@@ -222,7 +222,20 @@ export async function streamChat(
     }
     throw new Error((await response.text()) || '消息发送失败');
   }
-  const reader = response.body.getReader();
+  return response;
+}
+
+export async function chatSync(text: string, files: File[] = [], options: ChatOptions = {}): Promise<ChatEvent[]> {
+  const response = await sendChat('/api/chat_sync', text, files, options);
+  return response.json();
+}
+
+export async function streamChat(
+  text: string, files: File[], onEvent: (event: ChatEvent) => void,
+  options: ChatOptions = {},
+) {
+  const response = await sendChat('/api/chat', text, files, options);
+  const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   while (true) {

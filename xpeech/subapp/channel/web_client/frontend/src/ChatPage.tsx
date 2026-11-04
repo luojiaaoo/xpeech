@@ -14,7 +14,9 @@ import {
   DownOutlined,
   RobotOutlined,
 } from '@ant-design/icons';
-import { downloadFile, streamChat } from './api';
+import { chatSync, downloadFile, streamChat } from './api';
+import { collectReplies, connectEmbedBridge, postToParent } from './embedBridge';
+import type { SyncOptions } from './embedBridge';
 import { appendChatEvent, finishChatTurn, startChatTurn } from './chatState';
 import ToolCallCard from './ToolCallCard';
 import {
@@ -151,6 +153,19 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
   const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const sendRef = useRef(send);
+  sendRef.current = send;
+
+  useEffect(() => {
+    if (!embedded) return;
+    return connectEmbedBridge(sessionId, {
+      setInput(text) {
+        setValue(text);
+        senderRef.current?.focus();
+      },
+      chatSync: (text, options) => sendRef.current(text, options),
+    });
+  }, [embedded, sessionId]);
 
   useEffect(() => () => requestRef.current?.abort(), []);
 
@@ -179,28 +194,62 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
     setMessages((current) => appendChatEvent(current, event));
   }
 
-  async function send(text: string) {
-    if (!active || loading || requestRef.current || (!text.trim() && files.length === 0)) return;
+  async function send(text: string, sync?: SyncOptions): Promise<ChatEvent[]> {
+    if (!active || loading || requestRef.current) {
+      if (sync) throw new Error('当前会话正在回复，请稍后重试');
+      return [];
+    }
+    if (!text.trim() && (sync || files.length === 0)) return [];
     const controller = new AbortController();
     requestRef.current = controller;
-    const sentFiles = files;
+    const sentFiles = sync ? [] : files;
     const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
     setMessages((current) => startChatTurn(current, display));
-    setValue('');
-    setFiles([]);
-    setAttachmentsOpen(false);
+    if (!sync) {
+      setValue('');
+      setFiles([]);
+      setAttachmentsOpen(false);
+    }
     setLoading(true);
+    const replies = collectReplies((content) => {
+      if (embedded) postToParent({
+        type: 'xpeech:reply', session_id: sessionId, content,
+        request_id: sync?.requestId ?? null,
+      });
+    });
     try {
-      const pendingUserPrefix = takePendingUserPrefix();
+      const pendingUserPrefix = sync ? null : takePendingUserPrefix();
       const requestText = pendingUserPrefix ? `${pendingUserPrefix}\n\n===\n\n${text}` : text;
-      await streamChat(requestText, sentFiles, (event) => {
-        if (!controller.signal.aborted) appendEvent(event);
-      }, { sessionId, signal: controller.signal });
+      const receive = (event: ChatEvent) => {
+        if (!controller.signal.aborted) {
+          appendEvent(event);
+          replies.push(event);
+        }
+      };
+      let events: ChatEvent[] = [];
+      if (sync) {
+        events = await chatSync(requestText, sentFiles, { sessionId, signal: controller.signal, jsonOutput: sync.jsonOutput });
+        // Synchronous events already contain complete assistant messages.
+        for (const event of events) {
+          if (controller.signal.aborted) break;
+          receive(event);
+          if (event.event === 'assistant') {
+            replies.finish();
+            appendEvent({ event: 'assistant_end', context: '' });
+          }
+        }
+      } else {
+        await streamChat(requestText, sentFiles, receive, { sessionId, signal: controller.signal });
+      }
+      if (!controller.signal.aborted) replies.finish();
+      return events;
     } catch (error) {
       if (!controller.signal.aborted) {
         setMessages((current) => appendChatEvent(current, { event: 'error', context: String(error) }));
         message.error(String(error));
       }
+      if (sync) throw error;
+      return [];
     } finally {
       if (!controller.signal.aborted) {
         setMessages(finishChatTurn);
@@ -322,7 +371,7 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
           ref={senderRef}
           value={value}
           onChange={setValue}
-          onSubmit={send}
+          onSubmit={(text) => { void send(text); }}
           loading={loading}
           header={header}
           placeholder={embedded ? '输入消息…' : '输入消息，Enter 发送，Shift + Enter 换行'}
