@@ -200,7 +200,7 @@ LARKSUITE_CLI_USER_ACCESS_TOKEN="<lark_user_access_token>" lark-cli docs +fetch 
 不会阻塞命令。也可以先执行 `lark-cli-auth login --scope "<本次任务所需 scope>"` 或
 `lark-cli-auth login --domain calendar,task` 获取链接；`login` 至少需要一个非空的
 `--scope` 或 `--domain`，两者可以组合。用户在浏览器完成设备授权后重跑原命令，
-lark-token-manager 会按 session 绑定飞书用户。令牌数据库持久化在 `docker_data/lark-token-manager`，
+lark-token-manager 会按 session 绑定飞书用户。令牌数据库持久化在 `data/lark-token-manager`，
 后台任务每分钟扫描并在过期前刷新，refresh token 按单次轮换原子保存。
 飞书授权使用设备码流程，无需配置 `redirect_uri` 或暴露 callback 端口。lark-token-manager 使用飞书
 返回的 device code 有效期在后台轮询；lark-token-manager 只在 Xpeech 内部网络提供 session 级接口。
@@ -312,7 +312,7 @@ docker compose logs -f lark-token-manager backend scheduler nginx feishu web_cli
 ```
 
 持久化数据统一映射到宿主机
-的 `./docker_data/` 目录，其中包含 `session`、`workspace_base` 和
+的 `./data/` 目录，其中包含 `session`、`workspace_base` 和
 `browser_preview`，Web 用户数据库保存在 `web_client/users.db`；缓存目录不做宿主机磁盘
 映射。`conf.toml` 以只读方式挂载，`.env` 通过 `env_file` 注入进程。普通运行时配置修改后重建容器
 即可生效；`feishu.app_id` 或 `feishu.app_secret` 修改后需要增加 `--build` 重新编译 lark-cli 和
@@ -332,7 +332,7 @@ docker compose up -d --build --force-recreate backend
 再使用内部 JWT 向 scheduler 领取消息，不需要绑定特定实例。
 Nginx 对所有 API 使用同一条哈希转发规则。
 
-数据库使用 `docker_data/session/schedule.db`。scheduler 以单实例运行，独占该数据库。
+数据库使用 `data/session/schedule.db`。scheduler 以单实例运行，独占该数据库。
 调度期间需保持 Nginx/backend 可用，执行 HTTP 请求失败时会发送失败提示，不自动重试；
 停机期间错过的任务会被跳过。待发送结果保存在 scheduler 内存中，重启会丢失未发送结果。
 
@@ -776,7 +776,7 @@ Shell 命令会在 bwrap 进程沙盒中执行：
 - `/usr`、`/bin`、`/lib`、证书和 DNS 配置等系统路径以只读方式挂载，提供基础运行环境。
 - `HOME` 会指向当前会话的 `<workspace>/home`；路径参数中的 `~` 也会解析到这个目录。
 - `PATH` 会优先包含当前 HOME 下的 `.local/bin` 和 `.npm-global/bin`，`uv tool install`、`npm install -g` 的命令只在当前会话持久化。
-- `sandbox_home_path` 指定公共 HOME 配置源目录（默认为 `data/sandbox-home`）；其中的所有文件都会保留相对路径，通过 bwrap 只读映射到每个 HOME。
+- `sandbox_home_path` 指定公共 HOME 配置源目录（默认为 `assets/sandbox-home`）；其中的所有文件都会保留相对路径，通过 bwrap 只读映射到每个 HOME。
 
 Shell 工具首次运行时会在工作区内执行 `uv venv .venv`，为该工作区创建独立 Python 环境。
 Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `pip` 会被安全检查拦截。

@@ -163,18 +163,8 @@ cython_debug/
 .idea/
 .vscode
 
-# Ignore data except the sandbox-home config files listed below.
-# docker data directory
-docker_data/
-# Package-manager mirror settings mapped into each sandbox HOME
-data/*
-!data/sandbox-home/
-# npm
-!data/sandbox-home/.npmrc
-# pip
-!data/sandbox-home/.pip/pip.conf
-# uv
-!data/sandbox-home/.config/uv/uv.toml
+# Runtime data directory (sessions, logs, caches, workspace...)
+data/
 # nodejs
 node_modules/
 package-lock.json

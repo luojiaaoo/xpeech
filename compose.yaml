@@ -30,7 +30,7 @@ services:
     <<: *xpeech-service
     command: ["token_manager", "--host", "0.0.0.0", "--port", "7883"]
     volumes:
-      - ./docker_data/lark-token-manager:/app/data/lark-token-manager
+      - ./data/lark-token-manager:/app/data/lark-token-manager
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:7883/health"]
       interval: 20s
@@ -57,15 +57,15 @@ services:
       # 内置技能及本地自定义内置技能（x-*）
       - ./xpeech/agent/skills/buildin:/app/xpeech/agent/skills/buildin:ro
       # 会话上下文
-      - ./docker_data/session:/app/data/session
+      - ./data/session:/app/data/session
       # 工作目录
-      - ./docker_data/workspace_base:/app/data/workspace_base
+      - ./data/workspace_base:/app/data/workspace_base
       # 沙盒内包管理器的国内镜像配置（逐用户只读映射到 HOME）
-      - ./data/sandbox-home:/app/data/sandbox-home:ro
+      - ./assets/sandbox-home:/app/assets/sandbox-home:ro
       # 网页预览目录
-      - ./docker_data/browser_preview:/app/data/browser_preview
+      - ./data/browser_preview:/app/data/browser_preview
       # 运行日志目录
-      - ./docker_data/logs:/app/data/logs
+      - ./data/logs:/app/data/logs
       # 头像等
       - ./assets:/app/assets:ro
     cap_add:
@@ -88,8 +88,8 @@ services:
     expose:
       - "8090"
     volumes:
-      - ./docker_data/session:/app/data/session
-      - ./docker_data/logs/scheduler:/app/data/logs
+      - ./data/session:/app/data/session
+      - ./data/logs/scheduler:/app/data/logs
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/health"]
       interval: 20s
@@ -144,4 +144,4 @@ services:
       retries: 6
       start_period: 20s
     volumes:
-      - ./docker_data/web_client:/app/data/web_client
+      - ./data/web_client:/app/data/web_client
