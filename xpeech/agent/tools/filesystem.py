@@ -66,8 +66,8 @@ class EditFileArgs(BaseModel):
     )
 
 
-def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
-    base = Path(workspace).expanduser().resolve()
+def build_file_tools(workspace: Path, max_result_chars: int = 10_000):
+    base = workspace.resolve()
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
     if max_result_chars < 1:
@@ -75,7 +75,7 @@ def build_file_tools(workspace: str | Path, max_result_chars: int = 10_000):
 
     def safe_resolve(user_path: str, protect_read_only_file: bool = True) -> Path:
         return safe_resolve_workspace_path(
-            user_path,
+            Path(user_path),
             base,
             protect_read_only_file=protect_read_only_file,
         )

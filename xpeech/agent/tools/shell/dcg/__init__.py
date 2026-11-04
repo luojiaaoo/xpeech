@@ -14,7 +14,7 @@ SHELL_CHECK_TIMEOUT = 5.0
 DCG_POLICY_DIR = Path(__file__).parent
 
 
-async def shell_requires_confirmation(payload: str, *, workspace: str | Path) -> ExecutionDecision:
+async def shell_requires_confirmation(payload: str, *, workspace: Path) -> ExecutionDecision:
     """一次 dcg 检查返回 ALLOW、CONFIRM 或 DENY；检查失败报工具错误。"""
     command = json.loads(payload).get("command")
     if not isinstance(command, str) or not command.strip():
@@ -26,7 +26,7 @@ async def shell_requires_confirmation(payload: str, *, workspace: str | Path) ->
 
     process = None
     try:
-        workspace = Path(workspace).resolve()
+        workspace = workspace.resolve()
         if not workspace.is_dir():
             raise ValueError(f"Invalid workspace: {workspace}")
         env["HOME"] = str(sandbox.get_sandbox_home(workspace))

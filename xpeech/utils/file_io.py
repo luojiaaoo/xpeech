@@ -33,9 +33,9 @@ class _Transaction:
 class LockedFile:
     """单次操作自动加锁；transaction 可将同一把锁提升到多步上下文。"""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: Path):
         """规范化文件路径。"""
-        self.path = Path(path).resolve()
+        self.path = path.resolve()
         self._transaction_state: ContextVar[_Transaction | None] = ContextVar(
             "locked_file_transaction", default=None,
         )

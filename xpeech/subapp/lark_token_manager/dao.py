@@ -53,7 +53,7 @@ class DeviceAuthorization(_TokenSQLModel, table=True):
 
 class TokenStore:
     def __init__(self, path: Path) -> None:
-        self.path = path.expanduser().resolve()
+        self.path = path.resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.parent.chmod(0o700)
         self.engine = create_engine(f"sqlite:///{self.path.as_posix()}")

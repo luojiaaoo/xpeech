@@ -12,7 +12,7 @@ from ..utils.sqlite import configure_sqlite_connection
 
 TABLE_NAME = "conversation_records"
 _record_registry = registry()
-_record_database_path = settings.path.session_record_path.expanduser().resolve()
+_record_database_path = settings.path.session_record_path.resolve()
 ensure_path(_record_database_path.parent)
 record_engine = create_async_engine(
     f"sqlite+aiosqlite:///{_record_database_path.as_posix()}",

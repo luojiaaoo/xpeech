@@ -3,6 +3,7 @@
 import asyncio
 import os
 import platform
+import shlex
 import shutil
 import signal
 import subprocess
@@ -61,7 +62,7 @@ async def _run_wrapped_command(
     workspace: Path,
     timeout_ms: int = DEFAULT_EXEC_TIMEOUT_MS,
 ) -> ShellCommandResult:
-    wrapped_command = sandbox.wrap_command(command, workspace)
+    wrapped_command = shlex.join(sandbox.wrap_sandbox_command(command, workspace))
     logger.info(f"Running wrapped command: {wrapped_command}")
     with tempfile.TemporaryFile(mode="w+b") as stdout_f, tempfile.TemporaryFile(mode="w+b") as stderr_f:
         process = await asyncio.create_subprocess_exec(
@@ -131,13 +132,13 @@ async def _ensure_workspace_uv_venv(workspace: Path) -> None:
         raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{output}")
 
 
-def build_shell_tools(workspace: str | Path):
+def build_shell_tools(workspace: Path):
     if platform.system() != "Linux":
         raise RuntimeError("Shell tool requires Linux with bubblewrap; Windows and other platforms are not supported.")
     missing = [name for name in ("bwrap", "bash", "uv") if shutil.which(name) is None]
     if missing:
         raise RuntimeError(f"Shell tool requires executable(s) on PATH: {', '.join(missing)}")
-    workspace = Path(workspace).expanduser().resolve()
+    workspace = workspace.resolve()
     if not workspace.exists() or not workspace.is_dir():
         raise ValueError(f"Invalid workspace: {workspace}")
 

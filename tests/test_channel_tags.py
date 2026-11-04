@@ -350,11 +350,14 @@ async def test_mcp_only_registers_public_and_matching_servers(
         assert (f"purpose-{name}" in status_tool.__doc__) is (name in expected)
 
 
-def test_mcp_preserves_channel_tags_in_registration_and_cache_key():
-    public = mcp_client.create_mcp_registration_from_config("demo", MCPServerSettings(command="demo"))
+def test_mcp_preserves_channel_tags_in_registration_and_cache_key(tmp_path):
+    public = mcp_client.create_mcp_registration_from_config(
+        "demo", MCPServerSettings(command="demo"), workspace=tmp_path,
+    )
     dedicated = mcp_client.create_mcp_registration_from_config(
         "demo",
         MCPServerSettings(command="demo", channel_tags=["crm", "crm"]),
+        workspace=tmp_path,
     )
     assert dedicated.config.channel_tags == ["crm"]
     assert mcp_client._persistent_registration_key(public.config) != mcp_client._persistent_registration_key(

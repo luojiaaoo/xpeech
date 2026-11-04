@@ -31,9 +31,9 @@ async def read_document(file_path: Path, display_path: str) -> str:
         raise RuntimeError(f"Failed to read document {display_path}: {error}") from error
 
 
-def build_document_tool(workspace: str | Path):
+def build_document_tool(workspace: Path):
     """构建绑定当前工作区的文档读取工具。"""
-    base = Path(workspace).expanduser().resolve()
+    base = workspace.resolve()
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
 
@@ -41,7 +41,7 @@ def build_document_tool(workspace: str | Path):
         """Read Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV and PDF documents as Markdown.
         Supports legacy and macro-enabled Office formats. Detects formats from file content.
         """
-        file_path = safe_resolve_workspace_path(args.path, base, protect_read_only_file=False)
+        file_path = safe_resolve_workspace_path(Path(args.path), base, protect_read_only_file=False)
         return await read_document(file_path, args.path)
 
     return read_doc_file

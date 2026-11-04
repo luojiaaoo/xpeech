@@ -69,7 +69,7 @@ class ProtectedAdminDeletionError(Exception):
 
 def create_web_client_engine(database_path: Path) -> AsyncEngine:
     """为指定 Web 客户端数据库创建异步 SQLite engine。"""
-    resolved_path = database_path.expanduser().resolve()
+    resolved_path = database_path.resolve()
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{resolved_path.as_posix()}",

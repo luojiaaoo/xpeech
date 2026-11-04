@@ -55,6 +55,25 @@ def test_download_session_file_requires_valid_jwt(file_roots: tuple[Path, Path])
     assert valid_token.content == b"downloaded"
 
 
+def test_download_api_resolves_tilde_against_user_home(file_roots, tmp_path, monkeypatch):
+    workspace_root, _ = file_roots
+    backend_home = tmp_path / "backend-home"
+    backend_home.mkdir()
+    (backend_home / "result.txt").write_text("backend data")
+    monkeypatch.setenv("HOME", str(backend_home))
+    home = workspace_root / "home-api-user" / "home"
+    home.mkdir(parents=True)
+    (home / "result.txt").write_text("user data")
+    token = create_token(UserTokenParams("web_client", user_id="home-api-user"))
+
+    response = TestClient(app).get(
+        "/files", params={"path": "~/result.txt"}, headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"user data"
+
+
 def test_preview_directory_is_public_and_recursively_navigable(
     file_roots: tuple[Path, Path],
 ):

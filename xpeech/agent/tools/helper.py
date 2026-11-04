@@ -16,10 +16,10 @@ import re
 import shlex
 
 
-def get_mime_type(path: str | Path) -> str | None:
+def get_mime_type(path: Path) -> str | None:
     """Return a best-effort MIME type, preferring file content over its name."""
     try:
-        with open(path, "rb") as file:
+        with path.open("rb") as file:
             data = file.read(12)
     except OSError:
         data = b""
@@ -40,22 +40,24 @@ def get_mime_type(path: str | Path) -> str | None:
     return None
 
 
-def _expand_sandbox_home_path(user_path: str | Path, workspace: str | Path) -> Path:
+def _expand_sandbox_home_path(user_path: Path, workspace: Path) -> Path:
     path_text = str(user_path)
     if path_text == "~":
         return sandbox.get_sandbox_home(workspace)
     if path_text.startswith("~/") or path_text.startswith("~\\"):
         return sandbox.get_sandbox_home(workspace) / path_text[2:]
-    return Path(user_path).expanduser()
+    if path_text.startswith("~"):
+        raise PathProtectionError("Named-user home paths are not supported; use '~/' for the sandbox HOME")
+    return user_path
 
 
 def safe_resolve_workspace_path(
-    user_path: str | Path,
-    workspace: str | Path,
+    user_path: Path,
+    workspace: Path,
     protect_read_only_file: bool = True,
 ) -> Path:
     """Resolve a workspace path, including read-only sandbox mount mappings."""
-    workspace = Path(workspace).expanduser().resolve()
+    workspace = workspace.resolve()
     path = _expand_sandbox_home_path(user_path, workspace)
 
     if path.is_absolute():
@@ -76,7 +78,7 @@ def safe_resolve_workspace_path(
         pass
     else:
         if home_relative.parts:
-            config_root = settings.path.sandbox_home_path.expanduser().resolve()
+            config_root = settings.path.sandbox_home_path
             config_path = config_root.joinpath(*home_relative.parts)
             if config_path.is_file():
                 if protect_read_only_file:

@@ -139,13 +139,13 @@ async def arxiv_search(args: ArxivSearchArgs) -> str:
     return json.dumps(articles, ensure_ascii=False, indent=2)
 
 
-def build_research_tools(workspace: str | Path):
+def build_research_tools(workspace: Path):
     """构建绑定当前工作区的科研工具。"""
-    base = Path(workspace).expanduser().resolve()
+    base = workspace.resolve()
 
     async def arxiv_download(args: ArxivDownloadArgs) -> str:
         """按 arXiv 论文 ID 下载 PDF 到工作区内指定目录，返回论文元数据和本地路径。一次最多 5 篇；目录不存在时自动创建，单篇失败不影响其他论文。"""
-        download_dir = safe_resolve_workspace_path(args.download_dir, base)
+        download_dir = safe_resolve_workspace_path(Path(args.download_dir), base)
         download_dir.mkdir(parents=True, exist_ok=True)
 
         async def collect(paper_id: str) -> dict[str, Any] | str:

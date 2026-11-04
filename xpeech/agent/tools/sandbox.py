@@ -1,4 +1,4 @@
-"""Bubblewrap command wrapping for shell command execution."""
+"""Shared bubblewrap isolation for Shell and stdio MCP processes."""
 
 import os
 import shlex
@@ -12,13 +12,13 @@ from ..skills.skill import iter_builtin_skill_dirs
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
-def _add_setenv(args: list[str], key: str, value: Path | str) -> None:
-    args.extend(["--setenv", key, str(value)])
+def _add_setenv(args: list[str], key: str, value: str) -> None:
+    args.extend(["--setenv", key, value])
 
 
-def get_sandbox_home(workspace: str | Path) -> Path:
-    """Return the current workspace's private sandbox home, creating it if needed."""
-    workspace = Path(workspace).expanduser().resolve()
+def get_sandbox_home(workspace: Path) -> Path:
+    """Create the workspace's private home without expanding the backend's HOME."""
+    workspace = workspace.resolve()
     home = workspace / "home"
     if home.is_symlink():
         raise ValueError(f"Sandbox home must not be a symlink: {home}")
@@ -38,7 +38,7 @@ def _sandbox_path(home: Path) -> str:
 
 def _iter_sandbox_home_config_files() -> list[tuple[Path, Path]]:
     """Return (source, relative path) pairs for sandbox HOME config files."""
-    config_root = settings.path.sandbox_home_path.expanduser().resolve()
+    config_root = settings.path.sandbox_home_path
     if not config_root.is_dir():
         return []
 
@@ -53,9 +53,9 @@ def _iter_sandbox_home_config_files() -> list[tuple[Path, Path]]:
     return config_files
 
 
-def wrap_command(command: str, workspace: str | Path) -> str:
-    """Wrap a command in a bubblewrap sandbox."""
-    workspace = Path(workspace).expanduser().resolve()
+def wrap_sandbox_command(command: str | list[str], workspace: Path) -> list[str]:
+    """Wrap Shell text or a quoted argv list in a sandboxed bash command."""
+    workspace = workspace.resolve()
     workspace_python_env = workspace / ".venv"
     home = get_sandbox_home(workspace)
     user_id = get_user_id()
@@ -63,14 +63,14 @@ def wrap_command(command: str, workspace: str | Path) -> str:
 
     args = ["bwrap", "--new-session", "--die-with-parent", "--unshare-pid", "--cap-drop", "ALL"]
 
-    sandbox_env: dict[str, str | Path] = {
-        "HOME": home,
+    sandbox_env: dict[str, str] = {
+        "HOME": str(home),
         "PATH": _sandbox_path(home),
         "PIP_REQUIRE_VIRTUALENV": "true",  # 确保 pip 在虚拟环境中运行
-        "UV_PROJECT_ENVIRONMENT": workspace_python_env,  # uv虚拟py环境路径
-        "UV_CACHE_DIR": home / ".cache" / "uv",  # 包缓存目录
-        "NPM_CONFIG_PREFIX": home / ".npm-global",  # npm 全局安装目录
-        "SHELL_USER_ID": user_id, # 注入 user_id，给插件使用
+        "UV_PROJECT_ENVIRONMENT": str(workspace_python_env),  # uv虚拟py环境路径
+        "UV_CACHE_DIR": str(home / ".cache" / "uv"),  # 包缓存目录
+        "NPM_CONFIG_PREFIX": str(home / ".npm-global"),  # npm 全局安装目录
+        "SHELL_USER_ID": str(user_id), # 注入 user_id，给插件使用
     }
     lark_user_access_token = get_lark_user_access_token()
     if lark_user_access_token:
@@ -121,5 +121,6 @@ def wrap_command(command: str, workspace: str | Path) -> str:
         target = workspace_skills / builtin_skill.name
         args.extend(["--ro-bind", str(builtin_skill.resolve()), str(target)])
 
-    args.extend(["--chdir", str(workspace), "--", "bash", "-c", command])
-    return shlex.join(args)
+    shell_command = shlex.join(command) if isinstance(command, list) else command
+    args.extend(["--chdir", str(workspace), "--", "bash", "-c", shell_command])
+    return args

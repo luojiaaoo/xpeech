@@ -58,13 +58,8 @@ _scheduler: AsyncIOScheduler | None = None
 _schedule_lock = Lock()
 
 
-def _scheduler_database_path(database_path: str | Path | None = None) -> Path:
-    path = (
-        Path(database_path)
-        if database_path is not None
-        else settings.path.session_schedule_path
-    )
-    path = path.expanduser().resolve()
+def _scheduler_database_path(database_path: Path | None = None) -> Path:
+    path = (database_path if database_path is not None else settings.path.session_schedule_path).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -123,7 +118,7 @@ def _migrate_legacy_channel_kwargs(scheduler: AsyncIOScheduler) -> None:
 
 
 def start_background_scheduler(
-    database_path: str | Path | None = None,
+    database_path: Path | None = None,
     *,
     now: datetime | None = None,
 ) -> AsyncIOScheduler:

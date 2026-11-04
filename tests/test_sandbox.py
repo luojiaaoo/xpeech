@@ -45,6 +45,40 @@ def test_sandbox_home_rejects_symlink(tmp_path: Path) -> None:
         sandbox.get_sandbox_home(workspace)
 
 
+def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path, monkeypatch) -> None:
+    backend_home = tmp_path / "backend-home"
+    workspace = tmp_path / "~" / "workspace"
+    workspace.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(backend_home))
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
+    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+
+    relative_workspace = Path("~/workspace")
+    assert sandbox.get_sandbox_home(relative_workspace) == workspace / "home"
+    args = sandbox.wrap_sandbox_command("pwd", relative_workspace)
+    environment = dict(_option_pairs(args, "--setenv"))
+    assert environment["HOME"] == str(workspace / "home")
+    assert _option_pairs(args, "--bind") == [(str(workspace), str(workspace))]
+    assert args[args.index("--chdir") + 1] == str(workspace)
+    assert not backend_home.exists()
+
+
+@pytest.mark.parametrize("workspace_kind", ["relative", "symlink"])
+def test_resolver_normalizes_workspace(tmp_path, monkeypatch, workspace_kind):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(workspace, target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    supplied_workspace = Path("workspace") if workspace_kind == "relative" else alias
+
+    assert safe_resolve_workspace_path(Path("~/notes.txt"), supplied_workspace) == workspace / "home/notes.txt"
+    assert safe_resolve_workspace_path(Path("notes.txt"), supplied_workspace) == workspace / "notes.txt"
+    with pytest.raises(PathProtectionError, match="Path escapes workspace"):
+        safe_resolve_workspace_path(Path("../outside.txt"), supplied_workspace)
+
+
 @pytest.mark.parametrize(
     ("user_path", "relative_path"),
     [
@@ -61,7 +95,13 @@ def test_tilde_paths_resolve_to_workspace_home(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    assert safe_resolve_workspace_path(user_path, workspace) == workspace / relative_path
+    assert safe_resolve_workspace_path(Path(user_path), workspace) == workspace / relative_path
+
+
+@pytest.mark.parametrize("user_path", ["~root", "~root/secret.txt"])
+def test_named_user_homes_are_never_expanded_by_backend(tmp_path, user_path):
+    with pytest.raises(PathProtectionError, match="Named-user home paths"):
+        safe_resolve_workspace_path(Path(user_path), tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -86,7 +126,7 @@ def test_sandbox_home_config_paths_map_to_managed_files_for_reading(
 
     assert (
         safe_resolve_workspace_path(
-            user_path,
+            Path(user_path),
             workspace,
             protect_read_only_file=False,
         )
@@ -107,7 +147,7 @@ def test_sandbox_home_config_paths_are_read_only_to_file_tools(
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
 
     with pytest.raises(PathProtectionError, match="HOME config files are read-only"):
-        safe_resolve_workspace_path("~/.npmrc", workspace)
+        safe_resolve_workspace_path(Path("~/.npmrc"), workspace)
 
 
 def test_unmapped_sandbox_home_paths_stay_in_workspace(
@@ -120,7 +160,7 @@ def test_unmapped_sandbox_home_paths_stay_in_workspace(
     config_home.mkdir()
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
 
-    assert safe_resolve_workspace_path("~/notes/todo.md", workspace) == workspace / "home/notes/todo.md"
+    assert safe_resolve_workspace_path(Path("~/notes/todo.md"), workspace) == workspace / "home/notes/todo.md"
 
 
 @pytest.mark.asyncio
@@ -145,7 +185,7 @@ async def test_file_tools_can_read_but_not_write_mapped_home_configs(
     assert config_file.read_text(encoding="utf-8") == "registry=https://example.invalid\n"
 
 
-def test_wrap_command_uses_private_home_and_maps_mirror_configs(
+def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -169,7 +209,7 @@ def test_wrap_command_uses_private_home_and_maps_mirror_configs(
 
     session_token = user_id_var.set(user_id)
     try:
-        args = shlex.split(sandbox.wrap_command("pwd", workspace))
+        args = sandbox.wrap_sandbox_command("pwd", workspace)
     finally:
         user_id_var.reset(session_token)
     environment = dict(_option_pairs(args, "--setenv"))
@@ -188,14 +228,14 @@ def test_wrap_command_uses_private_home_and_maps_mirror_configs(
     } <= read_only_binds
 
 
-def test_wrap_command_selects_lark_skills_by_injected_token(tmp_path: Path) -> None:
+def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
     def wrapped(token: str | None) -> tuple[dict[str, str], set[tuple[str, str]]]:
         context = lark_user_access_token_var.set(token)
         try:
-            args = shlex.split(sandbox.wrap_command("true", workspace))
+            args = sandbox.wrap_sandbox_command("true", workspace)
         finally:
             lark_user_access_token_var.reset(context)
         return dict(_option_pairs(args, "--setenv")), set(_option_pairs(args, "--ro-bind"))
@@ -247,6 +287,16 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs(
         "echo partial-output; "
         + ("true" if termination == "exit" else "sleep 30")
     )
+    create_subprocess = asyncio.create_subprocess_exec
+
+    async def spawn(*args, **kwargs):
+        assert args[:3] == ("bash", "-l", "-c")
+        wrapped_command = shlex.split(args[3])
+        assert wrapped_command[0] == "bwrap"
+        assert wrapped_command[wrapped_command.index("--") + 1:] == ["bash", "-c", command]
+        return await create_subprocess(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     task = asyncio.create_task(
         _run_wrapped_command(command, workspace, timeout_ms=1_000 if termination == "timeout" else 10_000)
     )

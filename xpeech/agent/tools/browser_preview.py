@@ -14,14 +14,14 @@ class BrowserPreviewArgs(BaseModel):
 
 
 def build_browser_preview_tool(
-    workspace: str | Path,
-    browser_preview_path: str | Path,
+    workspace: Path,
+    browser_preview_path: Path,
     browser_preview_base_url: str,
 ):
-    base = Path(workspace).expanduser().resolve()
+    base = workspace.resolve()
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
-    target_root = Path(browser_preview_path).expanduser().resolve()
+    target_root = browser_preview_path.resolve()
     target_root.mkdir(parents=True, exist_ok=True)
     base_url = browser_preview_base_url.rstrip("/")
 
@@ -42,7 +42,7 @@ def build_browser_preview_tool(
             file, the complete file URL.
         """
         source = safe_resolve_workspace_path(
-            args.path,
+            Path(args.path),
             base,
             protect_read_only_file=False,
         )

@@ -1,4 +1,5 @@
 from typing import Annotated
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
@@ -20,7 +21,7 @@ async def download_session_file(
     workspace = (settings.path.workspace_base_path / user_id).resolve()
     try:
         file_path = safe_resolve_workspace_path(
-            path,
+            Path(path),
             workspace,
             protect_read_only_file=False,
         )

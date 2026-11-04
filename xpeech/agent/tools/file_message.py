@@ -11,14 +11,14 @@ class FilePathArgs(BaseModel):
     source: str = Field(description="local file path, for example a.pdf a.zip")
 
 
-def build_file_message_tools(workspace: str | Path):
-    base = Path(workspace).expanduser().resolve()
+def build_file_message_tools(workspace: Path):
+    base = workspace.resolve()
     if not base.exists():
         raise ValueError(f"Invalid workspace: {workspace}")
 
     def safe_resolve(user_path: str) -> Path:
         return safe_resolve_workspace_path(
-            user_path,
+            Path(user_path),
             base,
             protect_read_only_file=False,
         )

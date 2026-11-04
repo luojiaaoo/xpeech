@@ -33,6 +33,7 @@ async def register_tools(
     channel_tag: str | None = None,
 ) -> None:
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
+    workspace = workspace.resolve()
     read_image, read_video, read_file, write_file, edit_file = build_file_tools(
         workspace=workspace,
         max_result_chars=config.max_result_chars,
@@ -47,7 +48,7 @@ async def register_tools(
     provider.register_function_tool(
         build_execution_request_tool(
             build_shell_tools(workspace=workspace),
-            requires_confirmation=partial(shell_requires_confirmation, workspace=workspace.resolve()),
+            requires_confirmation=partial(shell_requires_confirmation, workspace=workspace),
             not_interactive=not_interactive,
         )
     )

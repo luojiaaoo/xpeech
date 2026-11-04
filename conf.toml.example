@@ -109,7 +109,10 @@ browser_preview_path = "data/browser_preview"
 # [tool.mcpServers.filesystem]
 # description = "读写工作区文件；任务需要本地文件操作时可等待此服务就绪"
 # command = "npx"
+# stdio 通过 Linux bubblewrap 沙盒启动，cwd 为用户 workspace，HOME 为 <workspace>/home；模型工具参数保持透传
+# command 及依赖须在系统运行时目录（如 /usr、/opt）或当前 workspace 内，backend 私有目录不会自动挂载
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+# env = { API_KEY = "replace-with-service-api-key" } # 仅 stdio；禁止配置 PATH 和 HOME，两者由沙盒管理
 # enabled_tools = ["*"] # 按 MCP 原始工具名匹配，支持 *、?、[abc]，例如 ["read_*", "write_?"]
 # execution_request_tools = ["write_*", "edit_*"] # 支持通配符 *、?、[abc]；["*"] 表示全部，[] 表示不启用
 # connect_timeout = 30

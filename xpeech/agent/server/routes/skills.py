@@ -26,7 +26,7 @@ def _user_workspace(user_id: str) -> Path:
             detail="Invalid user_id",
         ) from None
 
-    workspace_root = settings.path.workspace_base_path.expanduser().resolve()
+    workspace_root = settings.path.workspace_base_path.resolve()
     workspace = (workspace_root / validated_user_id).resolve()
     if not is_relative_path(workspace, workspace_root):
         raise HTTPException(

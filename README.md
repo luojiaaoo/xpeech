@@ -36,7 +36,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 uv sync
 ```
 
-Shell 工具只支持 Linux，并依赖 bubblewrap 沙盒。Debian/Ubuntu 可这样安装：
+Shell 工具和 stdio MCP 只支持 Linux，并依赖 bubblewrap 沙盒。Debian/Ubuntu 可这样安装：
 
 ```bash
 sudo apt-get install bubblewrap
@@ -584,8 +584,14 @@ tool_timeout = 120
 ```
 
 每个会话都会把当前用户 workspace 作为 MCP workspace root。stdio MCP
-进程同时以该目录作为 `cwd`；HTTP/SSE MCP 通过标准 `roots/list` 获取同一目录。
-因此 MCP、内置文件工具和 Shell 的相对路径基准保持一致。远程 MCP 服务若需
+进程通过与 Shell 共用的 bubblewrap 沙盒启动，以该目录作为 `cwd`，并将 `HOME` 设置为
+`<workspace>/home`，覆盖继承的 HOME；MCP 的 `env` 禁止配置 `PATH` 和 `HOME`。工作区可读写，系统运行时、公共 HOME 配置和内置技能只读挂载；
+进程使用独立 PID 命名空间并移除所有 Linux capabilities，连接关闭时清理子进程。网络保持可用。
+MCP SDK 直接启动沙盒进程，`command` 和 `args` 经 `shlex.join()` 合并后统一通过沙盒内的 `bash -c` 执行，参数中的特殊字符保持字面值；可执行文件及其依赖必须位于沙盒可见的系统运行时目录
+（例如 `/usr`、`/opt`）或当前工作区内，backend 私有目录中的虚拟环境和文件不会自动暴露。
+缺少 bubblewrap 或沙盒启动失败时连接报错，不回退到宿主机执行。
+模型传入的 MCP 参数保持透传；HTTP/SSE MCP 通过标准 `roots/list` 获取工作区目录，不修改远端 HOME。
+stdio MCP、内置文件工具和 Shell 的相对路径基准保持一致。远程 MCP 服务若需
 直接读写文件，必须能以相同绝对路径访问该目录。
 
 普通搜索使用 `baidu_search` 和 `bing_search`，网页文本抓取使用 `web_fetch`。`browser_preview_base_url` 只负责生成
@@ -601,7 +607,7 @@ tool_timeout = 120
 - `command` / `args`：启动 stdio MCP Server 的命令和参数。
 - `url`：连接远程 MCP Server。`/sse` 结尾的地址使用 SSE transport，其他地址默认使用 streamable HTTP。
 - `transport`：可选，显式指定 `stdio`、`sse` 或 `streamable-http`。省略时按 `command` 或 URL 自动判断。
-- `env`：stdio Server 的环境变量。
+- `env`：仅用于 stdio Server 的环境变量，例如 `env = { API_KEY = "your-key" }`；HTTP/SSE 不允许配置。禁止设置 `PATH` 和 `HOME`，两者统一由沙盒管理。
 - `command_authorization_token`：连接远程 MCP Server 前执行的取 token 命令，stdout 作为 `authorization_token`。
 - `headers`：远程 MCP Server 的请求头，支持按用户替换占位符。
 - `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
@@ -750,9 +756,9 @@ Shell 命令默认 120 秒超时，可在单次调用中通过 `timeout_ms` 指�
 
 ### 工具安全
 
-- **统一路径解析**：文件工具和文件发送工具统一通过 `xpeech/agent/tools/helper.py` 解析路径；默认限制在工作区内，读取类操作可额外访问内置技能目录，写入和编辑仍只能落在工作区内；Shell 文件系统访问由 bwrap 限制
+- **统一路径解析**：配置文件中的路径在加载时按 backend HOME 展开并转为绝对 `Path`；工作区文件 API/内置模型工具的路径参数保持字符串，在入口按当前工作区和沙盒 HOME 解析成绝对 `Path`，内部函数只接收 `Path`，不再兼容 `str | Path`。用户的 `~` 指向 `<workspace>/home`，`~用户名` 不会按 backend 账户展开；内部工作区 `Path` 通过 `resolve()` 规范化，不展开 backend HOME。MCP 参数按服务端协议透传，不根据字段名猜测本地路径。文件工具默认限制在工作区内，读取类操作可额外访问内置技能目录；Shell 文件系统访问由 bwrap 限制
 - **预览目录隔离**：`create_browser_preview` 只能复制当前会话工作区内的目录或 HTML，每次写入 `<browser_preview_path>/<uuid>/`，请求子路径不能越出对应 UUID 目录
-- **Shell 沙盒**：Shell 命令通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离；每次调用使用独立 PID 命名空间，并移除所有 Linux capabilities
+- **进程沙盒**：Shell 命令和 stdio MCP 通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离；每个进程沙盒使用独立 PID 命名空间，并移除所有 Linux capabilities
 - **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到 `<workspace>/home`，不会在会话间共享可写状态
 - **系统高危命令拒绝**：dcg 拒绝关机重启、`init`/`telinit` 切换运行级别、格式化及写设备等高危操作，不弹确认
 - **危险命令检查**：递归删除及破坏性 Git 操作由 dcg 返回确认；非交互模式直接拒绝，检查失败也不执行

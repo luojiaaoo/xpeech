@@ -3,7 +3,6 @@ import base64
 from datetime import datetime
 import math
 import re
-from typing import Union
 import inspect
 from asyncer import asyncify
 import yaml
@@ -140,8 +139,8 @@ def compress_image(
 
 
 async def compress_video(
-    input_path: Union[str, Path],
-    output_path: Union[str, Path],
+    input_path: Path,
+    output_path: Path,
     start_time: float | None = None,
     end_time: float | None = None,
     fps: int | None = None,
@@ -165,8 +164,7 @@ async def compress_video(
     Returns:
         压缩后的视频字节和 MIME 类型
     """
-    input_path = Path(input_path)
-    output_path = Path(output_path).with_suffix(".mp4")
+    output_path = output_path.with_suffix(".mp4")
     if not input_path.exists():
         raise FileNotFoundError(f"Input video file not found: {input_path}")
 

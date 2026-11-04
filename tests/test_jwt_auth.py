@@ -1,5 +1,4 @@
 import asyncio
-import shlex
 import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -158,7 +157,7 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
         if len(started) <= 2:
             await asyncio.wait_for(both_started.wait(), timeout=5)
         await asyncio.sleep(0)
-        args = shlex.split(sandbox.wrap_command("lark-cli whoami", tmp_path))
+        args = sandbox.wrap_sandbox_command("lark-cli whoami", tmp_path)
         environment = {args[index + 1]: args[index + 2] for index, value in enumerate(args) if value == "--setenv"}
         observed.append((message.user_id, environment.get("LARKSUITE_CLI_USER_ACCESS_TOKEN")))
         if get_lark_user_access_token() is None:

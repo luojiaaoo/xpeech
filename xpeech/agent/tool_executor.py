@@ -34,7 +34,7 @@ class ToolExecutor:
 
     def __init__(
         self,
-        workspace: str | Path,
+        workspace: Path,
         max_result_chars: int,
         max_tool_timeout: float = 300.0,
     ) -> None:
@@ -42,7 +42,7 @@ class ToolExecutor:
             raise ValueError("max_result_chars must be positive")
         if max_tool_timeout <= 0:
             raise ValueError("max_tool_timeout must be positive")
-        self._workspace = Path(workspace).expanduser().resolve()
+        self._workspace = workspace.resolve()
         self._max_result_chars = max_result_chars
         self._max_tool_timeout = max_tool_timeout
 

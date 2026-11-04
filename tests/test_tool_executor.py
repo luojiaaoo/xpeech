@@ -193,9 +193,19 @@ class TestToolExecutor:
         with pytest.raises(ValidationError, match="timeout_ms"):
             ShellArgs(command="true", timeout_ms=MAX_EXEC_TIMEOUT_MS + 1)
 
+    def test_shell_builder_does_not_expand_the_backend_home(self, tmp_path: Path, monkeypatch):
+        workspace = tmp_path / "~" / "workspace"
+        workspace.mkdir(parents=True)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path / "backend-home"))
+        monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+        assert build_shell_tools(workspace).__name__ == "shell"
+
     @pytest.mark.asyncio
     async def test_shell_timeout_terminates_command_and_preserves_partial_output(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(sandbox, "wrap_command", lambda command, workspace: command)
+        monkeypatch.setattr(sandbox, "wrap_sandbox_command", lambda command, workspace: ["bash", "-c", command])
         logged_errors: list[str] = []
         monkeypatch.setattr(
             shell_module.logger,
@@ -225,7 +235,7 @@ class TestToolExecutor:
 
     @pytest.mark.asyncio
     async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(sandbox, "wrap_command", lambda command, workspace: command)
+        monkeypatch.setattr(sandbox, "wrap_sandbox_command", lambda command, workspace: ["bash", "-c", command])
 
         result = await _run_wrapped_command("printf done", tmp_path, timeout_ms=1_000)
 

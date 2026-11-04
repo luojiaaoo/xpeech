@@ -13,7 +13,7 @@ import asyncio
 import hashlib
 import inspect
 import json
-import os
+import platform
 import re
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 from ...config.settings import MCPServerSettings
 from ...utils.command_template import execute_command_template
 from .execution_request import ExecutionDecision, build_execution_request_tool, execution_request_schema
+from .sandbox import wrap_sandbox_command
 
 
 _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset(
@@ -45,7 +46,6 @@ _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset(
         "ConnectionError",
     )
 )
-_WINDOWS_SHELL_LAUNCHERS: frozenset[str] = frozenset(("npx", "npm", "pnpm", "yarn", "bunx"))
 _SANITIZE_RE = re.compile(r"_+")
 _MAX_TOOL_NAME_LENGTH = 64
 _HASH_LENGTH = 8
@@ -136,40 +136,6 @@ def _normalize_transport(
     if url and normalized == "stdio":
         raise ValueError("An MCP URL requires the sse or streamable-http transport")
     return normalized
-
-
-def _windows_command_basename(command: str) -> str:
-    return command.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
-
-
-def _normalize_windows_stdio_command(
-    command: str,
-    args: Sequence[str] | None,
-    env: Mapping[str, str] | None,
-) -> tuple[str, list[str], dict[str, str] | None]:
-    normalized_args = list(args or [])
-    normalized_env = dict(env) if env is not None else None
-    if os.name != "nt":
-        return command, normalized_args, normalized_env
-
-    basename = _windows_command_basename(command)
-    if basename in {"cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}:
-        return command, normalized_args, normalized_env
-    if basename.endswith((".exe", ".com")):
-        return command, normalized_args, normalized_env
-
-    resolved = shutil.which(command, path=(normalized_env or {}).get("PATH")) or command
-    resolved_basename = _windows_command_basename(resolved)
-    should_wrap = (
-        basename in _WINDOWS_SHELL_LAUNCHERS
-        or basename.endswith((".cmd", ".bat"))
-        or resolved_basename.endswith((".cmd", ".bat"))
-    )
-    if not should_wrap:
-        return command, normalized_args, normalized_env
-
-    comspec = (normalized_env or {}).get("COMSPEC") or os.environ.get("COMSPEC") or "cmd.exe"
-    return comspec, ["/d", "/c", command, *normalized_args], normalized_env
 
 
 async def _resolve_http_headers(
@@ -393,7 +359,7 @@ def _render_mcp_result(result: Any) -> str | list[dict[str, Any]]:
 @dataclass(frozen=True)
 class MCPServerConfig:
     server_name: str
-    workspace: str | None = None
+    workspace: Path
     command: str | None = None
     args: tuple[str, ...] = ()
     env: Mapping[str, str] | None = None
@@ -413,6 +379,12 @@ class MCPServerConfig:
             raise ValueError("MCP server must define either command or url")
         if self.command and self.url:
             raise ValueError("MCP server cannot define both command and url")
+        if self.env is not None:
+            if not self.command or self.transport != "stdio":
+                raise ValueError("MCP env is only supported for stdio servers")
+            for name in ("PATH", "HOME"):
+                if name in self.env:
+                    raise ValueError(f"MCP env cannot configure {name}; it is managed by the sandbox")
         if self.command_authorization_token is not None and not self.url:
             raise ValueError("MCP command_authorization_token requires a remote URL")
         if self.command_authorization_token is not None and not self.command_authorization_token.strip():
@@ -690,7 +662,7 @@ class MCPServerRegistration:
         close_event: asyncio.Event,
     ) -> None:
         cfg = self.config
-        workspace = Path(cfg.workspace).expanduser().resolve() if cfg.workspace else None
+        workspace = cfg.workspace.resolve()
         session = None
         try:
             async with AsyncExitStack() as stack:
@@ -700,11 +672,13 @@ class MCPServerRegistration:
                 from mcp.client.streamable_http import streamable_http_client
 
                 if cfg.command:
-                    command, args, env = _normalize_windows_stdio_command(cfg.command, cfg.args, cfg.env)
+                    if platform.system() != "Linux" or shutil.which("bwrap") is None:
+                        raise RuntimeError("Stdio MCP requires Linux with bubblewrap")
+                    command = wrap_sandbox_command([cfg.command, *cfg.args], workspace)
                     server_params = StdioServerParameters(
-                        command=command,
-                        args=args,
-                        env=env,
+                        command=command[0],
+                        args=command[1:],
+                        env=dict(cfg.env) if cfg.env is not None else None,
                         cwd=workspace,
                     )
                     read, write = await stack.enter_async_context(stdio_client(server_params))
@@ -748,8 +722,6 @@ class MCPServerRegistration:
                         raise ValueError(f"Unsupported MCP transport: {cfg.transport}")
 
                 async def list_roots_callback(_context: Any) -> types.ListRootsResult:
-                    if workspace is None:
-                        return types.ListRootsResult(roots=[])
                     return types.ListRootsResult(
                         roots=[types.Root(uri=workspace.as_uri(), name=workspace.name)]
                     )
@@ -758,7 +730,7 @@ class MCPServerRegistration:
                     ClientSession(
                         read,
                         write,
-                        list_roots_callback=list_roots_callback if workspace is not None else None,
+                        list_roots_callback=list_roots_callback,
                     )
                 )
                 await asyncio.wait_for(session.initialize(), timeout=cfg.tool_timeout)
@@ -858,8 +830,8 @@ class MCPServerRegistration:
 def create_mcp_registration(
     *,
     server_name: str,
+    workspace: Path,
     description: str = "",
-    workspace: str | Path | None = None,
     command: str | None = None,
     args: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
@@ -883,7 +855,7 @@ def create_mcp_registration(
         MCPServerConfig(
             server_name=sanitized_server_name,
             description=description,
-            workspace=str(Path(workspace).expanduser().resolve()) if workspace is not None else None,
+            workspace=workspace.resolve(),
             command=command,
             args=tuple(args or ()),
             env=dict(env) if env is not None else None,
@@ -905,7 +877,7 @@ def create_mcp_registration(
 def create_mcp_registration_from_config(
     server_name: str,
     config: MCPServerSettings,
-    workspace: str | Path | None = None,
+    workspace: Path,
 ) -> MCPServerRegistration:
     return create_mcp_registration(
         server_name=server_name,
@@ -956,7 +928,7 @@ async def get_session_mcp_registration_from_config(
     user_id: str,
     server_name: str,
     config: MCPServerSettings,
-    workspace: str | Path | None = None,
+    workspace: Path,
 ) -> MCPServerRegistration:
     """Return a reusable MCP connection owned by one conversation session."""
     if not user_id:

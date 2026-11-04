@@ -1,12 +1,13 @@
 from pathlib import Path
 from threading import Lock
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import jq
 from dotenv import load_dotenv
 from pydantic import (
     BaseModel,
+    AfterValidator,
     ConfigDict,
     Field,
     PrivateAttr,
@@ -30,6 +31,13 @@ if Path(".env").exists():
 conf_toml_path = "conf.toml"  # Configuration TOML file path
 
 
+def _resolve_config_path(path: Path) -> Path:
+    return path.expanduser().resolve()
+
+
+ConfigPath = Annotated[Path, AfterValidator(_resolve_config_path)]
+
+
 class _RoundRobinApiKeySelector:
     """Select LLM API keys in round-robin order within this server process."""
 
@@ -50,21 +58,21 @@ class _RoundRobinApiKeySelector:
 class PathConfig(BaseModel):
     """Path configuration settings."""
 
-    session_path: Path
-    session_history_path: Path
-    workspace_base_path: Path
-    sandbox_home_path: Path
-    cache_path: Path
-    log_path: Path
-    session_record_path: Path
-    session_schedule_path: Path
+    session_path: ConfigPath
+    session_history_path: ConfigPath
+    workspace_base_path: ConfigPath
+    sandbox_home_path: ConfigPath
+    cache_path: ConfigPath
+    log_path: ConfigPath
+    session_record_path: ConfigPath
+    session_schedule_path: ConfigPath
 
 
 class BrowserPreviewConfig(BaseModel):
     """Browser preview URL and file storage settings."""
 
     browser_preview_base_url: str = "http://127.0.0.1:7878/browser_preview"
-    browser_preview_path: Path = Path("data/browser_preview")
+    browser_preview_path: ConfigPath = Field(default=Path("data/browser_preview"), validate_default=True)
 
     @field_validator("browser_preview_base_url")
     @classmethod
@@ -101,7 +109,7 @@ class MCPServerSettings(BaseModel):
     description: str = Field(default="", description="服务用途，供模型在连接完成前判断是否需要等待")
     command: str | None = None
     args: list[str] = Field(default_factory=list)
-    env: dict[str, str] | None = None
+    env: dict[str, str] | None = Field(default=None, description="stdio MCP 环境变量；PATH 和 HOME 由沙盒管理，不允许配置")
     url: str | None = None
     transport: Literal["stdio", "sse", "streamable-http"] | None = None
     command_authorization_token: str | None = None
@@ -117,6 +125,16 @@ class MCPServerSettings(BaseModel):
     @classmethod
     def validate_channel_tags(cls, value: list[str]) -> list[str]:
         return normalize_channel_tags(value)
+
+    @model_validator(mode="after")
+    def validate_stdio_env(self) -> "MCPServerSettings":
+        if self.env is not None:
+            if not self.command or self.transport not in (None, "stdio"):
+                raise ValueError("MCP env is only supported for stdio servers")
+            for name in ("PATH", "HOME"):
+                if name in self.env:
+                    raise ValueError(f"MCP env cannot configure {name}; it is managed by the sandbox")
+        return self
 
 
 class LLMConfig(BaseModel):
@@ -164,7 +182,7 @@ class LLMConfig(BaseModel):
 class LarkCLIConfig(BaseModel):
     """Configuration shared by the token manager and lark-cli clients."""
 
-    database_path: Path = Path("data/lark-token-manager/tokens.db")
+    database_path: ConfigPath = Field(default=Path("data/lark-token-manager/tokens.db"), validate_default=True)
 
 
 class JWTChannelConfig(BaseModel):
@@ -332,7 +350,7 @@ class InjectPromptConfig(BaseModel):
 class WebClientConfig(BaseModel):
     """Web client storage settings."""
 
-    database_path: Path
+    database_path: ConfigPath
     cookie_name: str = Field(
         default="xpeech_session",
         min_length=1,
@@ -391,8 +409,8 @@ class Settings(BaseSettings):
 settings = Settings()
 ensure_path(settings.path.session_path)
 ensure_path(settings.path.session_history_path)
-ensure_path(settings.path.session_record_path.expanduser().parent)
-ensure_path(settings.path.session_schedule_path.expanduser().parent)
+ensure_path(settings.path.session_record_path.parent)
+ensure_path(settings.path.session_schedule_path.parent)
 ensure_path(settings.path.workspace_base_path)
 ensure_path(settings.path.cache_path)
 ensure_path(settings.path.log_path)

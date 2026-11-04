@@ -30,7 +30,42 @@ def test_get_mime_type_falls_back_to_extension():
 
 
 def test_get_mime_type_returns_none_when_unknown():
-    assert get_mime_type("example.unknown") is None
+    assert get_mime_type(Path("example.unknown")) is None
+
+
+@pytest.mark.asyncio
+async def test_tool_paths_use_sandbox_home_instead_of_backend_home(tmp_path, monkeypatch):
+    backend_home = tmp_path / "backend-home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(backend_home))
+    _, _, read_file, write_file, _ = build_file_tools(workspace)
+
+    await write_file(WriteFileArgs(path="~/notes.txt", content="user data"))
+
+    assert (workspace / "home/notes.txt").read_text() == "user data"
+    assert not (backend_home / "notes.txt").exists()
+    assert "user data" in await read_file(ReadFileArgs(path="~/notes.txt"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace_kind", ["relative", "symlink"])
+async def test_file_tools_normalize_workspace_at_construction(tmp_path, monkeypatch, workspace_kind):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(workspace, target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    supplied_workspace = Path("workspace") if workspace_kind == "relative" else alias
+    _, _, read_file, write_file, _ = build_file_tools(supplied_workspace)
+    other_directory = tmp_path / "other"
+    other_directory.mkdir()
+    monkeypatch.chdir(other_directory)
+
+    await write_file(WriteFileArgs(path="~/notes.txt", content="sandbox data"))
+
+    assert (workspace / "home/notes.txt").read_text() == "sandbox data"
+    assert "sandbox data" in await read_file(ReadFileArgs(path="~/notes.txt"))
 
 
 def _read_file_tool(workspace: Path, max_result_chars: int = 10_000):

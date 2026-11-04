@@ -37,7 +37,7 @@ class YamlHistoryRepository:
         """初始化历史目录和每个用户的文件保留上限。"""
         if max_files_per_user < 1:
             raise ValueError("max_files_per_user must be at least 1")
-        self._base_dir = ensure_path(base_dir.expanduser().resolve())
+        self._base_dir = ensure_path(base_dir.resolve())
         self._max_files_per_user = max_files_per_user
 
     @classmethod

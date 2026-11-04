@@ -530,7 +530,7 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
             remote_calls.append((name, arguments))
             return {"content": [{"type": "text", "text": "remote result"}]}
 
-    registration = create_mcp_registration(server_name="demo", command="demo", enabled_tools=["*"])
+    registration = create_mcp_registration(server_name="demo", command="demo", enabled_tools=["*"], workspace=tmp_path)
     registration._session = Session()
     [binding] = await registration._discover_tool_bindings()
     original = deepcopy(binding.schema)
