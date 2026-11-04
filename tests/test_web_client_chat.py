@@ -33,8 +33,12 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
         headers={"Content-Type": media_type},
     )
     backend_client = SimpleNamespace(aclose=AsyncMock())
-    open_chat_stream = AsyncMock(return_value=ChatStream(response, backend_client))
-    monkeypatch.setattr(proxy_routes, "open_chat_stream", open_chat_stream)
+    if endpoint == "chat_sync":
+        opener = AsyncMock(return_value=response)
+        monkeypatch.setattr(proxy_routes, "open_chat_sync", opener)
+    else:
+        opener = AsyncMock(return_value=ChatStream(response, backend_client))
+        monkeypatch.setattr(proxy_routes, "open_chat", opener)
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
@@ -63,11 +67,14 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
     assert proxied.status_code == status_code
     assert proxied.content == body
     assert proxied.headers["content-type"].startswith(media_type)
-    assert open_chat_stream.await_args.args[4] == f"http://backend.test/{endpoint}"
-    assert open_chat_stream.await_args.kwargs["accept"] == media_type
-    backend_client.aclose.assert_awaited_once()
-    assert open_chat_stream.await_args.kwargs["json_output"] is json_output
-    assert json.loads(open_chat_stream.await_args.args[3]) == {
+    assert opener.await_args.args[4] == f"http://backend.test/{endpoint}"
+    assert opener.await_args.kwargs["json_output"] is json_output
+    assert json.loads(opener.await_args.args[3]) == {
         "channel": "spoofed",
         "source": "browser",
     }
+    if endpoint == "chat_sync":
+        # 同步执行由后端生成独立会话，不透传会话 ID。
+        assert "session_id" not in opener.await_args.kwargs
+    else:
+        backend_client.aclose.assert_awaited_once()

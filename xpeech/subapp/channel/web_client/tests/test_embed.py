@@ -68,12 +68,14 @@ def send(client, path, headers):
 
 
 def stream_mock(monkeypatch):
-    stream = AsyncMock(side_effect=lambda *_args, **_kwargs: ChatStream(
+    chat = AsyncMock(side_effect=lambda *_args, **_kwargs: ChatStream(
         httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n'),
         SimpleNamespace(aclose=AsyncMock()),
     ))
-    monkeypatch.setattr(proxy, "open_chat_stream", stream)
-    return stream
+    sync = AsyncMock(return_value=httpx.Response(200, json=[{"event": "assistant", "context": "hello"}]))
+    monkeypatch.setattr(proxy, "open_chat", chat)
+    monkeypatch.setattr(proxy, "open_chat_sync", sync)
+    return SimpleNamespace(chat=chat, sync=sync)
 
 
 def test_embed_validation_is_stateless_and_does_not_create_users_or_sessions(client, tmp_path, monkeypatch):
@@ -95,7 +97,7 @@ def test_embed_validation_is_stateless_and_does_not_create_users_or_sessions(cli
     assert "set-cookie" not in identity.headers
     for sender in ("张三", "李四"):
         assert send(client, "/api/chat", {**headers, "x-sender-name": quote(sender, safe="")}).status_code == 200
-        assert stream.await_args.args[:2] == (BackendJWTParams(token), sender)
+        assert stream.chat.await_args.args[:2] == (BackendJWTParams(token), sender)
     assert send(client, "/api/answer_question", headers).status_code == 200
     assert send(client, "/api/files", headers).status_code == 200
     for mocked in (answer, file):
@@ -185,7 +187,8 @@ def test_business_jwt_is_forwarded_unchanged_for_chat_answers_and_files(client, 
         if request.url.path == "/chat_sync":
             assert request.headers["accept"] == "application/json"
             assert unquote(request.headers["x-sender-name"]) == "张三"
-            assert request.headers["x-session-id"] == SESSION_ID
+            # 同步执行由后端生成独立会话，不透传 x-session-id。
+            assert "x-session-id" not in request.headers
             return httpx.Response(200, json=[{"event": "assistant", "context": "hello"}])
         return httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n')
 
@@ -195,7 +198,7 @@ def test_business_jwt_is_forwarded_unchanged_for_chat_answers_and_files(client, 
         assert send(client, path, headers).status_code == 200
     assert [request.url.path for request in calls] == ["/chat", "/chat_sync", "/answer_question", "/files"]
     assert unquote(calls[0].headers["x-sender-name"]) == "张三"
-    assert calls[0].headers["x-session-id"] == calls[1].headers["x-session-id"] == SESSION_ID
+    assert calls[0].headers["x-session-id"] == SESSION_ID
 
 
 @pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync", "/api/answer_question"])
@@ -215,7 +218,7 @@ def test_two_embedded_conversations_keep_distinct_ids(client, monkeypatch):
     headers = bearer()
     for session_id in (SESSION_ID, SESSION_ID, NEXT_SESSION_ID):
         assert send(client, "/api/chat", {**headers, "x-session-id": session_id}).status_code == 200
-    assert [call.kwargs["session_id"] for call in stream.await_args_list] == [SESSION_ID, SESSION_ID, NEXT_SESSION_ID]
+    assert [call.kwargs["session_id"] for call in stream.chat.await_args_list] == [SESSION_ID, SESSION_ID, NEXT_SESSION_ID]
 
 
 @pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync"])
@@ -228,7 +231,8 @@ def test_embedded_sender_name_is_required_and_validated(client, monkeypatch, sen
     else:
         headers["x-sender-name"] = sender
     assert send(client, path, headers).status_code == 422
-    stream.assert_not_awaited()
+    stream.chat.assert_not_awaited()
+    stream.sync.assert_not_awaited()
 
 
 @pytest.mark.parametrize("channel", [None, "unknown", "internal", "feishu", "web_client", "", "bad name"])
@@ -274,7 +278,8 @@ def test_jwt_expiration_is_checked_again_for_each_request(client, monkeypatch):
     monkeypatch.setattr(jwt.api_jwt, "datetime", SimpleNamespace(now=lambda tz: after_expiration))
     for path in EMBED_PATHS:
         assert send(client, path, headers).status_code == 401
-    assert stream.await_count == 1
+    assert stream.chat.await_count == 1
+    assert stream.sync.await_count == 0
 
 
 def test_global_algorithm_is_used_but_no_new_lifetime_or_token_is_issued(client, monkeypatch):
@@ -308,7 +313,10 @@ def test_local_cookie_login_still_signs_backend_jwt_for_main_session(client, mon
         token = request.headers["authorization"].removeprefix("Bearer ")
         assert jwt.get_unverified_header(token)["kid"] == "web_client"
         assert jwt.decode(token, secret, algorithms=[settings.jwt.algorithm])["sub"] == "admin"
-        assert request.headers["x-session-id"] == "default"
+        if request.url.path == "/chat_sync":
+            assert "x-session-id" not in request.headers  # 同步执行由后端生成独立会话
+        else:
+            assert request.headers["x-session-id"] == "default"
         return httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n')
 
     async_client = httpx.AsyncClient

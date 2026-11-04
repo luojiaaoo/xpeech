@@ -13,7 +13,7 @@ from .....utils.channel_jwt import UserJWTAuth
 from .....utils.internal_jwt import create_internal_access_token
 from .....utils.ids import DEFAULT_SESSION_ID, validate_session_id
 from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file
-from ..backend import open_chat_stream, submit_question
+from ..backend import open_chat, open_chat_sync, submit_question
 from ..dao import User
 
 UserDependency = Callable[..., Awaitable[User | UserJWTAuth] | User | UserJWTAuth]
@@ -107,19 +107,35 @@ def create_proxy_router(
                 )
             )
         synchronous = request.url.path.endswith("/chat_sync")
-        chat_stream = await open_chat_stream(
+        if synchronous:
+            # 同步执行：后端为每次调用生成独立会话，不传 x-session-id，返回完整 JSON 事件数组。
+            upstream = await open_chat_sync(
+                backend_auth,
+                sender_name,
+                content,
+                json.dumps(metadata, ensure_ascii=False),
+                str(URL(backend_url) / "chat_sync"),
+                files=upload_data,
+                json_output=json_output,
+            )
+            return Response(
+                upstream.content,
+                status_code=upstream.status_code,
+                media_type=upstream.headers.get("content-type"),
+            )
+
+        chat_stream = await open_chat(
             backend_auth,
             sender_name,
             content,
             json.dumps(metadata, ensure_ascii=False),
-            str(URL(backend_url) / ("chat_sync" if synchronous else "chat")),
+            str(URL(backend_url) / "chat"),
             files=upload_data,
             json_output=json_output,
             session_id=session_id,
-            accept="application/json" if synchronous else "text/event-stream",
         )
         upstream = chat_stream.response
-        if synchronous or upstream.status_code >= 400:
+        if upstream.status_code >= 400:
             try:
                 body = await upstream.aread()
             finally:
