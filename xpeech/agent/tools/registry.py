@@ -47,7 +47,7 @@ async def register_tools(
 
     provider.register_function_tool(
         build_execution_request_tool(
-            build_shell_tools(workspace=workspace),
+            build_shell_tools(workspace=workspace, config=config.shell),
             requires_confirmation=partial(shell_requires_confirmation, workspace=workspace),
             not_interactive=not_interactive,
         )

@@ -36,7 +36,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 uv sync
 ```
 
-Shell 工具和 stdio MCP 只支持 Linux，并依赖 bubblewrap 沙盒。Debian/Ubuntu 可这样安装：
+Shell 工具通过 OpenSandbox 在同机 Linux Docker 主机执行，部署见 [OpenSandbox 执行环境](docs/opensandbox.md)。stdio MCP 仍依赖 bubblewrap，Debian/Ubuntu 可这样安装：
 
 ```bash
 sudo apt-get install bubblewrap
@@ -180,8 +180,8 @@ Swagger 会调用 `/token` 校验密钥并签发带 channel `kid`、有效期
 - `feishu.app_id`：飞书应用 ID
 - `feishu.app_secret`：飞书应用密钥
 
-Docker 镜像会从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签编译
-`lark-cli` 和非阻塞的 `/usr/local/bin/lark-cli-auth`。独立的 `lark-token-manager` 服务负责设备授权、
+`bash scripts/build-lark-cli.sh` 使用 Buildx 从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签独立编译
+`lark-cli` 和非阻塞的 `lark-cli-auth`，导出到 `docker_data/lark-cli/` 并只读挂载到 backend 和沙箱的 `/opt/xpeech/bin`。独立的 `lark-token-manager` 服务负责设备授权、
 令牌加密存储和周期刷新；`lark-cli` 通过内部接口取得当前 Xpeech session 的短期令牌。
 `app_id`、`app_secret` 只由 lark-token-manager 在运行时读取，修改后重启服务即可。
 backend 通过环境变量 `XPEECH_TOKEN_MANAGER_URL` 获取 lark-token-manager 的内部地址。
@@ -194,7 +194,7 @@ backend 通过环境变量 `XPEECH_TOKEN_MANAGER_URL` 获取 lark-token-manager 
 LARKSUITE_CLI_USER_ACCESS_TOKEN="<lark_user_access_token>" lark-cli docs +fetch --doc "<文档 URL 或 token>" --as user
 ```
 
-未提供令牌时使用下述托管认证流程。修改 CLI 后需重新构建 Docker 镜像才能生效。
+未提供令牌时使用下述托管认证流程。修改 CLI 后重新运行 `bash scripts/build-lark-cli.sh` 即可，无需重建运行镜像。
 
 首次执行需要用户身份的命令时，Credential Provider 会立即返回 `authorization_required` 和授权 URL，
 不会阻塞命令。也可以先执行 `lark-cli-auth login --scope "<本次任务所需 scope>"` 或
@@ -260,7 +260,9 @@ Compose 已配置相同入口。
 
 ## Docker Compose 部署
 
-Compose 会启动六类容器：
+Compose 会启动应用服务和 OpenSandbox 管理服务：
+
+- `opensandbox`：管理按用户创建的执行容器，独立镜像提供 Python、uv、Node 和 npm，CLI 通过目录挂载提供
 
 - `lark-token-manager`：飞书用户令牌管理服务
 - `backend`：Xpeech API、Agent 和工具执行服务，默认启动 16 个副本
@@ -283,9 +285,11 @@ cp .env.example .env
 ```
 
 填写 `conf.toml` 中的 `llm.api_key`、三组 JWT 密钥和 `feishu.app_secret`，
-并确认 `feishu.app_id` 等普通配置正确，然后构建并启动：
+并确认 `feishu.app_id` 等普通配置正确。在 `.env` 填写宿主机项目绝对路径 `XPEECH_HOST_ROOT` 和随机 `OPENSANDBOX_API_KEY`，然后构建 CLI、执行镜像并启动：
 
 ```bash
+bash scripts/build-lark-cli.sh
+docker compose build sandbox-image
 docker compose up -d --build
 ```
 
@@ -584,7 +588,7 @@ tool_timeout = 120
 ```
 
 每个会话都会把当前用户 workspace 作为 MCP workspace root。stdio MCP
-进程通过与 Shell 共用的 bubblewrap 沙盒启动，以该目录作为 `cwd`，并将 `HOME` 设置为
+进程通过 stdio MCP 专用的 bubblewrap 沙盒启动，以该目录作为 `cwd`，并将 `HOME` 设置为
 `<workspace>/home`，覆盖继承的 HOME；MCP 的 `env` 禁止配置 `PATH` 和 `HOME`。工作区可读写，系统运行时、公共 HOME 配置和内置技能只读挂载；
 进程使用独立 PID 命名空间并移除所有 Linux capabilities，连接关闭时清理子进程。网络保持可用。
 MCP SDK 直接启动沙盒进程，`command` 和 `args` 经 `shlex.join()` 合并后统一通过沙盒内的 `bash -c` 执行，参数中的特殊字符保持字面值；可执行文件及其依赖必须位于沙盒可见的系统运行时目录
@@ -644,7 +648,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `write_file` | 向工作区写入文件 |
 | `edit_file` | 编辑工作区内的文件 |
 | `list_dir` | 列出工作区或内置技能目录内容 |
-| `shell` | 执行 Bash 命令（带显式拦截规则和 bwrap 沙盒） |
+| `shell` | 执行 Bash 命令（dcg 检查、执行确认和 OpenSandbox 容器） |
 | `web_fetch` | 使用 requests 抓取网页、Trafilatura 提取正文和评论并输出 Markdown，保留链接和表格；模型可通过 include_images 选择保留图片信息；支持 HTTP 重定向，不启动浏览器、不执行 JavaScript |
 | `baidu_search` | 使用百度搜索中文网页，返回标题、链接、摘要；支持条数限制，不支持时间过滤 |
 | `bing_search` | 使用必应 RSS 搜索网页，返回标题、链接、摘要；支持条数限制，不支持时间过滤 |
@@ -684,7 +688,7 @@ Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook�
 检查函数 `shell_requires_confirmation` 位于 `shell/dcg/__init__.py`，由 `registry.py` 注册为确认判断回调。
 注册时通过 `partial` 绑定当前工作区，检查进程以该目录为 `cwd`，`HOME` 使用同一工作区的沙盒 home，
 `PWD` 同步为工作区路径；不修改后端进程的全局目录或环境。工作区不会作为模型可填写的参数暴露。
-检查仍在宿主环境运行，不等同于完整复现 bwrap 的挂载视图（例如独立的 `/tmp` 和只读配置挂载）。
+检查仍在宿主环境运行，不等同于完整复现 OpenSandbox 的挂载视图（例如独立的 `/tmp` 和只读配置挂载）。
 它通过随代码发布的 `xpeech/agent/tools/shell/dcg/config.toml` 启用 `core.filesystem`、`core.git` 和 `system`，
 并加载 `dcg/agent.yaml` 补充规则。一次 `dcg test` 检查转换为字符串枚举 `ExecutionDecision`：
 `allow` 对应 `ALLOW = "allow"`（直接执行），`ask` 对应 `CONFIRM = "confirm"`（用户确认），
@@ -693,12 +697,12 @@ Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook�
 关机重启、`init 0/6`、`telinit` 改变运行级别、格式化、`dd` 写设备及 dcg 命中的其他系统破坏操作直接拒绝。
 规则按实际可执行命令匹配，普通 `git init`、`echo shutdown` 不会仅因包含关键词而被拒绝。
 混合命令采用最严格结果，确认级别的删除不能掩盖后续关机命令。静态检查不推断操作是否符合用户需求，
-也不保证识别任意动态脚本内部的行为；文件系统隔离仍由 bwrap 负责。
+也不保证识别任意动态脚本内部的行为；文件系统隔离仍由 OpenSandbox 容器和挂载负责。
 未安装、检查超过 5 秒、返回格式异常或无法得出明确结论均返回工具错误，不执行、不询问。
 非交互模式下，需要确认的调用也会直接拒绝。检查进程忽略继承的 `DCG_*` 环境覆盖，固定使用项目策略。
-`SHELL_BLOCK_RULES` 保留 Python/pip 调用规范检查，key 为 `Callable[[str], bool]`，value 为提示词。
+`SHELL_BLOCK_RULES` 默认为空，不限制直接调用 Python/pip；可扩展 key 为 `Callable[[str], bool]`、value 为提示词的规则。
 判断函数接收命令字符串，返回 `True` 时拒绝执行，并将对应提示作为工具错误返回给模型。
-危险命令的确认/拒绝规则统一由 dcg 策略维护。文件系统访问边界由 bwrap 的挂载隔离和只读挂载保证，
+危险命令的确认/拒绝规则统一由 dcg 策略维护。文件系统访问边界由 OpenSandbox 的挂载隔离和只读挂载保证，
 Shell 不在宿主机上解析命令路径或拦截 `../`、`..\` 等路径文本。
 
 需要按本次调用决定是否询问时，可在注册代码中传入可选的 `requires_confirmation`：
@@ -756,34 +760,18 @@ Shell 命令默认 120 秒超时，可在单次调用中通过 `timeout_ms` 指�
 
 ### 工具安全
 
-- **统一路径解析**：配置文件中的路径在加载时按 backend HOME 展开并转为绝对 `Path`；工作区文件 API/内置模型工具的路径参数保持字符串，在入口按当前工作区和沙盒 HOME 解析成绝对 `Path`，内部函数只接收 `Path`，不再兼容 `str | Path`。用户的 `~` 指向 `<workspace>/home`，`~用户名` 不会按 backend 账户展开；内部工作区 `Path` 通过 `resolve()` 规范化，不展开 backend HOME。MCP 参数按服务端协议透传，不根据字段名猜测本地路径。文件工具默认限制在工作区内，读取类操作可额外访问内置技能目录；Shell 文件系统访问由 bwrap 限制
+- **统一路径解析**：配置文件中的路径在加载时按 backend HOME 展开并转为绝对 `Path`；工作区文件 API/内置模型工具的路径参数保持字符串，在入口按当前工作区和沙盒 HOME 解析成绝对 `Path`，内部函数只接收 `Path`，不再兼容 `str | Path`。用户的 `~` 指向 `<workspace>/home`，`~用户名` 不会按 backend 账户展开；内部工作区 `Path` 通过 `resolve()` 规范化，不展开 backend HOME。MCP 参数按服务端协议透传，不根据字段名猜测本地路径。文件工具默认限制在工作区内，读取类操作可额外访问内置技能目录；Shell 文件系统访问由 OpenSandbox 的按用户挂载限制
 - **预览目录隔离**：`create_browser_preview` 只能复制当前会话工作区内的目录或 HTML，每次写入 `<browser_preview_path>/<uuid>/`，请求子路径不能越出对应 UUID 目录
-- **进程沙盒**：Shell 命令和 stdio MCP 通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离；每个进程沙盒使用独立 PID 命名空间，并移除所有 Linux capabilities
-- **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到 `<workspace>/home`，不会在会话间共享可写状态
-- **系统高危命令拒绝**：dcg 拒绝关机重启、`init`/`telinit` 切换运行级别、格式化及写设备等高危操作，不弹确认
-- **危险命令检查**：递归删除及破坏性 Git 操作由 dcg 返回确认；非交互模式直接拒绝，检查失败也不执行
-- **Python/pip 调用检查**：继续拦截直接执行 `python` / `pip`，要求通过 uv 运行
+- **进程沙盒**：Shell 在每用户的 OpenSandbox 容器执行，工作区可读写，内置技能、HOME 公共配置和 CLI 目录只读挂载；执行监督程序清理后台子进程，容器按空闲 TTL 回收。stdio MCP 使用独立 bwrap 实现。
+- **依赖安装隔离**：Shell 工具首次使用时创建 `<workspace>/.venv-opensandbox`，`uv run` 与 `uv pip` 使用这个环境；uv 缓存、uv tool 和 npm 用户安装保存在 `<workspace>/home`。
 
-### 沙盒
+### Shell 执行环境
 
-Shell 命令会在 bwrap 进程沙盒中执行：
+Dockerfile 的 `sandbox` 构建目标通过 Miniforge 安装 Python 3.12、Node 24、uv、conda 和 mamba，可直接调用 python、pip、node。lark-cli 两个二进制通过独立 Buildx 导出和只读目录挂载提供，更新无需重建执行镜像。
 
-- 每个用户工作区会绑定为可读写目录，并作为命令工作目录；该用户的多个会话共享此工作区。
-- 每次调用启用 `--unshare-pid` 和 `--cap-drop ALL`，命令无法通过 `/proc` 查看其他调用的进程，也不保留挂载、切换用户等操作所需的 Linux capabilities。
-- 命令正常结束、超时或取消后，本次沙盒内所有进程都会被清理，包括通过 `nohup`、`&` 或 `setsid` 启动的后台进程；工作区文件仍保留。需要临时服务时，应在同一次调用中启动服务、完成访问并停止服务，不能依赖服务跨调用存活。
-- 内置技能目录以只读方式挂载，便于读取技能脚本和资源。
-- `/tmp` 和工作区父目录会使用临时文件系统隔离，避免命令看到其他工作区。
-- `/usr`、`/bin`、`/lib`、证书和 DNS 配置等系统路径以只读方式挂载，提供基础运行环境。
-- `HOME` 会指向当前会话的 `<workspace>/home`；路径参数中的 `~` 也会解析到这个目录。
-- `PATH` 会优先包含当前 HOME 下的 `.local/bin` 和 `.npm-global/bin`，`uv tool install`、`npm install -g` 的命令只在当前会话持久化。
-- `sandbox_home_path` 指定公共 HOME 配置源目录（默认为 `data/sandbox-home`）；其中的所有文件都会保留相对路径，通过 bwrap 只读映射到每个 HOME。
+HOME 指向 `<workspace>/home`，公共 HOME 配置与内置技能的映射和本地文件工具一致。文件工具直接操作本地文件，Shell 通过挂载访问同一份内容。所有 backend 副本共享用户沙箱 ID、容量槽和跨进程锁。
 
-Shell 工具首次运行时会在工作区内执行 `uv venv .venv`，为该工作区创建独立 Python 环境。
-Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `pip` 会被安全检查拦截。
-沙盒内设置了 `PIP_REQUIRE_VIRTUALENV=true` 和 `UV_PROJECT_ENVIRONMENT=<workspace>/.venv`，确保项目 Python 依赖安装进入当前工作区的 `.venv`。
-同时设置 `UV_CACHE_DIR=<workspace>/home/.cache/uv` 和 `NPM_CONFIG_PREFIX=<workspace>/home/.npm-global`，让 uv 缓存、uv tool 工具和 npm 全局工具都保留在当前会话 HOME 内。
-
-如果 `npx` 来自 nvm 或真实用户 HOME 中的 Node 安装，沙盒默认看不到它；需要把 Node/npm/npx 安装到 `/usr`、`/bin`、`/opt` 等沙盒可见路径，或在沙盒内通过可见的 npm 安装全局工具。
+部署、容量参数、挂载路径、CLI 更新及真实服务测试见 [OpenSandbox 执行环境](docs/opensandbox.md)。
 
 ## 开发
 

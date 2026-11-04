@@ -1,4 +1,4 @@
-"""Shared bubblewrap isolation for Shell and stdio MCP processes."""
+"""Bubblewrap isolation for stdio MCP and shared workspace mount helpers."""
 
 import os
 import shlex

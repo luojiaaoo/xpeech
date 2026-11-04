@@ -19,6 +19,7 @@ from xpeech.agent.tools.execution_request import (
     build_execution_request_tool,
     execution_request_schema,
 )
+from xpeech.agent.tools.shell.schema import ShellCommandResult
 from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.mcp_client import create_mcp_registration
 from xpeech.agent.tools.ask_user_question import QuestionArgs, ask_user_question
@@ -106,13 +107,10 @@ def test_noninteractive_wrapper_requires_confirmation_callback_at_registration(k
 @pytest.mark.parametrize("command", ["shutdown -h now", "reboot", "poweroff", "init 6", "telinit 0"])
 async def test_power_commands_are_rejected_without_prompting(tmp_path, monkeypatch, command):
     monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
-    initialize = AsyncMock()
     execute = AsyncMock()
-    monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", initialize)
-    monkeypatch.setattr(shell_module, "_run_wrapped_command", execute)
+    monkeypatch.setattr(shell_module.OpenSandboxExecutor, "run", execute)
     process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(b'{"decision":"deny"}', b"")))
-    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(dcg_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(
@@ -129,21 +127,17 @@ async def test_power_commands_are_rejected_without_prompting(tmp_path, monkeypat
             await answer({"decision": "confirm"})
     assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
     assert "发现高危命令，直接拒绝执行" in json.loads(events[-1]["context"])["result"]
-    initialize.assert_not_awaited()
     execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_shell_checks_once_before_confirmed_execution(tmp_path, monkeypatch):
     monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
-    initialize = AsyncMock()
-    execute = AsyncMock(return_value=shell_module.ShellCommandResult(b"removed", b"", 0))
-    monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", initialize)
-    monkeypatch.setattr(shell_module, "_run_wrapped_command", execute)
+    execute = AsyncMock(return_value=ShellCommandResult(b"removed", b"", 0))
+    monkeypatch.setattr(shell_module.OpenSandboxExecutor, "run", execute)
     process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(b'{"decision":"ask"}', b"")))
     check = AsyncMock(return_value=process)
-    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", check)
+    monkeypatch.setattr(dcg_module.asyncio, "create_subprocess_exec", check)
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(

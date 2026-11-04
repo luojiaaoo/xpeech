@@ -8,13 +8,12 @@ from openai import pydantic_function_tool
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from xpeech.agent.tool_executor import ToolExecutor
-from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.shell import tool as shell_module
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
 from xpeech.agent.tools.shell import build_shell_tools
 from xpeech.agent.tools.shell.schema import MAX_EXEC_TIMEOUT_MS, ShellArgs, ShellCommandResult
-from xpeech.agent.tools.shell.tool import _format_command_output, _guard_command, _run_wrapped_command
+from xpeech.agent.tools.shell.tool import _format_command_output, _guard_command
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 from xpeech.provider.schema import ToolCallRequest
 
@@ -121,9 +120,8 @@ class TestToolExecutor:
             "python 'unterminated",
         ],
     )
-    def test_shell_guard_still_rejects_direct_python_and_pip(self, command: str):
-        with pytest.raises(RuntimeError, match="run Python through 'uv run python/pip'"):
-            _guard_command(command)
+    def test_shell_guard_allows_direct_python_and_pip(self, command: str):
+        assert _guard_command(command) == command
 
     @pytest.mark.parametrize(
         "command",
@@ -199,55 +197,11 @@ class TestToolExecutor:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("HOME", str(tmp_path / "backend-home"))
         monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
 
         assert build_shell_tools(workspace).__name__ == "shell"
 
     @pytest.mark.asyncio
-    async def test_shell_timeout_terminates_command_and_preserves_partial_output(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(sandbox, "wrap_sandbox_command", lambda command, workspace: ["bash", "-c", command])
-        logged_errors: list[str] = []
-        monkeypatch.setattr(
-            shell_module.logger,
-            "error",
-            lambda message, *args: logged_errors.append(message.format(*args)),
-        )
-
-        result = await asyncio.wait_for(
-            _run_wrapped_command("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500),
-            timeout=5,
-        )
-
-        assert result.timed_out is True
-        assert result.stdout == b"partial output\n"
-        assert len(logged_errors) == 1
-        assert logged_errors[0].startswith("Shell command timed out after 500ms; terminating process group pid=")
-        output = _format_command_output(
-            result.stdout,
-            result.stderr,
-            result.returncode,
-            timed_out=result.timed_out,
-            timeout_ms=500,
-        )
-        assert output.startswith("ERROR: Command timed out after 0.5s")
-        assert "partial output" in output
-        assert "Command timed out after 0.5s" in output
-
-    @pytest.mark.asyncio
-    async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(sandbox, "wrap_sandbox_command", lambda command, workspace: ["bash", "-c", command])
-
-        result = await _run_wrapped_command("printf done", tmp_path, timeout_ms=1_000)
-
-        assert result.stdout == b"done"
-        assert result.returncode == 0
-        assert result.timed_out is False
-
-    @pytest.mark.asyncio
     async def test_shell_timeout_result_is_limited_normally(self, tmp_path: Path, monkeypatch):
-        async def skip_venv(_workspace: Path) -> None:
-            return None
-
         async def timed_out_command(*_args, **_kwargs) -> ShellCommandResult:
             return ShellCommandResult(
                 stdout=b"partial output\n",
@@ -257,9 +211,7 @@ class TestToolExecutor:
             )
 
         monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
-        monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", skip_venv)
-        monkeypatch.setattr(shell_module, "_run_wrapped_command", timed_out_command)
+        monkeypatch.setattr(shell_module.OpenSandboxExecutor, "run", timed_out_command)
         shell = build_shell_tools(tmp_path)
 
         [result] = [

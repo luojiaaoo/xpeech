@@ -1,0 +1,9 @@
+.git
+.venv
+.env
+docker_data
+data
+.pytest_cache
+**/__pycache__
+**/node_modules
+**/.cache

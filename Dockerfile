@@ -14,8 +14,9 @@ RUN curl -fsSL https://gitee.com/luojiaaoo/uv/releases/download/0.12.5/uv-instal
 
 WORKDIR /src/lark-cli
 
+ARG LARK_CLI_REF=v1.0.89
 RUN git clone --filter=blob:none --no-checkout https://gitee.com/luojiaaoo/lark-cli.git . && \
-    git checkout --detach v1.0.89
+    git checkout --detach "${LARK_CLI_REF}"
 COPY feishu.lark-cli/main.go ./main.go
 COPY feishu.lark-cli/generate.py /build/generate.py
 COPY feishu.lark-cli/mycred/mycred.go.tmpl /build/mycred.go.tmpl
@@ -36,7 +37,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/lark-cli . && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/lark-cli-auth ./cmd/xpeech-lark-cli-auth
 
-FROM docker.1panel.live/library/ubuntu:22.04
+# Buildx exports this target directly to a host directory. Neither application
+# nor execution images depend on the CLI build stage.
+FROM scratch AS lark-cli-export
+COPY --from=lark-cli-builder /out/lark-cli /lark-cli
+COPY --from=lark-cli-builder /out/lark-cli-auth /lark-cli-auth
+
+FROM docker.1panel.live/library/ubuntu:22.04 AS os-base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -60,6 +67,33 @@ RUN sed -i \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# A standalone Miniforge runtime for user workloads.
+FROM os-base AS sandbox
+ARG MINIFORGE_VERSION=26.9.4-1
+RUN MINIFORGE_ARCH="$(uname -m)" && \
+    case "$MINIFORGE_ARCH" in x86_64|aarch64) ;; *) exit 1 ;; esac && \
+    MINIFORGE_ASSET="Miniforge3-${MINIFORGE_VERSION}-Linux-${MINIFORGE_ARCH}.sh" && \
+    MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}" && \
+    curl -fsSL --retry 3 "${MINIFORGE_URL}/${MINIFORGE_ASSET}" -o /tmp/miniforge.sh && \
+    curl -fsSL --retry 3 "${MINIFORGE_URL}/${MINIFORGE_ASSET}.sha256" -o /tmp/miniforge.sha256 && \
+    printf '%s  /tmp/miniforge.sh\n' "$(cut -d ' ' -f1 /tmp/miniforge.sha256)" | sha256sum -c - && \
+    bash /tmp/miniforge.sh -b -p /opt/miniforge && \
+    rm -f /tmp/miniforge.sh /tmp/miniforge.sha256
+COPY docker/sandbox/condarc /opt/miniforge/.condarc
+RUN /opt/miniforge/bin/mamba create --yes --prefix /opt/miniforge/envs/runtime \
+        python=3.12 pip nodejs=24 uv && \
+    /opt/miniforge/bin/mamba clean --all --yes && \
+    ln -s /opt/miniforge/envs/runtime/bin/python /usr/local/bin/python-runtime && \
+    printf '[global]\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple\n' > /etc/pip.conf && \
+    /opt/miniforge/envs/runtime/bin/npm config --global set registry https://registry.npmmirror.com/
+COPY docker/sandbox/run_command.py /opt/xpeech/run_command.py
+ENV PATH=/opt/xpeech/bin:/opt/miniforge/envs/runtime/bin:/opt/miniforge/condabin:/opt/miniforge/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    UV_PYTHON=/usr/local/bin/python-runtime \
+    HOME=/root
+WORKDIR /workspace
+CMD ["tail", "-f", "/dev/null"]
+
+FROM os-base AS tool-runtime
 ARG DCG_VERSION=0.16.0
 RUN DCG_ARCH="$(uname -m)" && \
     case "$DCG_ARCH" in \
@@ -88,6 +122,9 @@ RUN curl -fsSL https://gitee.com/luojiaaoo/uv/releases/download/0.12.5/uv-instal
     uv --version && \
     uv python install
 
+# Keep the backend as the default target. Its runtimes are still needed by
+# local media tools, configured command templates, and stdio MCP.
+FROM tool-runtime AS backend
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
@@ -104,9 +141,6 @@ RUN cd xpeech/subapp/channel/web_client/frontend && \
     npm install --no-audit --no-fund && \
     npm run build && \
     rm -rf node_modules
-
-COPY --from=lark-cli-builder /out/lark-cli /usr/local/bin/lark-cli
-COPY --from=lark-cli-builder /out/lark-cli-auth /usr/local/bin/lark-cli-auth
 
 RUN printf '0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} + > /dev/null 2>&1\n' | crontab -
 
