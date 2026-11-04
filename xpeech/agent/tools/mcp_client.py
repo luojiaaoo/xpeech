@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ...config.settings import MCPServerSettings
 from ...utils.command_template import execute_command_template
-from .execution_request import build_execution_request_tool, execution_request_schema
+from .execution_request import ExecutionDecision, build_execution_request_tool, execution_request_schema
 
 
 _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset(
@@ -1109,7 +1109,7 @@ def register_mcp_bindings(
     provider: Any,
     execution_request_tools: list[str],
     not_interactive: bool,
-    requires_confirmation: Callable[[str], bool | Awaitable[bool]] | None = None,
+    requires_confirmation: Callable[[str], ExecutionDecision | Awaitable[ExecutionDecision]] | None = None,
 ) -> None:
     if task.cancelled():
         return

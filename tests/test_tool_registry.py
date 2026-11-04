@@ -9,10 +9,10 @@ import pytest
 
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import mcp_client, registry
-from xpeech.agent.tools import shell as shell_module
-from xpeech.agent.tools.execution_request import EXECUTION_REQUEST
+from xpeech.agent.tools.shell import dcg as shell_module
+from xpeech.agent.tools.execution_request import EXECUTION_REQUEST, ExecutionDecision
 from xpeech.agent.tools.helper import get_tool_model_cls
-from xpeech.agent.tools.shell import ShellArgs
+from xpeech.agent.tools.shell.schema import ShellArgs
 from xpeech.config.settings import ToolConfig
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
@@ -53,19 +53,14 @@ class FakeProvider:
 @pytest.mark.parametrize(
     ("returncode", "output", "expected"),
     [
-        (0, b'{"decision":"allow"}', False),
-        (1, b'{"decision":"deny"}', True),
-        (0, b'{"decision":"deny"}', True),
-        (0, b'{"decision":"ask"}', True),
-        (0, b'{"decision":"indeterminate"}', True),
-        (3, b'{"decision":"allow"}', True),
-        (0, b"{}", True),
-        (0, b"[]", True),
-        (0, b"not json", True),
-        (0, b"\xff", True),
+        (0, b'{"decision":"allow"}', ExecutionDecision.ALLOW),
+        (1, b'{"decision":"deny"}', ExecutionDecision.DENY),
+        (0, b'{"decision":"deny"}', ExecutionDecision.DENY),
+        (0, b'{"decision":"ask"}', ExecutionDecision.CONFIRM),
+        (1, b'{"decision":"ask"}', ExecutionDecision.CONFIRM),
     ],
 )
-async def test_shell_dcg_only_skips_confirmation_for_successful_allow(monkeypatch, returncode, output, expected):
+async def test_shell_dcg_returns_allow_confirm_or_reject(monkeypatch, returncode, output, expected):
     process = SimpleNamespace(returncode=returncode, communicate=AsyncMock(return_value=(output, b"")))
     spawn = AsyncMock(return_value=process)
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
@@ -78,13 +73,45 @@ async def test_shell_dcg_only_skips_confirmation_for_successful_allow(monkeypatc
     assert argv[:3] == ("dcg", "test", "--stdin")
     assert command not in argv
     assert argv[argv.index("--dialect") + 1] == "posix"
-    assert "system" in argv[argv.index("--with-packs") + 1].split(",")
+    assert argv[argv.index("--config") + 1] == str(shell_module.DCG_POLICY_DIR / "config.toml")
+    assert "--robot" in argv
+    assert spawn.call_args.kwargs["env"]["DCG_CUSTOM_PATHS"] == str(shell_module.DCG_POLICY_DIR / "agent.yaml")
 
 
 @pytest.mark.asyncio
-async def test_shell_dcg_missing_binary_requires_confirmation(monkeypatch):
+async def test_shell_dcg_missing_binary_refuses_execution(monkeypatch):
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(side_effect=FileNotFoundError("dcg")))
-    assert await shell_module.shell_requires_confirmation('{"command":"pwd"}') is True
+    with pytest.raises(RuntimeError, match="危险命令检查失败，拒绝执行"):
+        await shell_module.shell_requires_confirmation('{"command":"pwd"}')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("returncode", "output"), [
+    (0, b'{"decision":"indeterminate"}'),
+    (3, b'{"decision":"allow"}'),
+    (1, b'{"decision":"allow"}'),
+    (0, b'{"decision":"warn"}'),
+    (0, b"{}"), (0, b"[]"), (0, b"not json"), (0, b"\xff"),
+])
+async def test_shell_dcg_invalid_results_refuse_execution(monkeypatch, returncode, output):
+    process = SimpleNamespace(returncode=returncode, communicate=AsyncMock(return_value=(output, b"")))
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    with pytest.raises(RuntimeError, match="危险命令检查失败，拒绝执行"):
+        await shell_module.shell_requires_confirmation('{"command":"pwd"}')
+
+
+@pytest.mark.asyncio
+async def test_shell_dcg_ignores_ambient_policy_overrides(monkeypatch):
+    monkeypatch.setenv("DCG_BYPASS", "1")
+    monkeypatch.setenv("DCG_POLICY_DEFAULT_MODE", "log")
+    monkeypatch.setenv("DCG_CUSTOM_PATHS", "/untrusted/pack.yaml")
+    process = SimpleNamespace(returncode=0, communicate=AsyncMock(return_value=(b'{"decision":"allow"}', b"")))
+    spawn = AsyncMock(return_value=process)
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
+    assert await shell_module.shell_requires_confirmation('{"command":"pwd"}') is ExecutionDecision.ALLOW
+    env = spawn.call_args.kwargs["env"]
+    assert "DCG_BYPASS" not in env and "DCG_POLICY_DEFAULT_MODE" not in env
+    assert env["DCG_CUSTOM_PATHS"] == str(shell_module.DCG_POLICY_DIR / "agent.yaml")
 
 
 @pytest.mark.asyncio
@@ -106,14 +133,15 @@ async def test_shell_dcg_stops_and_reaps_check_on_timeout_or_cancellation(monkey
         with pytest.raises(asyncio.CancelledError):
             await task
     else:
-        assert await task is True
+        with pytest.raises(RuntimeError, match="危险命令检查失败，拒绝执行"):
+            await task
     process.kill.assert_called_once_with()
     process.wait.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("not_interactive", [False, True])
-@pytest.mark.parametrize("decision", ["allow", "deny"])
+@pytest.mark.parametrize("decision", ["allow", "ask", "deny"])
 async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch, not_interactive, decision):
     executions = []
 
@@ -136,7 +164,7 @@ async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch,
         config=ToolConfig(),
         not_interactive=not_interactive,
     )
-    command = "pwd" if decision == "allow" else "dd if=/dev/zero of=/dev/sda"
+    command = {"allow": "pwd", "ask": "rm -rf ./build", "deny": "init 6"}[decision]
     [result] = [
         result
         async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
@@ -155,7 +183,9 @@ async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch,
         assert type(args) is ShellArgs and args.command == command
     else:
         assert executions == []
-        if not_interactive:
+        if decision == "deny":
+            assert not result.succeeded and "发现高危命令，直接拒绝执行" in result.value
+        elif not_interactive:
             assert not result.succeeded and "拒绝执行" in result.value
         else:
             assert result.succeeded and result.value == EXECUTION_REQUEST
@@ -168,6 +198,9 @@ async def test_registers_supported_default_and_mcp_tools(
     monkeypatch: pytest.MonkeyPatch,
     not_interactive: bool,
 ):
+    # This test uses an argument-free shell stub; exercise only registration
+    # and leave command validation to the dcg tests above.
+    monkeypatch.setattr(registry, "shell_requires_confirmation", lambda _: ExecutionDecision.CONFIRM)
     file_tools = tuple(
         named_tool(name) for name in ("read_image", "read_video", "read_file", "write_file", "edit_file")
     )
@@ -485,10 +518,10 @@ async def test_mcp_confirmation_selection_at_registration(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("async_check", [False, True])
-@pytest.mark.parametrize("needs_confirmation", [False, True])
+@pytest.mark.parametrize("decision", list(ExecutionDecision))
 @pytest.mark.parametrize("not_interactive", [False, True])
 async def test_register_mcp_bindings_passes_confirmation_callback(
-    tmp_path, async_check, needs_confirmation, not_interactive,
+    tmp_path, async_check, decision, not_interactive,
 ):
     session = SimpleNamespace(
         list_tools=AsyncMock(return_value=SimpleNamespace(tools=[{
@@ -503,7 +536,7 @@ async def test_register_mcp_bindings_passes_confirmation_callback(
     registration._session = session
     task = registration.start_tool_discovery()
     await task
-    check = (AsyncMock if async_check else Mock)(return_value=needs_confirmation)
+    check = (AsyncMock if async_check else Mock)(return_value=decision)
     provider = FakeProvider()
     mcp_client.register_mcp_bindings(
         task,
@@ -523,9 +556,9 @@ async def test_register_mcp_bindings_passes_confirmation_callback(
     if async_check:
         check.assert_awaited_once()
     assert "execution_description" in schema["function"]["parameters"]["required"]
-    if needs_confirmation:
+    if decision is not ExecutionDecision.ALLOW:
         session.call_tool.assert_not_called()
-        if not_interactive:
+        if decision is ExecutionDecision.DENY or not_interactive:
             assert not result.succeeded and "拒绝执行" in result.value
         else:
             assert result.succeeded and result.value == EXECUTION_REQUEST

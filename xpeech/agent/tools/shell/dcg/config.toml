@@ -1,0 +1,41 @@
+# Normal commands do not match a rule and remain allowed. Destructive system
+# operations keep dcg's deny policy; reviewed workspace operations may ask.
+[general]
+fail_closed = true
+unverified_decision = "deny"
+
+[packs]
+enabled = ["core.filesystem", "core.git", "system"]
+
+[heredoc]
+enabled = true
+fallback_on_parse_error = false
+fallback_on_timeout = false
+
+[policy]
+default_mode = "deny"
+
+[policy.packs]
+"core.git" = "ask"
+"xpeech.agent" = "ask"
+
+[policy.rules]
+# Catastrophic filesystem rules retain deny. List the confirmable rules
+# explicitly so a later ask finding cannot hide a deny in the same command.
+"core.filesystem:rm-rf-general" = "ask"
+"core.filesystem:rm-glob-home" = "ask"
+"core.filesystem:rm-r-f-separate" = "ask"
+"core.filesystem:rm-recursive-force-long" = "ask"
+"core.filesystem:rm-recursive-general" = "ask"
+"core.filesystem:rm-recursive-unverified" = "ask"
+"core.filesystem:find-delete-general" = "ask"
+"core.filesystem:unlink-general" = "ask"
+"core.filesystem:truncate-zero-general" = "ask"
+"core.filesystem:shred-general" = "ask"
+"core.filesystem:tar-remove-files-general" = "ask"
+"core.filesystem:dd-overwrite-general" = "ask"
+"core.filesystem:mv-dynamic-path" = "ask"
+"core.filesystem:redirect-truncate-dynamic-path" = "ask"
+"xpeech.agent:power-command" = "deny"
+"xpeech.agent:init-runlevel" = "deny"
+"xpeech.agent:system-power" = "deny"

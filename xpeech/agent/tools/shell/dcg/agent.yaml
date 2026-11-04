@@ -1,0 +1,29 @@
+schema_version: 1
+id: xpeech.agent
+name: Xpeech agent safety
+version: 1.0.0
+description: System power control is forbidden; recursive deletion always needs approval.
+keywords: [shutdown, reboot, poweroff, halt, init, telinit, systemctl, loginctl, rm]
+destructive_patterns:
+  - name: power-command
+    pattern: '\b(?:shutdown|reboot|poweroff|halt)\b'
+    executables: [shutdown, reboot, poweroff, halt, busybox]
+    severity: critical
+    description: System shutdown, reboot and halt are prohibited.
+  - name: init-runlevel
+    pattern: '\b(?:init|telinit)\s+(?:[0-6sSqQuU])(?:\s|$)'
+    executables: [init, telinit, busybox]
+    severity: critical
+    description: Changing or reloading the system init state is prohibited.
+  - name: system-power
+    pattern: '\b(?:systemctl|loginctl)\b.*?\s+(?:poweroff|reboot|halt|suspend|hibernate|hybrid-sleep|suspend-then-hibernate|soft-reboot|kexec|exit|rescue|emergency|isolate)(?:\s|$)'
+    executables: [systemctl, loginctl]
+    severity: critical
+    description: System power and runlevel changes are prohibited.
+  # core.filesystem allows some literal temporary directories. This independent
+  # executable-scoped rule requires approval for recursive rm there as well.
+  - name: recursive-rm
+    pattern: '\brm\s+(?:(?!--)[^\s]+\s+)*?(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?:\s|$)'
+    executables: [rm, busybox]
+    severity: high
+    description: Recursive deletion requires user confirmation, including temporary files.

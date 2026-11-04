@@ -12,7 +12,7 @@ from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR
 from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import safe_resolve_workspace_path
-from xpeech.agent.tools.shell import _run_wrapped_command
+from xpeech.agent.tools.shell.tool import _run_wrapped_command
 from xpeech.exceptions import PathProtectionError
 
 

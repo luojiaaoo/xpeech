@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
+from enum import StrEnum
 from typing import Any
 
 from pydantic import Field, create_model
@@ -14,17 +15,26 @@ EXECUTION_REQUEST = "__xpeech_execution_request_7f3b9a62_d8e4_4c15_a0f7_6e92b1d8
 _DESCRIPTION = "说明本次执行具体要做什么以及目的。"
 
 
+class ExecutionDecision(StrEnum):
+    """工具执行检查的结果。"""
+
+    ALLOW = "allow"
+    CONFIRM = "confirm"
+    DENY = "deny"
+
+
 def build_execution_request_tool(
     function: Callable,
-    requires_confirmation: Callable[[str], bool | Awaitable[bool]] | None = None,
+    requires_confirmation: Callable[[str], ExecutionDecision | Awaitable[ExecutionDecision]] | None = None,
     *,
     not_interactive: bool = False,
 ) -> Callable:
     """创建同名工具，默认返回标记，交由 Agent 询问用户后执行。
 
     requires_confirmation 接收包含 execution_description 和原工具参数的 JSON
-    字符串（仅包含调用时提供的字段），支持同步或异步函数。返回 True 时询问用户，
-    False 时直接执行原函数；异常或非 bool 返回值按工具错误处理，不执行原函数。
+    字符串（仅包含调用时提供的字段），支持同步或异步函数。必须返回 ExecutionDecision：
+    CONFIRM 时询问用户，ALLOW 时直接执行，DENY 时直接拒绝高危命令，不询问用户。
+    异常或其他返回值按工具错误处理，不执行原函数。
     not_interactive=True 时必须提供 requires_confirmation；无回调的工具应在注册时过滤。
     回调判断需要确认的调用直接拒绝，不询问用户。
     """
@@ -46,12 +56,15 @@ def build_execution_request_tool(
     check_confirmation = ensure_async(requires_confirmation) if requires_confirmation is not None else None
 
     async def execution_request(args) -> Any:
-        needs_confirmation = True
-        if check_confirmation is not None:
-            needs_confirmation = await check_confirmation(args.model_dump_json(exclude_unset=True))
-            if not isinstance(needs_confirmation, bool):
-                raise TypeError("requires_confirmation must return a bool")
-        if needs_confirmation:
+        if check_confirmation is None:
+            return EXECUTION_REQUEST
+
+        decision = await check_confirmation(args.model_dump_json(exclude_unset=True))
+        if not isinstance(decision, ExecutionDecision):
+            raise TypeError("requires_confirmation must return an ExecutionDecision")
+        if decision is ExecutionDecision.DENY:
+            raise PermissionError("发现高危命令，直接拒绝执行。")
+        if decision is ExecutionDecision.CONFIRM:
             if not_interactive:
                 raise PermissionError("非交互模式下无法获取用户确认，拒绝执行该工具。")
             return EXECUTION_REQUEST

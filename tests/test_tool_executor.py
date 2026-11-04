@@ -9,18 +9,12 @@ from pydantic import BaseModel, Field, ValidationError, create_model
 
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import sandbox
-from xpeech.agent.tools import shell as shell_module
+from xpeech.agent.tools.shell import tool as shell_module
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
-from xpeech.agent.tools.shell import (
-    MAX_EXEC_TIMEOUT_MS,
-    ShellArgs,
-    ShellCommandResult,
-    _format_command_output,
-    _guard_command,
-    _run_wrapped_command,
-    build_shell_tools,
-)
+from xpeech.agent.tools.shell import build_shell_tools
+from xpeech.agent.tools.shell.schema import MAX_EXEC_TIMEOUT_MS, ShellArgs, ShellCommandResult
+from xpeech.agent.tools.shell.tool import _format_command_output, _guard_command, _run_wrapped_command
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 from xpeech.provider.schema import ToolCallRequest
 
@@ -112,11 +106,6 @@ class TestToolExecutor:
     )
     def test_shell_guard_leaves_dangerous_command_decisions_to_dcg(self, command: str):
         assert _guard_command(command) == command
-
-    @pytest.mark.parametrize("command", ["sudo reboot", "echo ready && poweroff", "/sbin/shutdown -h now", "REBOOT"])
-    def test_shell_guard_rejects_power_commands(self, command: str):
-        with pytest.raises(RuntimeError, match="shutdown/reboot/poweroff are prohibited"):
-            _guard_command(command)
 
     @pytest.mark.parametrize(
         "command",

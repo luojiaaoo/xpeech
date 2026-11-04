@@ -652,7 +652,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `feishu_schedule_list` | 查看当前用户的定时任务 |
 | `feishu_schedule_cancel` | 取消当前用户拥有的定时任务 |
 
-`shell` 已接入本地 dcg 危险命令检查：明确允许的命令直接执行，命中危险规则或无法完成检查的命令需要用户确认。
+`shell` 已接入本地 dcg 危险命令检查：普通命令直接执行，破坏性文件/Git 操作需要用户确认，系统高危命令直接拒绝；检查失败不执行，也不弹确认。
 模型调用时必须填写
 `execution_description`，说明本次具体要做什么及目的；界面会显示说明和实际执行参数，
 执行确认复用 `question` 事件，使用 `type: "confirm"` 展示说明、参数和“确认” / “取消”按钮。
@@ -673,16 +673,23 @@ Dockerfile 从 [Gitee 镜像](https://gitee.com/luojiaaoo/destructive_command_gu
 安装 dcg v0.16.0，支持 x86_64 和 aarch64，并在安装前校验发布文件的 SHA-256；
 可通过构建参数 `DCG_VERSION` 指定版本。
 Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook，也不会通过 dcg 执行待检命令。
-检查函数 `shell_requires_confirmation` 位于 `shell.py`，由 `registry.py` 注册为确认判断回调。
-它启用 `core.filesystem`、`core.git` 和 `system` 规则，覆盖危险删除、破坏性 Git 操作、
-`dd` 写设备、格式化、分区修改及危险权限、服务操作。规则存在放行例外，覆盖范围以 dcg 规则为准。
-仅当 dcg 正常退出且 JSON 中 `decision` 为 `allow` 时免确认；其余结果、未安装、检查超过 5 秒
-或返回格式异常均退回用户确认。非交互模式下，这些需要确认的调用会直接拒绝。
-`shutdown`、`reboot`、`poweroff` 保留硬拦截，即使 dcg 放行或用户确认也不会执行。
-硬拦截规则集中在 `shell.py` 的 `SHELL_BLOCK_RULES` 字典中，key 为 `Callable[[str], bool]`，value 为提示词。
+`shell` 包通过 `__init__.py` 仅导出 `build_shell_tools` 和 `shell_requires_confirmation`，
+`tool.py` 负责命令执行，`schema.py` 定义参数和结果。
+检查函数 `shell_requires_confirmation` 位于 `shell/dcg/__init__.py`，由 `registry.py` 注册为确认判断回调。
+它通过随代码发布的 `xpeech/agent/tools/shell/dcg/config.toml` 启用 `core.filesystem`、`core.git` 和 `system`，
+并加载 `dcg/agent.yaml` 补充规则。一次 `dcg test` 检查转换为字符串枚举 `ExecutionDecision`：
+`allow` 对应 `ALLOW = "allow"`（直接执行），`ask` 对应 `CONFIRM = "confirm"`（用户确认），
+`deny` 对应 `DENY = "deny"`（返回“发现高危命令，直接拒绝执行。”）。枚举定义在 `execution_request.py`。
+普通递归删除（包括临时目录里的 `rm -rf` 及分离参数、长参数写法）和破坏性 Git 操作需要确认；
+关机重启、`init 0/6`、`telinit` 改变运行级别、格式化、`dd` 写设备及 dcg 命中的其他系统破坏操作直接拒绝。
+规则按实际可执行命令匹配，普通 `git init`、`echo shutdown` 不会仅因包含关键词而被拒绝。
+混合命令采用最严格结果，确认级别的删除不能掩盖后续关机命令。静态检查不推断操作是否符合用户需求，
+也不保证识别任意动态脚本内部的行为；文件系统隔离仍由 bwrap 负责。
+未安装、检查超过 5 秒、返回格式异常或无法得出明确结论均返回工具错误，不执行、不询问。
+非交互模式下，需要确认的调用也会直接拒绝。检查进程忽略继承的 `DCG_*` 环境覆盖，固定使用项目策略。
+`SHELL_BLOCK_RULES` 保留 Python/pip 调用规范检查，key 为 `Callable[[str], bool]`，value 为提示词。
 判断函数接收命令字符串，返回 `True` 时拒绝执行，并将对应提示作为工具错误返回给模型。
-当前包括关机重启和 Python/pip 直调规则；新增规则只需添加“判断函数 → 提示词”映射。
-其余危险命令由 dcg 判断。文件系统访问边界由 bwrap 的挂载隔离和只读挂载保证，
+危险命令的确认/拒绝规则统一由 dcg 策略维护。文件系统访问边界由 bwrap 的挂载隔离和只读挂载保证，
 Shell 不在宿主机上解析命令路径或拦截 `../`、`..\` 等路径文本。
 
 需要按本次调用决定是否询问时，可在注册代码中传入可选的 `requires_confirmation`：
@@ -690,14 +697,14 @@ Shell 不在宿主机上解析命令路径或拦截 `../`、`..\` 等路径文�
 ```python
 import json
 
-from xpeech.agent.tools.execution_request import build_execution_request_tool
+from xpeech.agent.tools.execution_request import ExecutionDecision, build_execution_request_tool
 from xpeech.agent.tools.shell import build_shell_tools
 
 
-def requires_confirmation(payload: str) -> bool:
+def requires_confirmation(payload: str) -> ExecutionDecision:
     request = json.loads(payload)
     # 仅 pwd 直接执行，其他命令均询问用户。
-    return request["command"] != "pwd"
+    return ExecutionDecision.ALLOW if request["command"] == "pwd" else ExecutionDecision.CONFIRM
 
 
 provider.register_function_tool(
@@ -711,12 +718,15 @@ provider.register_function_tool(
 
 回调接收 JSON 字符串，例如 `{"command":"pwd","execution_description":"查看当前目录"}`。
 `execution_description` 与原工具参数位于同一层，仅包含调用时提供并通过参数模型校验的字段，
-不补入未提供的默认参数。回调支持同步函数或 `async def`：返回 `True` 时询问用户，
-返回 `False` 时直接执行原工具；省略回调时每次都询问。回调抛出异常、超时或返回非 `bool`
-值时，按工具错误返回，原工具不会执行。
+不补入未提供的默认参数。回调支持同步函数或 `async def`：返回 `ExecutionDecision.CONFIRM` 时询问用户，
+返回 `ExecutionDecision.ALLOW` 时直接执行原工具；返回 `ExecutionDecision.DENY` 时直接拒绝，提示“发现高危命令，直接拒绝执行。”，
+不发出 `question` 事件；省略回调时每次都询问。回调抛出异常、超时或返回其他类型时，
+按工具错误返回，原工具不会执行。
 
-`not_interactive` 默认为 `False`。设置为 `True` 时，回调返回 `True` 会直接拒绝执行，
-返回 `False` 仍直接执行，不发出 `question` 事件。此时必须提供 `requires_confirmation`，
+回调必须返回枚举成员；旧的布尔值、`None` 和普通字符串均作为类型错误处理，不会执行工具。
+
+`not_interactive` 默认为 `False`。设置为 `True` 时，回调返回 `ExecutionDecision.CONFIRM` 会直接拒绝执行，
+返回 `ExecutionDecision.ALLOW` 仍直接执行，不发出 `question` 事件。此时必须提供 `requires_confirmation`，
 否则在构造包装器时抛出 `ValueError`，提示“请在注册的时候就屏蔽掉，而不是在运行时屏蔽”。
 `registry.py` 会把当前会话的 `not_interactive` 传给 Shell 和需要确认的 MCP 包装器。
 
@@ -741,8 +751,8 @@ Shell 命令默认 120 秒超时，可在单次调用中通过 `timeout_ms` 指�
 - **预览目录隔离**：`create_browser_preview` 只能复制当前会话工作区内的目录或 HTML，每次写入 `<browser_preview_path>/<uuid>/`，请求子路径不能越出对应 UUID 目录
 - **Shell 沙盒**：Shell 命令通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离；每次调用使用独立 PID 命名空间，并移除所有 Linux capabilities
 - **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到 `<workspace>/home`，不会在会话间共享可写状态
-- **关机重启硬拦截**：禁止执行 `shutdown`、`reboot`、`poweroff`，用户确认也不能放行
-- **危险命令检查**：其余危险命令由 dcg 判断；需要确认的命令在交互模式等待用户确认，非交互模式直接拒绝
+- **系统高危命令拒绝**：dcg 拒绝关机重启、`init`/`telinit` 切换运行级别、格式化及写设备等高危操作，不弹确认
+- **危险命令检查**：递归删除及破坏性 Git 操作由 dcg 返回确认；非交互模式直接拒绝，检查失败也不执行
 - **Python/pip 调用检查**：继续拦截直接执行 `python` / `pip`，要求通过 uv 运行
 
 ### 沙盒
