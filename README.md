@@ -39,7 +39,21 @@ uv sync
 Shell 工具和 stdio MCP 只支持 Linux，并依赖 bubblewrap 沙盒。Debian/Ubuntu 可这样安装：
 
 ```bash
-sudo apt-get install bubblewrap
+sudo apt-get install bubblewrap rootlesskit slirp4netns iproute2 uidmap
+```
+
+Shell 沙盒按用户工作区复用：首次调用时创建，同一用户的不同会话共享沙盒中的 `/tmp`、网络和后台进程。
+同一用户的多个 shell 命令可在同一沙盒内并发执行，输出、超时和取消按请求独立处理。
+每次命令使用独立 bash，并从工作区目录开始执行。正在运行或等待沙盒启动的请求会保持沙盒存活；最后一个请求结束后，
+连续空闲达到 `tool.shell.sandbox_idle_timeout_seconds`（默认 600 秒，即 10 分钟）便自动销毁沙盒及其后台进程。
+之后再次调用会创建新沙盒，工作区磁盘文件仍然保留。
+服务关闭时也会清理所有 shell 沙盒。沙盒异常退出或切换飞书令牌认证模式时会重新创建。
+
+可在 `conf.toml` 中调整空闲回收时间，修改后重启服务生效：
+
+```toml
+[tool.shell]
+sandbox_idle_timeout_seconds = 600
 ```
 
 Shell 危险命令检查还需要安装 [dcg](https://gitee.com/luojiaaoo/destructive_command_guard/releases/tag/v0.16.0)

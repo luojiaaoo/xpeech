@@ -1,13 +1,7 @@
 """Build and execute the sandboxed shell tool."""
 
-import asyncio
-import os
 import platform
-import shlex
 import shutil
-import signal
-import subprocess
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from textwrap import dedent
@@ -17,33 +11,13 @@ from loguru import logger
 from .. import sandbox
 from ..helper import is_direct_python_pip_exec
 from .schema import DEFAULT_EXEC_TIMEOUT_MS, ShellArgs, ShellCommandResult
+from .session import sandbox_manager
 
 SHELL_BLOCK_RULES: dict[Callable[[str], bool], str] = {
     is_direct_python_pip_exec: (
         "run Python through 'uv run python/pip' instead of calling 'python/pip' directly."
     ),
 }
-
-
-async def _stop_process(process: asyncio.subprocess.Process) -> None:
-    """Stop the isolated shell process group and reap the shell process."""
-    if process.returncode is not None:
-        return
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        try:
-            process.kill()
-        except ProcessLookupError:
-            pass
-    try:
-        await asyncio.wait_for(process.wait(), timeout=3.0)
-    except TimeoutError:
-        try:
-            process.kill()
-        except ProcessLookupError:
-            pass
-        await process.wait()
 
 
 def _guard_command(command: str) -> str:
@@ -62,38 +36,10 @@ async def _run_wrapped_command(
     workspace: Path,
     timeout_ms: int = DEFAULT_EXEC_TIMEOUT_MS,
 ) -> ShellCommandResult:
-    wrapped_command = shlex.join(sandbox.wrap_sandbox_command(command, workspace))
-    logger.info(f"Running wrapped command: {wrapped_command}")
-    with tempfile.TemporaryFile(mode="w+b") as stdout_f, tempfile.TemporaryFile(mode="w+b") as stderr_f:
-        process = await asyncio.create_subprocess_exec(
-            "bash",
-            "-l",
-            "-c",
-            wrapped_command,
-            stdin=subprocess.DEVNULL,
-            stdout=stdout_f,
-            stderr=stderr_f,
-            cwd=workspace,
-            start_new_session=True,
-        )
-        timed_out = False
-        try:
-            await asyncio.wait_for(process.wait(), timeout=timeout_ms / 1000)
-        except TimeoutError:
-            timed_out = True
-            logger.error(
-                "Shell command timed out after {}ms; terminating process group pid={}",
-                timeout_ms,
-                process.pid,
-            )
-            await _stop_process(process)
-        except asyncio.CancelledError:
-            await _stop_process(process)
-            raise
-
-        stdout_f.seek(0)
-        stderr_f.seek(0)
-        return ShellCommandResult(stdout_f.read(), stderr_f.read(), process.returncode, timed_out)
+    result = await sandbox_manager.run(command, workspace, timeout_ms)
+    if result.timed_out:
+        logger.error("Shell command timed out after {}ms; terminating command process group", timeout_ms)
+    return result
 
 
 def _format_command_output(
@@ -122,14 +68,17 @@ def _format_command_output(
 
 
 async def _ensure_workspace_uv_venv(workspace: Path) -> None:
-    if (workspace / ".venv").exists():
-        return
-    result = await _run_wrapped_command("uv venv .venv", workspace)
-    if result.returncode != 0:
-        output = _format_command_output(
-            result.stdout, result.stderr, result.returncode, timed_out=result.timed_out
-        )
-        raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{output}")
+    # All conversations share this lock. Check inside it so another call
+    # cannot use a .venv directory while uv is still initializing it.
+    async with sandbox_manager.use(workspace) as session, session.initialization_lock:
+        if (workspace / ".venv").exists():
+            return
+        result = await _run_wrapped_command("uv venv .venv", workspace)
+        if result.returncode != 0:
+            output = _format_command_output(
+                result.stdout, result.stderr, result.returncode, timed_out=result.timed_out
+            )
+            raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{output}")
 
 
 def build_shell_tools(workspace: Path):
@@ -155,15 +104,20 @@ def build_shell_tools(workspace: Path):
         )
 
     shell.__doc__ = dedent(
-        """
+        f"""
             Execute a bash command in the current workspace and return the output.
 
             Commands run on Linux inside a bubblewrap sandbox. The current
             workspace is isolated from other workspaces.
 
             The workspace is writable; system paths and built-in skills are
-            read-only. Workspace files persist across calls; background
-            processes do not.
+            read-only. Calls in this user workspace reuse the same sandbox,
+            including /tmp, network and background processes. Multiple commands
+            can run concurrently, with separate output, timeouts and cancellation.
+            After {sandbox_manager.idle_timeout:g} seconds without active shell requests,
+            the sandbox and all its processes are stopped. Workspace files remain on disk. Each call
+            starts a new bash in the workspace; shell variables and cd do not
+            carry over.
 
             Commands time out after 120 seconds by default; timeout_ms can
             request up to 240 seconds. On timeout, partial output is returned.

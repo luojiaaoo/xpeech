@@ -92,12 +92,19 @@ class BrowserPreviewConfig(BaseModel):
         return urlsplit(self.browser_preview_base_url).path.rstrip("/")
 
 
+class ShellConfig(BaseModel):
+    """Shell sandbox lifecycle settings."""
+
+    sandbox_idle_timeout_seconds: float = Field(default=600.0, gt=0, allow_inf_nan=False)
+
+
 class ToolConfig(BaseModel):
     """Tool safety configuration settings."""
 
     max_result_chars: int = Field(default=10_000, ge=1_000, validation_alias="max_result_chars")
     max_tool_timeout: float = Field(default=300.0, gt=0, validation_alias="max_tool_timeout")
     browser_preview: BrowserPreviewConfig = Field(default_factory=BrowserPreviewConfig)
+    shell: ShellConfig = Field(default_factory=ShellConfig)
     mcp_servers: dict[str, "MCPServerSettings"] = Field(default_factory=dict, validation_alias="mcpServers")
 
 

@@ -8,14 +8,27 @@ import socket
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from xpeech.agent.server.context import lark_user_access_token_var, user_id_var
 from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR
 from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import safe_resolve_workspace_path
+from xpeech.agent.tools.shell import tool as shell_module
+from xpeech.agent.tools.shell.session import SandboxManager
 from xpeech.agent.tools.shell.tool import _run_wrapped_command
 from xpeech.exceptions import PathProtectionError
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def shell_sessions(monkeypatch):
+    manager = SandboxManager()
+    monkeypatch.setattr(shell_module, "sandbox_manager", manager)
+    try:
+        yield manager
+    finally:
+        await manager.close()
 
 
 def _option_pairs(args: list[str], option: str) -> list[tuple[str, str]]:
@@ -282,10 +295,11 @@ def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: Path) -
 )
 @pytest.mark.asyncio
 @pytest.mark.parametrize("termination", ["exit", "timeout", "cancel"])
-async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs(
+async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on_close(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     termination: str,
+    shell_sessions,
 ) -> None:
     workspace = tmp_path / "workspaces" / "current"
     workspace.mkdir(parents=True)
@@ -294,7 +308,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs(
     managed_config = config_home / ".audit-config"
     managed_config.write_text("read-only config", encoding="utf-8")
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: [])
+    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", list)
     heartbeat = workspace / "heartbeat"
     worker = "for ((i=0; i<40; i++)); do printf x >> heartbeat; sleep 0.05; done"
     command = (
@@ -308,16 +322,6 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs(
         "echo partial-output; "
         + ("true" if termination == "exit" else "sleep 30")
     )
-    create_subprocess = asyncio.create_subprocess_exec
-
-    async def spawn(*args, **kwargs):
-        assert args[:3] == ("bash", "-l", "-c")
-        wrapped_command = shlex.split(args[3])
-        assert wrapped_command[0] == "rootlesskit"
-        assert wrapped_command[wrapped_command.index("--") + 1:] == ["bash", "-c", command]
-        return await create_subprocess(*args, **kwargs)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     task = asyncio.create_task(
         _run_wrapped_command(command, workspace, timeout_ms=1_000 if termination == "timeout" else 10_000)
     )
@@ -338,6 +342,8 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs(
         assert b"partial-output" in result.stdout
         if termination == "exit":
             assert result.returncode == 0
+
+    await shell_sessions.close()
 
     pid_namespace, net_namespace, ipc_namespace, capabilities = (workspace / "isolation.txt").read_text().splitlines()
     assert pid_namespace != os.readlink("/proc/self/ns/pid")

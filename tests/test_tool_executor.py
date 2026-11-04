@@ -1,22 +1,36 @@
 import asyncio
+import platform
+import shutil
 from datetime import date
 from pathlib import Path
 from typing import Annotated
 
 import pytest
+import pytest_asyncio
 from openai import pydantic_function_tool
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import sandbox
-from xpeech.agent.tools.shell import tool as shell_module
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
 from xpeech.agent.tools.shell import build_shell_tools
+from xpeech.agent.tools.shell import tool as shell_module
 from xpeech.agent.tools.shell.schema import MAX_EXEC_TIMEOUT_MS, ShellArgs, ShellCommandResult
+from xpeech.agent.tools.shell.session import SandboxManager
 from xpeech.agent.tools.shell.tool import _format_command_output, _guard_command, _run_wrapped_command
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 from xpeech.provider.schema import ToolCallRequest
+
+
+@pytest_asyncio.fixture
+async def shell_session_manager(monkeypatch):
+    manager = SandboxManager()
+    monkeypatch.setattr(shell_module, "sandbox_manager", manager)
+    try:
+        yield manager
+    finally:
+        await manager.close()
 
 
 class EchoArgs(BaseModel):
@@ -203,9 +217,14 @@ class TestToolExecutor:
 
         assert build_shell_tools(workspace).__name__ == "shell"
 
+    @pytest.mark.skipif(
+        platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.SANDBOX_EXECUTABLES),
+        reason="Requires Linux sandbox dependencies",
+    )
     @pytest.mark.asyncio
-    async def test_shell_timeout_terminates_command_and_preserves_partial_output(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(sandbox, "wrap_sandbox_command", lambda command, workspace: ["bash", "-c", command])
+    async def test_shell_timeout_terminates_command_and_preserves_partial_output(
+        self, tmp_path: Path, monkeypatch, shell_session_manager,
+    ):
         logged_errors: list[str] = []
         monkeypatch.setattr(
             shell_module.logger,
@@ -221,7 +240,7 @@ class TestToolExecutor:
         assert result.timed_out is True
         assert result.stdout == b"partial output\n"
         assert len(logged_errors) == 1
-        assert logged_errors[0].startswith("Shell command timed out after 500ms; terminating process group pid=")
+        assert logged_errors[0].startswith("Shell command timed out after 500ms; terminating command process group")
         output = _format_command_output(
             result.stdout,
             result.stderr,
@@ -233,9 +252,12 @@ class TestToolExecutor:
         assert "partial output" in output
         assert "Command timed out after 0.5s" in output
 
+    @pytest.mark.skipif(
+        platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.SANDBOX_EXECUTABLES),
+        reason="Requires Linux sandbox dependencies",
+    )
     @pytest.mark.asyncio
-    async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(sandbox, "wrap_sandbox_command", lambda command, workspace: ["bash", "-c", command])
+    async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, shell_session_manager):
 
         result = await _run_wrapped_command("printf done", tmp_path, timeout_ms=1_000)
 

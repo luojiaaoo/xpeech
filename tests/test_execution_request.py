@@ -12,7 +12,7 @@ from xpeech.agent import loop as loop_module
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.server.routes.chat import answer_question
 from xpeech.agent.tool_executor import ToolExecutor
-from xpeech.agent.tools.shell import dcg as dcg_module, tool as shell_module
+from xpeech.agent.tools.ask_user_question import QuestionArgs, ask_user_question
 from xpeech.agent.tools.execution_request import (
     EXECUTION_REQUEST,
     ExecutionDecision,
@@ -21,7 +21,8 @@ from xpeech.agent.tools.execution_request import (
 )
 from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.mcp_client import create_mcp_registration
-from xpeech.agent.tools.ask_user_question import QuestionArgs, ask_user_question
+from xpeech.agent.tools.shell import dcg as dcg_module
+from xpeech.agent.tools.shell import tool as shell_module
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
 from xpeech.subapp.channel.feishu.cards import build_feishu_question_card
@@ -112,7 +113,7 @@ async def test_power_commands_are_rejected_without_prompting(tmp_path, monkeypat
     monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", initialize)
     monkeypatch.setattr(shell_module, "_run_wrapped_command", execute)
     process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(b'{"decision":"deny"}', b"")))
-    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(dcg_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(
@@ -143,7 +144,7 @@ async def test_shell_checks_once_before_confirmed_execution(tmp_path, monkeypatc
     monkeypatch.setattr(shell_module, "_run_wrapped_command", execute)
     process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(b'{"decision":"ask"}', b"")))
     check = AsyncMock(return_value=process)
-    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", check)
+    monkeypatch.setattr(dcg_module.asyncio, "create_subprocess_exec", check)
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(

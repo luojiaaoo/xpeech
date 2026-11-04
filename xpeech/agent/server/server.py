@@ -8,6 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from ...utils.logging import configure_logging
 from ..record import create_db_and_tables, record_engine
 from ..tools.mcp_client import close_all_mcp_connections
+from ..tools.shell.session import close_all_shell_sandboxes
 from .middleware import ContextASGIMiddleware
 
 configure_logging()
@@ -19,8 +20,11 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        await close_all_mcp_connections()
-        await record_engine.dispose()
+        try:
+            await close_all_mcp_connections()
+        finally:
+            await close_all_shell_sandboxes()
+            await record_engine.dispose()
 
 
 app = FastAPI(
