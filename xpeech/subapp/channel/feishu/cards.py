@@ -195,6 +195,20 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
         elements.extend(_feishu_field(field))
 
     if confirmation:
+        if form["description"]:
+            elements.append(
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "plain_text",
+                        "content": form["description"],
+                        "text_size": "normal",
+                        "text_align": "left",
+                        "text_color": "default",
+                    },
+                    "margin": "0px 0px 0px 0px",
+                }
+            )
         buttons = [
             {
                 "tag": "button",
@@ -261,7 +275,7 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
         },
         "header": {
             "title": plain_text(form["title"]),
-            "subtitle": plain_text(form["subtitle"]),
+            "subtitle": plain_text("" if confirmation else form["subtitle"]),
             "template": "blue",
             "padding": "12px 12px 12px 12px",
         },

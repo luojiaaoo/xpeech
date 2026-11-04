@@ -74,7 +74,7 @@ class QuestionForm(StrictBaseModel):
 class ConfirmQuestion(StrictBaseModel):
     type: Literal["confirm"] = "confirm"
     title: str = "请确认"
-    subtitle: str | None = None
+    description: str | None = None
 
 
 def validate_question_form_json(data: str | dict[str, Any]) -> dict[str, Any]:
@@ -103,7 +103,7 @@ def build_execution_question(tool_name: str, arguments: dict[str, Any], descript
     """通过确认问题展示执行说明、参数和确认 / 取消按钮。"""
     return ConfirmQuestion(
         title=f"执行确认：{tool_name}",
-        subtitle=(
+        description=(
             f"执行说明：{description}\n\n"
             f"执行参数：\n{json.dumps(arguments, ensure_ascii=False, indent=2)}\n\n"
             f"请在 {USER_TIMEOUT} 秒内确认；取消或超时均不会执行。"

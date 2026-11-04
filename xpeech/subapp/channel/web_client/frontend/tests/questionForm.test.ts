@@ -24,12 +24,15 @@ async function renderQuestion(question: Record<string, unknown>) {
 }
 
 test('confirmation questions render only confirm and cancel buttons', async () => {
-  const html = await renderQuestion({ type: 'confirm', title: '执行确认', subtitle: '是否继续？' });
+  const description = '是否继续？\n\n执行参数：\n{\n  "command": "echo hello"\n}';
+  const html = await renderQuestion({ type: 'confirm', title: '执行确认', description });
   const text = html.replace(/<[^>]+>/g, '').replace(/\s+/g, '');
   assert.equal((html.match(/<button\b/g) || []).length, 2);
   assert.ok(text.includes('确认'));
   assert.ok(text.includes('取消'));
-  assert.ok(html.includes('是否继续？'));
+  assert.ok(html.includes(description.replaceAll('"', '&quot;')));
+  assert.ok(html.includes('white-space:pre-wrap'));
+  assert.ok(html.includes('overflow-wrap:anywhere'));
   assert.ok(!/<(?:input|textarea|select)\b/.test(html));
 });
 

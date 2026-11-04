@@ -256,12 +256,24 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
         if event["event"] == "question":
             assert executions == []
             form = validate_confirm_question_json(event["context"])
-            assert "输出 hello" in form["subtitle"]
-            assert "echo hello" in form["subtitle"]
+            assert "输出 hello" in form["description"]
+            assert "echo hello" in form["description"]
             assert form["type"] == "confirm"
             assert "fields" not in form
             card = build_feishu_question_card(event["context"])
-            [actions] = card["body"]["elements"]
+            assert card["header"]["subtitle"] == {"tag": "plain_text", "content": ""}
+            [description, actions] = card["body"]["elements"]
+            assert description == {
+                "tag": "div",
+                "text": {
+                    "tag": "plain_text",
+                    "content": form["description"],
+                    "text_size": "normal",
+                    "text_align": "left",
+                    "text_color": "default",
+                },
+                "margin": "0px 0px 0px 0px",
+            }
             buttons = [column["elements"][0] for column in actions["columns"]]
             assert [button["text"]["content"] for button in buttons] == ["确认", "取消"]
             assert [button["behaviors"][0]["value"] for button in buttons] == [

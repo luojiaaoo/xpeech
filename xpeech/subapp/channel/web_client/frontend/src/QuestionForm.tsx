@@ -13,17 +13,18 @@ interface Field {
 
 interface QuestionBase {
   title?: string;
-  subtitle?: string;
 }
 
 interface FormQuestion extends QuestionBase {
   type: 'form';
+  subtitle?: string;
   submit_label?: string;
   fields: Field[];
 }
 
 interface ConfirmQuestion extends QuestionBase {
   type: 'confirm';
+  description?: string;
 }
 
 type Question = FormQuestion | ConfirmQuestion;
@@ -38,6 +39,7 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
     // Fall back to a free-text answer.
   }
   const confirmation = question?.type === 'confirm';
+  const description = question?.type === 'confirm' ? question.description : question?.subtitle;
   const fields = question?.type === 'confirm' ? [] : question?.fields || [];
   const submitLabel = question?.type === 'confirm' ? '提交' : question?.submit_label || '提交';
 
@@ -66,7 +68,11 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
   return (
     <Form layout="vertical" disabled={answered} onFinish={submit} className="question-form">
       <Typography.Title level={5}>{question?.title || (confirmation ? '请确认' : '需要补充信息')}</Typography.Title>
-      {question?.subtitle ? <Typography.Paragraph type="secondary">{question.subtitle}</Typography.Paragraph> : null}
+      {description ? (
+        <Typography.Paragraph type="secondary" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+          {description}
+        </Typography.Paragraph>
+      ) : null}
       {!confirmation && (fields.length === 0 ? (
         <Form.Item name="answer"><Input.TextArea rows={3} placeholder="请输入回答" /></Form.Item>
       ) : fields.map((field) => (
