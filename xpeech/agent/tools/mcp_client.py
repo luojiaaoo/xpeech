@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 from ...config.settings import MCPServerSettings
 from ...utils.command_template import execute_command_template
 from .execution_request import ExecutionDecision, build_execution_request_tool, execution_request_schema
-from .sandbox import wrap_sandbox_command
+from .sandbox import SANDBOX_EXECUTABLES, wrap_sandbox_command
 
 
 _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset(
@@ -674,6 +674,9 @@ class MCPServerRegistration:
                 if cfg.command:
                     if platform.system() != "Linux" or shutil.which("bwrap") is None:
                         raise RuntimeError("Stdio MCP requires Linux with bubblewrap")
+                    missing = [name for name in SANDBOX_EXECUTABLES if shutil.which(name) is None]
+                    if missing:
+                        raise RuntimeError(f"Stdio MCP requires executable(s) on PATH: {', '.join(missing)}")
                     command = wrap_sandbox_command([cfg.command, *cfg.args], workspace)
                     server_params = StdioServerParameters(
                         command=command[0],

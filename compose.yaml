@@ -70,6 +70,8 @@ services:
       - ./assets:/app/assets:ro
     cap_add:
       - SYS_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     security_opt:
       - apparmor=unconfined
       - seccomp=unconfined

@@ -10,6 +10,7 @@ from ..server.context import get_lark_user_access_token, get_user_id
 from ..skills.skill import iter_builtin_skill_dirs
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+SANDBOX_EXECUTABLES = ("bwrap", "rootlesskit", "slirp4netns", "ip", "bash")
 
 
 def _add_setenv(args: list[str], key: str, value: str) -> None:
@@ -61,7 +62,24 @@ def wrap_sandbox_command(command: str | list[str], workspace: Path) -> list[str]
     user_id = get_user_id()
     workspace_skills = workspace / "skills"
 
-    args = ["bwrap", "--new-session", "--die-with-parent", "--unshare-pid", "--cap-drop", "ALL"]
+    # RootlessKit creates a fresh network namespace and configures outbound NAT
+    # before starting bwrap. Unsharing net again in bwrap would discard that
+    # configured network. No port driver means sandbox listeners stay private.
+    # Copy up /etc so DNS is configured privately, including on hosts whose
+    # resolver listens on loopback (which is deliberately inaccessible here).
+    args = [
+        "rootlesskit",
+        "--net=slirp4netns",
+        "--disable-host-loopback",
+        "--port-driver=none",
+        "--copy-up=/etc",
+        "bwrap",
+        "--new-session",
+        "--die-with-parent",
+        "--unshare-pid",
+        "--unshare-ipc",
+        "--cap-drop", "ALL",
+    ]
 
     sandbox_env: dict[str, str] = {
         "HOME": str(home),

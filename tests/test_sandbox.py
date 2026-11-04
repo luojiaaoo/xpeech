@@ -1,8 +1,10 @@
 import asyncio
+import json
 import os
 import platform
 import shlex
 import shutil
+import socket
 from pathlib import Path
 
 import pytest
@@ -43,6 +45,21 @@ def test_sandbox_home_rejects_symlink(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="must not be a symlink"):
         sandbox.get_sandbox_home(workspace)
+
+
+def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
+    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+
+    args = sandbox.wrap_sandbox_command("true", tmp_path)
+
+    assert args[:6] == [
+        "rootlesskit", "--net=slirp4netns", "--disable-host-loopback",
+        "--port-driver=none", "--copy-up=/etc", "bwrap",
+    ]
+    assert "--unshare-ipc" in args
+    # A second net namespace would lose the route and DNS configured outside.
+    assert "--unshare-net" not in args
 
 
 def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path, monkeypatch) -> None:
@@ -221,7 +238,7 @@ def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
     assert environment["UV_CACHE_DIR"] == str(home / ".cache/uv")
     assert environment["NPM_CONFIG_PREFIX"] == str(home / ".npm-global")
     assert environment["SHELL_USER_ID"] == user_id
-    assert environment["PATH"].startswith(f"{home}/.local/bin:{home}/.npm-global/bin:")
+    assert environment["PATH"].startswith(f"{home / '.local/bin'}:{home / '.npm-global/bin'}:")
     assert writable_binds == {(str(workspace), str(workspace))}
     assert {
         (str(config_home / relative_path), str(home / relative_path)) for relative_path in config_files
@@ -258,8 +275,10 @@ def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: Path) -
 
 
 @pytest.mark.skipif(
-    platform.system() != "Linux" or any(shutil.which(name) is None for name in ("bwrap", "bash", "setsid")),
-    reason="Requires Linux with bubblewrap, bash and setsid",
+    platform.system() != "Linux" or any(
+        shutil.which(name) is None for name in (*sandbox.SANDBOX_EXECUTABLES, "setsid")
+    ),
+    reason="Requires Linux with bubblewrap, RootlessKit, slirp4netns, ip, bash and setsid",
 )
 @pytest.mark.asyncio
 @pytest.mark.parametrize("termination", ["exit", "timeout", "cancel"])
@@ -280,6 +299,8 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs(
     worker = "for ((i=0; i<40; i++)); do printf x >> heartbeat; sleep 0.05; done"
     command = (
         "readlink /proc/self/ns/pid > isolation.txt; "
+        "readlink /proc/self/ns/net >> isolation.txt; "
+        "readlink /proc/self/ns/ipc >> isolation.txt; "
         "awk '/^CapEff:/ {print $2}' /proc/self/status >> isolation.txt; "
         "if (printf modified > home/.audit-config) 2>/dev/null; then exit 1; fi; "
         f"setsid bash -c {shlex.quote(worker)} & "
@@ -292,7 +313,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs(
     async def spawn(*args, **kwargs):
         assert args[:3] == ("bash", "-l", "-c")
         wrapped_command = shlex.split(args[3])
-        assert wrapped_command[0] == "bwrap"
+        assert wrapped_command[0] == "rootlesskit"
         assert wrapped_command[wrapped_command.index("--") + 1:] == ["bash", "-c", command]
         return await create_subprocess(*args, **kwargs)
 
@@ -318,11 +339,71 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs(
         if termination == "exit":
             assert result.returncode == 0
 
-    pid_namespace, capabilities = (workspace / "isolation.txt").read_text().splitlines()
+    pid_namespace, net_namespace, ipc_namespace, capabilities = (workspace / "isolation.txt").read_text().splitlines()
     assert pid_namespace != os.readlink("/proc/self/ns/pid")
+    assert net_namespace != os.readlink("/proc/self/ns/net")
+    assert ipc_namespace != os.readlink("/proc/self/ns/ipc")
     assert int(capabilities, 16) == 0
     assert managed_config.read_text(encoding="utf-8") == "read-only config"
     await asyncio.sleep(0.1)
     stopped_heartbeat = heartbeat.read_bytes()
     await asyncio.sleep(0.2)
     assert heartbeat.read_bytes() == stopped_heartbeat
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux" or any(
+        shutil.which(name) is None for name in sandbox.SANDBOX_EXECUTABLES
+    ) or not Path("/usr/bin/python3").exists(),
+    reason="Requires Linux sandbox dependencies and system Python",
+)
+@pytest.mark.asyncio
+async def test_concurrent_sandboxes_have_private_ports_and_ipc(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
+    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    program = """
+import json, os, socket, sys
+tcp = socket.socket()
+tcp.bind(('0.0.0.0', 43821))
+tcp.listen()
+abstract = socket.socket(socket.AF_UNIX)
+abstract.bind(b'\\0xpeech-private-network')
+probe = socket.socket()
+probe.settimeout(0.5)
+assert probe.connect_ex(('10.0.2.2', int(sys.argv[1]))) != 0
+print(json.dumps({name: os.readlink('/proc/self/ns/' + name) for name in ('net', 'ipc')}), flush=True)
+sys.stdin.readline()
+"""
+    processes = []
+    namespaces = []
+    with socket.socket() as host_listener:
+        host_listener.bind(("127.0.0.1", 0))
+        host_listener.listen()
+        host_port = host_listener.getsockname()[1]
+        try:
+            for name in ("first", "second"):
+                workspace = tmp_path / name
+                workspace.mkdir()
+                process = await asyncio.create_subprocess_exec(
+                    *sandbox.wrap_sandbox_command(["/usr/bin/python3", "-c", program, str(host_port)], workspace),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                processes.append(process)
+                line = await asyncio.wait_for(process.stdout.readline(), timeout=20)
+                if not line:
+                    _, stderr = await process.communicate()
+                    pytest.fail(f"Sandbox failed to start: {stderr.decode(errors='replace')}")
+                namespaces.append(json.loads(line))
+            for kind in ("net", "ipc"):
+                assert namespaces[0][kind] != namespaces[1][kind]
+                assert all(ns[kind] != os.readlink(f"/proc/self/ns/{kind}") for ns in namespaces)
+            for process in processes:
+                _, stderr = await asyncio.wait_for(process.communicate(b"\n"), timeout=10)
+                assert process.returncode == 0, stderr.decode(errors="replace")
+        finally:
+            for process in processes:
+                if process.returncode is None:
+                    process.terminate()
+                    await asyncio.wait_for(process.communicate(), timeout=10)

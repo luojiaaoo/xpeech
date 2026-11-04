@@ -770,6 +770,9 @@ Shell 命令会在 bwrap 进程沙盒中执行：
 
 - 每个用户工作区会绑定为可读写目录，并作为命令工作目录；该用户的多个会话共享此工作区。
 - 每次调用启用 `--unshare-pid` 和 `--cap-drop ALL`，命令无法通过 `/proc` 查看其他调用的进程，也不保留挂载、切换用户等操作所需的 Linux capabilities。
+- 每次调用通过 RootlessKit 和 slirp4netns 创建独立网络命名空间，保留出站 TCP/UDP 网络访问；不转发入站端口，并禁止通过 slirp 网关访问宿主机的 loopback。各次调用的 `localhost`、监听端口和抽象 Unix socket 相互隔离。网络隔离由外层 RootlessKit 完成，内层 bwrap 不再添加 `--unshare-net`，否则会切断已配置的出口。
+- bwrap 同时启用 `--unshare-ipc`，隔离 System V IPC 和 POSIX 消息队列；`/dev/shm` 随私有 `/dev` 隔离。相同用户的调用仍共享工作区，因此工作区内文件和文件型 Unix socket 可以共享。
+- 出站 NAT 不限制公网或局域网目标；如果要阻止访问宿主机非 loopback 地址或其他内网服务，需要额外配置出口防火墙。允许外网也意味着可以通过外部服务间接交换数据。
 - 命令正常结束、超时或取消后，本次沙盒内所有进程都会被清理，包括通过 `nohup`、`&` 或 `setsid` 启动的后台进程；工作区文件仍保留。需要临时服务时，应在同一次调用中启动服务、完成访问并停止服务，不能依赖服务跨调用存活。
 - 内置技能目录以只读方式挂载，便于读取技能脚本和资源。
 - `/tmp` 和工作区父目录会使用临时文件系统隔离，避免命令看到其他工作区。
@@ -777,6 +780,8 @@ Shell 命令会在 bwrap 进程沙盒中执行：
 - `HOME` 会指向当前会话的 `<workspace>/home`；路径参数中的 `~` 也会解析到这个目录。
 - `PATH` 会优先包含当前 HOME 下的 `.local/bin` 和 `.npm-global/bin`，`uv tool install`、`npm install -g` 的命令只在当前会话持久化。
 - `sandbox_home_path` 指定公共 HOME 配置源目录（默认为 `assets/sandbox-home`）；其中的所有文件都会保留相对路径，通过 bwrap 只读映射到每个 HOME。
+
+Shell 和 stdio MCP 共用上述隔离。运行环境需要 `bwrap`、`rootlesskit`、`slirp4netns`、`ip` 和 `bash`，Docker 镜像已安装相关软件包；缺少依赖时拒绝启动，不会退回共享网络。Linux 必须允许创建用户和网络命名空间，并提供 `/dev/net/tun`（Compose 已为 backend 配置设备映射）。运行 backend 的账户需要按 RootlessKit 要求配置 `uidmap`、`/etc/subuid` 和 `/etc/subgid`；镜像已为默认的 root 账户配置 subordinate ID 范围。DNS 使用 RootlessKit 在私有 `/etc` 中生成的配置。
 
 Shell 工具首次运行时会在工作区内执行 `uv venv .venv`，为该工作区创建独立 Python 环境。
 Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `pip` 会被安全检查拦截。

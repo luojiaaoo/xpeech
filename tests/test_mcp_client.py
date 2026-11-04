@@ -287,15 +287,20 @@ async def test_stdio_uses_workspace_home_and_passes_arguments_through(tmp_path, 
             await ready
             params = captured_params[-1]
             assert Path(params.cwd) == workspace
-            assert params.command == "bwrap"
+            assert params.command == "rootlesskit"
             sandbox_command = [params.command, *params.args]
             environment = {
                 sandbox_command[index + 1]: sandbox_command[index + 2]
                 for index, argument in enumerate(sandbox_command) if argument == "--setenv"
             }
             assert environment["HOME"] == str(workspace / "home")
-            assert environment["PATH"].startswith(f"{workspace}/home/.local/bin:{workspace}/home/.npm-global/bin:")
+            home = workspace / "home"
+            assert environment["PATH"].startswith(f"{home / '.local/bin'}:{home / '.npm-global/bin'}:")
             assert "--unshare-pid" in sandbox_command
+            assert "--unshare-ipc" in sandbox_command
+            assert "--net=slirp4netns" in sandbox_command
+            assert "--disable-host-loopback" in sandbox_command
+            assert "--port-driver=none" in sandbox_command
             assert sandbox_command[sandbox_command.index("--cap-drop") + 1] == "ALL"
             assert sandbox_command[sandbox_command.index("--chdir") + 1] == str(workspace)
             assert params.env == configured_env
@@ -340,8 +345,31 @@ async def test_stdio_refuses_to_launch_without_sandbox(tmp_path, monkeypatch, sy
     assert registration._session is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["rootlesskit", "slirp4netns", "ip"])
+async def test_stdio_refuses_to_launch_without_private_network(tmp_path, monkeypatch, missing):
+    from mcp.client import stdio
+
+    def unexpected_transport(_params):
+        raise AssertionError("Must not launch a process with shared networking")
+
+    monkeypatch.setattr(mcp_client.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mcp_client.shutil, "which", lambda name: None if name == missing else f"/usr/bin/{name}")
+    monkeypatch.setattr(stdio, "stdio_client", unexpected_transport)
+    registration = mcp_client.create_mcp_registration(
+        server_name="test", command="fake-server", workspace=tmp_path,
+    )
+    ready = asyncio.get_running_loop().create_future()
+
+    await registration._run_connection(ready, asyncio.Event())
+
+    with pytest.raises(RuntimeError, match=missing):
+        await ready
+    assert registration._session is None
+
+
 @pytest.mark.skipif(
-    platform.system() != "Linux" or shutil.which("bwrap") is None
+    platform.system() != "Linux" or any(shutil.which(name) is None for name in mcp_client.SANDBOX_EXECUTABLES)
     or shutil.which("python3", path="/usr/bin:/bin") is None,
     reason="Requires Linux with bubblewrap and system Python",
 )

@@ -56,7 +56,9 @@ RUN sed -i \
     apt-get update && \
     apt-get -o Acquire::https::Verify-Peer=false update && \
     apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bubblewrap cron curl ffmpeg git jq zip tzdata xz-utils && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bubblewrap rootlesskit slirp4netns iproute2 uidmap cron curl ffmpeg git jq zip tzdata xz-utils && \
+    printf 'root:100000:65536\n' >> /etc/subuid && \
+    printf 'root:100000:65536\n' >> /etc/subgid && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
