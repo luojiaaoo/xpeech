@@ -75,26 +75,26 @@ async def chat(
 @router.post(
     "/chat_sync",
     responses={400: {"description": "The configured model does not support the requested JSON output mode"}},
-    dependencies=[Depends(acquire_chat_session, scope="request")],
 )
 async def chat_sync(
     channel: Annotated[AuthenticatedUser, Depends(require_user_jwt)],
     user_id: Annotated[str, Depends(authenticated_user_id)],
-    session_id: Annotated[str, Depends(session_id_header)],
     sender_name: Annotated[str, Depends(sender_name_header)],
     session_metadata: Annotated[dict[str, str], Depends(session_metadata)],
     content: Annotated[InputContent, Depends(content)],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
     json_output: Annotated[bool, Depends(json_output_enabled)],
 ) -> list[dict[str, Any]]:
-    """接收用户消息，阻塞运行 Agent，并一次性返回合并后的全部事件。"""
+    """接收用户消息，阻塞运行 Agent，并一次性返回合并后的全部事件。
+
+    每次调用在服务端生成独立会话，不占用会话并发锁，可与 `/chat` 或其他同步调用并发。
+    """
     result = await execute_chat(
         user_id,
         channel_tag=channel.channel_tag,
         content=content,
         sender_name=sender_name,
         channel=channel.channel,
-        session_id=session_id,
         session_metadata=session_metadata,
         files=files,
         json_output=json_output,

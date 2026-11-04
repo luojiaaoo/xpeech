@@ -72,7 +72,7 @@ function onLogout() {
 | `assistant.open()` | 通过代码主动展开聊天 iframe，无需用户点击浮动按钮 |
 | `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
 | `assistant.setInput(text, { timeoutMs? } = {})` | 替换当前对话输入框内容（允许空字符串清空），不自动发送；返回 `Promise<{ session_id }>` |
-| `assistant.chatSync(text, { jsonOutput?, timeoutMs? } = {})` | 在当前会话调用 `/api/chat_sync`，显示对话并返回 `Promise<{ session_id, events }>` |
+| `assistant.chatSync(text, { jsonOutput?, timeoutMs? } = {})` | 在当前会话后台调用 `/api/chat_sync`，不渲染到对话框，返回 `Promise<{ session_id, events }>` |
 | `assistant.onReply(callback)` | 订阅每条完整模型回复，返回取消订阅函数 |
 | `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存中的身份和 JWT，不发送服务端撤销请求 |
 
@@ -87,6 +87,7 @@ function onLogout() {
 
 调用 `init(...)` 后即可使用以下接口，SDK 会等待认证和输入框就绪再投递请求。
 `setInput()` 和 `chatSync()` 不会自动展开窗口；需要展示时调用 `open()`。
+`chatSync()` 是纯后台交互：不在对话框渲染消息或回复，也不改变输入框和加载状态。
 
 ```javascript
 // 包括用户在 iframe 手动聊天、主页面调用 chatSync 产生的回复。
@@ -119,10 +120,12 @@ unsubscribe();
 思考内容、工具事件、token 统计和出错时尚未完成的回复不作为模型回复通知。
 同步请求的回复在后端返回全部事件后逐条通知。
 
-`chatSync()` 使用当前临时会话、JWT、发送者名称及初始化时的 `sessionMetadata`，
-保留输入框草稿和待发送附件，不携带这些附件。它使用后端的非交互模式，不等待用户填写问题表单。
+`chatSync()` 使用当前 JWT、发送者名称及初始化时的 `sessionMetadata`，
+保留输入框草稿和待发送附件，不携带这些附件。它使用后端的非交互模式，不等待用户填写问题表单；
+后端为每次同步执行生成独立会话，不读取也不写入对话历史。
+本轮消息和回复只经 Promise 与 `onReply` 回传主页面，不渲染到对话框，窗口收起时也可执行。
 `jsonOutput: true` 原样转发 JSON 输出选项，需模型配置支持；不支持时返回 HTTP 400。
-当前会话正在回复时，新同步调用会拒绝，调用方可稍后重试。
+同步调用可与对话框手动聊天、其他同步调用并发执行，互不阻塞。
 HTTP 错误会拒绝 Promise；HTTP 200 返回的 `error` 事件保留在 `events` 中，调用方应自行检查。
 
 `setInput` 默认等待 30 秒，`chatSync` 默认等待 5 分钟，可通过 `timeoutMs` 调整。

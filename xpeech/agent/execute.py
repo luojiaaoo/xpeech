@@ -90,19 +90,18 @@ async def execute_chat(
     content: InputContent,
     sender_name: str,
     channel: str,
-    session_id: str = DEFAULT_SESSION_ID,
     session_metadata: dict[str, str] | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
     channel_tag: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Run a non-interactive Agent call and return all collected events."""
+    """Run a non-interactive Agent call in a freshly generated session and return all events."""
     runner, message = await _prepare_chat(
         user_id,
         content=content,
         sender_name=sender_name,
         channel=channel,
-        session_id=session_id,
+        session_id=generate_session_id(),
         session_metadata=session_metadata,
         files=files,
         json_output=json_output,

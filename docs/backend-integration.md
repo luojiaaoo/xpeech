@@ -34,7 +34,7 @@
 
 1. **一次 `/chat` 请求 = 一轮对话**。请求体是一条用户消息，响应是一条 SSE 事件流；以流正常关闭（EOF）作为整轮完成信号。常规对话在结束前发送 `token_usage`，纯命令可能直接结束。
 2. **JWT `sub` 标识用户，`x-session-id` 标识会话**。同一通道、同一用户、同一会话的流式多轮消息共享历史上下文；同一用户的不同会话共享文件工作区和记忆。
-3. **同一用户、同一会话只允许一个进行中的聊天请求**。`/chat` 与 `/chat_sync` 共享并发限制，重复请求返回 `409`。收到 `question` 时原流仍在运行，应通过另一条请求提交答案。
+3. **同一用户、同一会话只允许一个进行中的 `/chat` 请求**，重复请求返回 `409`。`/chat_sync` 不占用会话并发锁，可与 `/chat` 或其他同步调用并发。收到 `question` 时原流仍在运行，应通过另一条请求提交答案。
 4. **业务请求使用通道 JWT**。聊天、答题、文件和技能接口还必须包含用户 `sub`；不能使用内部服务 JWT 代替。
 
 不需要流式返回时，可调用 `POST /chat_sync`，一次性获取事件列表，见第 3.4 节。
@@ -169,7 +169,7 @@ claims = {
 | --- | --- | --- |
 | `Authorization` | 是 | `Bearer <token>`，见第 2 节 |
 | JWT `sub` | 是 | 用户 ID，长度 1–128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_` |
-| `x-session-id` | 是 | `default`（主会话），或规范的小写连字符 UUIDv7，例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
+| `x-session-id` | `/chat`、`/answer_question` 必填；`/chat_sync` 不需要 | `default`（主会话），或规范的小写连字符 UUIDv7，例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
 | `x-sender-name` | 是 | 展示用用户名，不能为空或纯空白；非 ASCII 字符使用 UTF-8 URL 编码 |
 | `Accept` | 建议 | `text/event-stream` |
 
@@ -226,12 +226,11 @@ curl -N --fail-with-body -X POST "http://localhost:7878/chat" \
 
 ### 3.4 同步接口 `POST /chat_sync`
 
-请求头、表单字段与 `/chat` 相同。接口阻塞到 Agent 运行结束，一次性返回 JSON 事件列表：
+请求头、表单字段与 `/chat` 相同，但不需要 `x-session-id`。接口阻塞到 Agent 运行结束，一次性返回 JSON 事件列表：
 
 ```bash
 curl --fail-with-body -X POST "http://localhost:7878/chat_sync" \
   -H "Authorization: Bearer <JWT>" \
-  -H "x-session-id: 018f0000-0000-7000-8000-000000000001" \
   -H "x-sender-name: demo-user" \
   -F 'content=[{"text":"你好，请介绍一下自己"}]'
 ```
@@ -244,7 +243,7 @@ curl --fail-with-body -X POST "http://localhost:7878/chat_sync" \
 ```
 
 - 保留事件顺序，合并连续的 `assistant`、`thinking` 分片，过滤 `assistant_end`、`thinking_end`；文本不会跨结束标记合并，其他事件保留。
-- 与 `/chat` 共享用户工作区和并发限制，但每次同步调用均从空的对话历史开始，不读取已有聊天上下文；本轮历史另存为非交互类型，不覆盖流式会话历史。需要连续多轮上下文时请使用 `/chat`。
+- 与 `/chat` 共享用户工作区，但不占用会话并发锁，可与 `/chat` 或其他同步调用并发。每次同步调用在服务端生成独立会话 ID，从空的历史开始，不读取已有聊天上下文；本轮历史另存为非交互类型，不影响流式会话历史。需要连续多轮上下文时请使用 `/chat`。
 - 在工具注册阶段跳过追问及创建、查看、取消调度工具，适合不需要交互的任务。
 - 同步模式不拦截 `/help`、`/new`、`/clear` 等内置命令，这些内容按普通消息处理。
 - 客户端和网关需为整个任务设置足够的等待时间。
@@ -521,11 +520,11 @@ curl -N --fail-with-body -X POST "http://localhost:7878/chat" \
 
 | 场景 | 行为 |
 | --- | --- |
-| 同一用户、同一会话已有 `/chat` 或 `/chat_sync` | 新聊天请求返回 `409`，`detail` 为 `Session '<id>' already has an active chat request` |
+| 同一用户、同一会话已有进行中的 `/chat` | 新的 `/chat` 请求返回 `409`，`detail` 为 `Session '<id>' already has an active chat request`；`/chat_sync` 不受此限制 |
 | 同一通道的上一轮 `/chat` 结束后发下一条消息 | 正常，沿用该用户、会话的流式历史 |
 | 同一用户换新会话 ID 或换通道 | 隔离流式历史，文件工作区与记忆仍共享 |
 | 不同用户使用相同会话 ID | 按用户隔离 |
-| `x-session-id` 缺失、空值、非 `default` 且非规范 UUIDv7 | 返回 `422` |
+| `x-session-id` 缺失、空值、非 `default` 且非规范 UUIDv7 | 返回 `422`（仅 `/chat`、`/answer_question`；`/chat_sync` 不需要该头） |
 
 请以响应结束作为释放本地会话队列的时机；收到 `token_usage` 后继续读取至 EOF，再发送下一轮。
 
@@ -537,7 +536,7 @@ curl -N --fail-with-body -X POST "http://localhost:7878/chat" \
 | `401` | JWT 缺失、无效、过期，`kid` 不合法，用户 `sub` 缺失/非法，或 `/token` 凭据错误 | `Invalid or expired bearer token` / `Incorrect JWT secret`；修正身份或重新签发 |
 | `403` | 文件路径越界，或非 Feishu 通道访问后台消息 | `File is outside the workspace` 等 |
 | `404` | 下载文件不存在 | `File not found` |
-| `409` | 同一用户、同一会话并发聊天 | 等待现有请求结束，按会话排队 |
+| `409` | 同一用户、同一会话并发 `/chat` | 等待现有请求结束，按会话排队 |
 | `422` | 必填头缺失、会话 ID 非法、用户名空白或非法 UTF-8、JSON 字符串非法等 | `Invalid session_id` / `Invalid JSON format` 等；修正参数 |
 | `500` | 服务端或 Agent 执行异常，且尚未建立流式响应 | 记录响应和请求信息，按业务策略处理 |
 
@@ -855,7 +854,7 @@ Authorization: Bearer <feishu-channel-token>
 | GET | `/docs`、`/redoc`、`/openapi.json` | 无 | API 文档 |
 | POST | `/token` | HTTP Basic 通道名与通道密钥 | 表单 `username` 指定用户，换取短期 JWT |
 | POST | `/chat` | 通道 JWT，含用户 `sub` | 发送消息并返回 SSE 事件流 |
-| POST | `/chat_sync` | 通道 JWT，含用户 `sub` | 非交互执行，一次性返回合并后的事件列表 |
+| POST | `/chat_sync` | 通道 JWT，含用户 `sub` | 非交互执行，一次性返回合并后的事件列表；服务端生成独立会话，不需要 `x-session-id`，不占会话并发锁 |
 | POST | `/answer_question` | 通道 JWT，含同一用户 `sub` | 提交当前会话的追问答案 |
 | GET | `/files?path=...` | 通道 JWT，含同一用户 `sub` | 下载用户工作区文件 |
 | GET | `/background_message` | Feishu 通道 JWT，无需 `sub` | 领取后台任务消息，长轮询 |

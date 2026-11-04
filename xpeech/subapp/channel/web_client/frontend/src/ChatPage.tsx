@@ -153,6 +153,7 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
   const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const syncRequests = useRef(new Set<AbortController>());
   const sendRef = useRef(send);
   sendRef.current = send;
 
@@ -167,7 +168,11 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
     });
   }, [embedded, sessionId]);
 
-  useEffect(() => () => requestRef.current?.abort(), []);
+  useEffect(() => () => {
+    requestRef.current?.abort();
+    syncRequests.current.forEach((controller) => controller.abort());
+    syncRequests.current.clear();
+  }, []);
 
   useEffect(() => {
     if (active) return;
@@ -195,22 +200,24 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
   }
 
   async function send(text: string, sync?: SyncOptions): Promise<ChatEvent[]> {
-    if (!active || loading || requestRef.current) {
-      if (sync) throw new Error('当前会话正在回复，请稍后重试');
-      return [];
-    }
+    // 同步调用可与对话框手动聊天、其他同步调用并发；后端每次同步执行使用独立生成的会话。
+    if (!sync && (!active || loading || requestRef.current)) return [];
     if (!text.trim() && (sync || files.length === 0)) return [];
     const controller = new AbortController();
-    requestRef.current = controller;
     const sentFiles = sync ? [] : files;
-    const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
-    setMessages((current) => startChatTurn(current, display));
-    if (!sync) {
+    // 同步交互纯后台执行：不写入对话、不影响输入框和加载状态，
+    // 结果只经 Promise 与 onReply（xpeech:reply）回传主页面。
+    if (sync) {
+      syncRequests.current.add(controller);
+    } else {
+      requestRef.current = controller;
+      const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
+      setMessages((current) => startChatTurn(current, display));
       setValue('');
       setFiles([]);
       setAttachmentsOpen(false);
+      setLoading(true);
     }
-    setLoading(true);
     const replies = collectReplies((content) => {
       if (embedded) postToParent({
         type: 'xpeech:reply', session_id: sessionId, content,
@@ -222,7 +229,7 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
       const requestText = pendingUserPrefix ? `${pendingUserPrefix}\n\n===\n\n${text}` : text;
       const receive = (event: ChatEvent) => {
         if (!controller.signal.aborted) {
-          appendEvent(event);
+          if (!sync) appendEvent(event);
           replies.push(event);
         }
       };
@@ -233,10 +240,7 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
         for (const event of events) {
           if (controller.signal.aborted) break;
           receive(event);
-          if (event.event === 'assistant') {
-            replies.finish();
-            appendEvent({ event: 'assistant_end', context: '' });
-          }
+          if (event.event === 'assistant') replies.finish();
         }
       } else {
         await streamChat(requestText, sentFiles, receive, { sessionId, signal: controller.signal });
@@ -244,18 +248,22 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
       if (!controller.signal.aborted) replies.finish();
       return events;
     } catch (error) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && !sync) {
         setMessages((current) => appendChatEvent(current, { event: 'error', context: String(error) }));
         message.error(String(error));
       }
       if (sync) throw error;
       return [];
     } finally {
-      if (!controller.signal.aborted) {
-        setMessages(finishChatTurn);
-        setLoading(false);
+      if (sync) {
+        syncRequests.current.delete(controller);
+      } else {
+        if (!controller.signal.aborted) {
+          setMessages(finishChatTurn);
+          setLoading(false);
+        }
+        if (requestRef.current === controller) requestRef.current = null;
       }
-      if (requestRef.current === controller) requestRef.current = null;
     }
   }
 

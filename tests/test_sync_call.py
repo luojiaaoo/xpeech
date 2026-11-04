@@ -13,6 +13,7 @@ from xpeech.utils.channel_jwt import UserTokenParams, create_token
 
 UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 BUSY_UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000002"
+GENERATED_SESSION_ID = "018f0000-0000-7000-8000-0000000000ff"
 
 
 def chat_headers(**extra):
@@ -54,7 +55,8 @@ def fake_runner(monkeypatch, tmp_path):
     return runner
 
 
-def test_chat_sync_returns_collected_events(fake_runner):
+def test_chat_sync_returns_collected_events(fake_runner, monkeypatch):
+    monkeypatch.setattr("xpeech.agent.execute.generate_session_id", lambda: GENERATED_SESSION_ID)
     response = TestClient(app).post(
         "/chat_sync",
         headers=chat_headers(**{"x-session-id": UUID7_SESSION_ID}),
@@ -74,7 +76,8 @@ def test_chat_sync_returns_collected_events(fake_runner):
         "kwargs": {"not_interactive": True, "channel_tag": None},
     }
     [message] = fake_runner.messages
-    assert message.session_id == UUID7_SESSION_ID
+    # 会话 ID 由服务端生成，忽略请求头里的 x-session-id。
+    assert message.session_id == GENERATED_SESSION_ID
     assert message.sender_name == "Alice"
     assert message.channel == "web_client"
     assert message.session_metadata == {"trace": "t1"}
@@ -113,15 +116,11 @@ def test_channel_jwt_signed_with_another_channels_key_is_rejected(fake_runner):
     assert fake_runner.messages == []
 
 
-@pytest.mark.parametrize(
-    "session_id",
-    ["default", UUID7_SESSION_ID],
-)
-def test_chat_sync_initializes_non_interactive_tools_for_every_session(
+def test_chat_sync_initializes_non_interactive_tools_without_session_header(
     fake_runner,
-    session_id,
 ):
-    headers = chat_headers(**{"x-session-id": session_id})
+    headers = chat_headers()
+    del headers["x-session-id"]
 
     response = TestClient(app).post(
         "/chat_sync",
@@ -178,7 +177,7 @@ def test_chat_sync_saves_attachments_to_workspace(fake_runner, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_chat_sync_conflicts_with_active_session(fake_runner):
+async def test_chat_sync_ignores_the_session_chat_guard(fake_runner):
     assert await CHAT_GUARD.try_acquire("user", BUSY_UUID7_SESSION_ID)
     try:
         async with httpx.AsyncClient(
@@ -187,14 +186,15 @@ async def test_chat_sync_conflicts_with_active_session(fake_runner):
         ) as client:
             response = await client.post(
                 "/chat_sync",
-                headers=chat_headers(**{"x-session-id": BUSY_UUID7_SESSION_ID}),
+                headers=chat_headers(),
                 data={"content": '[{"text":"hello"}]'},
             )
     finally:
         await CHAT_GUARD.release("user", BUSY_UUID7_SESSION_ID)
 
-    assert response.status_code == 409
-    assert fake_runner.messages == []
+    # chat_sync 不占用会话并发锁：同一会话正在 /chat 时也可并发执行。
+    assert response.status_code == 200
+    assert len(fake_runner.messages) == 1
 
 
 def test_chat_sync_uses_subject_even_when_request_names_another_user(fake_runner, monkeypatch):

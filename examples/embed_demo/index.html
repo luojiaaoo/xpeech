@@ -22,8 +22,18 @@
     #status { font-size: 14px; margin-top: 20px; }
     textarea, input { width: 100%; padding: 12px; border: 1px solid #dfe5ef; border-radius: 9px; font: inherit; }
     #replies { white-space: pre-wrap; overflow-wrap: anywhere; }
+    #replies p { margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: #f4f7fb; }
+    #replies .sync-call { background: #eef4ff; color: #2a4c9c; }
+    #replies .sync-reply { background: #eaf7ef; color: #1d6a3c; }
+    #replies .log-error { background: #fdeeee; color: #a12622; }
+    #replies pre { margin: 8px 0; padding: 12px; border-radius: 8px; background: #f4f7fb; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .log-title { margin: 24px 0 8px; font-size: 15px; }
+    .reply-boxes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .reply-box { padding: 14px 16px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
+    .reply-box h3 { margin: 0 0 8px; font-size: 13px; color: #5b6578; }
+    .reply-content { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 3.2em; }
     .test-notice { padding: 16px; border: 1px solid #f2cc7a; border-radius: 9px; background: #fff8e6; color: #775414; }
-    @media (max-width: 600px) { main { margin: 24px auto; padding: 16px; } article { padding: 24px; } }
+    @media (max-width: 600px) { main { margin: 24px auto; padding: 16px; } article { padding: 24px; } .reply-boxes { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -55,7 +65,21 @@
     <label for="prompt">主页面交互内容</label>
     <textarea id="prompt" rows="3">请介绍一下你能做什么</textarea>
     <button id="fill" class="secondary" disabled>填入对话输入框</button>
-    <button id="sync" disabled>同步发送</button>
+    <button id="sync" disabled>同步发送（纯后台）</button>
+    <p class="test-notice">同步发送是纯后台交互：不展开聊天窗口，消息和回复都不渲染到对话框，
+      结果只回传主页面。可对照聊天窗口确认对话框无任何变化。</p>
+    <h2 class="log-title">模型回复展示</h2>
+    <div class="reply-boxes">
+      <section class="reply-box">
+        <h3>流式对话最后回复（跟随对话框同步变动）</h3>
+        <div id="stream-reply" class="reply-content" aria-live="polite">—</div>
+      </section>
+      <section class="reply-box">
+        <h3>同步调用最后回复（chatSync 返回的最后 ass 消息）</h3>
+        <div id="sync-last-reply" class="reply-content" aria-live="polite">—</div>
+      </section>
+    </div>
+    <h2 class="log-title">主页面交互记录</h2>
     <div id="replies" aria-live="polite"></div>
     <p id="status" role="status">正在加载聊天组件…</p>
   </article></main>
@@ -71,6 +95,8 @@
     const connect = document.querySelector('#connect');
     const channel = document.querySelector('#channel');
     const secretKey = document.querySelector('#secret-key');
+    const streamReply = document.querySelector('#stream-reply');
+    const syncLastReply = document.querySelector('#sync-last-reply');
     let assistant;
     let senderName;
     let assistantTitle;
@@ -80,6 +106,12 @@
     window.addEventListener('xpeech:error', event => {
       status.textContent = `连接失败：${event.detail.message}`;
     });
+    function log(text, className) {
+      const entry = document.createElement('p');
+      entry.textContent = text;
+      if (className) entry.className = className;
+      replies.appendChild(entry);
+    }
     async function loadJWT(credentials) {
       // Test-only: production must obtain JWTs from the business backend without sending a signing key.
       const response = await fetch('/api/assistant/jwt', {
@@ -95,10 +127,15 @@
       // Freeze these test parameters for renewal until the next connection/login.
       const credentials = { channel: channel.value.trim(), secret_key: secretKey.value };
       assistant.init(() => loadJWT(credentials), senderName, assistantTitle, sessionMetadata);
-      assistant.onReply(({ content }) => {
-        const reply = document.createElement('p');
-        reply.textContent = `模型回复：${content}`;
-        replies.appendChild(reply);
+      assistant.onReply(({ content, request_id }) => {
+        // request_id 为空表示用户在对话框手动聊天（流式）；否则是 chatSync 的后台回复。
+        if (request_id == null) {
+          // 跟随对话框内大模型响应同步变动：每条完整回复完成后更新为最新一条。
+          streamReply.textContent = content;
+          log(`对话框手动聊天回复：${content}`);
+        } else {
+          log(`后台同步回复（onReply，请求 ${request_id}）：${content}`, 'sync-reply');
+        }
       });
       loggedIn = true;
       open.disabled = false;
@@ -122,6 +159,7 @@
       assistant?.destroy();
       assistant = undefined;
       replies.replaceChildren();
+      streamReply.textContent = syncLastReply.textContent = '—';
       service.value = url.origin;
       status.textContent = '正在连接聊天前端…';
       try {
@@ -165,15 +203,29 @@
       sync.addEventListener('click', async () => {
         const version = connectionVersion;
         sync.disabled = true;
-        status.textContent = '正在等待同步回复…';
+        const started = Date.now();
+        log(`发起后台同步请求：${prompt.value}`, 'sync-call');
+        status.textContent = '正在后台同步调用，不会显示在对话框…';
         try {
-          assistant.open();
-          const { events } = await assistant.chatSync(prompt.value);
+          // 纯后台交互：不展开聊天窗口，消息和回复都不渲染到对话框。
+          const { session_id, events } = await assistant.chatSync(prompt.value);
           if (version !== connectionVersion) return;
           const failure = events.find(event => event.event === 'error');
-          status.textContent = failure ? `同步交互失败：${failure.context}` : '同步交互完成，回复已回传主页面。';
-        } catch (error) { if (version === connectionVersion) status.textContent = error.message; }
-        finally { if (version === connectionVersion) sync.disabled = !loggedIn; }
+          const lastAss = events.filter(event => event.event === 'assistant').at(-1);
+          syncLastReply.textContent = lastAss ? lastAss.context : '（本次同步没有 assistant 消息）';
+          log(`同步完成（会话 ${session_id}，耗时 ${Date.now() - started}ms），`
+            + `后端返回 ${events.length} 条事件，对话框无任何变化：`, failure ? 'log-error' : 'sync-reply');
+          const raw = document.createElement('pre');
+          raw.textContent = JSON.stringify(events, null, 2);
+          replies.appendChild(raw);
+          status.textContent = failure ? `同步交互失败：${failure.context}` : '同步交互完成（对话框无任何变化），回复已回传主页面。';
+        } catch (error) {
+          if (version === connectionVersion) {
+            syncLastReply.textContent = `同步失败：${error.message}`;
+            log(`同步请求失败：${error.message}`, 'log-error');
+            status.textContent = error.message;
+          }
+        } finally { if (version === connectionVersion) sync.disabled = !loggedIn; }
       });
       toggle.addEventListener('click', () => {
         if (loggedIn) {

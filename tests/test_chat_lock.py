@@ -37,12 +37,18 @@ def test_sender_name_header_is_required():
 
 
 def test_session_id_header_is_required_without_a_default_value():
-    for path in ("/chat", "/chat_sync", "/answer_question"):
+    for path in ("/chat", "/answer_question"):
         parameters = app.openapi()["paths"][path]["post"]["parameters"]
         session_id = next(parameter for parameter in parameters if parameter["name"] == "x-session-id")
         assert session_id["in"] == "header"
         assert session_id["required"] is True
         assert "default" not in session_id["schema"]
+
+
+def test_chat_sync_declares_no_session_id_header():
+    parameters = app.openapi()["paths"]["/chat_sync"]["post"]["parameters"]
+
+    assert all(parameter["name"] != "x-session-id" for parameter in parameters)
 
 
 def test_session_id_header_accepts_default_and_uuidv7():
@@ -109,7 +115,7 @@ def test_chat_initializes_all_tools_for_every_session(
         UUID7_SESSION_ID.replace("-", ""),
     ],
 )
-@pytest.mark.parametrize("path", ["/chat", "/chat_sync", "/answer_question"])
+@pytest.mark.parametrize("path", ["/chat", "/answer_question"])
 @pytest.mark.parametrize("channel", ["web_client", "feishu"])
 def test_chat_rejects_missing_empty_or_invalid_session_ids(session_id, path, channel):
     token = create_token(UserTokenParams(channel, user_id="user"))
