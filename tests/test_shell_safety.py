@@ -65,5 +65,16 @@ pytestmark = [
     ('echo "$(telinit 6)"', ExecutionDecision.DENY),
     ('uv run python -c "import os; os.system(\'init 6\')"', ExecutionDecision.DENY),
 ])
-async def test_shell_policy_decision(command, expected):
-    assert await shell_requires_confirmation(json.dumps({"command": command})) is expected
+async def test_shell_policy_decision(tmp_path, command, expected):
+    assert await shell_requires_confirmation(json.dumps({"command": command}), workspace=tmp_path) is expected
+
+
+async def test_shell_policy_reads_the_workspace_home(tmp_path):
+    payload = json.dumps({"command": "printf data > ~/report.md"})
+    target = tmp_path / "home" / "report.md"
+    assert await shell_requires_confirmation(payload, workspace=tmp_path) is ExecutionDecision.ALLOW
+    assert not target.exists()  # Inspection must not execute the command.
+
+    target.write_text("existing workspace data")
+    assert await shell_requires_confirmation(payload, workspace=tmp_path) is ExecutionDecision.DENY
+    assert target.read_text() == "existing workspace data"

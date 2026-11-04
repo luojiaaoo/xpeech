@@ -1,6 +1,7 @@
 import asyncio
 import json
 from copy import deepcopy
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -114,7 +115,9 @@ async def test_power_commands_are_rejected_without_prompting(tmp_path, monkeypat
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
     current_provider = provider()
     current_provider.register_function_tool(
-        build_execution_request_tool(shell_module.build_shell_tools(tmp_path), dcg_module.shell_requires_confirmation)
+        build_execution_request_tool(
+            shell_module.build_shell_tools(tmp_path), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
+        )
     )
     call = ToolCallRequest(
         id="1", name="shell", arguments={"command": command, "execution_description": "测试硬拦截"}
@@ -143,7 +146,9 @@ async def test_shell_checks_once_before_confirmed_execution(tmp_path, monkeypatc
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", check)
     current_provider = provider()
     current_provider.register_function_tool(
-        build_execution_request_tool(shell_module.build_shell_tools(tmp_path), dcg_module.shell_requires_confirmation)
+        build_execution_request_tool(
+            shell_module.build_shell_tools(tmp_path), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
+        )
     )
     call = ToolCallRequest(
         id="1", name="shell", arguments={"command": "rm -rf ./build", "execution_description": "删除构建目录"}

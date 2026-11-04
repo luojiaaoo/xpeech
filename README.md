@@ -676,6 +676,9 @@ Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook�
 `shell` 包通过 `__init__.py` 仅导出 `build_shell_tools` 和 `shell_requires_confirmation`，
 `tool.py` 负责命令执行，`schema.py` 定义参数和结果。
 检查函数 `shell_requires_confirmation` 位于 `shell/dcg/__init__.py`，由 `registry.py` 注册为确认判断回调。
+注册时通过 `partial` 绑定当前工作区，检查进程以该目录为 `cwd`，`HOME` 使用同一工作区的沙盒 home，
+`PWD` 同步为工作区路径；不修改后端进程的全局目录或环境。工作区不会作为模型可填写的参数暴露。
+检查仍在宿主环境运行，不等同于完整复现 bwrap 的挂载视图（例如独立的 `/tmp` 和只读配置挂载）。
 它通过随代码发布的 `xpeech/agent/tools/shell/dcg/config.toml` 启用 `core.filesystem`、`core.git` 和 `system`，
 并加载 `dcg/agent.yaml` 补充规则。一次 `dcg test` 检查转换为字符串枚举 `ExecutionDecision`：
 `allow` 对应 `ALLOW = "allow"`（直接执行），`ask` 对应 `CONFIRM = "confirm"`（用户确认），

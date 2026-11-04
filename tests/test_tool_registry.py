@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -60,13 +61,13 @@ class FakeProvider:
         (1, b'{"decision":"ask"}', ExecutionDecision.CONFIRM),
     ],
 )
-async def test_shell_dcg_returns_allow_confirm_or_reject(monkeypatch, returncode, output, expected):
+async def test_shell_dcg_returns_allow_confirm_or_reject(tmp_path, monkeypatch, returncode, output, expected):
     process = SimpleNamespace(returncode=returncode, communicate=AsyncMock(return_value=(output, b"")))
     spawn = AsyncMock(return_value=process)
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
     command = "echo '目录'; $(some-command)"
 
-    assert await shell_module.shell_requires_confirmation(json.dumps({"command": command})) is expected
+    assert await shell_module.shell_requires_confirmation(json.dumps({"command": command}), workspace=tmp_path) is expected
 
     process.communicate.assert_awaited_once_with(command.encode("utf-8"))
     argv = spawn.call_args.args
@@ -76,13 +77,16 @@ async def test_shell_dcg_returns_allow_confirm_or_reject(monkeypatch, returncode
     assert argv[argv.index("--config") + 1] == str(shell_module.DCG_POLICY_DIR / "config.toml")
     assert "--robot" in argv
     assert spawn.call_args.kwargs["env"]["DCG_CUSTOM_PATHS"] == str(shell_module.DCG_POLICY_DIR / "agent.yaml")
+    assert spawn.call_args.kwargs["cwd"] == tmp_path.resolve()
+    assert spawn.call_args.kwargs["env"]["HOME"] == str(tmp_path / "home")
+    assert spawn.call_args.kwargs["env"]["PWD"] == str(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_shell_dcg_missing_binary_refuses_execution(monkeypatch):
+async def test_shell_dcg_missing_binary_refuses_execution(tmp_path, monkeypatch):
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(side_effect=FileNotFoundError("dcg")))
     with pytest.raises(RuntimeError, match="危险命令检查失败，拒绝执行"):
-        await shell_module.shell_requires_confirmation('{"command":"pwd"}')
+        await shell_module.shell_requires_confirmation('{"command":"pwd"}', workspace=tmp_path)
 
 
 @pytest.mark.asyncio
@@ -93,30 +97,68 @@ async def test_shell_dcg_missing_binary_refuses_execution(monkeypatch):
     (0, b'{"decision":"warn"}'),
     (0, b"{}"), (0, b"[]"), (0, b"not json"), (0, b"\xff"),
 ])
-async def test_shell_dcg_invalid_results_refuse_execution(monkeypatch, returncode, output):
+async def test_shell_dcg_invalid_results_refuse_execution(tmp_path, monkeypatch, returncode, output):
     process = SimpleNamespace(returncode=returncode, communicate=AsyncMock(return_value=(output, b"")))
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
     with pytest.raises(RuntimeError, match="危险命令检查失败，拒绝执行"):
-        await shell_module.shell_requires_confirmation('{"command":"pwd"}')
+        await shell_module.shell_requires_confirmation('{"command":"pwd"}', workspace=tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_shell_dcg_ignores_ambient_policy_overrides(monkeypatch):
+async def test_shell_dcg_ignores_ambient_policy_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("DCG_BYPASS", "1")
     monkeypatch.setenv("DCG_POLICY_DEFAULT_MODE", "log")
     monkeypatch.setenv("DCG_CUSTOM_PATHS", "/untrusted/pack.yaml")
     process = SimpleNamespace(returncode=0, communicate=AsyncMock(return_value=(b'{"decision":"allow"}', b"")))
     spawn = AsyncMock(return_value=process)
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
-    assert await shell_module.shell_requires_confirmation('{"command":"pwd"}') is ExecutionDecision.ALLOW
+    assert await shell_module.shell_requires_confirmation('{"command":"pwd"}', workspace=tmp_path) is ExecutionDecision.ALLOW
     env = spawn.call_args.kwargs["env"]
     assert "DCG_BYPASS" not in env and "DCG_POLICY_DEFAULT_MODE" not in env
     assert env["DCG_CUSTOM_PATHS"] == str(shell_module.DCG_POLICY_DIR / "agent.yaml")
 
 
 @pytest.mark.asyncio
+async def test_shell_dcg_keeps_concurrent_workspaces_separate(tmp_path, monkeypatch):
+    backend_cwd = Path.cwd()
+    backend_home = os.environ.get("HOME")
+    workspaces = [tmp_path / "first", tmp_path / "second"]
+    for workspace in workspaces:
+        workspace.mkdir()
+
+    def process(*_args, **_kwargs):
+        return SimpleNamespace(returncode=0, communicate=AsyncMock(return_value=(b'{"decision":"allow"}', b"")))
+
+    spawn = AsyncMock(side_effect=process)
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
+    results = await asyncio.gather(*(
+        shell_module.shell_requires_confirmation('{"command":"pwd"}', workspace=workspace)
+        for workspace in workspaces
+    ))
+    assert results == [ExecutionDecision.ALLOW, ExecutionDecision.ALLOW]
+    contexts = {call.kwargs["cwd"]: call.kwargs["env"] for call in spawn.call_args_list}
+    assert set(contexts) == set(workspaces)
+    for workspace in workspaces:
+        assert contexts[workspace]["HOME"] == str(workspace / "home")
+        assert contexts[workspace]["PWD"] == str(workspace)
+    assert Path.cwd() == backend_cwd
+    assert os.environ.get("HOME") == backend_home
+
+
+@pytest.mark.asyncio
+async def test_shell_dcg_refuses_invalid_workspace_without_spawning(tmp_path, monkeypatch):
+    spawn = AsyncMock()
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
+    workspace = tmp_path / "missing"
+    with pytest.raises(RuntimeError, match="危险命令检查失败，拒绝执行"):
+        await shell_module.shell_requires_confirmation('{"command":"pwd"}', workspace=workspace)
+    spawn.assert_not_awaited()
+    assert not workspace.exists()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cancelled", [False, True])
-async def test_shell_dcg_stops_and_reaps_check_on_timeout_or_cancellation(monkeypatch, cancelled):
+async def test_shell_dcg_stops_and_reaps_check_on_timeout_or_cancellation(tmp_path, monkeypatch, cancelled):
     started = asyncio.Event()
 
     async def communicate(_command):
@@ -126,7 +168,7 @@ async def test_shell_dcg_stops_and_reaps_check_on_timeout_or_cancellation(monkey
     process = SimpleNamespace(returncode=None, communicate=communicate, kill=Mock(), wait=AsyncMock())
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
     monkeypatch.setattr(shell_module, "SHELL_CHECK_TIMEOUT", 1 if cancelled else 0.01)
-    task = asyncio.create_task(shell_module.shell_requires_confirmation('{"command":"pwd"}'))
+    task = asyncio.create_task(shell_module.shell_requires_confirmation('{"command":"pwd"}', workspace=tmp_path))
     await asyncio.wait_for(started.wait(), timeout=1)
     if cancelled:
         task.cancel()
@@ -155,7 +197,8 @@ async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch,
         returncode=0 if decision == "allow" else 1,
         communicate=AsyncMock(return_value=(json.dumps({"decision": decision}).encode(), b"")),
     )
-    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    spawn = AsyncMock(return_value=process)
+    monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
     provider = FakeProvider()
     await registry.register_tools(
         user_id="shell-dcg-test",
@@ -177,6 +220,8 @@ async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch,
         )
     ]
     process.communicate.assert_awaited_once_with(command.encode())
+    assert spawn.call_args.kwargs["cwd"] == tmp_path.resolve()
+    assert spawn.call_args.kwargs["env"]["HOME"] == str(tmp_path / "home")
     if decision == "allow":
         assert result.succeeded and result.value == "shell output"
         [args] = executions
@@ -200,7 +245,7 @@ async def test_registers_supported_default_and_mcp_tools(
 ):
     # This test uses an argument-free shell stub; exercise only registration
     # and leave command validation to the dcg tests above.
-    monkeypatch.setattr(registry, "shell_requires_confirmation", lambda _: ExecutionDecision.CONFIRM)
+    monkeypatch.setattr(registry, "shell_requires_confirmation", lambda _, **_kwargs: ExecutionDecision.CONFIRM)
     file_tools = tuple(
         named_tool(name) for name in ("read_image", "read_video", "read_file", "write_file", "edit_file")
     )
