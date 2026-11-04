@@ -489,15 +489,31 @@ class AgentLoop:
             ),
         )
 
-        # 输出token使用百分比
+        def format_token_count(value: int) -> str:
+            if value < 1_000:
+                return str(value)
+            amount, unit = value / 1_000, "k"
+            # A rounded 1000k is more naturally displayed as 1m.
+            if round(amount, 2) >= 1_000:
+                amount, unit = value / 1_000_000, "m"
+            return f"{amount:.2f}".rstrip("0").rstrip(".") + unit
+
+        # Context size is estimated separately from provider-reported consumption.
         token_count = await token_counter(messages_yaml)
         token_percent = min(1, token_count / self.max_accept_token) * 100
         token_notify = "♻️ 即将达到最大上下文" if token_percent > 90 else ""
+        context_usage = (
+            f"{token_percent:.2f}% "
+            f"({format_token_count(token_count)} / {format_token_count(self.max_accept_token)}) {token_notify}"
+        ).strip()
         yield {
             "event": "token_usage",
             "context": json.dumps(
                 {
-                    "上下文使用率": f"{token_percent:.2f}% ({token_count // 1000}k / {self.max_accept_token // 1000}k) {token_notify}".strip(),
+                    "上下文使用率": context_usage,
+                    "输入 Token": format_token_count(self._input_tokens),
+                    "输出 Token": format_token_count(self._output_tokens),
+                    "总 Token": format_token_count(self._input_tokens + self._output_tokens),
                     "会话时长": f"{duration_s:.0f}秒",
                     "大模型请求次数": str(self._model_call_count),
                 },

@@ -10,7 +10,8 @@ from ..server.context import get_lark_user_access_token, get_user_id
 from ..skills.skill import iter_builtin_skill_dirs
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-SANDBOX_EXECUTABLES = ("bwrap", "rootlesskit", "slirp4netns", "ip", "bash")
+SANDBOX_EXECUTABLES = ("bwrap", "bash")
+NETWORK_SANDBOX_EXECUTABLES = (*SANDBOX_EXECUTABLES, "rootlesskit", "slirp4netns", "ip")
 
 
 def _add_setenv(args: list[str], key: str, value: str) -> None:
@@ -54,32 +55,36 @@ def _iter_sandbox_home_config_files() -> list[tuple[Path, Path]]:
     return config_files
 
 
-def wrap_sandbox_command(command: str | list[str], workspace: Path) -> list[str]:
-    """Wrap Shell text or a quoted argv list in a sandboxed bash command."""
+def wrap_sandbox_command(
+    command: str | list[str], workspace: Path, *, network_isolation: bool = True,
+) -> list[str]:
+    """Wrap a bash command with optional RootlessKit network isolation (on by default)."""
     workspace = workspace.resolve()
     workspace_python_env = workspace / ".venv"
     home = get_sandbox_home(workspace)
     user_id = get_user_id()
     workspace_skills = workspace / "skills"
 
-    # RootlessKit creates a fresh network namespace and configures outbound NAT
-    # before starting bwrap. Unsharing net again in bwrap would discard that
-    # configured network. No port driver means sandbox listeners stay private.
-    # Copy up /etc so DNS is configured privately, including on hosts whose
-    # resolver listens on loopback (which is deliberately inaccessible here).
-    args = [
-        "rootlesskit",
-        "--net=slirp4netns",
-        "--disable-host-loopback",
-        "--port-driver=none",
-        "--copy-up=/etc",
+    args: list[str] = []
+    if network_isolation:
+        # RootlessKit configures outbound NAT in a fresh network namespace.
+        # Do not unshare net again in bwrap: that would discard the network.
+        # Copy up /etc for private DNS, and keep listeners/host loopback private.
+        args.extend([
+            "rootlesskit",
+            "--net=slirp4netns",
+            "--disable-host-loopback",
+            "--port-driver=none",
+            "--copy-up=/etc",
+        ])
+    args.extend([
         "bwrap",
         "--new-session",
         "--die-with-parent",
         "--unshare-pid",
         "--unshare-ipc",
         "--cap-drop", "ALL",
-    ]
+    ])
 
     sandbox_env: dict[str, str] = {
         "HOME": str(home),

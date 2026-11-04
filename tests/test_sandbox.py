@@ -75,6 +75,23 @@ def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypatch):
     assert "--unshare-net" not in args
 
 
+def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
+    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+
+    args = sandbox.wrap_sandbox_command("true", tmp_path, network_isolation=False)
+
+    assert args[0] == "bwrap"
+    assert "rootlesskit" not in args
+    assert not any(arg.startswith("--net=") for arg in args)
+    assert "--unshare-net" not in args
+    assert "--unshare-pid" in args
+    assert "--unshare-ipc" in args
+    assert args[args.index("--cap-drop") + 1] == "ALL"
+    assert _option_pairs(args, "--bind") == [(str(tmp_path), str(tmp_path))]
+    assert dict(_option_pairs(args, "--setenv"))["HOME"] == str(tmp_path / "home")
+
+
 def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path, monkeypatch) -> None:
     backend_home = tmp_path / "backend-home"
     workspace = tmp_path / "~" / "workspace"
@@ -289,7 +306,7 @@ def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: Path) -
 
 @pytest.mark.skipif(
     platform.system() != "Linux" or any(
-        shutil.which(name) is None for name in (*sandbox.SANDBOX_EXECUTABLES, "setsid")
+        shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "setsid")
     ),
     reason="Requires Linux with bubblewrap, RootlessKit, slirp4netns, ip, bash and setsid",
 )
@@ -359,7 +376,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
 
 @pytest.mark.skipif(
     platform.system() != "Linux" or any(
-        shutil.which(name) is None for name in sandbox.SANDBOX_EXECUTABLES
+        shutil.which(name) is None for name in sandbox.NETWORK_SANDBOX_EXECUTABLES
     ) or not Path("/usr/bin/python3").exists(),
     reason="Requires Linux sandbox dependencies and system Python",
 )

@@ -214,7 +214,7 @@ async def test_concurrent_first_shell_calls_share_initialization_then_execute_in
 
 
 linux_sandbox = pytest.mark.skipif(
-    platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.SANDBOX_EXECUTABLES),
+    platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.NETWORK_SANDBOX_EXECUTABLES),
     reason="Requires Linux sandbox dependencies",
 )
 

@@ -651,7 +651,11 @@ class MCPServerRegistration:
                     missing = [name for name in SANDBOX_EXECUTABLES if shutil.which(name) is None]
                     if missing:
                         raise RuntimeError(f"Stdio MCP requires executable(s) on PATH: {', '.join(missing)}")
-                    command = wrap_sandbox_command([cfg.command, *cfg.args], workspace)
+                    # MCP servers may need host-local services; keep the host
+                    # network while retaining filesystem and process isolation.
+                    command = wrap_sandbox_command(
+                        [cfg.command, *cfg.args], workspace, network_isolation=False,
+                    )
                     server_params = StdioServerParameters(
                         command=command[0],
                         args=command[1:],

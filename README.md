@@ -25,7 +25,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 自动历史消息压缩（三级压缩策略），避免超出上下文限制
 - 内置记忆系统，自动总结和保存关键信息
 - 支持视频输入
-- Token 使用率实时监控
+- Token 上下文使用率与本轮输入、输出、总消耗统计，支持 `k` / `m` 单位，未返回的用量按 `0` 累计
 - 丰富的内置工具集：文件读写、Shell 执行、Web 搜索与网页抓取、HTML 预览、Office 文档读取、文件发送、向用户提问
 
 ## 安装
@@ -795,7 +795,9 @@ Shell 命令会在 bwrap 进程沙盒中执行：
 - `PATH` 会优先包含当前 HOME 下的 `.local/bin` 和 `.npm-global/bin`，`uv tool install`、`npm install -g` 的命令只在当前会话持久化。
 - `sandbox_home_path` 指定公共 HOME 配置源目录（默认为 `assets/sandbox-home`）；其中的所有文件都会保留相对路径，通过 bwrap 只读映射到每个 HOME。
 
-Shell 和 stdio MCP 共用上述隔离。运行环境需要 `bwrap`、`rootlesskit`、`slirp4netns`、`ip` 和 `bash`，Docker 镜像已安装相关软件包；缺少依赖时拒绝启动，不会退回共享网络。Linux 必须允许创建用户和网络命名空间，并提供 `/dev/net/tun`（Compose 已为 backend 配置设备映射）。运行 backend 的账户需要按 RootlessKit 要求配置 `uidmap`、`/etc/subuid` 和 `/etc/subgid`；镜像已为默认的 root 账户配置 subordinate ID 范围。DNS 使用 RootlessKit 在私有 `/etc` 中生成的配置。
+`wrap_sandbox_command(..., network_isolation=True)` 默认开启网络隔离，通过 RootlessKit 包装 bwrap；设为 `False` 时直接运行 bwrap，共享宿主机网络，同时保留文件系统、进程、IPC 和 HOME 隔离。Shell 使用默认值；stdio MCP 显式关闭网络隔离，可访问宿主机的 `localhost` 服务，仅依赖 `bwrap` 和 `bash`。
+
+Shell 的运行环境还需要 `rootlesskit`、`slirp4netns` 和 `ip`，Docker 镜像已安装相关软件包；缺少依赖时拒绝启动，不会自动退回共享网络。Linux 必须允许创建用户和网络命名空间，并提供 `/dev/net/tun`（Compose 已为 backend 配置设备映射）。运行 backend 的账户需要按 RootlessKit 要求配置 `uidmap`、`/etc/subuid` 和 `/etc/subgid`；镜像已为默认的 root 账户配置 subordinate ID 范围。Shell 的 DNS 使用 RootlessKit 在私有 `/etc` 中生成的配置；stdio MCP 只读挂载宿主机的 DNS 配置。
 
 Shell 工具首次运行时会在工作区内执行 `uv venv .venv`，为该工作区创建独立 Python 环境。
 Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `pip` 会被安全检查拦截。

@@ -84,7 +84,7 @@ async def _ensure_workspace_uv_venv(workspace: Path) -> None:
 def build_shell_tools(workspace: Path):
     if platform.system() != "Linux":
         raise RuntimeError("Shell tool requires Linux with bubblewrap; Windows and other platforms are not supported.")
-    missing = [name for name in (*sandbox.SANDBOX_EXECUTABLES, "uv") if shutil.which(name) is None]
+    missing = [name for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "uv") if shutil.which(name) is None]
     if missing:
         raise RuntimeError(f"Shell tool requires executable(s) on PATH: {', '.join(missing)}")
     workspace = workspace.resolve()
