@@ -10,8 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from xpeech.agent.tools import mcp_client
-from xpeech.agent.tools import sandbox
+from xpeech.agent.tools import mcp_client, sandbox
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 
 
@@ -709,10 +708,9 @@ async def test_connections_are_reused_per_session_and_expire(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_failed_connection_is_skipped_during_cooldown_then_retried(tmp_path, monkeypatch: pytest.MonkeyPatch):
+async def test_failed_connection_is_retried_immediately_by_next_request(tmp_path, monkeypatch: pytest.MonkeyPatch):
     await mcp_client.close_all_mcp_connections()
     monkeypatch.setattr(mcp_client, "MCP_CONNECTION_TTL_SECONDS", 0.2)
-    monkeypatch.setattr(mcp_client, "MCP_RECONNECT_DELAY_SECONDS", 0.06)
     attempts = 0
 
     async def run_slow_connection(_registration, _ready, _close_event):
@@ -744,31 +742,27 @@ async def test_failed_connection_is_skipped_during_cooldown_then_retried(tmp_pat
         workspace=tmp_path,
     )
     assert cached is registration
-    assert await cached._get_tool_bindings() == []
-    assert attempts == 1
-
-    await asyncio.sleep(0.07)
-    retried = await mcp_client.get_session_mcp_registration_from_config(
-        "session-1",
-        "unreachable",
-        config,
-        workspace=tmp_path,
-    )
-    assert retried is registration
     with pytest.raises(asyncio.TimeoutError):
-        await retried._get_tool_bindings()
+        await cached._get_tool_bindings()
     assert attempts == 2
     await mcp_client.close_all_mcp_connections()
 
 
 @pytest.mark.asyncio
-async def test_terminated_connection_does_not_reconnect_during_cooldown(
+async def test_terminated_connection_reconnects_on_next_call_without_replaying_failed_tool(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    failed_calls = []
+
     class TerminatedSession:
         async def call_tool(self, _name, arguments):
+            failed_calls.append(arguments)
             raise ConnectionError("connection closed")
+
+    class HealthySession:
+        async def call_tool(self, _name, arguments):
+            return {"content": [{"type": "text", "text": "reconnected"}]}
 
     registration = mcp_client.create_mcp_registration(
         server_name="test",
@@ -777,35 +771,38 @@ async def test_terminated_connection_does_not_reconnect_during_cooldown(
     registration._session = TerminatedSession()
     reconnect_attempts = 0
 
-    async def fake_close():
-        registration._session = None
-
     async def fake_connect():
         nonlocal reconnect_attempts
         reconnect_attempts += 1
+        registration._session = HealthySession()
 
-    monkeypatch.setattr(registration, "aclose", fake_close)
     monkeypatch.setattr(registration, "_connect", fake_connect)
 
     assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
-    assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
     assert reconnect_attempts == 0
+    assert failed_calls == [{}]
+    assert await registration.call_tool("echo", {}) == "reconnected"
+    assert reconnect_attempts == 1
+    assert failed_calls == [{}]
+    await registration.aclose()
 
 
 @pytest.mark.asyncio
-async def test_background_discovery_reports_failure_and_retries_after_cooldown(tmp_path, monkeypatch):
-    monkeypatch.setattr(mcp_client, "MCP_RECONNECT_DELAY_SECONDS", 60)
+@pytest.mark.parametrize("phase", ["connecting", "discovering"])
+async def test_background_discovery_reports_failure_and_retries_immediately(tmp_path, monkeypatch, phase):
     registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path)
     attempts = 0
 
     class Session:
         async def list_tools(self):
+            if attempts == 1 and phase == "discovering":
+                raise ConnectionError("secret-authorization-token")
             return SimpleNamespace(tools=[])
 
     async def connect():
         nonlocal attempts
         attempts += 1
-        if attempts == 1:
+        if attempts == 1 and phase == "connecting":
             raise ConnectionError("secret-authorization-token")
         registration._session = Session()
 
@@ -818,13 +815,15 @@ async def test_background_discovery_reports_failure_and_retries_after_cooldown(t
     status = registration.get_status()
     assert status["status"] == "unavailable"
     assert status["error"] == "ConnectionError"
-    assert 0 < status["retry_after_seconds"] <= 60
+    assert "retry_after_seconds" not in status
     assert "secret-authorization-token" not in str(status)
-    assert registration.start_tool_discovery() is task
+    await asyncio.sleep(0)
     assert attempts == 1
 
-    registration._retry_after = asyncio.get_running_loop().time() - 1
-    await registration.start_tool_discovery()
+    retry = registration.start_tool_discovery()
+    assert retry is not task
+    assert registration.start_tool_discovery() is retry
+    await retry
     assert attempts == 2
     assert registration.get_status()["status"] == "ready"
     assert registration.get_status()["error"] is None
@@ -834,6 +833,114 @@ async def test_background_discovery_reports_failure_and_retries_after_cooldown(t
     assert attempts == 3
     assert registration.get_status()["status"] == "ready"
     await registration.aclose()
+
+
+@pytest.mark.asyncio
+async def test_new_discovery_waits_for_failed_connection_cleanup_without_being_cancelled(tmp_path, monkeypatch):
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    old_close = asyncio.Event()
+
+    class OldSession:
+        async def call_tool(self, _name, arguments):
+            raise ConnectionError("connection closed")
+
+    class NewSession:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[{"name": "echo"}])
+
+    async def old_owner():
+        await old_close.wait()
+        cleanup_started.set()
+        await release_cleanup.wait()
+
+    async def run_connection(ready, close_event):
+        session = NewSession()
+        registration._session = session
+        ready.set_result(None)
+        try:
+            await close_event.wait()
+        finally:
+            if registration._session is session:
+                registration._session = None
+
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path)
+    registration._session = OldSession()
+    registration._owner_task = asyncio.create_task(old_owner())
+    registration._close_event = old_close
+    monkeypatch.setattr(registration, "_run_connection", run_connection)
+    call = asyncio.create_task(registration.call_tool("echo", {}))
+    discovery = None
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), 1)
+        discovery = registration.start_tool_discovery()
+        await asyncio.sleep(0)
+        assert not discovery.done()
+        release_cleanup.set()
+        assert await asyncio.wait_for(call, 1) == "(MCP server is temporarily unavailable)"
+        bindings = await asyncio.wait_for(discovery, 1)
+        assert [binding.func.__name__ for binding in bindings] == ["mcp_demo_echo"]
+        assert registration.get_status()["status"] == "ready"
+    finally:
+        release_cleanup.set()
+        await registration.aclose()
+        await asyncio.gather(*(task for task in (call, discovery) if task is not None), return_exceptions=True)
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux" or any(shutil.which(name) is None for name in mcp_client.SANDBOX_EXECUTABLES)
+    or shutil.which("python3", path="/usr/bin:/bin") is None,
+    reason="Requires Linux with sandbox dependencies and system Python",
+)
+@pytest.mark.asyncio
+async def test_stdio_server_reconnects_immediately_after_failed_initialization(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", list)
+    server = workspace / "server.py"
+    server.write_text('''
+import json
+import sys
+from pathlib import Path
+
+counter = Path("attempts")
+attempt = int(counter.read_text()) + 1 if counter.exists() else 1
+counter.write_text(str(attempt))
+for line in sys.stdin:
+    request = json.loads(line)
+    if "id" not in request:
+        continue
+    method = request["method"]
+    if method == "initialize":
+        if attempt == 1:
+            sys.exit(1)
+        result = {
+            "protocolVersion": request["params"]["protocolVersion"],
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "reconnect-test", "version": "1"},
+        }
+    elif method == "tools/list":
+        result = {"tools": [{"name": "echo", "inputSchema": {"type": "object", "properties": {}}}]}
+    elif method == "tools/call":
+        result = {"content": [{"type": "text", "text": "connected"}], "isError": False}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+''', encoding="utf-8")
+    registration = mcp_client.create_mcp_registration(
+        server_name="reconnect", command=shutil.which("python3", path="/usr/bin:/bin"),
+        args=["-u", str(server)], workspace=workspace,
+    )
+    try:
+        assert await asyncio.wait_for(registration.start_tool_discovery(), 10) == []
+        assert registration.get_status()["status"] == "unavailable"
+        bindings = await asyncio.wait_for(registration.start_tool_discovery(), 10)
+        assert [binding.func.__name__ for binding in bindings] == ["mcp_reconnect_echo"]
+        assert await registration.call_tool("echo", {}) == "connected"
+        assert (workspace / "attempts").read_text() == "2"
+    finally:
+        await registration.aclose()
 
 
 @pytest.mark.asyncio
@@ -900,7 +1007,7 @@ async def test_late_failure_from_old_session_does_not_close_new_session(tmp_path
     fail.set()
     assert await call == "(MCP server is temporarily unavailable)"
     assert registration._session is new_session
-    assert registration._retry_after is None
+    assert registration._last_error is None
     await registration.aclose()
 
 
@@ -932,9 +1039,8 @@ async def test_discovery_after_tool_reconnect_uses_new_session_schemas(tmp_path,
     try:
         first = await registration.start_tool_discovery()
         assert [binding.func.__name__ for binding in first] == ["mcp_demo_version_1"]
-        registration._start_retry_cooldown(ConnectionError("connection closed"))
+        registration._mark_unavailable(ConnectionError("connection closed"))
         await registration.aclose()
-        registration._retry_after = asyncio.get_running_loop().time() - 1
         # A previously registered tool can reconnect before the next runner
         # asks for discovery. It must not cause the old schemas to be reused.
         await registration._ensure_session()

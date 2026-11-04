@@ -567,7 +567,7 @@ def echo(message: Message):
 
 可以在 `conf.toml` 的 `[tool.mcpServers.<name>]` 下配置 MCP Server。启动会话时，Xpeech 会在后台并发连接这些 Server、发现可用工具，首次对话无需等待 MCP 连接。每个 Server 就绪后，其工具会自动注册，并从后续模型调用开始可用。同一用户的并发会话共享连接和工具发现任务。
 
-Agent 可调用无参数的 `query_mcp_status` 工具，立即查询当前通道允许访问的 MCP 状态。返回的 `servers` 按配置名称列出 `description`、`status`（`connecting`、`ready`、`unavailable`、`disconnected`）、`transport`、`tool_count`、`tools`、`retry_after_seconds` 和 `error`。`error` 仅包含异常类型；查询不会等待连接或发起网络请求。连接失败后冷却 120 秒，冷却结束后的新会话可在后台重试。
+Agent 可调用无参数的 `query_mcp_status` 工具，立即查询当前通道允许访问的 MCP 状态。返回的 `servers` 按配置名称列出 `description`、`status`（`connecting`、`ready`、`unavailable`、`disconnected`）、`transport`、`tool_count`、`tools` 和 `error`。`error` 仅包含异常类型；查询不会等待连接或发起网络请求。连接失败后，下次对话会立即在后台重新连接，无需等待固定冷却时间；正在进行的连接和工具发现任务仍由并发会话共享。
 
 每个 MCP 可配置 `description` 说明用途。当前通道可访问的服务名称和用途会直接写入 `query_mcp_status` 的工具描述，模型从首次请求起就能判断是否需要等待某个 MCP，无需先完成连接或调用状态查询。状态查询结果也会返回用途说明。服务名称、用途、状态和工具均先按 `channel_tag` 筛选；未匹配的 MCP 不会连接或展示。未配置 MCP 或筛选后为空时，不注册 `query_mcp_status`。
 

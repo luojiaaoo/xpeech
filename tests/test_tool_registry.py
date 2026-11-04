@@ -10,9 +10,9 @@ import pytest
 
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import mcp_client, registry
-from xpeech.agent.tools.shell import dcg as shell_module
 from xpeech.agent.tools.execution_request import EXECUTION_REQUEST, ExecutionDecision
 from xpeech.agent.tools.helper import get_tool_model_cls
+from xpeech.agent.tools.shell import dcg as shell_module
 from xpeech.agent.tools.shell.schema import ShellArgs
 from xpeech.config.settings import ToolConfig
 from xpeech.provider.litellm_provider import LiteLLMProvider
@@ -682,16 +682,77 @@ async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(
 
         slow = next(registration for registration in registrations if registration.config.server_name == "slow")
         await slow.aclose()
-        slow._start_retry_cooldown(ConnectionError("connection closed"))
-        unavailable_provider = FakeProvider()
+        slow._mark_unavailable(ConnectionError("connection closed"))
+        release_slow.clear()
+        reconnecting_provider = FakeProvider()
         await registry.register_tools(
-            user_id="background-test", provider=unavailable_provider, workspace=tmp_path, config=config,
+            user_id="background-test", provider=reconnecting_provider, workspace=tmp_path, config=config,
         )
-        assert [tool.__name__ for _, tool in unavailable_provider.mcp_tools] == ["mcp_fast_echo"]
-        status = json.loads(await unavailable_provider.function_tools["query_mcp_status"]())["servers"]
-        assert status["slow"]["status"] == "unavailable"
+        assert [tool.__name__ for _, tool in reconnecting_provider.mcp_tools] == ["mcp_fast_echo"]
+        status = json.loads(await reconnecting_provider.function_tools["query_mcp_status"]())["servers"]
+        assert status["slow"]["status"] == "connecting"
+        release_slow.set()
+        await asyncio.wait_for(slow.start_tool_discovery(), 1)
+        assert [tool.__name__ for _, tool in reconnecting_provider.mcp_tools] == ["mcp_fast_echo", "mcp_slow_echo"]
+        assert sorted(attempts) == ["fast", "slow", "slow"]
     finally:
         await mcp_client.close_session_mcp_connections("background-test")
+
+
+@pytest.mark.asyncio
+async def test_failed_mcp_reconnects_on_next_conversations_with_one_shared_attempt(tmp_path, monkeypatch):
+    release = asyncio.Event()
+    reconnect_started = asyncio.Event()
+    attempts = 0
+
+    class Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[{"name": "echo"}])
+
+    async def run_connection(registration, ready, close_event):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            ready.set_exception(ConnectionError("unavailable"))
+            return
+        reconnect_started.set()
+        await release.wait()
+        session = Session()
+        registration._session = session
+        ready.set_result(None)
+        try:
+            await close_event.wait()
+        finally:
+            if registration._session is session:
+                registration._session = None
+
+    monkeypatch.setattr(mcp_client.MCPServerRegistration, "_run_connection", run_connection)
+    config = ToolConfig.model_validate({"mcpServers": {"demo": {"command": "demo"}}})
+    try:
+        first = FakeProvider()
+        await registry.register_tools(user_id="retry-test", provider=first, workspace=tmp_path, config=config)
+        registration = next(iter(mcp_client.MCP_CONNECTIONS["retry-test"].values()))
+        assert await registration.start_tool_discovery() == []
+        assert registration.get_status()["status"] == "unavailable"
+
+        providers = [FakeProvider(), FakeProvider()]
+        for provider in providers:
+            await asyncio.wait_for(registry.register_tools(
+                user_id="retry-test", provider=provider, workspace=tmp_path, config=config,
+            ), 1)
+        await asyncio.wait_for(reconnect_started.wait(), 1)
+        assert attempts == 2
+        assert registration.get_status()["status"] == "connecting"
+        assert all(not provider.mcp_tools for provider in providers)
+        release.set()
+        await asyncio.wait_for(registration.start_tool_discovery(), 1)
+        for provider in providers:
+            assert [tool.__name__ for _, tool in provider.mcp_tools] == ["mcp_demo_echo"]
+        assert registration.get_status()["status"] == "ready"
+        assert attempts == 2
+    finally:
+        release.set()
+        await mcp_client.close_session_mcp_connections("retry-test")
 
 
 @pytest.mark.asyncio
