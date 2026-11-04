@@ -30,8 +30,9 @@ async def test_shared_files_python_node_and_mounted_cli():
             "python -c \"from pathlib import Path; Path('output.txt').write_text('written-by-sandbox')\"; "
             "node --version; python --version; pip --version; uv --version; conda --version; lark-cli --version; "
             "test \"$HOME\" = \"$PWD/home\"; "
-            "test -x /opt/xpeech/bin/lark-cli-auth; "
-            "if touch /opt/xpeech/bin/should-be-readonly 2>/dev/null; then exit 1; fi"
+            "test \"$(command -v lark-cli)\" = /usr/local/bin/lark-cli; "
+            "test -x /usr/local/bin/lark-cli-auth; "
+            "test ! -w /usr/local/bin/lark-cli; test ! -w /usr/local/bin/lark-cli-auth"
         )
         result = await executor.run(command, workspace, timeout_ms=60_000)
         assert result.returncode == 0, (result.stdout, result.stderr)

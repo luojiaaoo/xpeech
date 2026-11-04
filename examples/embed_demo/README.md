@@ -11,7 +11,7 @@
 以及 Promise 返回的原始事件列表；对照聊天窗口可确认对话框无任何变化。
 手动聊天的回复同样记录在此，并与同步回复区分标注。
 
-在仓库根目录创建 `data/embed-demo/config.json`（该目录已被 Git 忽略）：
+在仓库根目录创建 `docker_data/embed-demo/config.json`（该目录已被 Git 忽略）：
 
 ```json
 {
@@ -46,7 +46,7 @@
 组件内存中的 JWT，已签发的 JWT 在过期前仍有效；演示 JWT 的有效期为 60 秒。
 
 ```bash
-chmod 600 data/embed-demo/config.json
+chmod 600 docker_data/embed-demo/config.json
 python3 examples/embed_demo/server.py
 ```
 

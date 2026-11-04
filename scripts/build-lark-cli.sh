@@ -23,10 +23,11 @@ docker buildx build \
     --output "type=local,dest=${build_dir}" \
     "$project_root"
 
-# Mount the DIRECTORY, not the individual binary inode. rename lets running
-# processes finish using the old binary and new calls see the replacement.
+# Publish atomically so running processes retain their old executable.
+# File bind mounts retain the old inode: recreate consumers after updating.
 for binary in lark-cli lark-cli-auth; do
     chmod 0755 "${build_dir}/${binary}"
     mv -f -- "${build_dir}/${binary}" "${output_dir}/${binary}"
 done
 printf 'Published lark-cli and lark-cli-auth to %s\n' "$output_dir"
+printf 'Recreate backend containers to refresh file mounts; existing sandboxes refresh after recycling.\n'

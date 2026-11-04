@@ -21,13 +21,14 @@ from opensandbox.models.sandboxes import Host, NetworkPolicy, NetworkRule, Volum
 
 from ....config.settings import OpenSandboxConfig, settings
 from ...server.context import get_lark_user_access_token, get_user_id
-from ...skills.skill import BUILTIN_SKILLS_DIR, iter_builtin_skill_dirs
+from ...skills.skill import iter_builtin_skill_dirs
 from ..sandbox import _iter_sandbox_home_config_files, get_sandbox_home
 from .schema import ShellCommandResult
 from .shared_slots import acquire_lock, acquire_resident, acquire_slot, read_record, write_record
 
 TIMEOUT_MARKER = b"\n__XPEECH_COMMAND_TIMEOUT__\n"
 VENV_NAME = ".venv-opensandbox"
+CLI_BIN_DIR = Path(__file__).resolve().parents[4] / "docker_data/lark-cli"
 
 
 class OpenSandboxExecutor:
@@ -49,34 +50,31 @@ class OpenSandboxExecutor:
         )
 
     def _volumes(self, workspace: Path) -> list[Volume]:
-        config = self.config
         relative = workspace.relative_to(settings.path.workspace_base_path)
         if len(relative.parts) != 1:
             raise ValueError("OpenSandbox workspace must be a direct child of workspace_base_path")
-        if any(getattr(config, name) is None for name in (
-            "host_workspace_root", "host_skills_root", "host_home_config_root", "host_cli_root"
-        )):
-            raise ValueError("OpenSandbox host mount roots are required")
         home = get_sandbox_home(workspace)
         volumes = [Volume(
-            name="workspace", host=Host(path=str(config.host_workspace_root / relative)),
+            name="workspace", host=Host(path=str(workspace)),
             mountPath=str(workspace), readOnly=False,
         )]
-        volumes.append(Volume(
-            name="lark-cli", host=Host(path=str(config.host_cli_root)),
-            mountPath="/opt/xpeech/bin", readOnly=True,
-        ))
-        # Match safe_resolve_workspace_path and the existing bwrap overlay.
+        for binary in ("lark-cli", "lark-cli-auth"):
+            volumes.append(Volume(
+                name=binary, host=Host(path=str(CLI_BIN_DIR / binary)),
+                mountPath=f"/usr/local/bin/{binary}", readOnly=True,
+            ))
+        # Same sources and targets as bwrap at 79e0baf: use the selected
+        # built-in directories and actual settings-backed HOME config files.
         for index, skill in enumerate(iter_builtin_skill_dirs()):
             volumes.append(Volume(
                 name=f"skill-{index}",
-                host=Host(path=str(config.host_skills_root / skill.relative_to(BUILTIN_SKILLS_DIR))),
+                host=Host(path=str(skill.resolve())),
                 mountPath=str(workspace / "skills" / skill.name), readOnly=True,
             ))
-        for index, (_, relative_path) in enumerate(_iter_sandbox_home_config_files()):
+        for index, (source, relative_path) in enumerate(_iter_sandbox_home_config_files()):
             volumes.append(Volume(
                 name=f"home-config-{index}",
-                host=Host(path=str(config.host_home_config_root / relative_path)),
+                host=Host(path=str(source)),
                 mountPath=str(home / relative_path), readOnly=True,
             ))
         return volumes
@@ -87,7 +85,7 @@ class OpenSandboxExecutor:
         return {
             "HOME": str(home),
             "PATH": (
-                f"{venv}/bin:/opt/xpeech/bin:{home}/.local/bin:{home}/.npm-global/bin:"
+                f"{venv}/bin:{home}/.local/bin:{home}/.npm-global/bin:"
                 "/opt/miniforge/envs/runtime/bin:/opt/miniforge/condabin:/opt/miniforge/bin:"
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
             ),

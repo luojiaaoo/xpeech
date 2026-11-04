@@ -72,7 +72,7 @@ class BrowserPreviewConfig(BaseModel):
     """Browser preview URL and file storage settings."""
 
     browser_preview_base_url: str = "http://127.0.0.1:7878/browser_preview"
-    browser_preview_path: ConfigPath = Field(default=Path("data/browser_preview"), validate_default=True)
+    browser_preview_path: ConfigPath = Field(default=Path("docker_data/browser_preview"), validate_default=True)
 
     @field_validator("browser_preview_base_url")
     @classmethod
@@ -99,14 +99,9 @@ class OpenSandboxConfig(BaseModel):
     protocol: Literal["http", "https"] = "http"
     api_key_env: str = "OPENSANDBOX_API_KEY"
     image: str = "xpeech-sandbox:local"
-    # These are paths on the Docker HOST, not inside the backend container.
-    host_workspace_root: Path | None = None
-    host_skills_root: Path | None = None
-    host_home_config_root: Path | None = None
-    host_cli_root: Path | None = None
     # A fixed host-gateway address lets egress allow only this internal service.
     token_manager_url: str = "http://172.17.0.1:7883"
-    state_path: ConfigPath = Field(default=Path("data/session/opensandbox"), validate_default=True)
+    state_path: ConfigPath = Field(default=Path("docker_data/session/opensandbox"), validate_default=True)
     max_sandboxes: int = Field(default=64, ge=1, le=1000)
     max_commands: int = Field(default=32, ge=1, le=1000)
     max_creating: int = Field(default=4, ge=1, le=100)
@@ -115,13 +110,6 @@ class OpenSandboxConfig(BaseModel):
     startup_timeout_seconds: float = Field(default=60, gt=0)
     cpu: str = "500m"
     memory: str = "1Gi"
-
-    @field_validator("host_workspace_root", "host_skills_root", "host_home_config_root", "host_cli_root")
-    @classmethod
-    def validate_host_path(cls, value: Path | None) -> Path | None:
-        if value is not None and (not value.is_absolute() or ".." in value.parts):
-            raise ValueError("Docker host paths must be absolute and contain no '..'")
-        return value
 
 
 class ToolConfig(BaseModel):
@@ -215,7 +203,7 @@ class LLMConfig(BaseModel):
 class LarkCLIConfig(BaseModel):
     """Configuration shared by the token manager and lark-cli clients."""
 
-    database_path: ConfigPath = Field(default=Path("data/lark-token-manager/tokens.db"), validate_default=True)
+    database_path: ConfigPath = Field(default=Path("docker_data/lark-token-manager/tokens.db"), validate_default=True)
 
 
 class JWTChannelConfig(BaseModel):

@@ -3,14 +3,15 @@ import shlex
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import yaml
 from opensandbox.exceptions import SandboxApiException
 from opensandbox.models.execd import Execution, ExecutionComplete, ExecutionLogs, OutputMessage
-from pydantic import ValidationError
 
 from xpeech.agent.server.context import lark_user_access_token_var
 from xpeech.agent.tools.shell import opensandbox as module
@@ -40,11 +41,13 @@ def runtime(tmp_path, monkeypatch):
     (home_configs / ".npmrc").write_text("registry=https://registry.npmmirror.com/")
     monkeypatch.setattr(module.settings.path, "workspace_base_path", base)
     monkeypatch.setattr(module.settings.path, "sandbox_home_path", home_configs)
+    cli_dir = tmp_path / "compiled-cli"
+    cli_dir.mkdir()
+    monkeypatch.setattr(module, "CLI_BIN_DIR", cli_dir)
     monkeypatch.setenv("OPENSANDBOX_API_KEY", "test-secret")
     monkeypatch.setenv("XPEECH_TOKEN_MANAGER_URL", "http://lark-token-manager:7883")
     config = OpenSandboxConfig(
-        host_workspace_root="/host/workspaces", host_skills_root="/host/skills",
-        host_home_config_root="/host/configs", host_cli_root="/host/lark-cli", state_path=tmp_path / "state",
+        state_path=tmp_path / "state",
         max_sandboxes=2, max_commands=2, max_creating=1, queue_timeout_seconds=0.15,
     )
     created = []
@@ -78,11 +81,11 @@ async def test_reuses_user_sandbox_across_executor_instances_and_mounts_only_use
     r.connect.assert_awaited_once()
     kwargs = r.create.await_args.kwargs
     volumes = kwargs["volumes"]
-    assert volumes[0].host.path == "/host/workspaces/alice"
+    assert volumes[0].host.path == str(r.workspace)
     assert volumes[0].mount_path == str(r.workspace)
     assert not volumes[0].read_only
     assert all(v.read_only for v in volumes[1:])
-    assert not any(v.host.path == "/host/workspaces" for v in volumes)
+    assert not any(v.host.path == str(r.workspace.parent) for v in volumes)
     policy = kwargs["network_policy"]
     assert policy.egress[0].target == "172.17.0.1" and policy.egress[0].ports == [7883]
     assert any(rule.action == "deny" and rule.target == "172.16.0.0/12" for rule in policy.egress)
@@ -96,8 +99,17 @@ async def test_reuses_user_sandbox_across_executor_instances_and_mounts_only_use
     assert opts.envs["PATH"].startswith(str(r.workspace / ".venv-opensandbox/bin") + ":")
     assert "/opt/miniforge/envs/runtime/bin" in opts.envs["PATH"]
     assert opts.envs["XPEECH_TOKEN_MANAGER_URL"] == "http://172.17.0.1:7883"
-    cli = next(v for v in volumes if v.name == "lark-cli")
-    assert cli.host.path == "/host/lark-cli" and cli.mount_path == "/opt/xpeech/bin" and cli.read_only
+    for binary in ("lark-cli", "lark-cli-auth"):
+        cli = next(v for v in volumes if v.name == binary)
+        assert cli.host.path == str(module.CLI_BIN_DIR / binary)
+        assert cli.mount_path == f"/usr/local/bin/{binary}" and cli.read_only
+    assert not any(v.mount_path == "/usr/local/bin" for v in volumes)
+    home_config = next(v for v in volumes if v.name == "home-config-0")
+    assert home_config.host.path == str(module.settings.path.sandbox_home_path / ".npmrc")
+    assert home_config.mount_path == str(r.workspace / "home/.npmrc")
+    assert {v.host.path for v in volumes if v.name.startswith("skill-")} == {
+        str(path.resolve()) for path in module.iter_builtin_skill_dirs()
+    }
 
 
 @pytest.mark.asyncio
@@ -252,10 +264,56 @@ def test_file_lock_is_exclusive_across_backend_processes(tmp_path):
     assert subprocess.run([sys.executable, "-c", probe, str(path)], capture_output=True).returncode == 0
 
 
-@pytest.mark.parametrize("field", ["host_workspace_root", "host_skills_root", "host_home_config_root", "host_cli_root"])
-def test_host_mounts_require_absolute_paths(field):
-    with pytest.raises(ValidationError, match="Docker host paths"):
-        OpenSandboxConfig(**{field: "../private"})
+def test_mounts_follow_settings_and_selected_builtins(runtime):
+    volumes = runtime.executor._volumes(runtime.workspace)
+    assert volumes[0].host.path == str(runtime.workspace)
+    assert next(v for v in volumes if v.name == "home-config-0").host.path == str(
+        module.settings.path.sandbox_home_path / ".npmrc"
+    )
+    actual = {str(path.resolve()) for path in module.iter_builtin_skill_dirs()}
+    assert {v.host.path for v in volumes if v.name.startswith("skill-")} == actual
+
+
+@pytest.mark.parametrize("project_root", [Path("/srv/xpeech"), Path("/opt/team-assistant")])
+def test_compose_and_settings_share_real_host_source_paths(project_root):
+    """Check the actual deployment files agree, without a translation table."""
+    root = Path(__file__).resolve().parents[1]
+    deployment = yaml.safe_load((root / "compose.yaml").read_text())
+    example = tomllib.loads((root / "conf.toml.example").read_text())
+    backend = deployment["services"]["backend"]
+
+    def expand(value):
+        return value.replace(
+            "${XPEECH_HOST_ROOT:?Set XPEECH_HOST_ROOT to the absolute project directory}", str(project_root),
+        ).replace("${XPEECH_HOST_ROOT}", str(project_root))
+
+    app_root = Path(expand(backend["build"]["args"]["APP_ROOT"]))
+    assert app_root == project_root
+    assert expand(backend["configs"][0]["target"]) == str(app_root / "conf.toml")
+    mounts = {}
+    for volume in backend["volumes"]:
+        if isinstance(volume, str):
+            source, target, *_ = volume.split(":")
+        else:
+            source, target = volume["source"], volume["target"]
+        mounts[Path(expand(target))] = project_root / source
+    for name in ("workspace_base_path", "sandbox_home_path"):
+        configured = app_root / example["path"][name]
+        assert mounts[configured] == configured
+    builtins = app_root / "xpeech/agent/skills/buildin"
+    assert mounts[builtins] == builtins
+    cli_dir = app_root / "docker_data/lark-cli"
+    assert mounts[cli_dir] == cli_dir
+    for binary in ("lark-cli", "lark-cli-auth"):
+        assert mounts[Path("/usr/local/bin") / binary] == cli_dir / binary
+    assert "host_path_mappings" not in example["tool"]["shell"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_outside_configured_user_root_is_not_mounted(runtime):
+    with pytest.raises(ValueError):
+        await runtime.executor.run("true", runtime.workspace.parent.parent / "outside", 1000)
+    runtime.create.assert_not_awaited()
 
 
 @pytest.mark.asyncio

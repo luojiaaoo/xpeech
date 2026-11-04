@@ -16,7 +16,7 @@ def test_core_does_not_import_subapps():
     for path in XPEECH_ROOT.rglob("*.py"):
         relative = path.relative_to(XPEECH_ROOT)
         if (
-            relative == Path("__main__.py")
+            relative == Path("container_entrypoint.py")
             or relative.parts[0] == "subapp"
             or relative.parts[:3] == ("agent", "skills", "buildin")
         ):
@@ -40,17 +40,16 @@ def test_core_does_not_import_subapps():
 @pytest.mark.parametrize(
     "entrypoint, arguments, target, expected",
     [
-        ("xpeech.__main__", [], "xpeech.agent.server.app", {"host": "0.0.0.0", "port": 7878, "scheduler_url": "http://127.0.0.1:8090"}),
-        ("xpeech.__main__", ["api", "--port", "8080", "--scheduler-url", "http://scheduler:8090"], "xpeech.agent.server.app", {"host": "0.0.0.0", "port": 8080, "scheduler_url": "http://scheduler:8090"}),
+        ("xpeech.container_entrypoint", ["api", "--port", "8080", "--scheduler-url", "http://scheduler:8090"], "xpeech.agent.server.app", {"host": "0.0.0.0", "port": 8080, "scheduler_url": "http://scheduler:8090"}),
         (
-            "xpeech.__main__",
+            "xpeech.container_entrypoint",
             ["scheduler", "--backend-url", "http://nginx:7878"],
             "xpeech.subapp.scheduler.app",
             {"host": "0.0.0.0", "port": 8090, "backend_url": "http://nginx:7878"},
         ),
-        ("xpeech.__main__", ["token_manager"], "xpeech.subapp.lark_token_manager.app", {"host": "0.0.0.0", "port": 7883}),
-        ("xpeech.__main__", ["feishu"], "xpeech.subapp.channel.feishu.bridge", {"chat_url": "http://127.0.0.1:7878"}),
-        ("xpeech.__main__", ["web_client"], "xpeech.subapp.channel.web_client.app", {"host": "0.0.0.0", "port": 7939, "backend_url": "http://127.0.0.1:7878"}),
+        ("xpeech.container_entrypoint", ["token_manager"], "xpeech.subapp.lark_token_manager.app", {"host": "0.0.0.0", "port": 7883}),
+        ("xpeech.container_entrypoint", ["feishu", "--chat-url", "http://nginx:7878"], "xpeech.subapp.channel.feishu.bridge", {"chat_url": "http://nginx:7878"}),
+        ("xpeech.container_entrypoint", ["web_client", "--backend-url", "http://nginx:7878"], "xpeech.subapp.channel.web_client.app", {"host": "0.0.0.0", "port": 7939, "backend_url": "http://nginx:7878"}),
     ],
 )
 def test_service_entrypoints_dispatch_to_their_own_apps(monkeypatch, entrypoint, arguments, target, expected):
@@ -59,3 +58,11 @@ def test_service_entrypoints_dispatch_to_their_own_apps(monkeypatch, entrypoint,
     monkeypatch.setattr("sys.argv", ["xpeech", *arguments])
     import_module(entrypoint).main()
     run.assert_called_once_with(**expected)
+
+
+@pytest.mark.parametrize("arguments", [[], ["api"], ["scheduler"], ["feishu"], ["web_client"]])
+def test_container_entrypoint_requires_explicit_service_dependencies(monkeypatch, arguments):
+    monkeypatch.setattr("sys.argv", ["xpeech", *arguments])
+    with pytest.raises(SystemExit) as exc:
+        import_module("xpeech.container_entrypoint").main()
+    assert exc.value.code == 2

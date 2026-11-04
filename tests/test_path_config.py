@@ -27,5 +27,5 @@ def test_other_config_paths_are_absolute_at_load(tmp_path, monkeypatch, model, f
 
 def test_default_config_paths_are_also_resolved(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert BrowserPreviewConfig().browser_preview_path == tmp_path / "data/browser_preview"
-    assert LarkCLIConfig().database_path == tmp_path / "data/lark-token-manager/tokens.db"
+    assert BrowserPreviewConfig().browser_preview_path == tmp_path / "docker_data/browser_preview"
+    assert LarkCLIConfig().database_path == tmp_path / "docker_data/lark-token-manager/tokens.db"

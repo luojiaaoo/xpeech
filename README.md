@@ -28,34 +28,14 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - Token 使用率实时监控
 - 丰富的内置工具集：文件读写、Shell 执行、Web 搜索与网页抓取、HTML 预览、Office 文档读取、文件发送、向用户提问
 
-## 安装
+## 部署要求
 
-需要 Python 3.12+ 和 uv。项目依赖通过 `uv sync` 安装：
-
-```bash
-uv sync
-```
-
-Shell 工具通过 OpenSandbox 在同机 Linux Docker 主机执行，部署见 [OpenSandbox 执行环境](docs/opensandbox.md)。stdio MCP 仍依赖 bubblewrap，Debian/Ubuntu 可这样安装：
-
-```bash
-sudo apt-get install bubblewrap
-```
-
-Shell 危险命令检查还需要安装 [dcg](https://gitee.com/luojiaaoo/destructive_command_guard/releases/tag/v0.16.0)
-并加入 backend 的 `PATH`。Docker 镜像已包含 dcg，无需额外安装。
-
-提前安装内置技能依赖：
-
-```bash
-pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-
-npm config set registry https://registry.npmmirror.com/
-```
+服务统一通过 Docker Compose 部署，需要同一台 Linux Docker 主机、Docker Compose v2 和 Buildx。
+Python、Node、uv、bubblewrap 和 dcg 由镜像提供，部署步骤见 [Docker Compose 部署](#docker-compose-部署)。
 
 ## 配置
 
-从模板创建本地配置：
+从模板创建部署配置：
 
 ```bash
 cp conf.toml.example conf.toml
@@ -136,31 +116,9 @@ channel_tags = ["crm"]
 `ask-user-question`，即使它标记为 `always: true`。交互式技能名称在代码中维护，
 无需在 Skill 中添加标记；普通交互会话仍正常加载。
 
-## 启动
+## 服务访问
 
-按需在独立终端启动各服务：
-
-```bash
-# API 服务
-uv run -m xpeech api
-
-# API 服务（省略服务名时的等价写法）
-uv run -m xpeech
-
-# 调度服务（单实例；到期后通过 HTTP 请求 API 执行）
-uv run -m xpeech scheduler
-
-# Web 客户端（依赖 API 服务）
-uv run -m xpeech web_client
-
-# 飞书桥接（依赖 API 服务）
-uv run -m xpeech feishu
-
-# Lark 令牌管理
-uv run -m xpeech token_manager
-```
-
-默认访问地址：
+按 [Docker Compose 部署](#docker-compose-部署) 启动服务后，默认访问地址：
 
 - API：`http://localhost:7878`
 - Web 客户端：`http://localhost:7939`
@@ -181,7 +139,7 @@ Swagger 会调用 `/token` 校验密钥并签发带 channel `kid`、有效期
 - `feishu.app_secret`：飞书应用密钥
 
 `bash scripts/build-lark-cli.sh` 使用 Buildx 从 `https://gitee.com/luojiaaoo/lark-cli` 的 `v1.0.89` 标签独立编译
-`lark-cli` 和非阻塞的 `lark-cli-auth`，导出到 `docker_data/lark-cli/` 并只读挂载到 backend 和沙箱的 `/opt/xpeech/bin`。独立的 `lark-token-manager` 服务负责设备授权、
+`lark-cli` 和非阻塞的 `lark-cli-auth`，导出到 `docker_data/lark-cli/` 并分别只读挂载到 backend 和沙箱的 `/usr/local/bin/lark-cli`、`/usr/local/bin/lark-cli-auth`。独立的 `lark-token-manager` 服务负责设备授权、
 令牌加密存储和周期刷新；`lark-cli` 通过内部接口取得当前 Xpeech session 的短期令牌。
 `app_id`、`app_secret` 只由 lark-token-manager 在运行时读取，修改后重启服务即可。
 backend 通过环境变量 `XPEECH_TOKEN_MANAGER_URL` 获取 lark-token-manager 的内部地址。
@@ -194,7 +152,7 @@ backend 通过环境变量 `XPEECH_TOKEN_MANAGER_URL` 获取 lark-token-manager 
 LARKSUITE_CLI_USER_ACCESS_TOKEN="<lark_user_access_token>" lark-cli docs +fetch --doc "<文档 URL 或 token>" --as user
 ```
 
-未提供令牌时使用下述托管认证流程。修改 CLI 后重新运行 `bash scripts/build-lark-cli.sh` 即可，无需重建运行镜像。
+未提供令牌时使用下述托管认证流程。修改 CLI 后重新运行 `bash scripts/build-lark-cli.sh`，再按 [CLI 更新说明](docs/opensandbox.md#pythonnode-与-cli) 刷新文件挂载，无需重建运行镜像。
 
 首次执行需要用户身份的命令时，Credential Provider 会立即返回 `authorization_required` 和授权 URL，
 不会阻塞命令。也可以先执行 `lark-cli-auth login --scope "<本次任务所需 scope>"` 或
@@ -255,8 +213,7 @@ xpeech/
 依赖方向为 `subapp → 核心`；`agent`、`config`、`provider`、`utils` 等核心代码不导入
 `subapp`。调度工具、共享协议和 HTTP 客户端统一位于 `agent/tools/schedule/`，
 后台 Agent 执行位于 `agent/background.py`。
-所有服务统一使用 `uv run -m xpeech <服务名>` 启动；不指定服务名时默认启动 API。
-Compose 已配置相同入口。
+服务只通过 Docker Compose 启动。镜像内的 `xpeech.container_entrypoint` 根据 Compose 提供的服务名和内部地址分发，不提供宿主机启动入口。
 
 ## Docker Compose 部署
 
@@ -285,7 +242,7 @@ cp .env.example .env
 ```
 
 填写 `conf.toml` 中的 `llm.api_key`、三组 JWT 密钥和 `feishu.app_secret`，
-并确认 `feishu.app_id` 等普通配置正确。在 `.env` 填写宿主机项目绝对路径 `XPEECH_HOST_ROOT` 和随机 `OPENSANDBOX_API_KEY`，然后构建 CLI、执行镜像并启动：
+并确认 `feishu.app_id` 等普通配置正确。在 `.env` 填写宿主机项目绝对路径 `XPEECH_HOST_ROOT` 和随机 `OPENSANDBOX_API_KEY`；`conf.toml` 的 `workspace_base_path` 使用 `docker_data/workspace_base`，保持宿主机、backend 和 bash 的工作区路径一致，然后构建 CLI、执行镜像并启动：
 
 ```bash
 bash scripts/build-lark-cli.sh
@@ -340,9 +297,7 @@ Nginx 对所有 API 使用同一条哈希转发规则。
 调度期间需保持 Nginx/backend 可用，执行 HTTP 请求失败时会发送失败提示，不自动重试；
 停机期间错过的任务会被跳过。待发送结果保存在 scheduler 内存中，重启会丢失未发送结果。
 
-本地运行 API 时，也需要在另一个终端执行 `uv run -m xpeech scheduler`。
-API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backend-url` 指定 backend
-网关地址；两者默认分别为 `http://127.0.0.1:8090` 和 `http://127.0.0.1:7878`。
+Compose 为 backend、scheduler 和渠道服务传入相应内部地址，服务之间通过 Docker 网络通信。
 
 ## 发送消息
 
@@ -446,7 +401,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 `output_tokens`、`model_call_count`、`created_at` 和 `duration_s` 九个业务字段，以及 ORM 使用的自增
 `id`。`created_at` 是应用写入记录时的 UTC 时间，`duration_s` 是本轮 Agent 处理耗时（秒）。
 `session_record_path` 默认是
-`data/session/record.db`，可在 `conf.toml` 的 `[path]` 中覆盖。
+`docker_data/session/record.db`，可在 `conf.toml` 的 `[path]` 中覆盖。
 
 对话记录、Web 用户与会话、飞书令牌的建表和业务读写统一使用 SQLModel；
 定时任务保留 APScheduler 自带的 SQLAlchemyJobStore，并接入公共 SQLite 连接配置。
@@ -474,7 +429,7 @@ Compose 将后者设置为 Nginx 地址。配置模板使用：
 
 ```toml
 [path]
-session_schedule_path = "data/session/schedule.db"
+session_schedule_path = "docker_data/session/schedule.db"
 ```
 
 任务会跨服务重启持久化，但不会补跑停机期间错过的任务：过期的单次任务会被删除，周期任务会推进到
@@ -678,7 +633,7 @@ Web 和飞书沿用现有 `/answer_question` 接口；后端直接检查整个�
 MCP 通过各 Server 的 `execution_request_tools` 配置启用同样的确认流程；默认 `[]`。
 
 Shell 检查依赖 [Destructive Command Guard（dcg）](https://github.com/Dicklesworthstone/destructive_command_guard)。
-本地运行需在 backend 所在环境安装 `dcg` 二进制并放入 `PATH`。
+backend 镜像包含 `dcg` 二进制并加入 `PATH`。
 Dockerfile 从 [Gitee 镜像](https://gitee.com/luojiaaoo/destructive_command_guard/releases/tag/v0.16.0)
 安装 dcg v0.16.0，支持 x86_64 和 aarch64，并在安装前校验发布文件的 SHA-256；
 可通过构建参数 `DCG_VERSION` 指定版本。
@@ -773,17 +728,19 @@ HOME 指向 `<workspace>/home`，公共 HOME 配置与内置技能的映射和�
 
 部署、容量参数、挂载路径、CLI 更新及真实服务测试见 [OpenSandbox 执行环境](docs/opensandbox.md)。
 
-## 开发
+## 开发验证
+
+生成密钥、检查配置和运行测试可直接在本地执行，服务启动统一使用 Docker Compose。
 
 ```bash
 uv sync
 uv run pytest
 ```
 
-如果需要检查配置是否能读取：
+验证配置能否读取：
 
 ```bash
-uv run python -c "from xpeech.config.settings import settings; print(settings.model_dump())"
+uv run python -c "from xpeech.config.settings import settings; print('Configuration OK')"
 ```
 
 ## Web 客户端
@@ -798,7 +755,7 @@ Web 客户端基于 React 和 Ant Design X，使用 FastAPI 认证代理访问 A
 Web 服务会签发短期内部 JWT，将请求及全部查询参数转发到后端对应的 `/statistics*` 接口。
 普通用户不会显示大屏入口，直接访问统计代理也会返回 403。
 
-首次运行前构建前端：
+Docker 镜像会构建前端。单独开发前端时可在本地执行：
 
 ```bash
 cd xpeech/subapp/channel/web_client/frontend
@@ -807,7 +764,7 @@ npm run build
 ```
 
 用户与登录会话数据库路径由 `conf.toml` 的
-`web_client.database_path` 配置，默认为 `data/web_client/users.db`。登录 Cookie 名称由
+`web_client.database_path` 配置，默认为 `docker_data/web_client/users.db`。登录 Cookie 名称由
 `web_client.cookie_name` 配置，默认为 `xpeech_session`；同一 IP 上运行多个独立 Web
 实例时，应为每个实例配置不同的名称（如 `xpeech_session_7939`），避免不同端口之间覆盖 Cookie。
 
@@ -932,5 +889,5 @@ userinfo_filter = 'select(.data.department == "R&D")'
 密钥，可将 `token_auth_method` 改为 `client_secret_basic`。额外的授权参数可通过
 `extra_authorization_params = { prompt = "login" }` 配置。
 
-启动命令统一见[启动](#启动)章节。打开 `http://127.0.0.1:7939` 即可访问。
+启动方式见 [Docker Compose 部署](#docker-compose-部署)。打开 `http://127.0.0.1:7939` 即可访问。
 新数据库的初始管理员为 `admin` / `admin123456`；

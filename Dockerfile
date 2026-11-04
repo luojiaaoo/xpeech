@@ -87,7 +87,7 @@ RUN /opt/miniforge/bin/mamba create --yes --prefix /opt/miniforge/envs/runtime \
     printf '[global]\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple\n' > /etc/pip.conf && \
     /opt/miniforge/envs/runtime/bin/npm config --global set registry https://registry.npmmirror.com/
 COPY docker/sandbox/run_command.py /opt/xpeech/run_command.py
-ENV PATH=/opt/xpeech/bin:/opt/miniforge/envs/runtime/bin:/opt/miniforge/condabin:/opt/miniforge/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+ENV PATH=/opt/miniforge/envs/runtime/bin:/opt/miniforge/condabin:/opt/miniforge/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     UV_PYTHON=/usr/local/bin/python-runtime \
     HOME=/root
 WORKDIR /workspace
@@ -125,7 +125,10 @@ RUN curl -fsSL https://gitee.com/luojiaaoo/uv/releases/download/0.12.5/uv-instal
 # Keep the backend as the default target. Its runtimes are still needed by
 # local media tools, configured command templates, and stdio MCP.
 FROM tool-runtime AS backend
-WORKDIR /app
+# Compose passes the real host project directory so __file__-based built-in
+# skill paths are valid bind sources for the host Docker daemon too.
+ARG APP_ROOT=/app
+WORKDIR ${APP_ROOT}
 
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
@@ -142,6 +145,6 @@ RUN cd xpeech/subapp/channel/web_client/frontend && \
     npm run build && \
     rm -rf node_modules
 
-RUN printf '0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} + > /dev/null 2>&1\n' | crontab -
+RUN printf '0 0 * * * find "%s/docker_data/cache" -type f -mmin +1440 -exec rm -f {} + > /dev/null 2>&1\n' "${APP_ROOT}" | crontab -
 
-ENTRYPOINT ["/bin/sh", "-c", "/etc/init.d/cron start && exec uv run -m xpeech \"$@\"", "--"]
+ENTRYPOINT ["/bin/sh", "-c", "/etc/init.d/cron start && exec uv run python -m xpeech.container_entrypoint \"$@\"", "--"]

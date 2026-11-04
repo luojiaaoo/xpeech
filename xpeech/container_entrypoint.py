@@ -1,3 +1,5 @@
+"""Internal service dispatcher used by the Docker image entrypoint."""
+
 from __future__ import annotations
 
 import argparse
@@ -18,29 +20,23 @@ def _normalize_http_url(url: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run an Xpeech service.")
-    parser.set_defaults(
-        host="0.0.0.0",
-        port=7878,
-        scheduler_url="http://127.0.0.1:8090",
-    )
-    subparsers = parser.add_subparsers(dest="service")
+    parser = argparse.ArgumentParser(description="Run a Docker Compose Xpeech service.")
+    subparsers = parser.add_subparsers(dest="service", required=True)
 
     api_parser = subparsers.add_parser("api", help="Run the Xpeech API service.")
     api_parser.add_argument("--host", default="0.0.0.0")
     api_parser.add_argument("--port", type=int, default=7878)
-    api_parser.add_argument("--scheduler-url", type=_normalize_http_url, default="http://127.0.0.1:8090")
-    api_parser.set_defaults(service="api")
+    api_parser.add_argument("--scheduler-url", type=_normalize_http_url, required=True)
 
     feishu_parser = subparsers.add_parser("feishu", help="Run the Feishu bridge.")
-    feishu_parser.add_argument("--chat-url", type=_normalize_http_url, default="http://127.0.0.1:7878")
+    feishu_parser.add_argument("--chat-url", type=_normalize_http_url, required=True)
 
     web_client_parser = subparsers.add_parser(
         "web_client", help="Run the authenticated web client.",
     )
     web_client_parser.add_argument("--host", default="0.0.0.0")
     web_client_parser.add_argument("--port", type=int, default=7939)
-    web_client_parser.add_argument("--backend-url", type=_normalize_http_url, default="http://127.0.0.1:7878")
+    web_client_parser.add_argument("--backend-url", type=_normalize_http_url, required=True)
 
     token_parser = subparsers.add_parser(
         "token_manager", help="Run the Lark token manager.",
@@ -53,10 +49,10 @@ def main() -> None:
     )
     scheduler_parser.add_argument("--host", default="0.0.0.0")
     scheduler_parser.add_argument("--port", type=int, default=8090)
-    scheduler_parser.add_argument("--backend-url", type=_normalize_http_url, default="http://127.0.0.1:7878")
+    scheduler_parser.add_argument("--backend-url", type=_normalize_http_url, required=True)
 
     args = parser.parse_args()
-    service = args.service or "api"
+    service = args.service
 
     if service == "api":
         from .agent.server.app import run

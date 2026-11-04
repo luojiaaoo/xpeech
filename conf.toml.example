@@ -1,19 +1,19 @@
 [path]
-session_path = "data/session"
-session_history_path = "data/session/history"
-session_record_path = "data/session/record.db"
-session_schedule_path = "data/session/schedule.db"
-workspace_base_path = "data/workspace_base"
-sandbox_home_path = "data/sandbox-home"
-cache_path = "data/cache"
-log_path = "data/logs"
+session_path = "docker_data/session"
+session_history_path = "docker_data/session/history"
+session_record_path = "docker_data/session/record.db"
+session_schedule_path = "docker_data/session/schedule.db"
+workspace_base_path = "docker_data/workspace_base"
+sandbox_home_path = "assets/sandbox-home"
+cache_path = "docker_data/cache"
+log_path = "docker_data/logs"
 
 [logging]
 retention_days = 7
 max_file_size_mb = 10
 
 [jwt]
-# Generate three distinct keys with: python -c "import secrets; print(secrets.token_hex(32))"
+# Generate three distinct keys with: uv run python -c "import secrets; print(secrets.token_hex(32))"
 # Internal service-to-service trust.
 secret_key = "replace-with-a-random-secret-of-at-least-32-characters"
 # Shared by internal services and all channels.
@@ -34,7 +34,7 @@ secret_key = "replace-with-a-different-feishu-channel-secret"
 # channel_tag = "crm"
 
 [web_client]
-database_path = "data/web_client/users.db"
+database_path = "docker_data/web_client/users.db"
 cookie_name = "xpeech_session"
 
 [web_client.inject_prompt]
@@ -103,17 +103,13 @@ max_result_chars = 10000
 max_tool_timeout = 300 # 工具自身超时之外的最终兜底上限（秒）
 
 [tool.shell]
-# Single Docker host; host_* paths refer to the actual Docker HOST filesystem.
-# See docs/opensandbox.md. Compose sets the four mount roots automatically.
+# Application paths come from [path] and the built-in skill loader.
+# Host, backend and sandbox use the same absolute mount source paths.
 domain = "opensandbox:8080"
 api_key_env = "OPENSANDBOX_API_KEY"
 image = "xpeech-sandbox:local"
-# host_workspace_root = "/srv/xpeech/docker_data/workspace_base"
-# host_skills_root = "/srv/xpeech/xpeech/agent/skills/buildin"
-# host_home_config_root = "/srv/xpeech/data/sandbox-home"
-# host_cli_root = "/srv/xpeech/docker_data/lark-cli"
 token_manager_url = "http://172.17.0.1:7883" # Docker bridge gateway; literal IP required
-state_path = "data/session/opensandbox" # shared by all backend replicas, outside workspaces
+state_path = "docker_data/session/opensandbox" # shared by all backend replicas, outside workspaces
 max_sandboxes = 64
 max_commands = 32
 max_creating = 4
@@ -125,7 +121,7 @@ memory = "1Gi"
 
 [tool.browser_preview]
 browser_preview_base_url = "http://backend:7878/browser_preview"
-browser_preview_path = "data/browser_preview"
+browser_preview_path = "docker_data/browser_preview"
 
 # [tool.mcpServers.filesystem]
 # description = "读写工作区文件；任务需要本地文件操作时可等待此服务就绪"
@@ -167,4 +163,4 @@ app_id = "cli_aa8fcbaccae41cba"
 app_secret = "xxxxxxx"
 
 [feishu.lark_cli]
-database_path = "data/lark-token-manager/tokens.db"
+database_path = "docker_data/lark-token-manager/tokens.db"

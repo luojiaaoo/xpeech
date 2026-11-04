@@ -1,6 +1,6 @@
 """Local embed demo. Run: python3 examples/embed_demo/server.py
 
-Configuration: data/embed-demo/config.json (ignored by Git).
+Configuration: docker_data/embed-demo/config.json (ignored by Git).
 The token endpoint always signs the configured demo user, never browser input.
 Channel and signing-key overrides from the browser are test-only convenience:
 the key round-trips through this backend, which signs and returns the JWT.
@@ -128,7 +128,7 @@ def create_server(config, port=8080):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--config", type=Path, default=ROOT / "data/embed-demo/config.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "docker_data/embed-demo/config.json")
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
     server = create_server(config, args.port)
