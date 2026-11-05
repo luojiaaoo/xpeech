@@ -228,13 +228,9 @@ class SkillsLoader:
 
             lines = ["<skills>"]
             for skill in skills:
-                channel_tags_attribute = (
-                    f" channel_tags='{escape_xml(','.join(skill.metadata.channel_tags))}'"
-                    if skill.metadata.channel_tags else ""
-                )
                 lines.append(
                     f"  <skill source='{skill.source}' "
-                    f"internal='{str(skill.metadata.internal).lower()}'{channel_tags_attribute}>"
+                    f"internal='{str(skill.metadata.internal).lower()}'>"
                 )
                 lines.append(f"    <name>{escape_xml(skill.metadata.name)}</name>")
                 lines.append(f"    <description>{escape_xml(skill.metadata.description)}</description>")
@@ -266,11 +262,7 @@ class SkillsLoader:
                 "read its SKILL.md file using the read_file tool.\n"
                 "`builtin` means a shared skill built into the sandbox, `workspace` means a skill "
                 "placed in the workspace by the user, and `internal` marks a skill related to the "
-                "agent's runtime mechanics. `channel_tags` restricts built-in skills to matching JWT "
-                "channels; built-in skills without channel_tags are public. Workspace skills are "
-                "not filtered by channel_tags. `organization_prefixes` restricts both built-in and "
-                "workspace skills to users whose organization starts with any configured prefix; "
-                "skills without organization_prefixes are public to organizations.\n\n"
+                "agent's runtime mechanics.\n\n"
                 f"{skills_summary}\n"
             )
 
