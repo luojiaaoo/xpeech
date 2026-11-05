@@ -84,7 +84,7 @@ class AgentLoop:
             chat=self.chat,
             summary_tokens=self.summary_tokens,
             max_accept_tokens=self.max_accept_token,
-            target_tokens=int(self.provider.default_context_token * 0.25),
+            target_tokens=int(self.provider.default_context_token * 0.4),
             token_counter=self._count_context_tokens,
         )
         self.memory_consolidator = MemoryConsolidator(
