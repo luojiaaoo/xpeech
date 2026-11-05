@@ -9,9 +9,11 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent import execute as execute_module
 from xpeech.agent.server.api import app
 from xpeech.agent.server.context import get_lark_user_access_token
+from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.tools import sandbox
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, settings
 from xpeech.utils import internal_jwt
@@ -144,7 +146,7 @@ def test_api_rejects_invalid_lark_user_access_token_claim(channel, lark_user_acc
 async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox.settings.path, "cache_path", tmp_path / "cache")
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "sandbox-home")
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
     monkeypatch.setenv("LARKSUITE_CLI_USER_ACCESS_TOKEN", "u-process-token")
     both_started = asyncio.Event()
     started = []
@@ -157,7 +159,7 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
         if len(started) <= 2:
             await asyncio.wait_for(both_started.wait(), timeout=5)
         await asyncio.sleep(0)
-        args = sandbox.wrap_sandbox_command("lark-cli whoami", tmp_path)
+        args = await sandbox.wrap_sandbox_command("lark-cli whoami", tmp_path, skills_loader=SkillsLoader(tmp_path))
         environment = {args[index + 1]: args[index + 2] for index, value in enumerate(args) if value == "--setenv"}
         observed.append((message.user_id, environment.get("LARKSUITE_CLI_USER_ACCESS_TOKEN")))
         if get_lark_user_access_token() is None:

@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import AsyncMock
 from xml.etree import ElementTree
 
 import pytest
@@ -21,6 +22,31 @@ async def test_skills_loader_creates_workspace_when_listing(tmp_path: Path, monk
     assert loader.workspace_skills == workspace / "skills"
     assert await loader.list_skill_info() == []
     assert (workspace / "skills").is_dir()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace_kind", ["none", "missing", "existing"])
+async def test_list_builtin_skill_info_does_not_access_workspace(tmp_path, monkeypatch, workspace_kind):
+    builtin_dir = tmp_path / "builtin-folder"
+    builtin_dir.mkdir()
+    skill_file = builtin_dir / "SKILL.md"
+    skill_file.write_text("---\nname: builtin-name\n---\nBuilt-in instructions")
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [builtin_dir])
+    workspace = None if workspace_kind == "none" else tmp_path / "workspace"
+    if workspace_kind == "existing":
+        workspace_skill = workspace / "skills/custom/SKILL.md"
+        workspace_skill.parent.mkdir(parents=True)
+        workspace_skill.write_text("---\nname: custom\n---\nWorkspace instructions")
+    monkeypatch.setattr(skill_module, "ensure_path_async", AsyncMock(side_effect=AssertionError("Workspace accessed")))
+    monkeypatch.setattr(skill_module.aiofiles.os, "scandir", AsyncMock(side_effect=AssertionError("Workspace scanned")))
+
+    [skill] = await SkillsLoader(workspace).list_builtin_skill_info()
+
+    assert skill.source == "builtin"
+    assert skill.metadata.name == "builtin-name"
+    assert skill.path == (str(workspace / "skills/builtin-folder/SKILL.md") if workspace is not None else "")
+    if workspace_kind == "missing":
+        assert not workspace.exists()
 
 
 def test_skill_content_is_frozen_after_creation():
@@ -85,6 +111,8 @@ async def test_interactive_skill_filter_applies_to_list_and_prompt(
     loader = SkillsLoader(tmp_path, not_interactive=not_interactive)
 
     skills = await loader.list_skill_info()
+    if source == "builtin":
+        assert await loader.list_builtin_skill_info() == [skill for skill in skills if skill.source == "builtin"]
     names = {skill.metadata.name for skill in skills}
     expected = {"regular-skill"}
     if not not_interactive:
@@ -224,6 +252,25 @@ async def test_builtin_name_takes_precedence_over_workspace_name(
     assert skills[0].source == "builtin"
     assert skills[0].metadata.description == "Built-in"
     assert skills[0].path == str(workspace / "skills" / "builtin-folder" / "SKILL.md")
+
+
+@pytest.mark.asyncio
+async def test_filtered_builtin_directory_still_takes_precedence_over_workspace(tmp_path, monkeypatch):
+    builtin_dir = tmp_path / "builtin/shared-folder"
+    builtin_dir.mkdir(parents=True)
+    (builtin_dir / "SKILL.md").write_text("---\nname: shared-name\nchannel_tags: [crm]\n---\nBuilt-in")
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [builtin_dir])
+    workspace = tmp_path / "workspace"
+    for folder in ("shared-folder", "other-folder"):
+        skill_file = workspace / "skills" / folder / "SKILL.md"
+        skill_file.parent.mkdir(parents=True)
+        skill_file.write_text("---\nname: shared-name\n---\nWorkspace")
+    loader = SkillsLoader(workspace)
+
+    assert await loader.list_builtin_skill_info() == []
+    [skill] = await loader.list_skill_info()
+    assert skill.source == "workspace"
+    assert skill.path == str(workspace / "skills/other-folder/SKILL.md")
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ from textwrap import dedent
 
 from loguru import logger
 
+from ...skills.skill import SkillsLoader
 from .. import sandbox
 from ..helper import is_direct_python_pip_exec
 from .schema import DEFAULT_EXEC_TIMEOUT_MS, ShellArgs, ShellCommandResult
@@ -35,8 +36,10 @@ async def _run_wrapped_command(
     command: str,
     workspace: Path,
     timeout_ms: int = DEFAULT_EXEC_TIMEOUT_MS,
+    *,
+    skills_loader: SkillsLoader,
 ) -> ShellCommandResult:
-    result = await sandbox_manager.run(command, workspace, timeout_ms)
+    result = await sandbox_manager.run(command, workspace, timeout_ms, skills_loader=skills_loader)
     if result.timed_out:
         logger.error("Shell command timed out after {}ms; terminating command process group", timeout_ms)
     return result
@@ -67,13 +70,13 @@ def _format_command_output(
     return "\n".join(output_parts) if output_parts else "(no output)"
 
 
-async def _ensure_workspace_uv_venv(workspace: Path) -> None:
+async def _ensure_workspace_uv_venv(workspace: Path, *, skills_loader: SkillsLoader) -> None:
     # All conversations share this lock. Check inside it so another call
     # cannot use a .venv directory while uv is still initializing it.
     async with sandbox_manager.use(workspace) as session, session.initialization_lock:
         if (workspace / ".venv").exists():
             return
-        result = await _run_wrapped_command("uv venv .venv", workspace)
+        result = await _run_wrapped_command("uv venv .venv", workspace, skills_loader=skills_loader)
         if result.returncode != 0:
             output = _format_command_output(
                 result.stdout, result.stderr, result.returncode, timed_out=result.timed_out
@@ -81,7 +84,7 @@ async def _ensure_workspace_uv_venv(workspace: Path) -> None:
             raise RuntimeError(f"Failed to initialize workspace Python environment with `uv venv .venv`.\n{output}")
 
 
-def build_shell_tools(workspace: Path):
+def build_shell_tools(workspace: Path, *, skills_loader: SkillsLoader):
     if platform.system() != "Linux":
         raise RuntimeError("Shell tool requires Linux with bubblewrap; Windows and other platforms are not supported.")
     missing = [name for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "uv") if shutil.which(name) is None]
@@ -93,8 +96,10 @@ def build_shell_tools(workspace: Path):
 
     async def shell(args: ShellArgs) -> str:
         command = _guard_command(args.command)
-        await _ensure_workspace_uv_venv(workspace)
-        result = await _run_wrapped_command(command, workspace, timeout_ms=args.timeout_ms)
+        await _ensure_workspace_uv_venv(workspace, skills_loader=skills_loader)
+        result = await _run_wrapped_command(
+            command, workspace, timeout_ms=args.timeout_ms, skills_loader=skills_loader,
+        )
         return _format_command_output(
             result.stdout,
             result.stderr,

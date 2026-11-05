@@ -7,12 +7,15 @@ import shutil
 import socket
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.server.context import lark_user_access_token_var, user_id_var
 from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR
+from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import safe_resolve_workspace_path
@@ -61,11 +64,12 @@ def test_sandbox_home_rejects_symlink(tmp_path: Path) -> None:
         sandbox.get_sandbox_home(workspace)
 
 
-def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
 
-    args = sandbox.wrap_sandbox_command("true", tmp_path)
+    args = await sandbox.wrap_sandbox_command("true", tmp_path, skills_loader=SkillsLoader(tmp_path))
 
     assert args[:4] == [
         sys.executable, "-I", str(Path(sandbox.__file__).parent / "scripts" / "sandbox_network.py"), "bwrap",
@@ -76,11 +80,12 @@ def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypatch):
     assert ("/etc/resolv.conf", "/etc/resolv.conf") not in _option_pairs(args, "--ro-bind-try")
 
 
-def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
 
-    args = sandbox.wrap_sandbox_command("true", tmp_path, network_isolation=False)
+    args = await sandbox.wrap_sandbox_command("true", tmp_path, network_isolation=False, skills_loader=SkillsLoader(tmp_path))
 
     assert args[0] == "bwrap"
     assert "rootlesskit" not in args
@@ -94,18 +99,19 @@ def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monkeypatc
     assert dict(_option_pairs(args, "--setenv"))["HOME"] == str(tmp_path / "home")
 
 
-def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path, monkeypatch) -> None:
     backend_home = tmp_path / "backend-home"
     workspace = tmp_path / "~" / "workspace"
     workspace.mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(backend_home))
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
 
     relative_workspace = Path("~/workspace")
     assert sandbox.get_sandbox_home(relative_workspace) == workspace / "home"
-    args = sandbox.wrap_sandbox_command("pwd", relative_workspace)
+    args = await sandbox.wrap_sandbox_command("pwd", relative_workspace, skills_loader=SkillsLoader(relative_workspace))
     environment = dict(_option_pairs(args, "--setenv"))
     assert environment["HOME"] == str(workspace / "home")
     assert _option_pairs(args, "--bind") == [(str(workspace), str(workspace))]
@@ -234,7 +240,8 @@ async def test_file_tools_can_read_but_not_write_mapped_home_configs(
     assert config_file.read_text(encoding="utf-8") == "registry=https://example.invalid\n"
 
 
-def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
+@pytest.mark.asyncio
+async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -253,12 +260,12 @@ def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
         config_file.write_text("mirror config", encoding="utf-8")
 
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
     user_id = "test-session"
 
     session_token = user_id_var.set(user_id)
     try:
-        args = sandbox.wrap_sandbox_command("pwd", workspace)
+        args = await sandbox.wrap_sandbox_command("pwd", workspace, skills_loader=SkillsLoader(workspace))
     finally:
         user_id_var.reset(session_token)
     environment = dict(_option_pairs(args, "--setenv"))
@@ -277,20 +284,21 @@ def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
     } <= read_only_binds
 
 
-def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    def wrapped(token: str | None) -> tuple[dict[str, str], set[tuple[str, str]]]:
+    async def wrapped(token: str | None) -> tuple[dict[str, str], set[tuple[str, str]]]:
         context = lark_user_access_token_var.set(token)
         try:
-            args = sandbox.wrap_sandbox_command("true", workspace)
+            args = await sandbox.wrap_sandbox_command("true", workspace, skills_loader=SkillsLoader(workspace))
         finally:
             lark_user_access_token_var.reset(context)
         return dict(_option_pairs(args, "--setenv")), set(_option_pairs(args, "--ro-bind"))
 
-    plain_environment, plain_binds = wrapped(None)
-    token_environment, token_binds = wrapped("u-request-token")
+    plain_environment, plain_binds = await wrapped(None)
+    token_environment, token_binds = await wrapped("u-request-token")
     skills_target = workspace / "skills"
     builtin_root = BUILTIN_SKILLS_DIR.resolve()
 
@@ -304,6 +312,48 @@ def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: Path) -
         str(skills_target / "lark-skills-token"),
     ) in token_binds
     assert not any(target == str(skills_target / "lark-cli-auth") for _, target in token_binds)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("channel_tag", "organization", "expected"),
+    [
+        (None, None, {"public"}),
+        ("crm", None, {"public", "tagged"}),
+        (None, "公司/研发/平台", {"public", "organization"}),
+        ("crm", "公司/研发/平台", {"public", "tagged", "organization", "both"}),
+        ("other", "公司/销售", {"public"}),
+    ],
+)
+async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
+    tmp_path, monkeypatch, channel_tag, organization, expected,
+):
+    builtin_root = tmp_path / "builtin"
+    for name, restrictions in {
+        "public": "",
+        "tagged": "channel_tags: [crm]\n",
+        "organization": "organization_prefixes: [公司/研发]\n",
+        "both": "channel_tags: [crm]\norganization_prefixes: [公司/研发]\n",
+        "invalid": "channel_tags: invalid\n",
+    }.items():
+        directory = builtin_root / name
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text(f"---\nname: metadata-{name}\n{restrictions}---\nInstructions")
+    monkeypatch.setattr(skill_module, "BUILTIN_SKILLS_DIR", builtin_root)
+    workspace = tmp_path / "workspace"
+    custom_skill = workspace / "skills/custom/SKILL.md"
+    custom_skill.parent.mkdir(parents=True)
+    custom_skill.write_text("---\nname: custom\n---\nCustom instructions")
+    loader = SkillsLoader(workspace, channel_tag=channel_tag, user_organization=organization)
+    monkeypatch.setattr(loader, "list_skill_info", AsyncMock(side_effect=AssertionError("Workspace skills requested")))
+
+    args = await sandbox.wrap_sandbox_command("true", workspace, skills_loader=loader)
+
+    builtin_mounts = {
+        (source, target) for source, target in _option_pairs(args, "--ro-bind")
+        if Path(source).is_relative_to(builtin_root)
+    }
+    assert builtin_mounts == {(str(builtin_root / name), str(workspace / "skills" / name)) for name in expected}
 
 
 @pytest.mark.skipif(
@@ -327,7 +377,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
     managed_config = config_home / ".audit-config"
     managed_config.write_text("read-only config", encoding="utf-8")
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
     heartbeat = workspace / "heartbeat"
     worker = "for ((i=0; i<40; i++)); do printf x >> heartbeat; sleep 0.05; done"
     command = (
@@ -342,7 +392,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
         + ("true" if termination == "exit" else "sleep 30")
     )
     task = asyncio.create_task(
-        _run_wrapped_command(command, workspace, timeout_ms=1_000 if termination == "timeout" else 10_000)
+        _run_wrapped_command(command, workspace, timeout_ms=1_000 if termination == "timeout" else 10_000, skills_loader=SkillsLoader(workspace))
     )
     if termination == "cancel":
         try:
@@ -385,7 +435,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
 @pytest.mark.asyncio
 async def test_concurrent_sandboxes_have_private_ports_and_ipc(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
     program = """
 import json, os, socket, sys
 tcp = socket.socket()
@@ -410,7 +460,7 @@ sys.stdin.readline()
                 workspace = tmp_path / name
                 workspace.mkdir()
                 process = await asyncio.create_subprocess_exec(
-                    *sandbox.wrap_sandbox_command(["/usr/bin/python3", "-c", program, str(host_port)], workspace),
+                    *(await sandbox.wrap_sandbox_command(["/usr/bin/python3", "-c", program, str(host_port)], workspace, skills_loader=SkillsLoader(workspace))),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,

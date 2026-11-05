@@ -10,6 +10,7 @@ import pytest_asyncio
 from openai import pydantic_function_tool
 from pydantic import BaseModel, Field, ValidationError, create_model
 
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
@@ -215,7 +216,7 @@ class TestToolExecutor:
         monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
         monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
 
-        assert build_shell_tools(workspace).__name__ == "shell"
+        assert build_shell_tools(workspace, skills_loader=SkillsLoader(workspace)).__name__ == "shell"
 
     @pytest.mark.skipif(
         platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.SANDBOX_EXECUTABLES),
@@ -233,7 +234,7 @@ class TestToolExecutor:
         )
 
         result = await asyncio.wait_for(
-            _run_wrapped_command("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500),
+            _run_wrapped_command("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500, skills_loader=SkillsLoader(tmp_path)),
             timeout=5,
         )
 
@@ -259,7 +260,7 @@ class TestToolExecutor:
     @pytest.mark.asyncio
     async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, shell_session_manager):
 
-        result = await _run_wrapped_command("printf done", tmp_path, timeout_ms=1_000)
+        result = await _run_wrapped_command("printf done", tmp_path, timeout_ms=1_000, skills_loader=SkillsLoader(tmp_path))
 
         assert result.stdout == b"done"
         assert result.returncode == 0
@@ -267,7 +268,7 @@ class TestToolExecutor:
 
     @pytest.mark.asyncio
     async def test_shell_timeout_result_is_limited_normally(self, tmp_path: Path, monkeypatch):
-        async def skip_venv(_workspace: Path) -> None:
+        async def skip_venv(_workspace: Path, **_kwargs) -> None:
             return None
 
         async def timed_out_command(*_args, **_kwargs) -> ShellCommandResult:
@@ -282,7 +283,7 @@ class TestToolExecutor:
         monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
         monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", skip_venv)
         monkeypatch.setattr(shell_module, "_run_wrapped_command", timed_out_command)
-        shell = build_shell_tools(tmp_path)
+        shell = build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
 
         [result] = [
             result

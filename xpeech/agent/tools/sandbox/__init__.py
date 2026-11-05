@@ -8,7 +8,7 @@ from pathlib import Path
 from ....config.settings import settings
 from ....utils.file_io import ensure_path
 from ...server.context import get_lark_user_access_token, get_user_id
-from ...skills.skill import iter_builtin_skill_dirs
+from ...skills.skill import SkillsLoader
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 SANDBOX_EXECUTABLES = ("bwrap", "bash")
@@ -56,8 +56,9 @@ def _iter_sandbox_home_config_files() -> list[tuple[Path, Path]]:
     return config_files
 
 
-def wrap_sandbox_command(
-    command: str | list[str], workspace: Path, *, network_isolation: bool = True,
+async def wrap_sandbox_command(
+    command: str | list[str], workspace: Path, *, skills_loader: SkillsLoader,
+    network_isolation: bool = True,
 ) -> list[str]:
     """Wrap a bash command with optional slirp4netns networking (on by default)."""
     workspace = workspace.resolve()
@@ -139,8 +140,10 @@ def wrap_sandbox_command(
     # Present built-in and custom skills through one workspace/skills tree.
     # Built-in directories are mounted read-only over same-named workspace
     # skills so the built-in version always has priority inside the sandbox.
-    for builtin_skill in iter_builtin_skill_dirs():
-        target = workspace_skills / builtin_skill.name
+    for skill in await skills_loader.list_builtin_skill_info():
+        # Use the directory name, which can differ from frontmatter's name.
+        target = workspace_skills / Path(skill.path).parent.name
+        builtin_skill = skills_loader.builtin_skills / target.name
         args.extend(["--ro-bind", str(builtin_skill.resolve()), str(target)])
 
     shell_command = shlex.join(command) if isinstance(command, list) else command

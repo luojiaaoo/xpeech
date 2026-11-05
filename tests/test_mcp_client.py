@@ -10,8 +10,178 @@ from types import SimpleNamespace
 
 import pytest
 
+from xpeech.agent.skills.skill import SkillsLoader
+from xpeech.agent.server.context import lark_user_access_token_var
+from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.tools import mcp_client, sandbox
 from xpeech.config.settings import MCPServerSettings, ToolConfig
+
+
+@pytest.fixture
+def stdio_transport(tmp_path, monkeypatch):
+    """Exercise connection ownership and sandbox wrapping without launching a server."""
+    import mcp
+    from mcp.client import stdio
+
+    builtin_root = tmp_path / "builtin"
+    builtin_root.mkdir()
+    monkeypatch.setattr(skill_module, "BUILTIN_SKILLS_DIR", builtin_root)
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(mcp_client.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(mcp_client.shutil, "which", lambda name: f"/usr/bin/{name}")
+    sessions = []
+    calls = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    @asynccontextmanager
+    async def transport(params):
+        yield params, None
+
+    class Session:
+        def __init__(self, params, _write, **_kwargs):
+            self.params = params
+            self.version = len(sessions) + 1
+            self.closed = False
+            sessions.append(self)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            self.closed = True
+
+        async def initialize(self):
+            pass
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[{"name": "echo", "description": f"session-{self.version}"}])
+
+        async def call_tool(self, name, arguments):
+            calls.append((self.version, name))
+            if name == "wait":
+                started.set()
+                await release.wait()
+            return {"content": [{"type": "text", "text": f"session-{self.version}"}]}
+
+    monkeypatch.setattr(stdio, "stdio_client", transport)
+    monkeypatch.setattr(mcp, "ClientSession", Session)
+    return SimpleNamespace(
+        sessions=sessions, calls=calls, started=started, release=release, builtin_root=builtin_root,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["add_skill", "remove_skill", "token", "home_config"])
+async def test_stdio_rebuilds_when_wrapped_command_changes(tmp_path, stdio_transport, change):
+    state = stdio_transport
+    skill_dir = state.builtin_root / "new-skill"
+
+    def add_skill():
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("---\nname: new-skill\n---\nInstructions")
+
+    if change == "remove_skill":
+        add_skill()
+    registration = mcp_client.create_mcp_registration(
+        server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
+    )
+    context = lark_user_access_token_var.set(None)
+    try:
+        await registration._get_tool_bindings()
+        assert await registration.call_tool("echo", {}) == "session-1"
+        assert len(state.sessions) == 1
+        if change == "add_skill":
+            add_skill()
+        elif change == "remove_skill":
+            (skill_dir / "SKILL.md").unlink()
+        elif change == "home_config":
+            config_home = sandbox.settings.path.sandbox_home_path
+            config_home.mkdir()
+            (config_home / ".npmrc").write_text("managed config")
+
+        tokens = ("old-token", "new-token", None) if change == "token" else (None,)
+        for version, token in enumerate(tokens, start=2):
+            lark_user_access_token_var.set(token)
+            assert await registration.call_tool("echo", {}) == f"session-{version}"
+            assert len(state.sessions) == version
+            assert state.sessions[-2].closed
+            params = state.sessions[-1].params
+            assert registration._wrapped_command == [params.command, *params.args]
+            if change == "token":
+                if token is not None:
+                    assert token in params.args
+                else:
+                    assert "--unsetenv" in params.args
+            elif change in {"add_skill", "remove_skill"}:
+                assert (str(skill_dir) in params.args) is (change == "add_skill")
+        assert state.calls == [(1, "echo"), *[(version, "echo") for version in range(2, len(tokens) + 2)]]
+    finally:
+        lark_user_access_token_var.reset(context)
+        await registration.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_stdio_rebuild_waits_for_active_calls_without_serializing_unchanged_calls(
+    tmp_path, stdio_transport, cancel,
+):
+    state = stdio_transport
+    registration = mcp_client.create_mcp_registration(
+        server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
+    )
+    context = lark_user_access_token_var.set(None)
+    pending = asyncio.create_task(registration.call_tool("wait", {}))
+    rebuilding = None
+    try:
+        await asyncio.wait_for(state.started.wait(), 1)
+        assert await asyncio.wait_for(registration.call_tool("fast", {}), 1) == "session-1"
+        lark_user_access_token_var.set("new-token")
+        rebuilding = asyncio.create_task(registration.call_tool("after", {}))
+        await asyncio.sleep(0.02)
+        assert not rebuilding.done()
+        assert len(state.sessions) == 1
+        assert not state.sessions[0].closed
+        if cancel:
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        else:
+            state.release.set()
+            assert await asyncio.wait_for(pending, 1) == "session-1"
+        assert await asyncio.wait_for(rebuilding, 1) == "session-2"
+        assert state.sessions[0].closed
+        assert registration._active_calls == 0
+        assert state.calls == [(1, "wait"), (1, "fast"), (2, "after")]
+    finally:
+        lark_user_access_token_var.reset(context)
+        state.release.set()
+        if rebuilding is not None:
+            rebuilding.cancel()
+        pending.cancel()
+        await asyncio.gather(*(task for task in (pending, rebuilding) if task is not None), return_exceptions=True)
+        await registration.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stdio_discovery_refreshes_sandbox_and_tool_schemas(tmp_path, stdio_transport):
+    registration = mcp_client.create_mcp_registration(
+        server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
+    )
+    try:
+        first = await registration.start_tool_discovery()
+        assert first[0].schema["function"]["description"] == "session-1"
+        assert await registration.start_tool_discovery() == first
+        assert len(stdio_transport.sessions) == 1
+        skill_dir = stdio_transport.builtin_root / "added"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("---\nname: added\n---\nInstructions")
+        second = await registration.start_tool_discovery()
+        assert second[0].schema["function"]["description"] == "session-2"
+        assert len(stdio_transport.sessions) == 2
+        assert stdio_transport.sessions[0].closed
+    finally:
+        await registration.aclose()
 
 
 def test_registration_normalizes_workspace_without_expanding_home(tmp_path, monkeypatch):
@@ -25,6 +195,7 @@ def test_registration_normalizes_workspace_without_expanding_home(tmp_path, monk
     for supplied_workspace in (Path("~/workspace"), alias):
         registration = mcp_client.create_mcp_registration(
             server_name="demo", command="demo", workspace=supplied_workspace,
+            skills_loader=SkillsLoader(supplied_workspace),
         )
         assert registration.config.workspace == workspace
         assert registration.config.workspace.as_uri() == workspace.as_uri()
@@ -58,6 +229,7 @@ async def test_enabled_tools_match_original_names_with_globs(tmp_path, patterns,
 
     registration = mcp_client.create_mcp_registration(
         server_name="demo", command="demo", enabled_tools=patterns, workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     registration._session = Session()
     bindings = await registration._discover_tool_bindings()
@@ -77,7 +249,7 @@ def test_supports_the_three_mcp_transports(tmp_path):
     ]
 
     for kwargs, expected in cases:
-        registration = mcp_client.create_mcp_registration(server_name="test", **kwargs, workspace=tmp_path)
+        registration = mcp_client.create_mcp_registration(server_name="test", **kwargs, workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
         assert registration.config.transport == expected
 
 
@@ -89,6 +261,7 @@ def test_rejects_nonstandard_transport_names(tmp_path, transport: str):
             url="https://example.test/mcp",
             transport=transport,
             workspace=tmp_path,
+            skills_loader=SkillsLoader(tmp_path),
         )
 
 
@@ -111,6 +284,7 @@ def test_tls_verification_can_be_disabled_from_config(tmp_path):
         "test",
         settings.mcp_servers["test"],
         workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
 
     assert registration.config.verify_tls is False
@@ -123,7 +297,7 @@ def test_tls_verification_can_be_disabled_from_config(tmp_path):
 
 def test_user_scoped_is_loaded_from_config(tmp_path):
     config = MCPServerSettings(command="server", user_scoped=True)
-    registration = mcp_client.create_mcp_registration_from_config("test", config, tmp_path)
+    registration = mcp_client.create_mcp_registration_from_config("test", config, tmp_path, skills_loader=SkillsLoader(tmp_path))
     assert registration.config.user_scoped is True
 
 
@@ -134,6 +308,7 @@ def test_stdio_env_is_loaded_from_server_config(tmp_path):
 
     registration = mcp_client.create_mcp_registration_from_config(
         "local", config.mcp_servers["local"], workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
 
     assert registration.config.env == {"API_KEY": "test-key"}
@@ -150,7 +325,7 @@ def test_env_restrictions_apply_to_config_and_direct_registration(tmp_path, conf
         MCPServerSettings.model_validate(config)
 
     with pytest.raises(ValueError, match=message):
-        mcp_client.create_mcp_registration(server_name="test", workspace=tmp_path, **config)
+        mcp_client.create_mcp_registration(server_name="test", workspace=tmp_path, **config, skills_loader=SkillsLoader(tmp_path))
 
 
 @pytest.mark.asyncio
@@ -235,6 +410,7 @@ def test_authorization_token_command_requires_remote_mcp(tmp_path):
             command="fake-server",
             command_authorization_token="token-helper $user_id",
             workspace=tmp_path,
+            skills_loader=SkillsLoader(tmp_path),
         )
 
 
@@ -289,6 +465,7 @@ async def test_stdio_uses_workspace_home_and_passes_arguments_through(tmp_path, 
         registration = mcp_client.create_mcp_registration(
             server_name="test", command="fake-server", args=["--config", "~/server-config", "literal ; $(touch injected)"],
             workspace=workspace, env=configured_env,
+            skills_loader=SkillsLoader(workspace),
         )
         ready = asyncio.get_running_loop().create_future()
         close_event = asyncio.Event()
@@ -347,6 +524,7 @@ async def test_stdio_refuses_to_launch_without_sandbox(tmp_path, monkeypatch, sy
     monkeypatch.setattr(stdio, "stdio_client", unexpected_transport)
     registration = mcp_client.create_mcp_registration(
         server_name="test", command="fake-server", workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     ready = asyncio.get_running_loop().create_future()
 
@@ -370,6 +548,7 @@ async def test_stdio_refuses_to_launch_without_required_executable(tmp_path, mon
     monkeypatch.setattr(stdio, "stdio_client", unexpected_transport)
     registration = mcp_client.create_mcp_registration(
         server_name="test", command="fake-server", workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     ready = asyncio.get_running_loop().create_future()
 
@@ -402,7 +581,7 @@ async def test_stdio_sandbox_isolates_files_and_cleans_up_children(tmp_path, mon
     (config_home / ".mcp-config").write_text("managed config")
     monkeypatch.setenv("HOME", str(backend_home))
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
     (workspace / "worker.py").write_text(
         "import time\nfrom pathlib import Path\nwhile True:\n"
         "    with Path('heartbeat').open('ab') as file:\n        file.write(b'x')\n"
@@ -473,6 +652,7 @@ for line in sys.stdin:
         server_name="sandbox-test", command=shutil.which("python3", path="/usr/bin:/bin"),
         args=["-u", str(server), str(other_file), literal], workspace=workspace,
         env={"CUSTOM_SETTING": "configured"},
+        skills_loader=SkillsLoader(workspace),
     )
     try:
         bindings = await registration._get_tool_bindings()
@@ -557,6 +737,7 @@ async def test_streamable_http_passes_tls_setting_to_httpx(tmp_path, monkeypatch
         verify_tls=False,
         connect_timeout=45,
         workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     registration.user_id = "user-42"
     ready = asyncio.get_running_loop().create_future()
@@ -621,6 +802,7 @@ async def test_connection_error_is_passed_through_exit_stack(tmp_path, monkeypat
         url="https://example.test/mcp",
         verify_tls=False,
         workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     ready = asyncio.get_running_loop().create_future()
     owner = asyncio.create_task(registration._run_connection(ready, asyncio.Event()))
@@ -638,6 +820,7 @@ async def test_collect_mcp_tool_does_not_swallow_cancellation_groups(tmp_path, m
     registration = mcp_client.create_mcp_registration(
         server_name="test",
         command="fake-server", workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
 
     async def cancelled():
@@ -654,6 +837,7 @@ async def test_collect_mcp_tool_skips_unavailable_server(tmp_path, monkeypatch: 
     registration = mcp_client.create_mcp_registration(
         server_name="test",
         command="fake-server", workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
 
     async def unavailable():
@@ -670,6 +854,7 @@ async def test_collect_mcp_tool_skips_unavailable_server(tmp_path, monkeypatch: 
 async def test_connections_are_reused_and_expire(tmp_path, monkeypatch: pytest.MonkeyPatch, user_scoped, transport):
     await mcp_client.close_all_mcp_connections()
     monkeypatch.setattr(mcp_client, "MCP_CONNECTION_TTL_SECONDS", 0.06)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
 
     class FakeSession:
         async def list_tools(self):
@@ -707,9 +892,9 @@ async def test_connections_are_reused_and_expire(tmp_path, monkeypatch: pytest.M
     config = MCPServerSettings(**server_options, transport=transport, user_scoped=user_scoped)
     isolated_by_user = transport == "stdio" or user_scoped
 
-    first = await mcp_client.get_session_mcp_registration_from_config("session-1", "demo", config, tmp_path)
-    reused = await mcp_client.get_session_mcp_registration_from_config("session-1", "demo", config, tmp_path)
-    isolated = await mcp_client.get_session_mcp_registration_from_config("session-2", "demo", config, tmp_path)
+    first = await mcp_client.get_session_mcp_registration_from_config("session-1", "demo", config, tmp_path, skills_loader=SkillsLoader(tmp_path))
+    reused = await mcp_client.get_session_mcp_registration_from_config("session-1", "demo", config, tmp_path, skills_loader=SkillsLoader(tmp_path))
+    isolated = await mcp_client.get_session_mcp_registration_from_config("session-2", "demo", config, tmp_path, skills_loader=SkillsLoader(tmp_path))
 
     assert first is reused
     assert (first is not isolated) is isolated_by_user
@@ -751,7 +936,7 @@ async def test_connection_scope_and_cleanup(tmp_path, options, user_scoped):
     config = MCPServerSettings(**(options if "command" in options else {"url": "https://example.test/mcp", **options}))
     try:
         first, reused, other = await asyncio.gather(*(
-            mcp_client.get_session_mcp_registration_from_config(user_id, "demo", config, tmp_path)
+            mcp_client.get_session_mcp_registration_from_config(user_id, "demo", config, tmp_path, skills_loader=SkillsLoader(tmp_path))
             for user_id in ("user-1", "user-1", "user-2")
         ))
         assert first is reused
@@ -764,6 +949,7 @@ async def test_connection_scope_and_cleanup(tmp_path, options, user_scoped):
         assert not other._retired
         assert await mcp_client.get_session_mcp_registration_from_config(
             "user-2", "demo", config, tmp_path,
+            skills_loader=SkillsLoader(tmp_path),
         ) is other
     finally:
         await mcp_client.close_all_mcp_connections()
@@ -773,20 +959,50 @@ async def test_connection_scope_and_cleanup(tmp_path, options, user_scoped):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stdio", [True, False])
+@pytest.mark.parametrize("access", [
+    {"channel_tag": "crm"},
+    {"user_organization": "company/engineering"},
+    {"not_interactive": True},
+])
+async def test_stdio_cache_separates_skill_visibility(tmp_path, stdio, access, monkeypatch):
+    await mcp_client.close_all_mcp_connections()
+    monkeypatch.setattr(mcp_client.settings.path, "cache_path", tmp_path / "cache")
+    config = MCPServerSettings(**({"command": "demo"} if stdio else {"url": "https://example.test/mcp"}))
+    try:
+        first = await mcp_client.get_session_mcp_registration_from_config(
+            "alice", "demo", config, tmp_path, skills_loader=SkillsLoader(tmp_path),
+        )
+        changed = await mcp_client.get_session_mcp_registration_from_config(
+            "alice", "demo", config, tmp_path, skills_loader=SkillsLoader(tmp_path, **access),
+        )
+        again = await mcp_client.get_session_mcp_registration_from_config(
+            "alice", "demo", config, tmp_path, skills_loader=SkillsLoader(tmp_path, **access),
+        )
+        assert (first is not changed) is stdio
+        assert again is changed
+    finally:
+        await mcp_client.close_all_mcp_connections()
+
+
+@pytest.mark.asyncio
 async def test_shared_connections_ignore_user_workspaces_but_separate_configs(tmp_path, monkeypatch):
     await mcp_client.close_all_mcp_connections()
     monkeypatch.setattr(mcp_client.settings.path, "cache_path", tmp_path / "cache")
     config = MCPServerSettings(url="https://example.test/mcp")
     try:
-        first = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, tmp_path)
+        first = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, tmp_path, skills_loader=SkillsLoader(tmp_path))
         changed_config = await mcp_client.get_session_mcp_registration_from_config(
             "user-2", "demo", config.model_copy(update={"headers": {"X-Test": "other"}}), tmp_path,
+            skills_loader=SkillsLoader(tmp_path),
         )
         changed_workspace = await mcp_client.get_session_mcp_registration_from_config(
             "user-2", "demo", config, tmp_path / "other",
+            skills_loader=SkillsLoader(tmp_path / "other"),
         )
         scoped = await mcp_client.get_session_mcp_registration_from_config(
             "user-1", "demo", config.model_copy(update={"user_scoped": True}), tmp_path,
+            skills_loader=SkillsLoader(tmp_path),
         )
         assert changed_workspace is first
         assert first.config.workspace == tmp_path / "cache" / "mcp" / "demo"
@@ -813,9 +1029,9 @@ async def test_user_workspaces_have_independent_cache_expiry_and_cleanup(tmp_pat
     alias = tmp_path / "alias"
     alias.symlink_to(workspace, target_is_directory=True)
     try:
-        first = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, workspace)
-        reused = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, alias)
-        other = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, other_workspace)
+        first = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, workspace, skills_loader=SkillsLoader(workspace))
+        reused = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, alias, skills_loader=SkillsLoader(alias))
+        other = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, other_workspace, skills_loader=SkillsLoader(other_workspace))
         assert first is reused
         assert first is not other
         assert set(mcp_client.MCP_CONNECTIONS) == {("user-1", workspace), ("user-1", other_workspace)}
@@ -834,6 +1050,7 @@ async def test_user_workspaces_have_independent_cache_expiry_and_cleanup(tmp_pat
         assert not first._retired
         replacement = await mcp_client.get_session_mcp_registration_from_config(
             "user-1", "demo", config, other_workspace,
+            skills_loader=SkillsLoader(other_workspace),
         )
         assert replacement is not other
 
@@ -871,6 +1088,7 @@ async def test_failed_connection_is_retried_immediately_by_next_request(tmp_path
         "unreachable",
         config,
         workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
 
     with pytest.raises(asyncio.TimeoutError):
@@ -882,6 +1100,7 @@ async def test_failed_connection_is_retried_immediately_by_next_request(tmp_path
         "unreachable",
         config,
         workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     assert cached is registration
     with pytest.raises(asyncio.TimeoutError):
@@ -909,6 +1128,7 @@ async def test_terminated_connection_reconnects_on_next_call_without_replaying_f
     registration = mcp_client.create_mcp_registration(
         server_name="test",
         command="fake-server", workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     registration._session = TerminatedSession()
     reconnect_attempts = 0
@@ -932,7 +1152,7 @@ async def test_terminated_connection_reconnects_on_next_call_without_replaying_f
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["connecting", "discovering"])
 async def test_background_discovery_reports_failure_and_retries_immediately(tmp_path, monkeypatch, phase):
-    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path)
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
     attempts = 0
 
     class Session:
@@ -1006,7 +1226,7 @@ async def test_new_discovery_waits_for_failed_connection_cleanup_without_being_c
             if registration._session is session:
                 registration._session = None
 
-    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path)
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
     registration._session = OldSession()
     registration._owner_task = asyncio.create_task(old_owner())
     registration._close_event = old_close
@@ -1039,7 +1259,7 @@ async def test_stdio_server_reconnects_immediately_after_failed_initialization(t
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
-    monkeypatch.setattr(sandbox, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
     server = workspace / "server.py"
     server.write_text('''
 import json
@@ -1073,6 +1293,7 @@ for line in sys.stdin:
     registration = mcp_client.create_mcp_registration(
         server_name="reconnect", command=shutil.which("python3", path="/usr/bin:/bin"),
         args=["-u", str(server)], workspace=workspace,
+        skills_loader=SkillsLoader(workspace),
     )
     try:
         assert await asyncio.wait_for(registration.start_tool_discovery(), 10) == []
@@ -1113,6 +1334,7 @@ async def test_closing_session_cancels_background_discovery(tmp_path, monkeypatc
     monkeypatch.setattr(mcp_client.MCPServerRegistration, "_run_connection", run_connection)
     registration = await mcp_client.get_session_mcp_registration_from_config(
         "closing-test", "demo", MCPServerSettings(command="demo", user_scoped=True), workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     task = registration.start_tool_discovery()
     await asyncio.wait_for(started.wait(), timeout=1)
@@ -1140,7 +1362,7 @@ async def test_late_failure_from_old_session_does_not_close_new_session(tmp_path
             await fail.wait()
             raise ConnectionError("old connection closed")
 
-    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path)
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
     registration._session = OldSession()
     call = asyncio.create_task(registration.call_tool("echo", {}))
     await asyncio.wait_for(started.wait(), timeout=1)
@@ -1177,7 +1399,7 @@ async def test_discovery_after_tool_reconnect_uses_new_session_schemas(tmp_path,
                 registration._session = None
 
     monkeypatch.setattr(mcp_client.MCPServerRegistration, "_run_connection", run_connection)
-    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path)
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
     try:
         first = await registration.start_tool_discovery()
         assert [binding.func.__name__ for binding in first] == ["mcp_demo_version_1"]

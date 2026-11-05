@@ -14,10 +14,12 @@ from loguru import logger
 
 from ....config.settings import settings
 from ...server.context import get_lark_user_access_token, get_user_id
+from ...skills.skill import SkillsLoader
 from .. import sandbox
 from .schema import ShellCommandResult
 
 _WORKER_SOURCE = (Path(__file__).parent / "scripts" / "worker.py").read_text(encoding="utf-8")
+SandboxScope = tuple[str | None, Path]
 
 
 class SandboxConnectionError(RuntimeError):
@@ -43,38 +45,39 @@ class SandboxSession:
         self.process = None
         self.stderr = None
         self.idle_task = None
-        self.token_skills = None
+        self.wrapped_command: list[str] | None = None
         self.reader_task = None
         self.pending: dict[int, asyncio.Future[ShellCommandResult]] = {}
         self.next_request_id = 0
         self.retired = False
 
-    async def start(self) -> None:
+    async def start(self, skills_loader: SkillsLoader) -> None:
         """Start or reuse the worker while holding the lifecycle lock."""
-        token_skills = bool(get_lark_user_access_token())
-        # A different skill mount set needs a new sandbox. Let existing commands
-        # finish before switching authentication modes instead of killing them.
-        while self.process is not None and self.token_skills != token_skills and self.pending:
+        # The backend venv is deliberately not mounted. Use its base interpreter
+        # and expose only that runtime when installed outside /usr or /opt.
+        python = Path(sys._base_executable).resolve()
+        command = await sandbox.wrap_sandbox_command(
+            [str(python), "-I", "-u", "-c", _WORKER_SOURCE], self.workspace, skills_loader=skills_loader,
+        )
+        runtime = Path(sys.base_prefix).resolve()
+        if not any(runtime.is_relative_to(root) for root in (Path("/usr"), Path("/opt"))):
+            index = command.index("--chdir")
+            command[index:index] = ["--ro-bind", str(runtime), str(runtime)]
+        # Refresh mounts and environment on every call. Let active commands
+        # finish before rebuilding the sandbox with a different configuration.
+        while self.process is not None and self.wrapped_command != command and self.pending:
             await self.drained.wait()
         if self.retired:
             raise SandboxConnectionError("Shell sandbox has been closed")
         if self.process is not None:
             if (
                 self.process.returncode is None
-                and self.token_skills == token_skills
+                and self.wrapped_command == command
                 and self.reader_task is not None
                 and not self.reader_task.done()
             ):
                 return
             await self.stop()
-        # The backend venv is deliberately not mounted. Use its base interpreter
-        # and expose only that runtime when installed outside /usr or /opt.
-        python = Path(sys._base_executable).resolve()
-        command = sandbox.wrap_sandbox_command([str(python), "-I", "-u", "-c", _WORKER_SOURCE], self.workspace)
-        runtime = Path(sys.base_prefix).resolve()
-        if not any(runtime.is_relative_to(root) for root in (Path("/usr"), Path("/opt"))):
-            index = command.index("--chdir")
-            command[index:index] = ["--ro-bind", str(runtime), str(runtime)]
         self.stderr = tempfile.TemporaryFile()  # noqa: SIM115 -- owned by the session; closed in stop().
         try:
             spawning = asyncio.create_task(
@@ -101,7 +104,7 @@ class SandboxSession:
         except BaseException:
             await self.stop()
             raise
-        self.token_skills = token_skills
+        self.wrapped_command = command
         self.reader_task = asyncio.create_task(self.receive(self.process))
         logger.info("Started persistent shell sandbox workspace={}", self.workspace)
 
@@ -123,6 +126,7 @@ class SandboxSession:
         if self.stderr is not None:
             self.stderr.close()
             self.stderr = None
+        self.wrapped_command = None
 
     async def send(self, request: dict) -> None:
         self.process.stdin.write(json.dumps(request).encode("utf-8") + b"\n")
@@ -158,10 +162,12 @@ class SandboxSession:
             if self.process is process:
                 await self.stop()
 
-    async def execute(self, command: str, timeout_ms: int) -> ShellCommandResult:
+    async def execute(
+        self, command: str, timeout_ms: int, *, skills_loader: SkillsLoader,
+    ) -> ShellCommandResult:
         # Only lifecycle changes and writes share the lock, never command waits.
         async with self.lock:
-            await self.start()
+            await self.start(skills_loader)
             process = self.process
             request_id = self.next_request_id
             self.next_request_id += 1
@@ -217,16 +223,17 @@ class SandboxSession:
 class SandboxManager:
     def __init__(self, idle_timeout: float | None = None):
         self.idle_timeout = settings.tool.shell.sandbox_idle_timeout_seconds if idle_timeout is None else idle_timeout
-        self.sessions: dict[Path, SandboxSession] = {}
+        self.sessions: dict[SandboxScope, SandboxSession] = {}
         self.closing = False
 
     @asynccontextmanager
     async def use(self, workspace: Path):
-        """Keep a workspace session alive while a caller uses its resources."""
+        """Keep a user/workspace session alive while a caller uses its resources."""
         workspace = workspace.resolve()
+        scope = get_user_id(), workspace
         if self.closing:
             raise SandboxConnectionError("Shell sandboxes are shutting down")
-        session = self.sessions.setdefault(workspace, SandboxSession(workspace))
+        session = self.sessions.setdefault(scope, SandboxSession(workspace))
         session.users += 1  # Includes requests waiting for sandbox startup.
         if session.idle_task is not None:
             session.idle_task.cancel()
@@ -234,17 +241,19 @@ class SandboxManager:
             yield session
         finally:
             session.users -= 1
-            if not session.users and self.sessions.get(workspace) is session:
-                session.idle_task = asyncio.create_task(self._expire(workspace, session))
+            if not session.users and self.sessions.get(scope) is session:
+                session.idle_task = asyncio.create_task(self._expire(scope, session))
 
-    async def run(self, command: str, workspace: Path, timeout_ms: int) -> ShellCommandResult:
+    async def run(
+        self, command: str, workspace: Path, timeout_ms: int, *, skills_loader: SkillsLoader,
+    ) -> ShellCommandResult:
         async with self.use(workspace) as session:
-            return await session.execute(command, timeout_ms)
+            return await session.execute(command, timeout_ms, skills_loader=skills_loader)
 
-    async def _expire(self, workspace: Path, session: SandboxSession) -> None:
+    async def _expire(self, scope: SandboxScope, session: SandboxSession) -> None:
         await asyncio.sleep(self.idle_timeout)
         async with session.lock:
-            if session.users or self.sessions.get(workspace) is not session:
+            if session.users or self.sessions.get(scope) is not session:
                 return
             # Keep cleanup shielded from a request arriving during teardown.
             cleanup = asyncio.create_task(session.stop())
@@ -253,9 +262,9 @@ class SandboxManager:
             except asyncio.CancelledError:
                 await cleanup
                 raise
-            if self.sessions.get(workspace) is session and not session.users:
-                del self.sessions[workspace]
-            logger.info("Reclaimed idle shell sandbox workspace={}", workspace)
+            if self.sessions.get(scope) is session and not session.users:
+                del self.sessions[scope]
+            logger.info("Reclaimed idle shell sandbox user_id={} workspace={}", *scope)
 
     async def close(self) -> None:
         self.closing = True

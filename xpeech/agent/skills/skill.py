@@ -144,13 +144,10 @@ class SkillsLoader:
         self.user_organization = user_organization
         self.not_interactive = not_interactive
 
-    async def _skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
-        """Return skill documents, with built-ins taking precedence."""
-        builtin_dirs = iter_builtin_skill_dirs()
-        builtin_dir_names = {skill_dir.name for skill_dir in builtin_dirs}
-        files: list[tuple[Path, Literal["builtin", "workspace"]]] = [
-            (skill_dir / "SKILL.md", "builtin") for skill_dir in builtin_dirs
-        ]
+    async def _workspace_skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
+        """Return workspace skill documents without shadowing built-in directories."""
+        builtin_dir_names = {skill_dir.name for skill_dir in iter_builtin_skill_dirs()}
+        files: list[tuple[Path, Literal["builtin", "workspace"]]] = []
         if self.workspace_skills is not None:
             await ensure_path_async(self.workspace_skills)
             entries = await aiofiles.os.scandir(self.workspace_skills)
@@ -165,11 +162,14 @@ class SkillsLoader:
                     files.append((skill_file, "workspace"))
         return files
 
-    async def list_skill_info(self) -> list[SkillInfo]:
-        """Return valid skills with metadata and full SKILL.md content."""
+    async def _load_skill_info(
+        self,
+        skill_files: list[tuple[Path, Literal["builtin", "workspace"]]],
+        seen_names: set[str],
+    ) -> list[SkillInfo]:
+        """Read, filter and de-duplicate skill documents."""
         skills = []
-        seen_names = set()
-        for skill_file, source in await self._skill_files():
+        for skill_file, source in skill_files:
             content = await LockedFile(skill_file).read_text()
             # Built-in skills are mounted into the workspace by the shell sandbox.
             if source == "builtin":
@@ -198,6 +198,22 @@ class SkillsLoader:
             seen_names.add(metadata.name)
             skills.append(skill)
         return skills
+
+    async def list_builtin_skill_info(self) -> list[SkillInfo]:
+        """Return available built-in skills without accessing workspace skills."""
+        return await self._load_skill_info(
+            [(skill_dir / "SKILL.md", "builtin") for skill_dir in iter_builtin_skill_dirs()],
+            set(),
+        )
+
+    async def list_skill_info(self) -> list[SkillInfo]:
+        """Merge available built-in and workspace skills, preferring built-ins."""
+        builtin_skills = await self.list_builtin_skill_info()
+        workspace_skills = await self._load_skill_info(
+            await self._workspace_skill_files(),
+            {skill.metadata.name for skill in builtin_skills},
+        )
+        return [*builtin_skills, *workspace_skills]
 
     async def build_skills_prompt(self) -> str:
         """Build the complete skills section for the system prompt."""

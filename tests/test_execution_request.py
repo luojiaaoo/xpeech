@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent import loop as loop_module
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.server.routes.chat import answer_question
@@ -117,7 +118,7 @@ async def test_power_commands_are_rejected_without_prompting(tmp_path, monkeypat
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(
-            shell_module.build_shell_tools(tmp_path), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
+            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
         )
     )
     call = ToolCallRequest(
@@ -148,7 +149,7 @@ async def test_shell_checks_once_before_confirmed_execution(tmp_path, monkeypatc
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(
-            shell_module.build_shell_tools(tmp_path), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
+            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
         )
     )
     call = ToolCallRequest(
@@ -531,7 +532,7 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
             remote_calls.append((name, arguments))
             return {"content": [{"type": "text", "text": "remote result"}]}
 
-    registration = create_mcp_registration(server_name="demo", command="demo", enabled_tools=["*"], workspace=tmp_path)
+    registration = create_mcp_registration(server_name="demo", command="demo", enabled_tools=["*"], workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
     registration._session = Session()
     [binding] = await registration._discover_tool_bindings()
     original = deepcopy(binding.schema)

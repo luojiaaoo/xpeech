@@ -5,6 +5,7 @@ from typing import Any
 from ...config.settings import ToolConfig, settings
 from ...utils.channel_tag import channel_tag_allows_access
 from ...utils.organization import organization_allows_access
+from ..skills.skill import SkillsLoader
 from .browser_preview import build_browser_preview_tool
 from .document import build_document_tool
 from .execution_request import build_execution_request_tool
@@ -36,6 +37,9 @@ async def register_tools(
 ) -> None:
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
     workspace = workspace.resolve()
+    skills_loader = SkillsLoader(
+        workspace, channel_tag=channel_tag, user_organization=user_organization, not_interactive=not_interactive,
+    )
     read_image, read_video, read_file, write_file, edit_file = build_file_tools(
         workspace=workspace,
         max_result_chars=config.max_result_chars,
@@ -49,7 +53,7 @@ async def register_tools(
 
     provider.register_function_tool(
         build_execution_request_tool(
-            build_shell_tools(workspace=workspace),
+            build_shell_tools(workspace=workspace, skills_loader=skills_loader),
             requires_confirmation=partial(shell_requires_confirmation, workspace=workspace),
             not_interactive=not_interactive,
         )
@@ -93,6 +97,7 @@ async def register_tools(
             server_name,
             server_config,
             workspace=workspace,
+            skills_loader=skills_loader,
         )
         registrations[server_name] = registration
 

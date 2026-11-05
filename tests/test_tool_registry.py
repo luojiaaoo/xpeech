@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import mcp_client, registry
 from xpeech.agent.tools.execution_request import EXECUTION_REQUEST, ExecutionDecision
@@ -266,7 +267,7 @@ async def test_registers_supported_default_and_mcp_tools(
     monkeypatch.setattr(registry, "build_file_message_tools", lambda **_kwargs: named_tool("send_file"))
     monkeypatch.setattr(registry, "ask_user_question", named_tool("ask_user_question"))
 
-    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path)
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
     registration_calls = []
 
     async def get_registration(*args, **kwargs):
@@ -346,7 +347,12 @@ async def test_registers_supported_default_and_mcp_tools(
         assert result.succeeded
         assert result.value == EXECUTION_REQUEST
     assert provider.mcp_tools == mcp_tools
-    assert registration_calls == [(("session-1", "demo", config.mcp_servers["demo"]), {"workspace": tmp_path})]
+    [(registration_args, registration_kwargs)] = registration_calls
+    assert registration_args == ("session-1", "demo", config.mcp_servers["demo"])
+    assert registration_kwargs["workspace"] == tmp_path
+    loader = registration_kwargs["skills_loader"]
+    assert loader.workspace_skills == tmp_path / "skills"
+    assert loader.not_interactive is not_interactive
 
 
 @pytest.mark.asyncio
@@ -562,6 +568,7 @@ async def test_mcp_confirmation_selection_at_registration(
             "demo",
             config.mcp_servers["demo"],
             workspace=tmp_path,
+            skills_loader=SkillsLoader(tmp_path),
         )
         for binding in await registration._get_tool_bindings():
             assert "execution_description" not in binding.schema["function"]["parameters"]["properties"]
@@ -585,7 +592,7 @@ async def test_register_mcp_bindings_passes_confirmation_callback(
         }])),
         call_tool=AsyncMock(return_value={"content": [{"type": "text", "text": "echo result"}]}),
     )
-    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path)
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
     registration._session = session
     task = registration.start_tool_discovery()
     await task

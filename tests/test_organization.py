@@ -10,6 +10,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.server.api import app
 from xpeech.agent.skills import skill as skill_module
@@ -151,9 +152,11 @@ async def test_mcp_filters_before_connections_status_and_discovery(monkeypatch, 
 def test_mcp_organization_settings_are_preserved_in_cache_key(tmp_path):
     public = mcp_client.create_mcp_registration_from_config(
         "demo", MCPServerSettings(command="demo"), workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     private = mcp_client.create_mcp_registration_from_config(
         "demo", MCPServerSettings(command="demo", organization_prefixes=["公司/", "公司/"]), workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path),
     )
     assert private.config.organization_prefixes == ["公司/"]
     assert mcp_client._persistent_registration_key(public.config) != mcp_client._persistent_registration_key(private.config)

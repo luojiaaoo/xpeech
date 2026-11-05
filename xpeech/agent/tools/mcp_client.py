@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ...config.settings import MCPServerSettings, settings
 from ...utils.command_template import execute_command_template
+from ..skills.skill import SkillsLoader
 from .execution_request import ExecutionDecision, build_execution_request_tool, execution_request_schema
 from .sandbox import SANDBOX_EXECUTABLES, wrap_sandbox_command
 
@@ -361,6 +362,7 @@ def _render_mcp_result(result: Any) -> str | list[dict[str, Any]]:
 class MCPServerConfig:
     server_name: str
     workspace: Path
+    skills_loader: SkillsLoader
     command: str | None = None
     args: tuple[str, ...] = ()
     env: Mapping[str, str] | None = None
@@ -414,6 +416,12 @@ class MCPServerRegistration:
     )
     _last_error: str | None = dataclass_field(default=None, init=False, repr=False)
     _retired: bool = dataclass_field(default=False, init=False, repr=False)
+    _wrapped_command: list[str] | None = dataclass_field(default=None, init=False, repr=False)
+    _active_calls: int = dataclass_field(default=0, init=False, repr=False)
+    _drained: asyncio.Condition = dataclass_field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._drained = asyncio.Condition(self._lock)
 
     @property
     def connection_scope(self) -> MCPConnectionScope:
@@ -430,7 +438,7 @@ class MCPServerRegistration:
         if not self._retired and task is not None and not task.cancelled():
             if not task.done():
                 return task
-            if self._bindings is not None and self._session is not None:
+            if self._bindings is not None and self._session is not None and not self.config.command:
                 return task
         if self._session is None:
             self._bindings = None
@@ -478,12 +486,10 @@ class MCPServerRegistration:
         async with self._lock:
             if self._retired:
                 return []
-            if self._bindings is not None and self._session is not None:
-                return self._bindings
-
             try:
-                if self._session is None:
-                    await self._connect()
+                await self._ensure_session_locked()
+                if self._bindings is not None:
+                    return self._bindings
                 self._bindings = await self._discover_tool_bindings()
                 self._last_error = None
                 await _refresh_session_expiry(self)
@@ -507,7 +513,14 @@ class MCPServerRegistration:
 
     async def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> str | list[dict[str, Any]]:
         try:
-            await self._ensure_session()
+            async with self._lock:
+                await self._ensure_session_locked()
+                session = self._session
+                if session is None or self._retired:
+                    return "(MCP server is temporarily unavailable)"
+                # Reserve this session under the lifecycle lock so a rebuild
+                # cannot close it between validation and the actual tool call.
+                self._active_calls += 1
         except _MCPRegistrationRetiredError:
             return "(MCP server is temporarily unavailable)"
         except asyncio.CancelledError:
@@ -520,9 +533,6 @@ class MCPServerRegistration:
             )
             return "(MCP server is temporarily unavailable)"
 
-        session = self._session
-        if session is None or self._retired:
-            return "(MCP server is temporarily unavailable)"
         try:
             result = await asyncio.wait_for(
                 session.call_tool(tool_name, arguments=dict(arguments)),
@@ -568,6 +578,10 @@ class MCPServerRegistration:
                 exc,
             )
             return f"(MCP tool call failed: {type(exc).__name__})"
+        finally:
+            async with self._lock:
+                self._active_calls -= 1
+                self._drained.notify_all()
 
     async def aclose(self) -> None:
         discovery_task = self._discovery_task
@@ -584,28 +598,48 @@ class MCPServerRegistration:
         self._owner_task = None
         self._close_event = None
         self._session = None
+        self._wrapped_command = None
         if close_event is not None:
             close_event.set()
         if owner_task is not None and owner_task is not asyncio.current_task():
             await owner_task
 
     async def _ensure_session(self) -> None:
+        async with self._lock:
+            await self._ensure_session_locked()
+
+    async def _ensure_session_locked(self) -> None:
+        """Validate sandbox configuration and refresh the connection under the lock."""
         if self._retired:
             raise _MCPRegistrationRetiredError("MCP registration has been retired")
+        if self.config.command:
+            command = await wrap_sandbox_command(
+                [self.config.command, *self.config.args], self.config.workspace,
+                network_isolation=False, skills_loader=self.config.skills_loader,
+            )
+            # Concurrent calls with unchanged configuration keep sharing the
+            # connection. Configuration changes wait for existing calls.
+            while (
+                self._session is not None
+                and self._wrapped_command is not None
+                and self._wrapped_command != command
+                and self._active_calls
+            ):
+                await self._drained.wait()
+            if self._retired:
+                raise _MCPRegistrationRetiredError("MCP registration has been retired")
+            if self._wrapped_command is not None and self._wrapped_command != command:
+                await self._close_connection()
         if self._session is None:
-            async with self._lock:
-                if self._retired:
-                    raise _MCPRegistrationRetiredError("MCP registration has been retired")
-                if self._session is None:
-                    try:
-                        await self._connect()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        self._mark_unavailable(exc)
-                        with suppress(BaseException):
-                            await self._close_connection()
-                        raise
+            try:
+                await self._connect()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._mark_unavailable(exc)
+                with suppress(BaseException):
+                    await self._close_connection()
+                raise
 
     async def _connect(self) -> None:
         await self._close_connection()
@@ -646,6 +680,7 @@ class MCPServerRegistration:
         cfg = self.config
         workspace = cfg.workspace.resolve()
         session = None
+        command = None
         try:
             async with AsyncExitStack() as stack:
                 from mcp import ClientSession, StdioServerParameters, types
@@ -661,8 +696,9 @@ class MCPServerRegistration:
                         raise RuntimeError(f"Stdio MCP requires executable(s) on PATH: {', '.join(missing)}")
                     # MCP servers may need host-local services; keep the host
                     # network while retaining filesystem and process isolation.
-                    command = wrap_sandbox_command(
+                    command = await wrap_sandbox_command(
                         [cfg.command, *cfg.args], workspace, network_isolation=False,
+                        skills_loader=cfg.skills_loader,
                     )
                     server_params = StdioServerParameters(
                         command=command[0],
@@ -724,6 +760,7 @@ class MCPServerRegistration:
                 )
                 await asyncio.wait_for(session.initialize(), timeout=cfg.tool_timeout)
                 self._session = session
+                self._wrapped_command = command
                 logger.info("MCP server '{}' connected", cfg.server_name)
                 ready.set_result(None)
                 await close_event.wait()
@@ -736,6 +773,7 @@ class MCPServerRegistration:
         finally:
             if self._session is session:
                 self._session = None
+                self._wrapped_command = None
             if self._owner_task is asyncio.current_task():
                 self._owner_task = None
                 self._close_event = None
@@ -820,6 +858,7 @@ def create_mcp_registration(
     *,
     server_name: str,
     workspace: Path,
+    skills_loader: SkillsLoader,
     description: str = "",
     command: str | None = None,
     args: Sequence[str] | None = None,
@@ -863,6 +902,7 @@ def create_mcp_registration(
             ),
             channel_tags=channel_tags if channel_tags is not None else [],
             organization_prefixes=organization_prefixes if organization_prefixes is not None else [],
+            skills_loader=skills_loader,
         )
     )
 
@@ -871,6 +911,8 @@ def create_mcp_registration_from_config(
     server_name: str,
     config: MCPServerSettings,
     workspace: Path,
+    *,
+    skills_loader: SkillsLoader,
 ) -> MCPServerRegistration:
     return create_mcp_registration(
         server_name=server_name,
@@ -890,6 +932,7 @@ def create_mcp_registration_from_config(
         connect_timeout=config.connect_timeout,
         channel_tags=config.channel_tags,
         organization_prefixes=config.organization_prefixes,
+        skills_loader=skills_loader,
     )
 
 
@@ -900,6 +943,7 @@ def _hashable_mapping(value: Mapping[str, str] | None) -> tuple[tuple[str, str],
 
 
 def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
+    loader = config.skills_loader if config.command else None
     return (
         config.server_name,
         config.description,
@@ -918,6 +962,9 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         float(config.connect_timeout),
         tuple(config.channel_tags),
         tuple(config.organization_prefixes),
+        loader.channel_tag if loader is not None else None,
+        loader.user_organization if loader is not None else None,
+        loader.not_interactive if loader is not None else False,
     )
 
 
@@ -926,6 +973,8 @@ async def get_session_mcp_registration_from_config(
     server_name: str,
     config: MCPServerSettings,
     workspace: Path,
+    *,
+    skills_loader: SkillsLoader,
 ) -> MCPServerRegistration:
     """Always isolate stdio; share remote connections unless authorization/config requires isolation."""
     if not user_id:
@@ -939,7 +988,9 @@ async def get_session_mcp_registration_from_config(
     if not user_scoped:
         # Shared transports and roots must never inherit the first user's workspace.
         workspace = settings.path.cache_path / "mcp" / _sanitize_name(server_name)
-    registration = create_mcp_registration_from_config(server_name, config, workspace=workspace)
+    registration = create_mcp_registration_from_config(
+        server_name, config, workspace=workspace, skills_loader=skills_loader,
+    )
     if user_scoped:
         registration.user_id = user_id
     key = _persistent_registration_key(registration.config)
