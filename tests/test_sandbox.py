@@ -5,6 +5,7 @@ import platform
 import shlex
 import shutil
 import socket
+import sys
 from pathlib import Path
 
 import pytest
@@ -66,13 +67,13 @@ def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypatch):
 
     args = sandbox.wrap_sandbox_command("true", tmp_path)
 
-    assert args[:6] == [
-        "rootlesskit", "--net=slirp4netns", "--disable-host-loopback",
-        "--port-driver=none", "--copy-up=/etc", "bwrap",
+    assert args[:4] == [
+        sys.executable, "-I", str(Path(sandbox.__file__).parent / "scripts" / "sandbox_network.py"), "bwrap",
     ]
     assert "--unshare-ipc" in args
-    # A second net namespace would lose the route and DNS configured outside.
-    assert "--unshare-net" not in args
+    assert "--unshare-net" in args
+    assert "rootlesskit" not in args
+    assert ("/etc/resolv.conf", "/etc/resolv.conf") not in _option_pairs(args, "--ro-bind-try")
 
 
 def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monkeypatch):
@@ -87,6 +88,7 @@ def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monkeypatc
     assert "--unshare-net" not in args
     assert "--unshare-pid" in args
     assert "--unshare-ipc" in args
+    assert ("/etc/resolv.conf", "/etc/resolv.conf") in _option_pairs(args, "--ro-bind-try")
     assert args[args.index("--cap-drop") + 1] == "ALL"
     assert _option_pairs(args, "--bind") == [(str(tmp_path), str(tmp_path))]
     assert dict(_option_pairs(args, "--setenv"))["HOME"] == str(tmp_path / "home")
@@ -308,7 +310,7 @@ def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: Path) -
     platform.system() != "Linux" or any(
         shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "setsid")
     ),
-    reason="Requires Linux with bubblewrap, RootlessKit, slirp4netns, ip, bash and setsid",
+    reason="Requires Linux with bubblewrap, slirp4netns, bash and setsid",
 )
 @pytest.mark.asyncio
 @pytest.mark.parametrize("termination", ["exit", "timeout", "cancel"])

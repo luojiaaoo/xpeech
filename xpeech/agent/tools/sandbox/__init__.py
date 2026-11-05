@@ -2,16 +2,17 @@
 
 import os
 import shlex
+import sys
 from pathlib import Path
 
-from ...config.settings import settings
-from ...utils.file_io import ensure_path
-from ..server.context import get_lark_user_access_token, get_user_id
-from ..skills.skill import iter_builtin_skill_dirs
+from ....config.settings import settings
+from ....utils.file_io import ensure_path
+from ...server.context import get_lark_user_access_token, get_user_id
+from ...skills.skill import iter_builtin_skill_dirs
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 SANDBOX_EXECUTABLES = ("bwrap", "bash")
-NETWORK_SANDBOX_EXECUTABLES = (*SANDBOX_EXECUTABLES, "rootlesskit", "slirp4netns", "ip")
+NETWORK_SANDBOX_EXECUTABLES = (*SANDBOX_EXECUTABLES, "slirp4netns")
 
 
 def _add_setenv(args: list[str], key: str, value: str) -> None:
@@ -58,7 +59,7 @@ def _iter_sandbox_home_config_files() -> list[tuple[Path, Path]]:
 def wrap_sandbox_command(
     command: str | list[str], workspace: Path, *, network_isolation: bool = True,
 ) -> list[str]:
-    """Wrap a bash command with optional RootlessKit network isolation (on by default)."""
+    """Wrap a bash command with optional slirp4netns networking (on by default)."""
     workspace = workspace.resolve()
     workspace_python_env = workspace / ".venv"
     home = get_sandbox_home(workspace)
@@ -67,15 +68,10 @@ def wrap_sandbox_command(
 
     args: list[str] = []
     if network_isolation:
-        # RootlessKit configures outbound NAT in a fresh network namespace.
-        # Do not unshare net again in bwrap: that would discard the network.
-        # Copy up /etc for private DNS, and keep listeners/host loopback private.
+        # Run the standard-library launcher outside the mount namespace. It
+        # configures bwrap's network before allowing the command to execute.
         args.extend([
-            "rootlesskit",
-            "--net=slirp4netns",
-            "--disable-host-loopback",
-            "--port-driver=none",
-            "--copy-up=/etc",
+            sys.executable, "-I", str(Path(__file__).parent / "scripts" / "sandbox_network.py"),
         ])
     args.extend([
         "bwrap",
@@ -85,6 +81,8 @@ def wrap_sandbox_command(
         "--unshare-ipc",
         "--cap-drop", "ALL",
     ])
+    if network_isolation:
+        args.append("--unshare-net")
 
     sandbox_env: dict[str, str] = {
         "HOME": str(home),
@@ -115,11 +113,12 @@ def wrap_sandbox_command(
         "/etc/pki/tls/certs",
         "/etc/pki/ca-trust",
         "/etc/crypto-policies",
-        "/etc/resolv.conf",
         "/etc/ld.so.cache",
         "/etc/hosts",
     ):
         args.extend(["--ro-bind-try", path, path])
+    if not network_isolation:
+        args.extend(["--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf"])
 
     args.extend(
         [
