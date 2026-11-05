@@ -152,3 +152,118 @@ async def test_stream_holds_semaphore_until_consumption_finishes(monkeypatch):
 
 async def _collect(stream):
     return [chunk async for chunk in stream]
+
+
+@pytest.mark.asyncio
+async def test_cancel_while_opening_completion_returns_permit(monkeypatch):
+    started = asyncio.Event()
+    semaphore = asyncio.Semaphore(1)
+
+    async def fake_acompletion(**kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
+    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
+    stream = LiteLLMRetryClient().acompletion()
+    task = asyncio.create_task(_collect(stream))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.wait_for(semaphore.acquire(), timeout=1)
+    assert semaphore.locked()
+    semaphore.release()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup", ["normal", "error", "timeout"])
+async def test_close_returns_permit_before_sdk_cleanup(monkeypatch, cleanup):
+    semaphore = asyncio.Semaphore(1)
+    close_started = asyncio.Event()
+    finish_close = asyncio.Event()
+
+    class SDKStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            return "chunk"
+
+        async def aclose(self):
+            close_started.set()
+            if cleanup == "error":
+                raise RuntimeError("HTTP cleanup failed")
+            await finish_close.wait()
+
+    async def fake_acompletion(**kwargs):
+        return SDKStream()
+
+    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
+    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
+    monkeypatch.setattr(helper, "STREAM_CLOSE_TIMEOUT", 0.05)
+    stream = LiteLLMRetryClient(max_retries=0).acompletion()
+    assert await anext(stream) == "chunk"
+    assert semaphore.locked()
+
+    close_task = asyncio.create_task(stream.aclose())
+    await asyncio.wait_for(close_started.wait(), timeout=1)
+    await asyncio.wait_for(semaphore.acquire(), timeout=1)
+    assert semaphore.locked()
+    semaphore.release()
+    if cleanup == "normal":
+        finish_close.set()
+    await asyncio.wait_for(close_task, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_task_exit_and_later_stream_close_release_exactly_once(monkeypatch):
+    semaphore = asyncio.Semaphore(1)
+    closed = asyncio.Event()
+    close_count = 0
+
+    class SDKStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            return "chunk"
+
+        async def aclose(self):
+            nonlocal close_count
+            close_count += 1
+            closed.set()
+
+    async def fake_acompletion(**kwargs):
+        return SDKStream()
+
+    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
+    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
+    stream = LiteLLMRetryClient().acompletion()
+
+    async def consume_one_chunk():
+        assert await anext(stream) == "chunk"
+
+    await asyncio.create_task(consume_one_chunk())
+    await asyncio.wait_for(closed.wait(), timeout=1)
+    await stream.aclose()
+
+    assert close_count == 1
+    await asyncio.wait_for(semaphore.acquire(), timeout=1)
+    assert semaphore.locked()
+    semaphore.release()
+
+
+@pytest.mark.asyncio
+async def test_cancel_while_waiting_for_permit_does_not_release_another_slot(monkeypatch):
+    semaphore = asyncio.Semaphore(0)
+    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
+    stream = LiteLLMRetryClient().acompletion()
+    task = asyncio.create_task(_collect(stream))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert semaphore.locked()

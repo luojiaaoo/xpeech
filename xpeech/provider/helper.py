@@ -2,15 +2,81 @@ import asyncio
 import random
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
+import anyio
 from litellm import RateLimitError, acompletion
 from loguru import logger
-
-from ..config.settings import settings
 from openai import APIStatusError
 
+from ..config.settings import settings
+
 LLM_PARALLEL_SEMAPHORE = asyncio.Semaphore(settings.llm.parallel)
+STREAM_CLOSE_TIMEOUT = 5.0
+_STREAM_CLEANUP_TASKS: set[asyncio.Task[None]] = set()
+
+
+async def _close_stream(response: Any) -> None:
+    """限时清理 HTTP 连接，清理期间不占用模型并发名额。"""
+    close = getattr(response, "aclose", None)
+    if close is None:
+        return
+    with anyio.move_on_after(STREAM_CLOSE_TIMEOUT, shield=True) as close_scope:
+        try:
+            await close()
+        except Exception as exc:  # noqa: BLE001 - 清理异常不能覆盖原始的流异常。
+            logger.opt(exception=exc).warning("Failed to close LiteLLM stream")
+    if close_scope.cancel_called:
+        logger.warning("Timed out closing LiteLLM stream")
+
+
+@asynccontextmanager
+async def _completion_stream(**kwargs: Any) -> AsyncIterator[Any]:
+    """在消费任务的生命周期内管理模型流及其并发名额。
+
+    每个模型流应由同一个任务消费，流的生命周期不能超过该任务。
+    即使转发生成器暂停在 yield，任务结束回调也能兜底归还名额。
+    生成器可能在稍后再次清理，因此释放操作必须保证幂等。
+    """
+    semaphore = LLM_PARALLEL_SEMAPHORE
+    owner = asyncio.current_task()
+    response = None
+    released = False
+
+    def release() -> None:
+        nonlocal released
+        if not released:
+            released = True
+            semaphore.release()
+
+    def take_response() -> Any:
+        nonlocal response
+        upstream, response = response, None
+        return upstream
+
+    def owner_done(_task: asyncio.Task[Any]) -> None:
+        release()
+        upstream = take_response()
+        if upstream is not None:
+            cleanup = asyncio.create_task(_close_stream(upstream))
+            # 避免被 gc 回收，其实也不会被回收
+            _STREAM_CLEANUP_TASKS.add(cleanup)
+            cleanup.add_done_callback(_STREAM_CLEANUP_TASKS.discard)
+
+    await semaphore.acquire()
+    if owner is not None:
+        owner.add_done_callback(owner_done)
+    try:
+        response = await acompletion(**kwargs)
+        yield response
+    finally:
+        if owner is not None:
+            owner.remove_done_callback(owner_done)
+        release()
+        upstream = take_response()
+        if upstream is not None:
+            await _close_stream(upstream)
 
 
 def _format_error(exc: APIStatusError) -> str:
@@ -18,13 +84,13 @@ def _format_error(exc: APIStatusError) -> str:
 
 
 class LiteLLMRetryClient:
-    """Call LiteLLM with retries for rate-limit responses only.
+    """调用 LiteLLM，仅在收到限流响应时重试。
 
-    Args:
-        max_retries: Number of retries after the first failed request.
-        initial_delay: Initial backoff delay in seconds.
-        max_delay: Maximum delay between retry attempts in seconds.
-        jitter: Extra random delay in seconds to avoid retry bursts.
+    参数：
+        max_retries: 首次请求失败后的最大重试次数。
+        initial_delay: 初始退避时间，单位为秒。
+        max_delay: 重试间隔的上限，单位为秒。
+        jitter: 额外的随机延迟范围，单位为秒，用于分散重试请求。
     """
 
     def __init__(
@@ -40,14 +106,13 @@ class LiteLLMRetryClient:
         self.jitter = jitter
 
     async def acompletion(self, **kwargs: Any) -> AsyncIterator[Any]:
-        """Stream a completion while retaining concurrency and retry guards."""
+        """流式获取模型响应，并保留并发限制和限流重试机制。"""
         kwargs["stream"] = True
         kwargs.setdefault("stream_options", {"include_usage": True})
         start_time = time.time()
         for attempt in range(self.max_retries + 1):
             try:
-                async with LLM_PARALLEL_SEMAPHORE:
-                    response = await acompletion(**kwargs)
+                async with _completion_stream(**kwargs) as response:
                     async for chunk in response:
                         yield chunk
 
