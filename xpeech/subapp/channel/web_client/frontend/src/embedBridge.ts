@@ -1,6 +1,6 @@
 import type { ChatEvent } from './types';
 
-export type SyncOptions = { files?: File[]; jsonOutput?: boolean; requestId?: string };
+export type SyncOptions = { files?: File[]; requestId?: string };
 
 function parentOrigin() {
   const origin = new URLSearchParams(window.location.search).get('parent_origin');
@@ -42,11 +42,8 @@ export function connectEmbedBridge(sessionId: string, handlers: {
           throw new Error('files 必须为 File 数组');
         }
         if (!data.text.trim() && files.length === 0) throw new Error('消息不能为空');
-        if (data.json_output !== undefined && typeof data.json_output !== 'boolean') {
-          throw new Error('jsonOutput 必须为布尔值');
-        }
         const events = await handlers.chatSync(data.text, {
-          files, jsonOutput: data.json_output, requestId: data.request_id,
+          files, requestId: data.request_id,
         });
         respond({ result: { session_id: sessionId, events } });
       } else if (data.method === 'downloadFile' || data.method === 'getFile') {

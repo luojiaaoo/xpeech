@@ -16,11 +16,11 @@ WebConfig = web_client_app.WebConfig
 create_app = web_client_app.create_app
 
 
-@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("text", ["hello", "hello::请严格以JSON格式回复::"])
 @pytest.mark.parametrize("endpoint", ["chat", "chat_sync"])
 @pytest.mark.parametrize("status_code", [200, 400, 409])
 def test_web_client_forwards_chat_metadata_without_channel_injection(
-    tmp_path: Path, monkeypatch, json_output, endpoint, status_code,
+    tmp_path: Path, monkeypatch, text, endpoint, status_code,
 ):
     body = (
         b'[{"event":"assistant","context":"hello"}]' if endpoint == "chat_sync"
@@ -47,6 +47,10 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
             system_name="Test Assistant",
         )
     )
+    schema = app.openapi()
+    form = schema["paths"][f"/api/{endpoint}"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+    form_fields = schema["components"]["schemas"][form["$ref"].rsplit("/", 1)[1]]["properties"]
+    assert "json_output" not in form_fields
 
     with TestClient(app) as client:
         assert client.post(
@@ -56,8 +60,7 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
         proxied = client.post(
             f"/api/{endpoint}",
             data={
-                "content": '[{"text":"hello"}]',
-                "json_output": str(json_output).lower(),
+                "content": json.dumps([{"text": text}], ensure_ascii=False),
                 "session_metadata": json.dumps(
                     {"channel": "spoofed", "source": "browser"}
                 ),
@@ -68,7 +71,8 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
     assert proxied.content == body
     assert proxied.headers["content-type"].startswith(media_type)
     assert opener.await_args.args[4] == f"http://backend.test/{endpoint}"
-    assert opener.await_args.kwargs["json_output"] is json_output
+    assert "json_output" not in opener.await_args.kwargs
+    assert json.loads(opener.await_args.args[2]) == [{"text": text}]
     assert json.loads(opener.await_args.args[3]) == {
         "channel": "spoofed",
         "source": "browser",

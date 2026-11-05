@@ -107,7 +107,7 @@ test('synchronous chat forwards authentication, session, metadata and JSON mode 
   const controller = new AbortController();
   const bytes = new Uint8Array([0, 255, 128]);
   const files = [new File([bytes], '报告.bin', { type: 'application/octet-stream' }), new File(['second'], 'other.txt', { type: 'text/plain' })];
-  const events = await api.chatSync('hello', files, { sessionId: 'session', signal: controller.signal, jsonOutput: true });
+  const events = await api.chatSync('hello::请严格以JSON格式回复::', files, { sessionId: 'session', signal: controller.signal });
   assert.equal(events[0].context, 'answer');
   assert.equal(events[1].event, 'send_file');
   assert.equal(events[1].context, 'reports/报告.pdf');
@@ -118,8 +118,8 @@ test('synchronous chat forwards authentication, session, metadata and JSON mode 
   assert.equal((init.headers as Headers).get('authorization'), 'Bearer business.jwt.signature');
   assert.equal((init.headers as Headers).get('x-session-id'), 'session');
   assert.equal((init.headers as Headers).get('x-sender-name'), encodeURIComponent('张三'));
-  assert.equal((init.body as FormData).get('json_output'), 'true');
-  assert.deepEqual(JSON.parse((init.body as FormData).get('content') as string), [{ text: 'hello' }]);
+  assert.equal((init.body as FormData).has('json_output'), false);
+  assert.deepEqual(JSON.parse((init.body as FormData).get('content') as string), [{ text: 'hello::请严格以JSON格式回复::' }]);
   assert.deepEqual(JSON.parse((init.body as FormData).get('session_metadata') as string), { source: 'portal' });
   assert.equal((init.headers as Headers).has('content-type'), false);
   const uploaded = (init.body as FormData).getAll('files') as File[];

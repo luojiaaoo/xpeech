@@ -13,24 +13,7 @@ from .schema import InputContent
 from .session_guard import SessionChatGuard
 
 CHAT_GUARD = SessionChatGuard()
-
-
-def json_output_enabled(
-    json_output: Annotated[
-        bool,
-        Form(
-            description='为大模型请求添加 response_format={"type":"json_object"}，不修改提示词；'
-            "模型未配置支持 JSON 输出时返回 HTTP 400，成功响应仍使用 SSE 流"
-        ),
-    ] = False,
-) -> bool:
-    """在 SSE 响应开始前校验模型是否支持请求的 JSON 输出模式。"""
-    if json_output and not settings.llm.support_json_output:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The configured model does not support JSON output",
-        )
-    return json_output
+JSON_OUTPUT_TRIGGER = "::请严格以JSON格式回复::"
 
 
 def internal_user_id(
@@ -128,6 +111,22 @@ def content(
         return json.loads(content)
     except json.JSONDecodeError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid JSON format")
+
+
+def json_output_enabled(
+    request_content: Annotated[list[dict[str, str]], Depends(content)],
+) -> bool:
+    """仅根据本次用户文本的完整标记开启 JSON 输出，并校验模型是否支持。"""
+    enabled = any(
+        isinstance(block, dict) and isinstance(block.get("text"), str) and JSON_OUTPUT_TRIGGER in block["text"]
+        for block in request_content
+    )
+    if enabled and not settings.llm.support_json_output:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The configured model does not support JSON output",
+        )
+    return enabled
 
 
 async def acquire_chat_session(

@@ -368,7 +368,7 @@ test('interaction requests wait for the composer and correlate responses from th
   await assert.rejects(app.api.chatSync('hello'), /init/);
   app.api.init(jwtFor(), 'Alice');
   const input = app.api.setInput('draft');
-  const chat = app.api.chatSync('hello', { jsonOutput: true });
+  const chat = app.api.chatSync('hello::请严格以JSON格式回复::');
   await tick();
   app.message({ type: 'xpeech:ready' });
   app.message({ type: 'xpeech:authenticated' });
@@ -378,7 +378,8 @@ test('interaction requests wait for the composer and correlate responses from th
   app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
   const commands = app.sent.slice(1).map(item => item.data);
   assert.deepEqual(commands.map(data => data.method), ['setInput', 'chatSync']);
-  assert.equal(commands[1].json_output, true);
+  assert.equal('json_output' in commands[1], false);
+  assert.equal(commands[1].text, 'hello::请严格以JSON格式回复::');
   assert.equal(commands[0].session_id, 'first');
   assert.notEqual(commands[0].request_id, commands[1].request_id);
   let settled = false;
@@ -602,7 +603,6 @@ test('interaction errors, conversation changes and destroy reject pending promis
   app.message({ type: 'xpeech:ready' });
   app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
   await assert.rejects(app.api.chatSync(''), /不能为空/);
-  await assert.rejects(app.api.chatSync('hello', { jsonOutput: 'yes' }), /jsonOutput/);
   await assert.rejects(app.api.setInput('hello', { timeoutMs: -1 }), /timeoutMs/);
   const busy = app.api.chatSync('hello');
   const busyCheck = assert.rejects(busy, /正在回复/);

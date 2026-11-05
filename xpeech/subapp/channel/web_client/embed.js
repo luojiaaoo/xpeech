@@ -77,13 +77,10 @@ function requestInteraction(method, text, options = {}) {
   if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 2147483647) {
     return Promise.reject(new TypeError('timeoutMs 必须为有效的正数'));
   }
-  if (options.jsonOutput !== undefined && typeof options.jsonOutput !== 'boolean') {
-    return Promise.reject(new TypeError('jsonOutput 必须为布尔值'));
-  }
   return new Promise(function (resolve, reject) {
     var id = String(++requestSequence);
     var pending = {
-      data: { type: 'xpeech:request', request_id: id, method: method, text: text, json_output: options.jsonOutput, files: files },
+      data: { type: 'xpeech:request', request_id: id, method: method, text: text, files: files },
       resolve: resolve, reject: reject, sent: false, sessionId: null,
       timer: setTimeout(function () {
         pendingRequests.delete(id);

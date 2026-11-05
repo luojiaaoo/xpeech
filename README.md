@@ -472,13 +472,19 @@ curl -N -X POST "http://localhost:7878/chat" \
 
 响应是 SSE 流，可以边生成边读取。
 
-需要模型输出 JSON 对象时，添加表单参数 `-F 'json_output=true'`，默认关闭。
-此参数仅在 `llm.support_json_output = true` 时，为大模型请求添加
-`response_format={"type":"json_object"}`；不添加或修改任何系统提示词、用户提示词。
-如果请求开启 JSON 输出，但 `llm.support_json_output = false`，接口会在 SSE 流开始前返回 HTTP 400，
-不会调用模型。
-`/api/chat` 代理接口也支持此参数。响应仍为 SSE，JSON 内容通过 `assistant` 事件分片返回，
-需要拼接完整的最终回复后再解析 JSON。
+需要模型输出 JSON 对象时，在本次用户消息中加入完整标记 `::请严格以JSON格式回复::`，例如：
+
+```text
+列出三个 RSS 新闻源，包含名称和链接。::请严格以JSON格式回复::
+```
+
+标记必须精确匹配，前后的 `::` 均不可省略。普通的 `JSON`、`json` 或不带符号的“请严格以JSON格式回复”不会触发。
+标记保留在发送给模型的原始文本中，仅对本次请求生效，不会因为历史消息里有该标记而延续到下一轮。
+此规则适用于 `/chat`、`/chat_sync` 及通过这些接口接入的网页和飞书渠道；
+模型仍需配置 `llm.support_json_output = true`，否则返回 HTTP 400。
+开启后为大模型请求添加 `response_format={"type":"json_object"}`，不额外修改提示词。
+API 不再通过 `json_output` 表单参数控制输出格式，仅按本次消息中的完整标记判断。
+`/chat` 的响应仍为 SSE，JSON 内容通过 `assistant` 事件分片返回，需拼接完整的最终回复后再解析 JSON。
 
 ### 内置命令
 

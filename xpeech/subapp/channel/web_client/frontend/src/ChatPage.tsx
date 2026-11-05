@@ -241,7 +241,7 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
       };
       let events: ChatEvent[] = [];
       if (sync) {
-        events = await chatSync(requestText, sentFiles, { sessionId, signal: controller.signal, jsonOutput: sync.jsonOutput });
+        events = await chatSync(requestText, sentFiles, { sessionId, signal: controller.signal });
         // Synchronous events already contain complete assistant messages.
         for (const event of events) {
           if (controller.signal.aborted) break;

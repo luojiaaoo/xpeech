@@ -44,14 +44,13 @@ test('iframe bridge validates parent, session and payload and correlates sync re
   assert.equal(app.sent.at(-1).data.request_id, '1');
   await app.message({ ...input, session_id: 'old' });
   assert.match(app.sent.at(-1).data.error, /会话已切换/);
-  await app.message({ ...input, method: 'chatSync', text: 'question', json_output: true });
-  assert.equal(calls[0].options.jsonOutput, true);
+  await app.message({ ...input, method: 'chatSync', text: 'question::请严格以JSON格式回复::' });
+  assert.equal(calls[0].text, 'question::请严格以JSON格式回复::');
+  assert.equal('jsonOutput' in calls[0].options, false);
   assert.equal(calls[0].options.requestId, '1');
   assert.deepEqual(app.sent.at(-1).data.result.events, events);
   await app.message({ ...input, method: 'chatSync', text: '' });
   assert.match(app.sent.at(-1).data.error, /不能为空/);
-  await app.message({ ...input, method: 'chatSync', json_output: 'yes' });
-  assert.match(app.sent.at(-1).data.error, /jsonOutput/);
   assert.ok(app.sent.every(message => message.origin === 'https://portal.test'));
   dispose();
   const count = app.sent.length;

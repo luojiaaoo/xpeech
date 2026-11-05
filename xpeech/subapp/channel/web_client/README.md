@@ -72,7 +72,7 @@ function onLogout() {
 | `assistant.open()` | 通过代码主动展开聊天 iframe，无需用户点击浮动按钮 |
 | `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
 | `assistant.setInput(text, { timeoutMs? } = {})` | 替换当前对话输入框内容（允许空字符串清空），不自动发送；返回 `Promise<{ session_id }>` |
-| `assistant.chatSync(text, { files?, jsonOutput?, timeoutMs? } = {})` | 在当前会话后台调用 `/api/chat_sync`，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id, events, files }>`，其中返回的 `files` 为 `{ path, url }[]` |
+| `assistant.chatSync(text, { files?, timeoutMs? } = {})` | 在当前会话后台调用 `/api/chat_sync`，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id, events, files }>`，其中返回的 `files` 为 `{ path, url }[]` |
 | `assistant.downloadFile(path, { timeoutMs? } = {})` | 下载 `send_file` 事件 `context` 指定的文件，自动携带当前 JWT 并触发浏览器保存，返回 `Promise<{ session_id }>` |
 | `assistant.getFile(path, { timeoutMs? } = {})` | 获取文件二进制，返回 `Promise<File>`，包含文件名和 MIME 类型，供主站 JS 处理，不触发浏览器保存 |
 | `assistant.onReply(callback)` | 订阅每条完整模型回复，返回取消订阅函数 |
@@ -104,7 +104,6 @@ await assistant.setInput("请帮我分析当前订单"); // 用户可以继续�
 
 try {
   const { session_id, events } = await assistant.chatSync("总结当前订单的风险", {
-    jsonOutput: false,
     timeoutMs: 300000,
   });
   // events 是后端原始事件数组，例如 [{ event: "assistant", context: "..." }]。
@@ -204,7 +203,9 @@ SDK 本身收到通知不会自动下载；调用方决定如何处理。`destro
 保留输入框草稿和待发送附件，只携带调用时通过 `files` 显式传入的附件。它使用后端的非交互模式，不等待用户填写问题表单；
 后端为每次同步执行生成独立会话，不读取也不写入对话历史。
 本轮消息和回复只经 Promise 与 `onReply` 回传主页面，不渲染到对话框，窗口收起时也可执行。
-`jsonOutput: true` 原样转发 JSON 输出选项，需模型配置支持；不支持时返回 HTTP 400。
+需要模型输出 JSON 对象时，在消息文本中加入完整标记 `::请严格以JSON格式回复::`，例如
+`assistant.chatSync("总结当前订单的风险。::请严格以JSON格式回复::")`。仅本次请求生效，需模型配置支持；
+不支持时返回 HTTP 400。
 同步调用可与对话框手动聊天、其他同步调用并发执行，互不阻塞。
 HTTP 错误会拒绝 Promise；HTTP 200 返回的 `error` 事件保留在 `events` 中，调用方应自行检查。
 
@@ -214,7 +215,7 @@ HTTP 错误会拒绝 Promise；HTTP 200 返回的 `error` 事件保留在 `event
 双方都校验 `postMessage` 的 origin 和窗口来源，请求和响应还使用 `request_id`、`session_id` 关联。
 
 Web Client 同时提供 `POST /api/chat_sync`，与 `/api/chat` 使用相同的 multipart 字段
-（`content`、`session_metadata`、`files`、`json_output`）和认证 / 会话请求头，
+（`content`、`session_metadata`、`files`）和认证 / 会话请求头，
 成功时返回完整 JSON 事件数组；嵌入请求仍必须提供合法 UUIDv7 的 `x-session-id` 和 `x-sender-name`。
 
 JWT 必须由业务后端先验证网站当前用户的登录身份，再为该用户签发，不能直接采用浏览器提交的

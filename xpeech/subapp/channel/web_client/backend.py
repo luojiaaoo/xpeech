@@ -10,11 +10,8 @@ from ....utils.ids import DEFAULT_SESSION_ID
 from ..helper import BackendAuthParams, ChatStream, _backend_headers
 
 
-def _chat_form(content: str, session_metadata: str, json_output: bool) -> dict[str, str]:
-    data = {"session_metadata": session_metadata, "content": content}
-    if json_output:
-        data["json_output"] = "true"
-    return data
+def _chat_form(content: str, session_metadata: str) -> dict[str, str]:
+    return {"session_metadata": session_metadata, "content": content}
 
 
 async def open_chat(
@@ -25,7 +22,6 @@ async def open_chat(
     chat_url: str,
     *,
     files: Any = None,
-    json_output: bool = False,
     session_id: str | None = None,
 ) -> ChatStream:
     """Open the interactive /chat request as a text/event-stream."""
@@ -40,7 +36,7 @@ async def open_chat(
         response = await client.send(
             client.build_request(
                 "POST", chat_url, headers=headers,
-                data=_chat_form(content, session_metadata, json_output), files=files,
+                data=_chat_form(content, session_metadata), files=files,
             ),
             stream=True,
         )
@@ -58,7 +54,6 @@ async def open_chat_sync(
     chat_url: str,
     *,
     files: Any = None,
-    json_output: bool = False,
 ) -> httpx.Response:
     """Call the non-interactive /chat_sync and wait for the full JSON event list.
 
@@ -74,7 +69,7 @@ async def open_chat_sync(
         return await client.post(
             chat_url,
             headers=headers,
-            data=_chat_form(content, session_metadata, json_output),
+            data=_chat_form(content, session_metadata),
             files=files,
         )
 

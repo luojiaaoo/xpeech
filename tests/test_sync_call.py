@@ -132,13 +132,13 @@ def test_chat_sync_initializes_non_interactive_tools_without_session_header(
     assert fake_runner.created["kwargs"] == {"not_interactive": True, "channel_tag": None}
 
 
-def test_chat_sync_passes_json_output_flag(monkeypatch, fake_runner):
+def test_chat_sync_recognizes_json_output_keyword(monkeypatch, fake_runner):
     monkeypatch.setattr(settings.llm, "support_json_output", True)
 
     response = TestClient(app).post(
         "/chat_sync",
         headers=chat_headers(),
-        data={"content": '[{"text":"hello"}]', "json_output": "true"},
+        data={"content": '[{"text":"hello::请严格以JSON格式回复::"}]'},
     )
 
     assert response.status_code == 200
@@ -151,7 +151,7 @@ def test_chat_sync_rejects_unsupported_json_output_before_running(monkeypatch, f
     response = TestClient(app).post(
         "/chat_sync",
         headers=chat_headers(),
-        data={"content": '[{"text":"hello"}]', "json_output": "true"},
+        data={"content": '[{"text":"hello::请严格以JSON格式回复::"}]'},
     )
 
     assert response.status_code == 400

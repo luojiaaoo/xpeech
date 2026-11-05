@@ -79,7 +79,6 @@ async def open_chat_stream(
     channel: str,
     *,
     files: Any = None,
-    json_output: bool = False,
 ) -> ChatStream:
     """Open a streaming request to the backend chat endpoint."""
 
@@ -87,9 +86,6 @@ async def open_chat_stream(
         "session_metadata": session_metadata,
         "content": content,
     }
-    if json_output:
-        data["json_output"] = "true"
-
     client = httpx.AsyncClient(timeout=None)
     try:
         headers = _backend_headers(BackendUserParams(user_id, channel), sender_name)

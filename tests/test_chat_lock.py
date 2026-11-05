@@ -61,13 +61,13 @@ def test_session_id_header_accepts_default_and_uuidv7():
     ["default", UUID7_SESSION_ID],
 )
 @pytest.mark.parametrize("channel", ["web_client", "feishu"])
-@pytest.mark.parametrize("json_output", [None, False, True])
+@pytest.mark.parametrize("json_requested", [False, True])
 def test_chat_initializes_all_tools_for_every_session(
     tmp_path,
     monkeypatch,
     session_id,
     channel,
-    json_output,
+    json_requested,
 ):
     from xpeech.agent import execute as execute_module
 
@@ -87,9 +87,8 @@ def test_chat_initializes_all_tools_for_every_session(
         "x-sender-name": "Alice",
     }
 
-    data = {"content": '[{"text":"hello"}]'}
-    if json_output is not None:
-        data["json_output"] = str(json_output).lower()
+    text = "hello::请严格以JSON格式回复::" if json_requested else "hello"
+    data = {"content": '[{"text":"' + text + '"}]'}
     response = TestClient(app).post(
         "/chat",
         headers=headers,
@@ -100,7 +99,7 @@ def test_chat_initializes_all_tools_for_every_session(
     create.assert_awaited_once_with("user", not_interactive=False, channel_tag=None)
     assert messages[0].session_id == session_id
     assert messages[0].channel == channel
-    assert messages[0].json_output is (json_output is True)
+    assert messages[0].json_output is json_requested
 
 
 @pytest.mark.parametrize(
@@ -153,7 +152,7 @@ def test_unsupported_json_output_returns_http_error_before_starting_stream(monke
             "x-session-id": "default",
             "x-sender-name": "Alice",
         },
-        data={"content": '[{"text":"hello"}]', "json_output": "true"},
+        data={"content": '[{"text":"hello::请严格以JSON格式回复::"}]'},
     )
 
     assert response.status_code == 400

@@ -208,13 +208,12 @@ function parseEventBlock(block: string): ChatEvent | null {
   }
 }
 
-type ChatOptions = { sessionId?: string; signal?: AbortSignal; jsonOutput?: boolean };
+type ChatOptions = { sessionId?: string; signal?: AbortSignal };
 
 async function sendChat(path: string, text: string, files: File[], options: ChatOptions) {
   const form = new FormData();
   form.set('content', JSON.stringify(text.trim() ? [{ text: text.trim() }] : []));
   if (memoryJWT) form.set('session_metadata', JSON.stringify(memorySessionMetadata));
-  if (options.jsonOutput) form.set('json_output', 'true');
   files.forEach((file) => form.append('files', file, file.name));
   const headers = authHeaders();
   if (memorySenderName !== null) {

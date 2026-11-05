@@ -10,8 +10,8 @@ from yarl import URL
 
 from .....exceptions import PathProtectionError
 from .....utils.channel_jwt import UserJWTAuth
-from .....utils.internal_jwt import create_internal_access_token
 from .....utils.ids import DEFAULT_SESSION_ID, validate_session_id
+from .....utils.internal_jwt import create_internal_access_token
 from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file
 from ..backend import open_chat, open_chat_sync, submit_question
 from ..dao import User
@@ -65,13 +65,6 @@ def create_proxy_router(
         sender_name: Annotated[str | None, Header(alias="x-sender-name", min_length=1)] = None,
         session_metadata: Annotated[str, Form()] = "{}",
         files: Annotated[list[UploadFile] | None, File()] = None,
-        json_output: Annotated[
-            bool,
-            Form(
-                description='为大模型请求添加 response_format={"type":"json_object"}，不修改提示词；'
-                "模型未配置支持 JSON 输出时返回 HTTP 400"
-            ),
-        ] = False,
     ):
         if sender_name is None and isinstance(user, UserJWTAuth):
             raise HTTPException(422, "嵌入聊天必须提供 x-sender-name")
@@ -116,7 +109,6 @@ def create_proxy_router(
                 json.dumps(metadata, ensure_ascii=False),
                 str(URL(backend_url) / "chat_sync"),
                 files=upload_data,
-                json_output=json_output,
             )
             return Response(
                 upstream.content,
@@ -131,7 +123,6 @@ def create_proxy_router(
             json.dumps(metadata, ensure_ascii=False),
             str(URL(backend_url) / "chat"),
             files=upload_data,
-            json_output=json_output,
             session_id=session_id,
         )
         upstream = chat_stream.response
