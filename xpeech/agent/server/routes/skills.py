@@ -7,6 +7,7 @@ from ....config.settings import settings
 from ....exceptions import PathProtectionError
 from ....utils.file_io import is_relative_path
 from ....utils.ids import validate_user_id
+from ....utils.organization import resolve_user_organization
 from ...skills.skill import SkillInfo, SkillsLoader
 from ..auth import AuthenticatedUser, require_user_jwt
 from ..dependencies import authenticated_user_id
@@ -74,7 +75,13 @@ async def list_skills(
 ) -> list[SkillInfo]:
     """返回内置技能，以及 JWT 用户可用的 SKILL 列表。"""
     workspace = _user_workspace(user_id)
-    return await SkillsLoader(workspace, channel_tag=channel.channel_tag).list_skill_info()
+    organization = settings.organization
+    user_organization = await resolve_user_organization(
+        user_id, command_template=organization.command_template, timeout=organization.timeout,
+    )
+    return await SkillsLoader(
+        workspace, channel_tag=channel.channel_tag, user_organization=user_organization,
+    ).list_skill_info()
 
 
 @router.post("/import", response_model=SkillInfo, status_code=status.HTTP_201_CREATED)

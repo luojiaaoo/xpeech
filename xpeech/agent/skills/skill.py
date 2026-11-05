@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, computed_field, field_validator
 
 from ...utils.channel_tag import channel_tag_allows_access, normalize_channel_tags
 from ...utils.file_io import LockedFile, ensure_path_async
+from ...utils.organization import normalize_organization_prefixes, organization_allows_access
 from ..server.context import get_lark_user_access_token
 
 # Default builtin skills directory (relative to this file)
@@ -31,7 +32,13 @@ class SkillMetadata(BaseModel):
     always: bool = False
     internal: bool = False
     channel_tags: list[str] = Field(default_factory=list)
+    organization_prefixes: list[str] = Field(default_factory=list)
     kwargs: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("organization_prefixes")
+    @classmethod
+    def validate_organization_prefixes(cls, value: list[str]) -> list[str]:
+        return normalize_organization_prefixes(value)
 
     @field_validator("channel_tags")
     @classmethod
@@ -68,7 +75,7 @@ class SkillInfo(BaseModel):
             kwargs = {
                 key: value
                 for key, value in frontmatter.items()
-                if key not in {"name", "description", "always", "internal", "channel_tags"}
+                if key not in {"name", "description", "always", "internal", "channel_tags", "organization_prefixes"}
             }
             return SkillMetadata(
                 name=name,
@@ -76,6 +83,7 @@ class SkillInfo(BaseModel):
                 always=always if isinstance(always, bool) else False,
                 internal=internal if isinstance(internal, bool) else False,
                 channel_tags=frontmatter.get("channel_tags", []),
+                organization_prefixes=frontmatter.get("organization_prefixes", []),
                 kwargs=kwargs,
             )
 
@@ -127,11 +135,13 @@ class SkillsLoader:
         workspace: Path | None,
         *,
         channel_tag: str | None = None,
+        user_organization: str | None = None,
         not_interactive: bool = False,
     ):
         self.workspace_skills = workspace / "skills" if workspace is not None else None
         self.builtin_skills = BUILTIN_SKILLS_DIR
         self.channel_tag = channel_tag
+        self.user_organization = user_organization
         self.not_interactive = not_interactive
 
     async def _skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
@@ -179,6 +189,8 @@ class SkillsLoader:
             if self.not_interactive and metadata.name in INTERACTIVE_SKILL_NAMES:
                 continue
             if source == "builtin" and not channel_tag_allows_access(metadata.channel_tags, self.channel_tag):
+                continue
+            if not organization_allows_access(metadata.organization_prefixes, self.user_organization):
                 continue
             if metadata.name in seen_names:
                 logger.warning("Skipping duplicate skill '{}' at '{}'", metadata.name, skill_file)
@@ -240,7 +252,9 @@ class SkillsLoader:
                 "placed in the workspace by the user, and `internal` marks a skill related to the "
                 "agent's runtime mechanics. `channel_tags` restricts built-in skills to matching JWT "
                 "channels; built-in skills without channel_tags are public. Workspace skills are "
-                "always available regardless of their channel_tags.\n\n"
+                "not filtered by channel_tags. `organization_prefixes` restricts both built-in and "
+                "workspace skills to users whose organization starts with any configured prefix; "
+                "skills without organization_prefixes are public to organizations.\n\n"
                 f"{skills_summary}\n"
             )
 

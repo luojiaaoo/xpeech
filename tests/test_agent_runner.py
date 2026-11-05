@@ -7,6 +7,7 @@ import pytest
 from xpeech.agent import runner as runner_module
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.schema import InboundMessage, InputText
+from xpeech.config.settings import OrganizationConfig
 
 
 class FakeProvider:
@@ -45,6 +46,7 @@ def make_config(workspace_base_path: Path):
             max_iterations=5,
         ),
         tool=object(),
+        organization=OrganizationConfig(),
     )
 
 
@@ -89,7 +91,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     create_templates.assert_awaited_once_with(runner.workspace)
     register_tools.assert_awaited_once()
     assert set(register_tools.await_args.kwargs) == {
-        "user_id", "provider", "workspace", "config", "not_interactive", "channel_tag",
+        "user_id", "provider", "workspace", "config", "not_interactive", "channel_tag", "user_organization",
     }
     assert register_tools.await_args.kwargs["not_interactive"] is False
     assert register_tools.await_args.kwargs["channel_tag"] is None
@@ -100,6 +102,26 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     provider = FakeAgentLoop.instances[0].kwargs["provider"]
     assert provider.kwargs["api_key"] == "test-key"
     assert provider.kwargs["extra_headers"] == {"Authorization": "Bearer test-key"}
+
+
+@pytest.mark.asyncio
+async def test_runner_resolves_organization_once_before_registering_tools(
+    monkeypatch, tmp_path, runner_dependencies,
+):
+    config = make_config(tmp_path)
+    config.organization = OrganizationConfig(command_template="lookup ${user_id}", timeout=2.0)
+    lookup = AsyncMock(return_value="公司/研发/平台")
+    monkeypatch.setattr(runner_module, "resolve_user_organization", lookup)
+    register_tools = runner_dependencies[2]
+
+    async def check_registration(**kwargs):
+        lookup.assert_awaited_once_with("alice", command_template="lookup ${user_id}", timeout=2.0)
+        assert kwargs["user_organization"] == "公司/研发/平台"
+
+    register_tools.side_effect = check_registration
+    runner = await AgentRunner.create("alice", config=config)
+    assert runner.user_organization == "公司/研发/平台"
+    assert FakeAgentLoop.instances[0].kwargs["user_organization"] == "公司/研发/平台"
 
 
 @pytest.mark.asyncio

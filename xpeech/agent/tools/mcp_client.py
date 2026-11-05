@@ -371,6 +371,7 @@ class MCPServerConfig:
     tool_timeout: float = 30.0
     connect_timeout: float = MCP_CONNECT_TIMEOUT_SECONDS
     channel_tags: list[str] = dataclass_field(default_factory=list)
+    organization_prefixes: list[str] = dataclass_field(default_factory=list)
     description: str = ""
 
     def __post_init__(self) -> None:
@@ -825,6 +826,7 @@ def create_mcp_registration(
     tool_timeout: float = 30.0,
     connect_timeout: float | None = None,
     channel_tags: list[str] | None = None,
+    organization_prefixes: list[str] | None = None,
 ) -> MCPServerRegistration:
     """Create an MCP server registration from configuration."""
 
@@ -851,6 +853,7 @@ def create_mcp_registration(
                 MCP_CONNECT_TIMEOUT_SECONDS if connect_timeout is None else connect_timeout
             ),
             channel_tags=channel_tags if channel_tags is not None else [],
+            organization_prefixes=organization_prefixes if organization_prefixes is not None else [],
         )
     )
 
@@ -876,6 +879,7 @@ def create_mcp_registration_from_config(
         tool_timeout=config.tool_timeout,
         connect_timeout=config.connect_timeout,
         channel_tags=config.channel_tags,
+        organization_prefixes=config.organization_prefixes,
     )
 
 
@@ -902,6 +906,7 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         float(config.tool_timeout),
         float(config.connect_timeout),
         tuple(config.channel_tags),
+        tuple(config.organization_prefixes),
     )
 
 

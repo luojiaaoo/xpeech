@@ -55,6 +55,7 @@ def test_import_and_list_session_skill(skill_api: tuple[TestClient, Path, dict[s
             "always": True,
             "internal": False,
             "channel_tags": [],
+            "organization_prefixes": [],
             "kwargs": {},
         },
         "source": "workspace",
@@ -156,6 +157,7 @@ def test_import_uses_loader_metadata_fallback(skill_api: tuple[TestClient, Path,
         "always": False,
         "internal": False,
         "channel_tags": [],
+        "organization_prefixes": [],
         "kwargs": {},
     }
 

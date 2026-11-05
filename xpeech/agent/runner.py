@@ -4,6 +4,7 @@ from typing import Any, Self
 from ..config.settings import Settings, settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..utils.file_io import ensure_path_async
+from ..utils.organization import resolve_user_organization
 from ..utils.session import create_workspace_templates
 from .loop import AgentLoop
 from .server.schema import InboundMessage
@@ -25,6 +26,7 @@ class AgentRunner:
         self.config = config
         self.not_interactive = not_interactive
         self.channel_tag = channel_tag
+        self.user_organization: str | None = None
         self.workspace = (config.path.workspace_base_path / self.user_id).resolve()
         self._agent_loop: AgentLoop | None = None
 
@@ -45,6 +47,10 @@ class AgentRunner:
     async def _initialize(self) -> None:
         """Initialize the user workspace, provider, tools, and agent loop."""
         await create_workspace_templates(await ensure_path_async(self.workspace))
+        organization = self.config.organization
+        self.user_organization = await resolve_user_organization(
+            self.user_id, command_template=organization.command_template, timeout=organization.timeout,
+        )
 
         llm_config = self.config.llm
         api_key = llm_config.api_key
@@ -65,6 +71,7 @@ class AgentRunner:
             summary_tokens=llm_config.summary_tokens,
             max_iterations=llm_config.max_iterations,
             channel_tag=self.channel_tag,
+            user_organization=self.user_organization,
         )
         await register_tools(
             user_id=self.user_id,
@@ -73,6 +80,7 @@ class AgentRunner:
             config=self.config.tool,
             not_interactive=self.not_interactive,
             channel_tag=self.channel_tag,
+            user_organization=self.user_organization,
         )
         self._agent_loop = agent_loop
 

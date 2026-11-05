@@ -32,8 +32,9 @@ async def test_context_commands_continue_with_trailing_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def build_test_system_prompt(workspace: Path, *, channel_tag, not_interactive):
+    async def build_test_system_prompt(workspace: Path, *, channel_tag, user_organization, not_interactive):
         assert workspace == tmp_path
+        assert user_organization == "公司/研发/平台"
         assert not_interactive is False
         return {"role": "system", "content": "system"}
 
@@ -43,6 +44,7 @@ async def test_context_commands_continue_with_trailing_prompt(
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
     agent_loop.channel_tag = None
+    agent_loop.user_organization = "公司/研发/平台"
     load_results = (
         [[{"role": "user", "content": "old context"}], []]
         if consolidates_memory

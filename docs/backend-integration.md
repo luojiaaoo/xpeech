@@ -80,7 +80,9 @@ channel_tag = "crm"
 
 `jwt.secret_key` 仅供 backend、scheduler 等内部服务互信。内部 JWT 不带 `kid` 或 `sub`，不能调用本文的聊天、答题、文件、技能接口；`/statistics` 及其子接口、内部调度接口也不属于外部通道的权限范围。
 
-每个通道只绑定一个 `channel_tag`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能/MCP 使用 `channel_tags` 列表，无标签的资源为公共资源；有标签的资源只有在列表包含当前通道的 `channel_tag` 时才展示或注册。用户工作区内的技能全部加载，不受该标签匹配限制。
+每个通道只绑定一个 `channel_tag`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能/MCP 使用 `channel_tags` 列表，无标签的资源为公共资源；有标签的资源只有在列表包含当前通道的 `channel_tag` 时才展示或注册。用户工作区内的技能不受渠道标签匹配限制。
+
+技能（包括工作区技能）与 MCP 还支持 `organization_prefixes`。服务端通过 `[organization].command_template` 查询当前已鉴权 `user_id` 的组织字符串，使用 stdout 与列表中的前缀做区分大小写的字面匹配。命令必须包含 `${user_id}` 或 `$user_id`，默认超时 10 秒；JWT 或请求元数据不能覆盖组织。省略前缀或配置 `[]` 表示不限制组织；无查询命令、查询失败或空结果时只加载不限制组织的资源。渠道条件和组织条件必须同时满足；配置示例见 README。
 
 ### 2.2 方式 A：本地签发（业务系统推荐）
 

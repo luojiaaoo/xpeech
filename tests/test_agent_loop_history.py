@@ -20,8 +20,9 @@ def make_response(content: str) -> LLMResponse:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("json_output", [False, True])
 async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
-    async def build_test_system_prompt(workspace: Path, *, channel_tag, not_interactive):
+    async def build_test_system_prompt(workspace: Path, *, channel_tag, user_organization, not_interactive):
         assert workspace == tmp_path
+        assert user_organization == "公司/研发/平台"
         assert not_interactive is True
         return {"role": "system", "content": "system"}
 
@@ -31,6 +32,7 @@ async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, m
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
     agent_loop.channel_tag = None
+    agent_loop.user_organization = "公司/研发/平台"
     agent_loop.history = SimpleNamespace(
         load=AsyncMock(return_value=[{"role": "user", "content": "old context"}]),
         save=AsyncMock(),
@@ -95,8 +97,9 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
 ):
     expected_not_interactive = not_interactive
 
-    async def build_test_system_prompt(workspace: Path, *, channel_tag, not_interactive):
+    async def build_test_system_prompt(workspace: Path, *, channel_tag, user_organization, not_interactive):
         assert workspace == tmp_path
+        assert user_organization is None
         assert not_interactive is expected_not_interactive
         return {"role": "system", "content": "system"}
 
@@ -105,6 +108,7 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
     agent_loop.channel_tag = None
+    agent_loop.user_organization = None
     agent_loop.history = SimpleNamespace(
         load=AsyncMock(return_value=[]),
         save=AsyncMock(),

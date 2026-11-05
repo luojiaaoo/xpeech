@@ -24,6 +24,7 @@ from pydantic_settings import (
 from ..provider.schema import LLMParameters
 from ..utils.channel_tag import normalize_channel_tags, validate_channel_tag
 from ..utils.file_io import ensure_path
+from ..utils.organization import normalize_organization_prefixes
 
 if Path(".env").exists():
     load_dotenv(".env")
@@ -127,6 +128,12 @@ class MCPServerSettings(BaseModel):
     tool_timeout: float = Field(default=30.0, validation_alias="tool_timeout")
     connect_timeout: float = Field(default=30.0, gt=0, validation_alias="connect_timeout")
     channel_tags: list[str] = Field(default_factory=list)
+    organization_prefixes: list[str] = Field(default_factory=list)
+
+    @field_validator("organization_prefixes")
+    @classmethod
+    def validate_organization_prefixes(cls, value: list[str]) -> list[str]:
+        return normalize_organization_prefixes(value)
 
     @field_validator("channel_tags")
     @classmethod
@@ -379,6 +386,24 @@ class WebClientConfig(BaseModel):
         return self
 
 
+class OrganizationConfig(BaseModel):
+    """在加载技能和 MCP 服务前查询用户所属组织的配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    command_template: str | None = None
+    timeout: float = Field(default=10.0, gt=0, allow_inf_nan=False)
+
+    @field_validator("command_template")
+    @classmethod
+    def validate_command_template(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("organization.command_template cannot be empty")
+        return value
+
+
 class Settings(BaseSettings):
     path: PathConfig
     tool: ToolConfig = ToolConfig()
@@ -386,6 +411,7 @@ class Settings(BaseSettings):
     feishu: FeishuConfig
     logging: LoggingConfig = LoggingConfig()
     jwt: JWTConfig
+    organization: OrganizationConfig = Field(default_factory=OrganizationConfig)
     web_client: WebClientConfig = Field(default_factory=WebClientConfig)
 
     @classmethod
