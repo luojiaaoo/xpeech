@@ -71,6 +71,47 @@ def test_concurrent_network_startup_preserves_namespace_permissions(tmp_path):
             process.communicate(timeout=10)
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="Root has a UID map before loopback setup")
+def test_root_waits_for_loopback_before_starting_slirp(tmp_path):
+    wrapper = tmp_path / "delayed-bwrap"
+    wrapper.write_text(
+        f"#!{sys.executable}\n"
+        "import fcntl, json, os, subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "info_r, info_w = os.pipe()\n"
+        "fcntl.fcntl(info_w, fcntl.F_SETPIPE_SZ, 4096)\n"
+        "os.write(info_w, b'x' * 4096)\n"
+        "status_w = int(args[args.index('--json-status-fd') + 1])\n"
+        "block_r = int(args[args.index('--block-fd') + 1])\n"
+        "dns_fd = int(args[args.index('--ro-bind-data') + 1])\n"
+        # A full info pipe stalls the real bwrap parent before it releases
+        # the child to initialize loopback. Report the cloned PID ourselves
+        # to exercise exactly the ordering its early JSON status permits.
+        "process = subprocess.Popen(\n"
+        "    ['bwrap', '--info-fd', str(info_w), *args],\n"
+        "    pass_fds=(status_w, block_r, dns_fd, info_w))\n"
+        "children = Path(f'/proc/{process.pid}/task/{process.pid}/children')\n"
+        "deadline = time.monotonic() + 5\n"
+        "while not (pids := children.read_text().split()):\n"
+        "    if process.poll() is not None or time.monotonic() >= deadline:\n"
+        "        raise RuntimeError('bwrap did not clone')\n"
+        "    time.sleep(0.001)\n"
+        "os.write(status_w, (json.dumps({'child-pid': int(pids[0])}) + '\\n').encode())\n"
+        "time.sleep(0.5)\n"
+        "os.read(info_r, 4096)\n"
+        "sys.exit(process.wait(timeout=10))\n"
+    )
+    wrapper.chmod(0o755)
+    command = _command(tmp_path, "printf ready")
+    command[3] = str(wrapper)
+
+    result = subprocess.run(command, capture_output=True, timeout=15)
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout == b"ready"
+
+
 @pytest.mark.parametrize("termination", ["exit", "terminate", "kill"])
 def test_network_helper_stops_with_the_sandbox(tmp_path, termination):
     real_slirp = shutil.which("slirp4netns")

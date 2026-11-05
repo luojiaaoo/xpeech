@@ -118,6 +118,13 @@ def test_tls_verification_can_be_disabled_from_config(tmp_path):
     assert registration.config.connect_timeout == 45
     assert registration.config.command_authorization_token == "token-helper --user $user_id"
     assert registration.config.headers == {"Authorization": "Bearer ${authorization_token}"}
+    assert registration.config.user_scoped is False
+
+
+def test_user_scoped_is_loaded_from_config(tmp_path):
+    config = MCPServerSettings(command="server", user_scoped=True)
+    registration = mcp_client.create_mcp_registration_from_config("test", config, tmp_path)
+    assert registration.config.user_scoped is True
 
 
 def test_stdio_env_is_loaded_from_server_config(tmp_path):
@@ -658,7 +665,9 @@ async def test_collect_mcp_tool_skips_unavailable_server(tmp_path, monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_connections_are_reused_per_session_and_expire(tmp_path, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("user_scoped", [False, True])
+@pytest.mark.parametrize("transport", ["stdio", "sse", "streamable-http"])
+async def test_connections_are_reused_and_expire(tmp_path, monkeypatch: pytest.MonkeyPatch, user_scoped, transport):
     await mcp_client.close_all_mcp_connections()
     monkeypatch.setattr(mcp_client, "MCP_CONNECTION_TTL_SECONDS", 0.06)
 
@@ -694,15 +703,22 @@ async def test_connections_are_reused_per_session_and_expire(tmp_path, monkeypat
         "_run_connection",
         run_fake_connection,
     )
-    config = MCPServerSettings(command="fake-server")
+    server_options = {"command": "fake-server"} if transport == "stdio" else {"url": "https://example.test/mcp"}
+    config = MCPServerSettings(**server_options, transport=transport, user_scoped=user_scoped)
+    isolated_by_user = transport == "stdio" or user_scoped
 
     first = await mcp_client.get_session_mcp_registration_from_config("session-1", "demo", config, tmp_path)
     reused = await mcp_client.get_session_mcp_registration_from_config("session-1", "demo", config, tmp_path)
     isolated = await mcp_client.get_session_mcp_registration_from_config("session-2", "demo", config, tmp_path)
 
     assert first is reused
-    assert first is not isolated
-    assert set(mcp_client.MCP_CONNECTIONS) == {"session-1", "session-2"}
+    assert (first is not isolated) is isolated_by_user
+    assert set(mcp_client.MCP_CONNECTIONS) == (
+        {("session-1", tmp_path), ("session-2", tmp_path)} if isolated_by_user else {first.connection_scope}
+    )
+    if transport == "stdio":
+        assert first.config.workspace == tmp_path
+        assert isolated.config.workspace == tmp_path
 
     binding = (await first._get_tool_bindings())[0]
     await isolated._get_tool_bindings()
@@ -711,10 +727,126 @@ async def test_connections_are_reused_per_session_and_expire(tmp_path, monkeypat
     await asyncio.sleep(0.04)
     assert await binding.func(model(text="ok")) == "ok"
     await asyncio.sleep(0.04)
-    assert set(mcp_client.MCP_CONNECTIONS) == {"session-1"}
+    assert set(mcp_client.MCP_CONNECTIONS) == {first.connection_scope}
     await asyncio.sleep(0.03)
     assert mcp_client.MCP_CONNECTIONS == {}
     await mcp_client.close_all_mcp_connections()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options, user_scoped", [
+    ({}, False),
+    ({"user_scoped": False}, False),
+    ({"user_scoped": True}, True),
+    ({"command_authorization_token": "token-helper $user_id"}, True),
+    ({"command_authorization_token": "token-helper $user_id", "user_scoped": False}, True),
+    ({"command_authorization_token": "token-helper $user_id", "user_scoped": True}, True),
+    ({"command": "demo"}, True),
+    ({"command": "demo", "user_scoped": False}, True),
+    ({"command": "demo", "user_scoped": True}, True),
+    ({"command": "demo", "transport": "stdio", "user_scoped": False}, True),
+])
+async def test_connection_scope_and_cleanup(tmp_path, options, user_scoped):
+    await mcp_client.close_all_mcp_connections()
+    config = MCPServerSettings(**(options if "command" in options else {"url": "https://example.test/mcp", **options}))
+    try:
+        first, reused, other = await asyncio.gather(*(
+            mcp_client.get_session_mcp_registration_from_config(user_id, "demo", config, tmp_path)
+            for user_id in ("user-1", "user-1", "user-2")
+        ))
+        assert first is reused
+        assert (first is not other) is user_scoped
+        assert first.user_id == ("user-1" if user_scoped else None)
+        assert other.user_id == ("user-2" if user_scoped else None)
+
+        await mcp_client.close_session_mcp_connections("user-1")
+        assert first._retired is user_scoped
+        assert not other._retired
+        assert await mcp_client.get_session_mcp_registration_from_config(
+            "user-2", "demo", config, tmp_path,
+        ) is other
+    finally:
+        await mcp_client.close_all_mcp_connections()
+    assert first._retired
+    assert other._retired
+    assert not mcp_client._SESSION_EXPIRY_HANDLES
+
+
+@pytest.mark.asyncio
+async def test_shared_connections_ignore_user_workspaces_but_separate_configs(tmp_path, monkeypatch):
+    await mcp_client.close_all_mcp_connections()
+    monkeypatch.setattr(mcp_client.settings.path, "cache_path", tmp_path / "cache")
+    config = MCPServerSettings(url="https://example.test/mcp")
+    try:
+        first = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, tmp_path)
+        changed_config = await mcp_client.get_session_mcp_registration_from_config(
+            "user-2", "demo", config.model_copy(update={"headers": {"X-Test": "other"}}), tmp_path,
+        )
+        changed_workspace = await mcp_client.get_session_mcp_registration_from_config(
+            "user-2", "demo", config, tmp_path / "other",
+        )
+        scoped = await mcp_client.get_session_mcp_registration_from_config(
+            "user-1", "demo", config.model_copy(update={"user_scoped": True}), tmp_path,
+        )
+        assert changed_workspace is first
+        assert first.config.workspace == tmp_path / "cache" / "mcp" / "demo"
+        assert first.config.workspace.is_dir()
+        assert len({id(first), id(changed_config), id(scoped)}) == 3
+        assert scoped.config.workspace == tmp_path
+    finally:
+        await mcp_client.close_all_mcp_connections()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [
+    {"user_scoped": True},
+    {"command_authorization_token": "token-helper $user_id"},
+    {"command": "demo", "user_scoped": False},
+    {"command": "demo", "transport": "stdio"},
+])
+async def test_user_workspaces_have_independent_cache_expiry_and_cleanup(tmp_path, options):
+    await mcp_client.close_all_mcp_connections()
+    config = MCPServerSettings(**(options if "command" in options else {"url": "https://example.test/mcp", **options}))
+    workspace = tmp_path / "first"
+    other_workspace = tmp_path / "second"
+    workspace.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(workspace, target_is_directory=True)
+    try:
+        first = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, workspace)
+        reused = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, alias)
+        other = await mcp_client.get_session_mcp_registration_from_config("user-1", "demo", config, other_workspace)
+        assert first is reused
+        assert first is not other
+        assert set(mcp_client.MCP_CONNECTIONS) == {("user-1", workspace), ("user-1", other_workspace)}
+
+        first_handle = mcp_client._SESSION_EXPIRY_HANDLES[first.connection_scope]
+        other_handle = mcp_client._SESSION_EXPIRY_HANDLES[other.connection_scope]
+        await mcp_client._refresh_session_expiry(first)
+        assert first_handle.cancelled()
+        assert mcp_client._SESSION_EXPIRY_HANDLES[other.connection_scope] is other_handle
+        await mcp_client._expire_session(first.connection_scope, first_handle)
+        assert not first._retired
+
+        other_handle.cancel()
+        await mcp_client._expire_session(other.connection_scope, other_handle)
+        assert other._retired
+        assert not first._retired
+        replacement = await mcp_client.get_session_mcp_registration_from_config(
+            "user-1", "demo", config, other_workspace,
+        )
+        assert replacement is not other
+
+        await mcp_client.close_session_mcp_connections("user-1", alias)
+        assert first._retired
+        assert not replacement._retired
+        assert set(mcp_client.MCP_CONNECTIONS) == {("user-1", other_workspace)}
+        await mcp_client.close_session_mcp_connections("user-1")
+        assert replacement._retired
+        assert not mcp_client.MCP_CONNECTIONS
+        assert not mcp_client._SESSION_EXPIRY_HANDLES
+    finally:
+        await mcp_client.close_all_mcp_connections()
 
 
 @pytest.mark.asyncio
@@ -980,7 +1112,7 @@ async def test_closing_session_cancels_background_discovery(tmp_path, monkeypatc
 
     monkeypatch.setattr(mcp_client.MCPServerRegistration, "_run_connection", run_connection)
     registration = await mcp_client.get_session_mcp_registration_from_config(
-        "closing-test", "demo", MCPServerSettings(command="demo"), workspace=tmp_path,
+        "closing-test", "demo", MCPServerSettings(command="demo", user_scoped=True), workspace=tmp_path,
     )
     task = registration.start_tool_discovery()
     await asyncio.wait_for(started.wait(), timeout=1)
@@ -991,7 +1123,7 @@ async def test_closing_session_cancels_background_discovery(tmp_path, monkeypatc
     assert registration._owner_task is None
     assert registration._session is None
     assert registration.get_status()["status"] == "disconnected"
-    assert "closing-test" not in mcp_client.MCP_CONNECTIONS
+    assert registration.connection_scope not in mcp_client.MCP_CONNECTIONS
     assert await asyncio.wait_for(registration.start_tool_discovery(), timeout=0.2) == []
     assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
     assert registration._owner_task is None

@@ -118,6 +118,7 @@ browser_preview_path = "data/browser_preview"
 # [tool.mcpServers.filesystem]
 # description = "读写工作区文件；任务需要本地文件操作时可等待此服务就绪"
 # command = "npx"
+# stdio 始终按 (user_id, workspace) 隔离，不受 user_scoped 设置影响。
 # stdio 通过 Linux bubblewrap 沙盒启动，cwd 为用户 workspace，HOME 为 <workspace>/home；模型工具参数保持透传
 # command 及依赖须在系统运行时目录（如 /usr、/opt）或当前 workspace 内，backend 私有目录不会自动挂载
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
@@ -143,6 +144,7 @@ tool_timeout = 120
 # url = "https://mcp.example.com/sse"
 # transport = "sse" # stdio / sse / streamable-http
 # command_authorization_token = "curl --fail --silent 'https://auth.example.com/token?user_id=${user_id}'"
+# user_scoped = false # 远程 MCP 默认跨用户共享；true 或配置 command_authorization_token 时按用户隔离，均空闲 20 分钟回收。
 # headers = { Authorization = "Bearer ${authorization_token}", X-User-ID = "$user_id" }
 # verify_tls = false # 仅用于自签名证书；生产环境优先安装并信任内部 CA
 # enabled_tools = ["*"]

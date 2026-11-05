@@ -121,6 +121,7 @@ class MCPServerSettings(BaseModel):
     url: str | None = None
     transport: Literal["stdio", "sse", "streamable-http"] | None = None
     command_authorization_token: str | None = None
+    user_scoped: bool = Field(default=False, description="按用户隔离远程 MCP 连接；stdio 或配置 command_authorization_token 时强制隔离")
     headers: dict[str, str] | None = None
     verify_tls: bool = Field(default=True, validation_alias="verify_tls")
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")

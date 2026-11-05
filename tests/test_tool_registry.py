@@ -27,6 +27,14 @@ def named_tool(name: str):
     return tool
 
 
+def pooled_mcp_registrations():
+    return [
+        registration
+        for connections in mcp_client.MCP_CONNECTIONS.values()
+        for registration in connections.values()
+    ]
+
+
 @pytest.fixture(autouse=True)
 def stub_unrelated_shell_builder(monkeypatch):
     # Registry/MCP tests do not require the Linux-only shell implementation.
@@ -399,7 +407,7 @@ async def test_mcp_functions_call_the_bound_server_with_original_schema_and_argu
         )
         await asyncio.gather(*(
             registration.start_tool_discovery()
-            for registration in mcp_client.MCP_CONNECTIONS["mcp-binding-test"].values()
+            for registration in pooled_mcp_registrations()
         ))
 
         mcp_tools = {name: tool for name, tool in provider.default_tools.items() if name.startswith("mcp_")}
@@ -430,7 +438,7 @@ async def test_mcp_functions_call_the_bound_server_with_original_schema_and_argu
             ("beta", "echo", {"text": "world", "style": None}),
         ]
     finally:
-        await mcp_client.close_session_mcp_connections("mcp-binding-test")
+        await mcp_client.close_all_mcp_connections()
 
 
 _LONG_MCP_TOOL_NAME = "update.record-" + "details_" * 12
@@ -516,7 +524,7 @@ async def test_mcp_confirmation_selection_at_registration(
         )
         await asyncio.gather(*(
             registration.start_tool_discovery()
-            for registration in mcp_client.MCP_CONNECTIONS["mcp-confirmation-test"].values()
+            for registration in pooled_mcp_registrations()
         ))
         tools = {name: tool for name, tool in provider.default_tools.items() if name.startswith("mcp_")}
         registered_names = enabled_names - expected_confirmation if not_interactive else enabled_names
@@ -558,7 +566,7 @@ async def test_mcp_confirmation_selection_at_registration(
         for binding in await registration._get_tool_bindings():
             assert "execution_description" not in binding.schema["function"]["parameters"]["properties"]
     finally:
-        await mcp_client.close_session_mcp_connections("mcp-confirmation-test")
+        await mcp_client.close_all_mcp_connections()
 
 
 @pytest.mark.asyncio
@@ -638,18 +646,18 @@ async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(
 
     monkeypatch.setattr(mcp_client.MCPServerRegistration, "_run_connection", run_connection)
     config = ToolConfig.model_validate({"mcpServers": {
-        "slow": {"command": "demo", "enabled_tools": ["echo"], "description": "查询客户订单"},
-        "fast": {"command": "demo", "enabled_tools": ["echo"], "description": "查询商品信息"},
-        "private": {"command": "demo", "channel_tags": ["private"], "description": "查询内部薪资"},
+        "slow": {"url": "https://example.test/mcp", "enabled_tools": ["echo"], "description": "查询客户订单"},
+        "fast": {"url": "https://example.test/mcp", "enabled_tools": ["echo"], "description": "查询商品信息"},
+        "private": {"url": "https://example.test/mcp", "channel_tags": ["private"], "description": "查询内部薪资"},
     }})
     providers = [FakeProvider(), FakeProvider()]
     try:
-        for provider in providers:
+        for index, provider in enumerate(providers):
             await asyncio.wait_for(registry.register_tools(
-                user_id="background-test", provider=provider, workspace=tmp_path, config=config,
+                user_id=f"background-test-{index}", provider=provider, workspace=tmp_path, config=config,
             ), timeout=1)
         await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started.values())), timeout=1)
-        registrations = list(mcp_client.MCP_CONNECTIONS["background-test"].values())
+        registrations = list(pooled_mcp_registrations())
         fast = next(registration for registration in registrations if registration.config.server_name == "fast")
         await asyncio.wait_for(fast.start_tool_discovery(), timeout=1)
 
@@ -696,7 +704,7 @@ async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(
         assert [tool.__name__ for _, tool in reconnecting_provider.mcp_tools] == ["mcp_fast_echo", "mcp_slow_echo"]
         assert sorted(attempts) == ["fast", "slow", "slow"]
     finally:
-        await mcp_client.close_session_mcp_connections("background-test")
+        await mcp_client.close_all_mcp_connections()
 
 
 @pytest.mark.asyncio
@@ -731,7 +739,7 @@ async def test_failed_mcp_reconnects_on_next_conversations_with_one_shared_attem
     try:
         first = FakeProvider()
         await registry.register_tools(user_id="retry-test", provider=first, workspace=tmp_path, config=config)
-        registration = next(iter(mcp_client.MCP_CONNECTIONS["retry-test"].values()))
+        registration = next(iter(pooled_mcp_registrations()))
         assert await registration.start_tool_discovery() == []
         assert registration.get_status()["status"] == "unavailable"
 
@@ -752,7 +760,7 @@ async def test_failed_mcp_reconnects_on_next_conversations_with_one_shared_attem
         assert attempts == 2
     finally:
         release.set()
-        await mcp_client.close_session_mcp_connections("retry-test")
+        await mcp_client.close_all_mcp_connections()
 
 
 @pytest.mark.asyncio
@@ -815,7 +823,7 @@ async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeyp
         assert [chunk async for chunk in first.iter_mix_chunks] == []
 
         release.set()
-        [registration] = mcp_client.MCP_CONNECTIONS["next-model-call"].values()
+        [registration] = pooled_mcp_registrations()
         await asyncio.wait_for(registration.start_tool_discovery(), timeout=1)
         assert len(chats_scheduled_mid_registration) == 1
         [concurrent] = await asyncio.gather(*chats_scheduled_mid_registration)
@@ -830,4 +838,4 @@ async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeyp
         assert "mcp_demo_echo" not in first.mapping_tool_call_funcs
         assert [chunk async for chunk in second.iter_mix_chunks] == []
     finally:
-        await mcp_client.close_session_mcp_connections("next-model-call")
+        await mcp_client.close_all_mcp_connections()

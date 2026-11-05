@@ -29,7 +29,7 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-from ...config.settings import MCPServerSettings
+from ...config.settings import MCPServerSettings, settings
 from ...utils.command_template import execute_command_template
 from .execution_request import ExecutionDecision, build_execution_request_tool, execution_request_schema
 from .sandbox import SANDBOX_EXECUTABLES, wrap_sandbox_command
@@ -53,9 +53,11 @@ MCPTransport = Literal["stdio", "sse", "streamable-http"]
 MCP_CONNECTION_TTL_SECONDS = 20 * 60
 MCP_CONNECT_TIMEOUT_SECONDS = 30
 MCP_AUTHORIZATION_TOKEN_TIMEOUT_SECONDS = 10
-MCP_CONNECTIONS: dict[str, dict[tuple[Any, ...], MCPServerRegistration]] = {}
+MCPConnectionScope = tuple[str | None, Path]
+# None identifies shared connections; user-scoped connections also include their workspace.
+MCP_CONNECTIONS: dict[MCPConnectionScope, dict[tuple[Any, ...], MCPServerRegistration]] = {}
 
-_SESSION_EXPIRY_HANDLES: dict[str, asyncio.TimerHandle] = {}
+_SESSION_EXPIRY_HANDLES: dict[MCPConnectionScope, asyncio.TimerHandle] = {}
 _MCP_CONNECTIONS_LOCK: asyncio.Lock | None = None
 
 _USER_ID_PLACEHOLDER_RE = re.compile(r"\$(?:\{user_id\}|user_id(?![a-zA-Z0-9_]))")
@@ -365,6 +367,7 @@ class MCPServerConfig:
     url: str | None = None
     transport: MCPTransport = "stdio"
     command_authorization_token: str | None = None
+    user_scoped: bool = False
     headers: Mapping[str, str] | None = None
     verify_tls: bool = True
     enabled_tools: tuple[str, ...] = ("*",)
@@ -411,6 +414,10 @@ class MCPServerRegistration:
     )
     _last_error: str | None = dataclass_field(default=None, init=False, repr=False)
     _retired: bool = dataclass_field(default=False, init=False, repr=False)
+
+    @property
+    def connection_scope(self) -> MCPConnectionScope:
+        return self.user_id, self.config.workspace
 
     def retire(self) -> None:
         """Prevent stale agent references from reopening an evicted registration."""
@@ -479,7 +486,7 @@ class MCPServerRegistration:
                     await self._connect()
                 self._bindings = await self._discover_tool_bindings()
                 self._last_error = None
-                await _refresh_session_expiry(self.user_id)
+                await _refresh_session_expiry(self)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -521,7 +528,7 @@ class MCPServerRegistration:
                 session.call_tool(tool_name, arguments=dict(arguments)),
                 timeout=self.config.tool_timeout,
             )
-            await _refresh_session_expiry(self.user_id)
+            await _refresh_session_expiry(self)
             return _render_mcp_result(result)
         except TimeoutError:
             logger.warning(
@@ -620,7 +627,7 @@ class MCPServerRegistration:
             if self._retired:
                 raise _MCPRegistrationRetiredError("MCP registration has been retired")
             self._last_error = None
-            await _refresh_session_expiry(self.user_id)
+            await _refresh_session_expiry(self)
         except BaseException:
             close_event.set()
             owner_task.cancel()
@@ -820,6 +827,7 @@ def create_mcp_registration(
     url: str | None = None,
     transport: str | None = None,
     command_authorization_token: str | None = None,
+    user_scoped: bool = False,
     headers: Mapping[str, str] | None = None,
     verify_tls: bool = True,
     enabled_tools: Sequence[str] | None = None,
@@ -845,6 +853,7 @@ def create_mcp_registration(
             url=url,
             transport=normalized_transport,
             command_authorization_token=command_authorization_token,
+            user_scoped=user_scoped,
             headers=dict(headers) if headers is not None else None,
             verify_tls=verify_tls,
             enabled_tools=("*",) if enabled_tools is None else tuple(enabled_tools),
@@ -873,6 +882,7 @@ def create_mcp_registration_from_config(
         url=config.url,
         transport=config.transport,
         command_authorization_token=config.command_authorization_token,
+        user_scoped=config.user_scoped,
         headers=config.headers,
         verify_tls=config.verify_tls,
         enabled_tools=config.enabled_tools,
@@ -900,6 +910,7 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         config.url,
         config.transport,
         config.command_authorization_token,
+        config.user_scoped,
         _hashable_mapping(config.headers),
         config.verify_tls,
         config.enabled_tools,
@@ -916,63 +927,75 @@ async def get_session_mcp_registration_from_config(
     config: MCPServerSettings,
     workspace: Path,
 ) -> MCPServerRegistration:
-    """Return a reusable MCP connection owned by one conversation session."""
+    """Always isolate stdio; share remote connections unless authorization/config requires isolation."""
     if not user_id:
         raise ValueError("user_id cannot be empty")
+    transport = _normalize_transport(config.command, config.url, config.transport)
+    user_scoped = (
+        transport == "stdio"
+        or config.command_authorization_token is not None
+        or config.user_scoped
+    )
+    if not user_scoped:
+        # Shared transports and roots must never inherit the first user's workspace.
+        workspace = settings.path.cache_path / "mcp" / _sanitize_name(server_name)
     registration = create_mcp_registration_from_config(server_name, config, workspace=workspace)
-    registration.user_id = user_id
+    if user_scoped:
+        registration.user_id = user_id
     key = _persistent_registration_key(registration.config)
     async with _mcp_connections_lock():
-        session_connections = MCP_CONNECTIONS.setdefault(user_id, {})
+        session_connections = MCP_CONNECTIONS.setdefault(registration.connection_scope, {})
         cached = session_connections.get(key)
         if cached is not None:
             return cached
+        if not user_scoped:
+            registration.config.workspace.mkdir(parents=True, exist_ok=True)
         session_connections[key] = registration
-        _schedule_session_expiry_locked(user_id)
+        _schedule_session_expiry_locked(registration.connection_scope)
         return registration
 
 
-def _schedule_session_expiry_locked(user_id: str) -> None:
-    if user_id in _SESSION_EXPIRY_HANDLES:
+def _schedule_session_expiry_locked(scope: MCPConnectionScope) -> None:
+    if scope in _SESSION_EXPIRY_HANDLES:
         return
 
     handle: asyncio.TimerHandle
 
     def expire() -> None:
         asyncio.create_task(
-            _expire_session(user_id, handle),
-            name=f"mcp-expiry-{user_id}",
+            _expire_session(scope, handle),
+            name=f"mcp-expiry-{scope}",
         )
 
     handle = asyncio.get_running_loop().call_later(MCP_CONNECTION_TTL_SECONDS, expire)
-    _SESSION_EXPIRY_HANDLES[user_id] = handle
+    _SESSION_EXPIRY_HANDLES[scope] = handle
 
 
-async def _refresh_session_expiry(user_id: str | None) -> None:
-    """Extend a connected session's idle lifetime after successful MCP I/O."""
-    if user_id is None:
-        return
+async def _refresh_session_expiry(registration: MCPServerRegistration) -> None:
+    """Extend a pooled connection scope's idle lifetime after successful MCP I/O."""
+    scope = registration.connection_scope
     async with _mcp_connections_lock():
-        if user_id not in MCP_CONNECTIONS:
+        registrations = MCP_CONNECTIONS.get(scope, {})
+        if registrations.get(_persistent_registration_key(registration.config)) is not registration:
             return
-        expiry_handle = _SESSION_EXPIRY_HANDLES.pop(user_id, None)
+        expiry_handle = _SESSION_EXPIRY_HANDLES.pop(scope, None)
         if expiry_handle is not None:
             expiry_handle.cancel()
-        _schedule_session_expiry_locked(user_id)
+        _schedule_session_expiry_locked(scope)
 
 
-async def _expire_session(user_id: str, handle: asyncio.TimerHandle) -> None:
+async def _expire_session(scope: MCPConnectionScope, handle: asyncio.TimerHandle) -> None:
     async with _mcp_connections_lock():
-        if _SESSION_EXPIRY_HANDLES.get(user_id) is not handle:
+        if _SESSION_EXPIRY_HANDLES.get(scope) is not handle:
             return
-        registrations = MCP_CONNECTIONS.pop(user_id, {})
-        _SESSION_EXPIRY_HANDLES.pop(user_id, None)
+        registrations = MCP_CONNECTIONS.pop(scope, {})
+        _SESSION_EXPIRY_HANDLES.pop(scope, None)
         for registration in registrations.values():
             registration.retire()
 
     logger.info(
         "MCP session '{}' expired after {}s without successful MCP activity",
-        user_id,
+        scope,
         MCP_CONNECTION_TTL_SECONDS,
     )
     await asyncio.gather(
@@ -981,16 +1004,28 @@ async def _expire_session(user_id: str, handle: asyncio.TimerHandle) -> None:
     )
 
 
-async def close_session_mcp_connections(user_id: str) -> None:
+async def close_session_mcp_connections(user_id: str, workspace: Path | None = None) -> None:
+    """Close one user's connections, optionally limited to a workspace."""
+    if workspace is not None:
+        workspace = workspace.resolve()
     async with _mcp_connections_lock():
-        registrations = MCP_CONNECTIONS.pop(user_id, {})
-        for registration in registrations.values():
+        scopes = [
+            scope for scope in MCP_CONNECTIONS
+            if scope[0] == user_id and (workspace is None or scope[1] == workspace)
+        ]
+        registrations = [
+            registration
+            for scope in scopes
+            for registration in MCP_CONNECTIONS.pop(scope).values()
+        ]
+        for registration in registrations:
             registration.retire()
-        expiry_handle = _SESSION_EXPIRY_HANDLES.pop(user_id, None)
-        if expiry_handle is not None:
-            expiry_handle.cancel()
+        for scope in scopes:
+            expiry_handle = _SESSION_EXPIRY_HANDLES.pop(scope, None)
+            if expiry_handle is not None:
+                expiry_handle.cancel()
     await asyncio.gather(
-        *(registration.aclose() for registration in registrations.values()),
+        *(registration.aclose() for registration in registrations),
         return_exceptions=True,
     )
 

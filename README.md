@@ -337,11 +337,19 @@ docker compose up -d --build
 
 `backend` 的沙盒需要 `SYS_ADMIN`（命名空间和挂载）、`NET_ADMIN`（TAP 网卡和
 loopback 配置）以及 `/dev/net/tun` 设备映射，Compose 已配置。如果旧容器运行 Shell 时出现
-`ioctl(TUNSETIFF): Operation not permitted` 或 `bwrap: loopback: Failed RTM_NEWADDR`，
+`ioctl(TUNSETIFF): Operation not permitted`，
 更新 Compose 配置后执行以下命令，使权限变更生效（仅 restart 不会更新容器权限，无需重建镜像）：
 
 ```bash
 docker compose up -d --no-deps --force-recreate backend
+```
+
+如果已有 `sent tapfd` / `received tapfd`，仍出现
+`bwrap: loopback: Failed RTM_NEWADDR: No child processes`，这是 bwrap 与 slirp4netns
+初始化 loopback 的时序冲突。启动器已增加同步等待，需要重新构建镜像才能应用代码修复：
+
+```bash
+docker compose up -d --build --no-deps --force-recreate backend
 ```
 
 后端默认暴露在 `http://localhost:7878`，Web 客户端默认暴露在
@@ -638,8 +646,9 @@ enabled_tools = ["search", "read_record"]
 tool_timeout = 120
 ```
 
-每个会话都会把当前用户 workspace 作为 MCP workspace root。stdio MCP
-进程通过与 Shell 共用的 bubblewrap 沙盒启动，以该目录作为 `cwd`，并将 `HOME` 设置为
+stdio MCP 始终绑定用户沙盒，使用当前用户 workspace 作为 MCP workspace root，不受 `user_scoped` 设置影响。
+远程 MCP 的用户隔离模式使用当前用户 workspace，共享模式使用 `<cache_path>/mcp/<server_name>` 作为 MCP workspace root。stdio MCP
+进程通过与 Shell 共用的 bubblewrap 沙盒启动，以用户 workspace 作为 `cwd`，并将 `HOME` 设置为
 `<workspace>/home`，覆盖继承的 HOME；MCP 的 `env` 禁止配置 `PATH` 和 `HOME`。工作区可读写，系统运行时、公共 HOME 配置和内置技能只读挂载；
 进程使用独立 PID 命名空间并移除所有 Linux capabilities，连接关闭时清理子进程。网络保持可用。
 MCP SDK 直接启动沙盒进程，`command` 和 `args` 经 `shlex.join()` 合并后统一通过沙盒内的 `bash -c` 执行，参数中的特殊字符保持字面值；可执行文件及其依赖必须位于沙盒可见的系统运行时目录
@@ -664,6 +673,7 @@ stdio MCP、内置文件工具和 Shell 的相对路径基准保持一致。远�
 - `transport`：可选，显式指定 `stdio`、`sse` 或 `streamable-http`。省略时按 `command` 或 URL 自动判断。
 - `env`：仅用于 stdio Server 的环境变量，例如 `env = { API_KEY = "your-key" }`；HTTP/SSE 不允许配置。禁止设置 `PATH` 和 `HOME`，两者统一由沙盒管理。
 - `command_authorization_token`：连接远程 MCP Server 前执行的取 token 命令，stdout 作为 `authorization_token`。
+- `user_scoped`：是否按用户隔离远程 MCP 连接，默认 `false`；stdio 始终按用户隔离，远程 MCP 配置 `command_authorization_token` 时也强制隔离。
 - `headers`：远程 MCP Server 的请求头，支持按用户替换占位符。
 - `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
 - `enabled_tools`：允许注册的 MCP 原始工具名或通配模式，默认 `["*"]` 表示全部注册；`[]` 表示全部禁用。
@@ -678,10 +688,12 @@ stdio MCP、内置文件工具和 Shell 的相对路径基准保持一致。远�
 
 `headers` 的值支持 `$user_id` / `${user_id}` 和 `$authorization_token` /
 `${authorization_token}`。后两者由 `command_authorization_token` 的 stdout 提供。其他 MCP 配置不做
-运行时字符串替换。
+运行时字符串替换。仅使用用户 ID 请求头而不配置取 token 命令时，需设置 `user_scoped = true`。
 
-MCP 连接按 `user_id` 隔离。同一用户在最后一次成功连接、工具发现或 MCP 工具调用后的 20 分钟内复用连接；
-空闲超时后自动关闭，不同用户不会共享连接。
+stdio MCP 始终按 `(user_id, workspace)` 缓存和隔离；远程 MCP 配置 `command_authorization_token` 或 `user_scoped = true` 时同样隔离，
+各工作区独立续期和回收。其余远程 MCP 由不同用户共享配置相同的连接，使用 `<cache_path>/mcp/<server_name>` 作为 MCP roots。
+需要访问用户工作区的远程 MCP 应设置 `user_scoped = true`。两种模式均在最后一次成功连接、工具发现或
+MCP 工具调用后续期 20 分钟，空闲超时后自动关闭。
 
 注册后的工具名会加上 `mcp_<server>_` 前缀，例如 `filesystem` Server 暴露的 `read_file` 会注册为 `mcp_filesystem_read_file`。
 `enabled_tools` 和 `execution_request_tools` 均只匹配 MCP 原始工具名，支持 `*`、`?`、`[abc]`，区分大小写。
@@ -826,7 +838,7 @@ Shell 命令会在 bwrap 进程沙盒中执行：
 
 - 每个用户工作区会绑定为可读写目录，并作为命令工作目录；该用户的多个会话共享此工作区。
 - 每次调用启用 `--unshare-pid` 和 `--cap-drop ALL`，命令无法通过 `/proc` 查看其他调用的进程，也不保留挂载、切换用户等操作所需的 Linux capabilities。
-- 每个 Shell 沙盒由 bwrap 的 `--unshare-net` 创建独立网络命名空间，再由 slirp4netns 配置出站 TCP/UDP 网络；网络就绪后才启动命令。不转发入站端口，并禁止通过 slirp 网关访问宿主机的 loopback。不同工作区沙盒的 `localhost`、监听端口和抽象 Unix socket 相互隔离，同一工作区的命令共享网络。
+- 每个 Shell 沙盒由 bwrap 的 `--unshare-net` 创建独立网络命名空间；启动器确认 bwrap 已完成 loopback 初始化后，再由 slirp4netns 配置出站 TCP/UDP 网络，避免两者同时配置 loopback。网络就绪后才启动命令。不转发入站端口，并禁止通过 slirp 网关访问宿主机的 loopback。不同工作区沙盒的 `localhost`、监听端口和抽象 Unix socket 相互隔离，同一工作区的命令共享网络。
 - bwrap 同时启用 `--unshare-ipc`，隔离 System V IPC 和 POSIX 消息队列；`/dev/shm` 随私有 `/dev` 隔离。相同用户的调用仍共享工作区，因此工作区内文件和文件型 Unix socket 可以共享。
 - 出站 NAT 不限制公网或局域网目标；如果要阻止访问宿主机非 loopback 地址或其他内网服务，需要额外配置出口防火墙。允许外网也意味着可以通过外部服务间接交换数据。
 - 命令正常结束、超时或取消后，本次沙盒内所有进程都会被清理，包括通过 `nohup`、`&` 或 `setsid` 启动的后台进程；工作区文件仍保留。需要临时服务时，应在同一次调用中启动服务、完成访问并停止服务，不能依赖服务跨调用存活。

@@ -5,6 +5,8 @@ import json
 import os
 import select
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -14,6 +16,8 @@ from pathlib import Path
 
 _NS_GET_USERNS = 0xB701
 _STARTUP_TIMEOUT = 20
+_SIOCGIFFLAGS = 0x8913
+_IFF_UP = 0x1
 
 
 def _enter_network_userns(net_fd: int) -> None:
@@ -36,6 +40,22 @@ def _read_startup(fd: int, deadline: float) -> bytes:
     if not data:
         raise RuntimeError("Sandbox networking exited before becoming ready")
     return data
+
+
+def _wait_for_loopback(net_fd: int, deadline: float) -> None:
+    """Probe in a separate process so the supervisor keeps its host network."""
+    _enter_network_userns(net_fd)
+    os.setns(net_fd, os.CLONE_NEWNET)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        request = struct.pack("16s24x", b"lo")
+        while True:
+            response = fcntl.ioctl(probe.fileno(), _SIOCGIFFLAGS, request)
+            flags = struct.unpack_from("H", response, 16)[0]
+            if flags & _IFF_UP:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Timed out waiting for bwrap's loopback setup")
+            time.sleep(0.001)
 
 
 def _child_pid(fd: int, deadline: float) -> int:
@@ -64,7 +84,7 @@ def _terminate(signum: int, _frame) -> None:
 
 def run(command: list[str]) -> int:
     """Keep the sandbox blocked until NAT is ready and own both lifetimes."""
-    bwrap = slirp = None
+    bwrap = slirp = probe = None
     pid = None
     # This launcher is single-threaded, so joining a namespace in the slirp
     # child's preexec_fn is safe and never changes the backend's namespace.
@@ -111,6 +131,24 @@ def run(command: list[str]) -> int:
             # bwrap's credential changes and can fail the ptrace access check.
             net = stack.enter_context(open(f"/proc/{pid}/ns/net", "rb", buffering=0))
             net_fd = net.fileno()
+            # The PID/UID map does not imply that bwrap finished setting up
+            # loopback (notably for root, whose UID map already exists).
+            # slirp --configure also brings lo up, implicitly assigning
+            # 127.0.0.1. Starting it first makes bwrap's exclusive RTM_NEWADDR
+            # fail with EEXIST, often printed as "No child processes".
+            probe = subprocess.Popen(
+                [sys.executable, "-I", str(Path(__file__).resolve()),
+                 "--wait-loopback", str(net_fd), str(deadline)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                pass_fds=(net_fd,),
+            )
+            try:
+                probe_returncode = probe.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("Timed out waiting for bwrap's loopback setup") from None
+            if probe_returncode != 0:
+                raise RuntimeError("Failed waiting for bwrap's loopback setup")
             slirp = subprocess.Popen(
                 ["slirp4netns", "--configure", "--disable-host-loopback",
                  "--cidr=10.0.2.0/24", "--userns-path=/proc/self/ns/user",
@@ -143,6 +181,7 @@ def run(command: list[str]) -> int:
                 except ProcessLookupError:
                     pass
             _stop(bwrap)
+            _stop(probe)
             _stop(slirp)
             # --exit-fd also stops slirp if this supervisor receives SIGKILL;
             # --die-with-parent does the same for bwrap and its process tree.
@@ -152,7 +191,10 @@ if __name__ == "__main__":
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, _terminate)
     try:
-        sys.exit(run(sys.argv[1:]))
+        if sys.argv[1:2] == ["--wait-loopback"]:
+            _wait_for_loopback(int(sys.argv[2]), float(sys.argv[3]))
+        else:
+            sys.exit(run(sys.argv[1:]))
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         print(f"Sandbox network setup failed: {error}", file=sys.stderr)
         sys.exit(1)
