@@ -56,7 +56,10 @@ RUN sed -i \
     apt-get update && \
     apt-get -o Acquire::https::Verify-Peer=false update && \
     apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bubblewrap slirp4netns cron curl ffmpeg git jq zip tzdata xz-utils && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        bubblewrap slirp4netns cron curl ffmpeg git jq zip tzdata xz-utils \
+        fontconfig fonts-dejavu-core fonts-noto-cjk && \
+    fc-cache -f && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

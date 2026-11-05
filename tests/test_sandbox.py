@@ -5,6 +5,7 @@ import platform
 import shlex
 import shutil
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -355,6 +356,35 @@ async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
         if Path(source).is_relative_to(builtin_root)
     }
     assert builtin_mounts == {(str(builtin_root / name), str(workspace / "skills" / name)) for name in expected}
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux" or any(
+        shutil.which(name) is None for name in (*sandbox.SANDBOX_EXECUTABLES, "fc-list")
+    ),
+    reason="Requires Linux sandbox dependencies and Fontconfig",
+)
+@pytest.mark.asyncio
+async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
+    font_command = ["fc-list", ":lang=zh", "file", "family"]
+    host_fonts = subprocess.run(font_command, capture_output=True, check=True, timeout=10)
+    assert b"Fontconfig error" not in host_fonts.stderr
+    if not host_fonts.stdout.strip():
+        pytest.skip("Requires system Chinese fonts (e.g. fonts-noto-cjk)")
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+
+    command = await sandbox.wrap_sandbox_command(
+        font_command, tmp_path, skills_loader=SkillsLoader(tmp_path), network_isolation=False,
+    )
+    process = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), 20)
+
+    assert process.returncode == 0, stderr.decode(errors="replace")
+    assert b"Fontconfig error" not in stderr
+    assert set(stdout.splitlines()) == set(host_fonts.stdout.splitlines())
 
 
 @pytest.mark.skipif(

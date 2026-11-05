@@ -68,7 +68,7 @@ async def test_only_current_users_tree_is_injected(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["missing", "empty", "root-files"])
-async def test_missing_or_empty_memo_tree_is_optional(tmp_path, state):
+async def test_missing_or_empty_memo_tree_keeps_context(tmp_path, state):
     store = MemoryStore(tmp_path)
     if state != "missing":
         directory = tmp_path / "memory/self-improving"
@@ -77,7 +77,13 @@ async def test_missing_or_empty_memo_tree_is_optional(tmp_path, state):
             (directory / "index.md").write_text("obsolete index content", encoding="utf-8")
             (directory / "notes.md").write_text("root-level note", encoding="utf-8")
 
-    assert await store.get_self_improvement_context() == ""
+    context = await store.get_self_improvement_context()
+
+    assert "## Self-improvement Memos\nRoot: memory/self-improving/" in context
+    assert "use the self-improving skill" in context
+    assert "(No self-improvement memos found yet.)" in context
+    assert "obsolete index content" not in context
+    assert "root-level note" not in context
 
 
 @pytest.mark.asyncio
@@ -111,7 +117,7 @@ async def test_symlink_memo_root_is_ignored(tmp_path):
 
     assert "another-user.md" not in prompt["content"]
     assert "private body" not in prompt["content"]
-    assert "## Self-improvement Memos" not in prompt["content"]
+    assert "(No self-improvement memos found yet.)" in prompt["content"]
 
 
 @pytest.mark.asyncio

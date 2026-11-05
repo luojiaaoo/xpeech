@@ -113,6 +113,9 @@ async def wrap_sandbox_command(
         "/lib64",
         "/opt",
         "/etc/alternatives",
+        # Fontconfig needs its configuration as well as fonts under /usr.
+        "/etc/fonts",
+        "/var/cache/fontconfig",
         "/etc/ssl/certs",
         "/etc/pki/tls/certs",
         "/etc/pki/ca-trust",

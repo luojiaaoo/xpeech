@@ -335,6 +335,13 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+镜像内置 Noto CJK 中文字体（黑体、宋体，含常规和粗体）和 DejaVu 字体，
+Shell 沙盒以只读方式共享 Fontconfig 配置与字体缓存。旧镜像需要重新构建并重建 backend：
+
+```bash
+docker compose up -d --build --no-deps --force-recreate backend
+```
+
 `backend` 的沙盒需要 `SYS_ADMIN`（命名空间和挂载）、`NET_ADMIN`（TAP 网卡和
 loopback 配置）以及 `/dev/net/tun` 设备映射，Compose 已配置。如果旧容器运行 Shell 时出现
 `ioctl(TUNSETIFF): Operation not permitted`，
