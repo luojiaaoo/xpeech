@@ -81,6 +81,9 @@ async def wrap_sandbox_command(
         "--unshare-pid",
         "--unshare-ipc",
         "--cap-drop", "ALL",
+        # Preserve root's file access across host bind mounts. Read-only mounts
+        # still enforce write protection for built-in skills and system paths.
+        "--cap-add", "CAP_DAC_OVERRIDE",
     ])
     if network_isolation:
         args.append("--unshare-net")

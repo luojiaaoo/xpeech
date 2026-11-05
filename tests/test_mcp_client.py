@@ -491,6 +491,7 @@ async def test_stdio_uses_workspace_home_and_passes_arguments_through(tmp_path, 
             assert "--port-driver=none" not in sandbox_command
             assert "--unshare-net" not in sandbox_command
             assert sandbox_command[sandbox_command.index("--cap-drop") + 1] == "ALL"
+            assert sandbox_command[sandbox_command.index("--cap-add") + 1] == "CAP_DAC_OVERRIDE"
             assert sandbox_command[sandbox_command.index("--chdir") + 1] == str(workspace)
             assert params.env == configured_env
             assert (workspace / "home").is_dir()
@@ -670,7 +671,7 @@ for line in sys.stdin:
         assert result["pid_namespace"] != os.readlink("/proc/self/ns/pid")
         assert result["net_namespace"] == os.readlink("/proc/self/ns/net")
         assert result["ipc_namespace"] != os.readlink("/proc/self/ns/ipc")
-        assert int(result["capabilities"].split()[1], 16) == 0
+        assert int(result["capabilities"].split()[1], 16) == 1 << 1  # CAP_DAC_OVERRIDE
         assert (workspace / "home/result.txt").read_text() == "workspace data"
         assert not (workspace / "injected").exists()
         async with asyncio.timeout(5):

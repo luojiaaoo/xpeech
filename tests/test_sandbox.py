@@ -95,6 +95,7 @@ async def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monk
     assert "--unshare-ipc" in args
     assert ("/etc/resolv.conf", "/etc/resolv.conf") in _option_pairs(args, "--ro-bind-try")
     assert args[args.index("--cap-drop") + 1] == "ALL"
+    assert args[args.index("--cap-add") + 1] == "CAP_DAC_OVERRIDE"
     assert _option_pairs(args, "--bind") == [(str(tmp_path), str(tmp_path))]
     assert dict(_option_pairs(args, "--setenv"))["HOME"] == str(tmp_path / "home")
 
@@ -357,6 +358,122 @@ async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
 
 
 @pytest.mark.skipif(
+    platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.NETWORK_SANDBOX_EXECUTABLES),
+    reason="Requires Linux sandbox dependencies",
+)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("network_isolation", [False, True])
+async def test_root_can_read_restricted_builtin_permissions_but_not_write_read_only_mounts(
+    tmp_path, monkeypatch, network_isolation,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    builtin_root = tmp_path / "builtin"
+    skill_dir = builtin_root / "weather"
+    resources = skill_dir / "resources"
+    resources.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: weather\n---\nWeather instructions")
+    resource_file = resources / "data.txt"
+    resource_file.write_text("resource-content\n")
+    resource_file.chmod(0o000)
+    skill_dir.chmod(0o111)
+    monkeypatch.setattr(skill_module, "BUILTIN_SKILLS_DIR", builtin_root)
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    try:
+        command = await sandbox.wrap_sandbox_command(
+            "set -e; test $(id -u) = 0; ls skills/weather; cat skills/weather/resources/data.txt; "
+            "if echo changed > skills/weather/resources/data.txt 2>/dev/null; then exit 1; fi; "
+            "if touch /usr/xpeech-should-stay-read-only 2>/dev/null; then exit 1; fi; "
+            "awk '/^CapEff:/ {print $2}' /proc/self/status",
+            workspace, skills_loader=SkillsLoader(workspace), network_isolation=network_isolation,
+        )
+        # Exercise UID 0 even when the test runner is an ordinary host user.
+        if os.geteuid() != 0:
+            index = command.index("bwrap") + 1
+            command[index:index] = ["--unshare-user", "--uid", "0", "--gid", "0"]
+        process = await asyncio.create_subprocess_exec(
+            *command, cwd=workspace, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), 20)
+        assert process.returncode == 0, stderr.decode()
+        lines = stdout.decode().splitlines()
+        assert "SKILL.md" in lines and "resources" in lines
+        assert "resource-content" in lines
+        assert int(lines[-1], 16) == 1 << 1  # Only CAP_DAC_OVERRIDE survives.
+    finally:
+        skill_dir.chmod(0o755)
+        resource_file.chmod(0o644)
+    assert resource_file.read_text() == "resource-content\n"
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux" or any(
+        shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "node", "npm", "npx")
+    ),
+    reason="Requires Linux sandbox dependencies and Node.js/npm/npx",
+)
+@pytest.mark.asyncio
+async def test_node_npm_and_npx_work_with_only_file_access_capability(tmp_path, monkeypatch):
+    workspace = tmp_path / "node-workspace"
+    workspace.mkdir()
+    dependency = workspace / "local-dependency"
+    dependency.mkdir()
+    (dependency / "package.json").write_text(json.dumps({
+        "name": "sandbox-local-bin", "version": "1.0.0", "bin": {"sandbox-local-bin": "bin.js"},
+    }))
+    executable = dependency / "bin.js"
+    executable.write_text("#!/usr/bin/env node\nconsole.log('local-bin-ok');\n")
+    executable.chmod(0o755)
+    (workspace / "package.json").write_text(json.dumps({
+        "name": "sandbox-node-test", "version": "1.0.0", "private": True, "type": "module",
+        "scripts": {"build": "node build.js"},
+        "dependencies": {"sandbox-local-bin": "file:./local-dependency"},
+    }))
+    (workspace / "build.js").write_text('''
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import {execFileSync} from 'node:child_process';
+import {Worker} from 'node:worker_threads';
+fs.writeFileSync('build-result.txt', 'build-ok');
+assert.equal(fs.readFileSync('build-result.txt', 'utf8'), 'build-ok');
+assert.equal(execFileSync(process.execPath, ['-e', 'process.stdout.write("child-ok")']).toString(), 'child-ok');
+await new Promise((resolve, reject) => {
+    const worker = new Worker('require("node:worker_threads").parentPort.postMessage("worker-ok")', {eval: true});
+    worker.once('message', value => { assert.equal(value, 'worker-ok'); resolve(); });
+    worker.once('error', reject);
+});
+const server = http.createServer((request, response) => response.end('http-ok'));
+await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+try {
+    const body = await new Promise((resolve, reject) => {
+        http.get(`http://127.0.0.1:${server.address().port}`, response => {
+            let body = ''; response.on('data', chunk => { body += chunk; }); response.on('end', () => resolve(body));
+        }).on('error', reject);
+    });
+    assert.equal(body, 'http-ok');
+    console.log('node-runtime-ok');
+} finally {
+    await new Promise(resolve => server.close(resolve));
+}
+''')
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+
+    result = await _run_wrapped_command(
+        "npm install --offline --ignore-scripts --no-audit --no-fund && npm run build && "
+        "npx --offline --no-install sandbox-local-bin",
+        workspace, timeout_ms=20_000, skills_loader=SkillsLoader(workspace),
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert not result.timed_out
+    assert b"node-runtime-ok" in result.stdout
+    assert b"local-bin-ok" in result.stdout
+    assert (workspace / "build-result.txt").read_text() == "build-ok"
+
+
+@pytest.mark.skipif(
     platform.system() != "Linux" or any(
         shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "setsid")
     ),
@@ -418,7 +535,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
     assert pid_namespace != os.readlink("/proc/self/ns/pid")
     assert net_namespace != os.readlink("/proc/self/ns/net")
     assert ipc_namespace != os.readlink("/proc/self/ns/ipc")
-    assert int(capabilities, 16) == 0
+    assert int(capabilities, 16) == 1 << 1  # CAP_DAC_OVERRIDE
     assert managed_config.read_text(encoding="utf-8") == "read-only config"
     await asyncio.sleep(0.1)
     stopped_heartbeat = heartbeat.read_bytes()

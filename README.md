@@ -650,7 +650,7 @@ stdio MCP 始终绑定用户沙盒，使用当前用户 workspace 作为 MCP wor
 远程 MCP 的用户隔离模式使用当前用户 workspace，共享模式使用 `<cache_path>/mcp/<server_name>` 作为 MCP workspace root。stdio MCP
 进程通过与 Shell 共用的 bubblewrap 沙盒启动，以用户 workspace 作为 `cwd`，并将 `HOME` 设置为
 `<workspace>/home`，覆盖继承的 HOME；MCP 的 `env` 禁止配置 `PATH` 和 `HOME`。工作区可读写，系统运行时、公共 HOME 配置和内置技能只读挂载；
-进程使用独立 PID 命名空间并移除所有 Linux capabilities，连接关闭时清理子进程。网络保持可用。
+进程使用独立 PID 命名空间，仅保留 `CAP_DAC_OVERRIDE` 以访问宿主机挂载目录，连接关闭时清理子进程。只读挂载仍禁止写入，网络保持可用。
 MCP SDK 直接启动沙盒进程，`command` 和 `args` 经 `shlex.join()` 合并后统一通过沙盒内的 `bash -c` 执行，参数中的特殊字符保持字面值；可执行文件及其依赖必须位于沙盒可见的系统运行时目录
 （例如 `/usr`、`/opt`）或当前工作区内，backend 私有目录中的虚拟环境和文件不会自动暴露。
 缺少 bubblewrap 或沙盒启动失败时连接报错，不回退到宿主机执行。
@@ -826,7 +826,7 @@ Shell 命令默认 120 秒超时，可在单次调用中通过 `timeout_ms` 指�
 
 - **统一路径解析**：配置文件中的路径在加载时按 backend HOME 展开并转为绝对 `Path`；工作区文件 API/内置模型工具的路径参数保持字符串，在入口按当前工作区和沙盒 HOME 解析成绝对 `Path`，内部函数只接收 `Path`，不再兼容 `str | Path`。用户的 `~` 指向 `<workspace>/home`，`~用户名` 不会按 backend 账户展开；内部工作区 `Path` 通过 `resolve()` 规范化，不展开 backend HOME。MCP 参数按服务端协议透传，不根据字段名猜测本地路径。文件工具默认限制在工作区内，读取类操作可额外访问内置技能目录；Shell 文件系统访问由 bwrap 限制
 - **预览目录隔离**：`create_browser_preview` 只能复制当前会话工作区内的目录或 HTML，每次写入 `<browser_preview_path>/<uuid>/`，请求子路径不能越出对应 UUID 目录
-- **进程沙盒**：Shell 命令和 stdio MCP 通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离；每个进程沙盒使用独立 PID 命名空间，并移除所有 Linux capabilities
+- **进程沙盒**：Shell 命令和 stdio MCP 通过 bubblewrap 运行，工作区可读写，内置技能目录只读挂载，系统运行时路径只读挂载，临时目录和工作区父目录使用 tmpfs 隔离；每个进程沙盒使用独立 PID 命名空间，仅保留 `CAP_DAC_OVERRIDE`，让 root 能访问挂载目录的内容；只读挂载仍禁止写入
 - **依赖安装隔离**：Shell 工具首次使用时自动创建 `<workspace>/.venv`；项目 Python 依赖进入当前工作区虚拟环境，`uv tool install` 和 `npm install -g` 安装到 `<workspace>/home`，不会在会话间共享可写状态
 - **系统高危命令拒绝**：dcg 拒绝关机重启、`init`/`telinit` 切换运行级别、格式化及写设备等高危操作，不弹确认
 - **危险命令检查**：递归删除及破坏性 Git 操作由 dcg 返回确认；非交互模式直接拒绝，检查失败也不执行
@@ -837,7 +837,7 @@ Shell 命令默认 120 秒超时，可在单次调用中通过 `timeout_ms` 指�
 Shell 命令会在 bwrap 进程沙盒中执行：
 
 - 每个用户工作区会绑定为可读写目录，并作为命令工作目录；该用户的多个会话共享此工作区。
-- 每次调用启用 `--unshare-pid` 和 `--cap-drop ALL`，命令无法通过 `/proc` 查看其他调用的进程，也不保留挂载、切换用户等操作所需的 Linux capabilities。
+- 进程沙盒启用 `--unshare-pid`，通过 `--cap-drop ALL --cap-add CAP_DAC_OVERRIDE` 仅保留文件访问权限绕过能力；其他工作区的进程不可见，也不保留挂载、切换用户等操作所需的 Linux capabilities。
 - 每个 Shell 沙盒由 bwrap 的 `--unshare-net` 创建独立网络命名空间；启动器确认 bwrap 已完成 loopback 初始化后，再由 slirp4netns 配置出站 TCP/UDP 网络，避免两者同时配置 loopback。网络就绪后才启动命令。不转发入站端口，并禁止通过 slirp 网关访问宿主机的 loopback。不同工作区沙盒的 `localhost`、监听端口和抽象 Unix socket 相互隔离，同一工作区的命令共享网络。
 - bwrap 同时启用 `--unshare-ipc`，隔离 System V IPC 和 POSIX 消息队列；`/dev/shm` 随私有 `/dev` 隔离。相同用户的调用仍共享工作区，因此工作区内文件和文件型 Unix socket 可以共享。
 - 出站 NAT 不限制公网或局域网目标；如果要阻止访问宿主机非 loopback 地址或其他内网服务，需要额外配置出口防火墙。允许外网也意味着可以通过外部服务间接交换数据。
