@@ -191,10 +191,9 @@ x-sender-name: %E5%BC%A0%E4%B8%89
 
 | 字段 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `content` | 是 | — | **JSON 字符串**，文本块列表，例如 `[{"text":"你好"},{"text":"第二段"}]`；目前仅支持文本块 |
+| `content` | 是 | — | **JSON 字符串**，文本块列表，例如 `[{"text":"你好"},{"text":"第二段"}]`；目前仅支持文本块；文本中加入完整标记 `::请严格以JSON格式回复::` 可启用 JSON 输出，见第 3.5 节 |
 | `session_metadata` | 否 | `"{}"` | **JSON 字符串**，元数据对象，例如 `{"sender_id":"u-123"}`；值请使用字符串 |
 | `files` | 否 | 空 | multipart 文件字段，可重复多个；附件保存到用户工作区的 `attachments/YYYY-MM-DD/` 下，重名自动加序号 |
-| `json_output` | 否 | `false` | 请求模型输出 JSON 对象，见第 3.5 节 |
 
 `content`、`session_metadata` 是表单里的字符串，不能把整个请求发送为 `application/json`。非法 JSON 返回 `422`；`session_metadata` 必须为对象。渠道由 JWT `kid` 决定，元数据中的 `channel` 键会被丢弃。
 
@@ -252,14 +251,22 @@ curl --fail-with-body -X POST "http://localhost:7878/chat_sync" \
 
 ### 3.5 JSON 输出模式
 
-`/chat`、`/chat_sync` 都支持 `json_output=true`。服务端需启用：
+`/chat`、`/chat_sync` 根据本次用户消息中的完整标记 `::请严格以JSON格式回复::` 判断是否启用 JSON 输出，不再通过 `json_output` 表单参数控制。服务端需启用：
 
 ```toml
 [llm]
 support_json_output = true
 ```
 
-该参数为模型请求添加 `response_format={"type":"json_object"}`，不会自动修改提示词；请在 `content` 中说明目标 JSON 结构。
+在 `content` 的文本块中加入该标记，并说明目标 JSON 结构，例如：
+
+```json
+[{"text":"列出三个新闻源，返回包含 name 和 url 字段的对象。::请严格以JSON格式回复::"}]
+```
+
+标记必须完整、精确匹配，前后的 `::` 均不可省略。不带符号的“请严格以JSON格式回复”、缺少任一侧符号或普通的 `JSON` 字样都不会触发。
+标记保留在发送给模型的原始文本中，仅本次请求生效，不从历史消息继承。
+触发后为模型请求添加 `response_format={"type":"json_object"}`，不会额外修改提示词。
 
 未启用能力时返回 `400`，`detail` 为 `The configured model does not support JSON output`，发生在 SSE 建立前。启用后响应格式保持不变：流式接口仍返回 SSE，同步接口仍返回事件列表。模型输出位于 `assistant.context` 中；流式分片需先拼接，再解析完整的 JSON 文本。
 

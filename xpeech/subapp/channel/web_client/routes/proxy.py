@@ -58,7 +58,14 @@ def create_proxy_router(
     @router.post("/chat_sync")
     async def proxy_chat(
         request: Request,
-        content: Annotated[str, Form()],
+        content: Annotated[
+            str,
+            Form(
+                description='消息内容列表，JSON 格式字符串，例如 [{"text":"你好"}]。'
+                "在本次消息的 text 中加入完整标记 `::请严格以JSON格式回复::` 可强制模型输出 JSON 对象；"
+                "前后的 `::` 均不可省略，仅本次请求生效。模型需配置支持 JSON 输出，否则返回 HTTP 400。"
+            ),
+        ],
         user: CurrentUser,
         session_id: ChatSessionId,
         backend_auth: RequestBackendAuth,

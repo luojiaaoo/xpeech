@@ -102,7 +102,10 @@ def content(
     content: Annotated[
         str,
         Form(
-            description='消息内容列表，JSON 格式字符串。[{"text": "你好"}, {"text": "world"}]',
+            description='消息内容列表，JSON 格式字符串。[{"text": "你好"}, {"text": "world"}]。'
+            f'在本次消息的 text 中加入完整标记 `{JSON_OUTPUT_TRIGGER}` 可强制模型输出 JSON 对象；'
+            "前后的 `::` 均不可省略，缺少任一侧或仅出现普通 JSON 字样不会触发，仅本次请求生效。"
+            "模型需配置 `llm.support_json_output = true`，否则在 SSE 开始前返回 HTTP 400。",
         ),
     ],
 ) -> InputContent:
