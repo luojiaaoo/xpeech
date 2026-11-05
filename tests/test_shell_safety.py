@@ -6,7 +6,7 @@ import shutil
 import pytest
 
 from xpeech.agent.tools.execution_request import ExecutionDecision
-from xpeech.agent.tools.shell import shell_requires_confirmation
+from xpeech.utils.security.dcg import shell_requires_confirmation
 
 pytestmark = [
     pytest.mark.asyncio,

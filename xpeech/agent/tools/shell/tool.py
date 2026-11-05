@@ -8,8 +8,8 @@ from textwrap import dedent
 
 from loguru import logger
 
+from ....utils.security import sandbox
 from ...skills.skill import SkillsLoader
-from .. import sandbox
 from ..helper import is_direct_python_pip_exec
 from .schema import DEFAULT_EXEC_TIMEOUT_MS, ShellArgs, ShellCommandResult
 from .session import sandbox_manager

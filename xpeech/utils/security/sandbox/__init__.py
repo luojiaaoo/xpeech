@@ -6,9 +6,9 @@ import sys
 from pathlib import Path
 
 from ....config.settings import settings
-from ....utils.file_io import ensure_path
-from ...server.context import get_lark_user_access_token, get_user_id
-from ...skills.skill import SkillsLoader
+from ...file_io import ensure_path
+from ....agent.server.context import get_lark_user_access_token, get_user_id
+from ....agent.skills.skill import SkillsLoader
 
 _DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 SANDBOX_EXECUTABLES = ("bwrap", "bash")

@@ -13,9 +13,9 @@ from pathlib import Path
 from loguru import logger
 
 from ....config.settings import settings
+from ....utils.security import sandbox
 from ...server.context import get_lark_user_access_token, get_user_id
 from ...skills.skill import SkillsLoader
-from .. import sandbox
 from .schema import ShellCommandResult
 
 _WORKER_SOURCE = (Path(__file__).parent / "scripts" / "worker.py").read_text(encoding="utf-8")

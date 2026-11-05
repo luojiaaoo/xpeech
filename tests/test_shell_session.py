@@ -12,12 +12,12 @@ from pydantic import ValidationError
 from xpeech.agent.server.context import lark_user_access_token_var, session_id_var, user_id_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
-from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.shell import tool as shell_module
 from xpeech.agent.tools.shell import session as session_module
 from xpeech.agent.tools.shell.schema import ShellArgs, ShellCommandResult
 from xpeech.agent.tools.shell.session import SandboxConnectionError, SandboxManager, SandboxSession
 from xpeech.config.settings import Settings, ShellConfig, ToolConfig
+from xpeech.utils.security import sandbox
 
 
 def test_existing_tool_configs_keep_the_default_sandbox_lifetime():

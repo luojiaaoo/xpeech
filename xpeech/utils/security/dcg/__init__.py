@@ -7,8 +7,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from ... import sandbox
-from ...execution_request import ExecutionDecision
+from .. import sandbox
+from ....agent.tools.execution_request import ExecutionDecision
 
 SHELL_CHECK_TIMEOUT = 5.0
 DCG_POLICY_DIR = Path(__file__).parent

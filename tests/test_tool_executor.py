@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field, ValidationError, create_model
 
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
-from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
 from xpeech.agent.tools.shell import build_shell_tools
@@ -22,6 +21,7 @@ from xpeech.agent.tools.shell.session import SandboxManager
 from xpeech.agent.tools.shell.tool import _format_command_output, _guard_command, _run_wrapped_command
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 from xpeech.provider.schema import ToolCallRequest
+from xpeech.utils.security import sandbox
 
 
 @pytest_asyncio.fixture

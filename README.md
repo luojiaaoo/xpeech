@@ -747,14 +747,14 @@ Dockerfile 从 [Gitee 镜像](https://gitee.com/luojiaaoo/destructive_command_gu
 安装 dcg v0.16.0，支持 x86_64 和 aarch64，并在安装前校验发布文件的 SHA-256；
 可通过构建参数 `DCG_VERSION` 指定版本。
 Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook，也不会通过 dcg 执行待检命令。
-`shell` 包通过 `__init__.py` 仅导出 `build_shell_tools` 和 `shell_requires_confirmation`，
+`shell` 包通过 `__init__.py` 导出 `build_shell_tools`，
 `tool.py` 负责命令执行，`schema.py` 定义参数和结果。
-检查函数 `shell_requires_confirmation` 位于 `shell/dcg/__init__.py`，由 `registry.py` 注册为确认判断回调。
+检查函数 `shell_requires_confirmation` 位于 `xpeech/utils/security/dcg/__init__.py`，由 `registry.py` 注册为确认判断回调。
 注册时通过 `partial` 绑定当前工作区，检查进程以该目录为 `cwd`，`HOME` 使用同一工作区的沙盒 home，
 `PWD` 同步为工作区路径；不修改后端进程的全局目录或环境。工作区不会作为模型可填写的参数暴露。
 检查仍在宿主环境运行，不等同于完整复现 bwrap 的挂载视图（例如独立的 `/tmp` 和只读配置挂载）。
-它通过随代码发布的 `xpeech/agent/tools/shell/dcg/config.toml` 启用 `core.filesystem`、`core.git` 和 `system`，
-并加载 `dcg/agent.yaml` 补充规则。一次 `dcg test` 检查转换为字符串枚举 `ExecutionDecision`：
+它通过随代码发布的 `xpeech/utils/security/dcg/config.toml` 启用 `core.filesystem`、`core.git` 和 `system`，
+并加载同目录的 `agent.yaml` 补充规则。一次 `dcg test` 检查转换为字符串枚举 `ExecutionDecision`：
 `allow` 对应 `ALLOW = "allow"`（直接执行），`ask` 对应 `CONFIRM = "confirm"`（用户确认），
 `deny` 对应 `DENY = "deny"`（返回“发现高危命令，直接拒绝执行。”）。枚举定义在 `execution_request.py`。
 普通递归删除（包括临时目录里的 `rm -rf` 及分离参数、长参数写法）和破坏性 Git 操作需要确认；
@@ -834,6 +834,7 @@ Shell 命令默认 120 秒超时，可在单次调用中通过 `timeout_ms` 指�
 
 ### 沙盒
 
+共享沙盒封装位于 `xpeech/utils/security/sandbox/`，供 Shell 和 stdio MCP 使用。
 Shell 命令会在 bwrap 进程沙盒中执行：
 
 - 每个用户工作区会绑定为可读写目录，并作为命令工作目录；该用户的多个会话共享此工作区。

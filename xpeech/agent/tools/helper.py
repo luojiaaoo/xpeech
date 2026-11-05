@@ -6,10 +6,10 @@ from typing import Callable, get_type_hints, Type
 from pydantic import BaseModel
 from ...utils.file_io import is_relative_path
 from ...utils.helper import dynamic_import
+from ...utils.security import sandbox
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
 from ..skills.skill import BUILTIN_SKILLS_DIR
-from . import sandbox
 from openai import pydantic_function_tool
 import os
 import re

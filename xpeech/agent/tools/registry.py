@@ -5,6 +5,7 @@ from typing import Any
 from ...config.settings import ToolConfig, settings
 from ...utils.channel_tag import channel_tag_allows_access
 from ...utils.organization import organization_allows_access
+from ...utils.security.dcg import shell_requires_confirmation
 from ..skills.skill import SkillsLoader
 from .browser_preview import build_browser_preview_tool
 from .document import build_document_tool
@@ -21,7 +22,7 @@ from .ask_user_question import ask_user_question
 from .research import build_research_tools
 from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .sessions import build_session_tools
-from .shell import shell_requires_confirmation, build_shell_tools
+from .shell import build_shell_tools
 from .web import baidu_search, bing_search, web_fetch
 
 

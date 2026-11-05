@@ -13,8 +13,9 @@ import pytest
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.server.context import lark_user_access_token_var
 from xpeech.agent.skills import skill as skill_module
-from xpeech.agent.tools import mcp_client, sandbox
+from xpeech.agent.tools import mcp_client
 from xpeech.config.settings import MCPServerSettings, ToolConfig
+from xpeech.utils.security import sandbox
 
 
 @pytest.fixture

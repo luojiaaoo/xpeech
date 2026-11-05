@@ -14,9 +14,9 @@ from xpeech.agent import execute as execute_module
 from xpeech.agent.server.api import app
 from xpeech.agent.server.context import get_lark_user_access_token
 from xpeech.agent.skills import skill as skill_module
-from xpeech.agent.tools import sandbox
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, settings
 from xpeech.utils import internal_jwt
+from xpeech.utils.security import sandbox
 from xpeech.utils.channel_jwt import ChannelJWTAuth, ChannelTokenParams, UserTokenParams, create_token
 from xpeech.utils.internal_jwt import (
     create_internal_access_token,

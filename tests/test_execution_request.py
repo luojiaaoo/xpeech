@@ -22,12 +22,12 @@ from xpeech.agent.tools.execution_request import (
 )
 from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.mcp_client import create_mcp_registration
-from xpeech.agent.tools.shell import dcg as dcg_module
 from xpeech.agent.tools.shell import tool as shell_module
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
 from xpeech.subapp.channel.feishu.cards import build_feishu_question_card
 from xpeech.utils.question import validate_confirm_question_json, validate_question_form_json
+from xpeech.utils.security import dcg as dcg_module
 
 
 class CommandArgs(BaseModel):

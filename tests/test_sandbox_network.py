@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from xpeech.agent.tools.sandbox.scripts import sandbox_network
+from xpeech.utils.security.sandbox.scripts import sandbox_network
 
 pytestmark = pytest.mark.skipif(
     platform.system() != "Linux" or any(shutil.which(name) is None for name in ("bwrap", "slirp4netns", "bash")),

@@ -31,9 +31,9 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ...config.settings import MCPServerSettings, settings
 from ...utils.command_template import execute_command_template
+from ...utils.security.sandbox import SANDBOX_EXECUTABLES, wrap_sandbox_command
 from ..skills.skill import SkillsLoader
 from .execution_request import ExecutionDecision, build_execution_request_tool, execution_request_schema
-from .sandbox import SANDBOX_EXECUTABLES, wrap_sandbox_command
 
 _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset(
     (

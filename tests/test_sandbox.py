@@ -16,13 +16,13 @@ from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.server.context import lark_user_access_token_var, user_id_var
 from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR
 from xpeech.agent.skills import skill as skill_module
-from xpeech.agent.tools import sandbox
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import safe_resolve_workspace_path
 from xpeech.agent.tools.shell import tool as shell_module
 from xpeech.agent.tools.shell.session import SandboxManager
 from xpeech.agent.tools.shell.tool import _run_wrapped_command
 from xpeech.exceptions import PathProtectionError
+from xpeech.utils.security import sandbox
 
 
 @pytest_asyncio.fixture(autouse=True)
