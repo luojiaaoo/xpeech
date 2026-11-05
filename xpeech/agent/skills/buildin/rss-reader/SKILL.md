@@ -1,14 +1,14 @@
 ---
 name: rss-reader
 short_description: RSS 订阅与资讯
-description: 按主题查找内建 RSS/Atom 订阅源，读取最新文章和技术动态并生成带来源链接的摘要；用于 RSS 源推荐、AI/科技简报、技术资讯汇总和订阅清单导出。
+description: 按主题查找内建 RSS/Atom 订阅源，读取最新新闻、文章和技术动态并生成带来源链接的摘要；用于 RSS 源推荐、新闻简报、AI/科技简报、技术资讯汇总和订阅清单导出。
 ---
 
 # RSS 订阅与资讯阅读
 
 ## 选择订阅源
 
-目录包含 9 类、43 个 RSS/Atom 地址。
+目录包含 10 类、48 个 RSS/Atom 地址。
 
 - 用户指定源或地址时，优先使用用户指定的范围；目录不是白名单。
 - 用户仅要订阅地址时，直接返回名称、分类和地址，无需抓取文章。
@@ -49,6 +49,7 @@ Atom 默认命名空间为 `http://www.w3.org/2005/Atom`，解析时显式绑定
 | 分类 | 源数量 |
 | --- | ---: |
 | AI | 7 |
+| 新闻 | 5 |
 | 中文 / 国内 | 6 |
 | 技术媒体 | 6 |
 | Hacker News | 5 |
@@ -57,7 +58,7 @@ Atom 默认命名空间为 `http://www.w3.org/2005/Atom`，解析时显式绑定
 | 周刊 / Newsletter | 4 |
 | 设计 / 产品 | 2 |
 | 学术 | 1 |
-| **合计** | **43** |
+| **合计** | **48** |
 
 ## AI
 
@@ -71,12 +72,22 @@ Atom 默认命名空间为 `http://www.w3.org/2005/Atom`，解析时显式绑定
 | Hacker News LLM | `https://hnrss.org/newest?q=LLM` |
 | Simon Willison | `https://simonwillison.net/atom/everything/` |
 
+## 新闻
+
+| 名称 | 订阅地址 |
+| --- | --- |
+| 中新网滚动 | `https://www.chinanews.com.cn/rss/scroll-news.xml` |
+| 中新网国内 | `https://www.chinanews.com.cn/rss/china.xml` |
+| 中新网国际 | `https://www.chinanews.com.cn/rss/world.xml` |
+| 中新网财经 | `https://www.chinanews.com.cn/rss/finance.xml` |
+| 中新网科技 | `https://www.chinanews.com.cn/rss/it.xml` |
+
 ## 中文 / 国内
 
 | 名称 | 订阅地址 |
 | --- | --- |
 | 少数派 SSPAI | `https://sspai.com/feed` |
-| IT之家 | `https://www.ithome.com/rss/` |
+| IT之家 | `https://www.ithome.com/rss` |
 | FreeBuf | `https://www.freebuf.com/feed` |
 | 安全客 AnQuanKe | `https://api.anquanke.com/data/v1/rss` |
 | 阮一峰周刊 | `https://www.ruanyifeng.com/blog/atom.xml` |
