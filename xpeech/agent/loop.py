@@ -13,7 +13,7 @@ from ..agent.server.schema import InputText
 from ..config.settings import settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import LLMResponse, ToolCallRequest
-from ..utils.helper import format_exception2llm, token_counter
+from ..utils.helper import format_exception2llm
 from ..utils.question import USER_TIMEOUT, build_execution_question
 from .compression import ConversationCompressor
 from .helper import strip_internal_message_metadata
@@ -85,6 +85,7 @@ class AgentLoop:
             summary_tokens=self.summary_tokens,
             max_accept_tokens=self.max_accept_token,
             target_tokens=int(self.provider.default_context_token * 0.25),
+            token_counter=self._count_context_tokens,
         )
         self.memory_consolidator = MemoryConsolidator(
             store=MemoryStore(workspace=self.workspace),
@@ -502,7 +503,7 @@ class AgentLoop:
             return f"{amount:.2f}".rstrip("0").rstrip(".") + unit
 
         # Context size is estimated separately from provider-reported consumption.
-        token_count = await token_counter(messages_yaml)
+        token_count = await self._count_context_tokens(messages_yaml)
         token_percent = min(1, token_count / self.max_accept_token) * 100
         token_notify = "♻️ 即将达到最大上下文" if token_percent > 90 else ""
         context_usage = (
@@ -525,6 +526,10 @@ class AgentLoop:
         }
 
         logger.info("Agent run completed")
+
+    async def _count_context_tokens(self, messages: list[dict[str, Any]]) -> int:
+        """按实际请求统计消息及工具定义的上下文占用。"""
+        return await self.provider.count_tokens(messages=strip_internal_message_metadata(messages), tools=self.tools)
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs) -> LLMResponse:
         """移除内部元数据后调用模型提供方。"""

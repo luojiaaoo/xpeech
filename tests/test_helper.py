@@ -11,6 +11,41 @@ from xpeech.utils.file_io import LockedFile
 from xpeech.utils.helper import compress_image
 
 
+@pytest.mark.asyncio
+async def test_token_counter_includes_tools_alongside_video_tokens(monkeypatch):
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Describe this video"},
+                {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,dmlkZW8="}},
+            ],
+        }
+    ]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "search",
+                "description": "Search for information",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+    async def video_metadata(_path):
+        return {"duration": 1.25}
+
+    monkeypatch.setattr(helper, "read_video_metadata", video_metadata)
+    text_messages = [{"role": "user", "content": [messages[0]["content"][0]]}]
+    text_tokens = await helper.token_counter(text_messages)
+    text_and_tools_tokens = await helper.token_counter(text_messages, tools=tools)
+
+    assert text_and_tools_tokens > text_tokens
+    assert await helper.token_counter(messages, tools=tools) == text_and_tools_tokens + 125
+    assert messages[0]["content"][1]["type"] == "video_url"
+
+
 def test_compress_image_returns_raw_and_mime_type():
     input_buffer = BytesIO()
     Image.new("RGB", (2, 2), color="red").save(input_buffer, format="PNG")

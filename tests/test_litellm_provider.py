@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, RegisteredTool, ToolCallChunk, ToolCallRequest
+from xpeech.utils.helper import token_counter
 
 
 def stream_chunk(*, delta=None, finish_reason=None, usage=None):
@@ -26,6 +27,72 @@ def test_chat_exposes_llm_parameter_overrides_as_one_object():
     assert "reasoning_effort" not in parameters
     assert "remove_interactive_tool" not in parameters
     assert "is_interactive" not in inspect.signature(LiteLLMProvider.register_function_tool).parameters
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("options", "expected_names"),
+    [
+        ({}, ["search", "default_tool", "extra_tool"]),
+        ({"remove_default_tools": True}, ["search", "extra_tool"]),
+        ({"remove_all_tools": True}, []),
+        ({"remove_default_tools": True, "remove_all_tools": True}, []),
+    ],
+)
+async def test_count_tokens_uses_the_same_tools_as_chat(monkeypatch, options, expected_names):
+    captured_kwargs = {}
+
+    class RetryClient:
+        def acompletion(self, **kwargs):
+            captured_kwargs.update(kwargs)
+
+            async def upstream():
+                yield stream_chunk(finish_reason="stop")
+
+            return upstream()
+
+    async def search() -> str:
+        """Search using the overridden schema."""
+        return "found"
+
+    async def default_tool() -> str:
+        """A default tool."""
+        return "default"
+
+    async def extra_tool() -> str:
+        """An extra tool."""
+        return "extra"
+
+    monkeypatch.setattr("xpeech.provider.litellm_provider.get_custom_tool_func", lambda name: search)
+    provider = LiteLLMProvider(
+        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters()
+    )
+    provider.register_mcp_tool(
+        search,
+        tool_json={
+            "type": "function",
+            "function": {
+                "name": "search",
+                "description": "Original MCP schema",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+    )
+    provider.register_function_tool(default_tool)
+    provider._retry_client = RetryClient()
+    messages = [{"role": "user", "content": "hello"}]
+    request = {"messages": messages, "tools": ["search", extra_tool], **options}
+
+    count = await provider.count_tokens(**request)
+    await provider.chat(**request)
+
+    actual_tools = captured_kwargs.get("tools")
+    assert [tool["function"]["name"] for tool in actual_tools or []] == expected_names
+    assert count == await token_counter(messages, tools=actual_tools)
+    if expected_names:
+        assert count > await token_counter(messages)
+        assert actual_tools[0]["function"]["description"] == search.__doc__
+    assert provider.default_tools["search"].tool_json["function"]["description"] == "Original MCP schema"
 
 
 @pytest.mark.asyncio

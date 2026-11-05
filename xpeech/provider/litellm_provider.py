@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from pydantic import BaseModel
 
 from ..agent.tools.helper import as_tool, get_custom_tool_func
-from ..utils.helper import ensure_async
+from ..utils.helper import ensure_async, token_counter
 from .helper import LiteLLMRetryClient
 from .schema import (
     LLMParameters,
@@ -122,6 +122,36 @@ class LiteLLMProvider:
             tools[func.__name__] = self._build_function_tool(func)
         return tools
 
+    async def _resolve_tools(
+        self,
+        tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
+        *,
+        remove_all_tools: bool = False,
+        remove_default_tools: bool = False,
+    ) -> ToolRegistry:
+        """统一解析请求使用的工具，供模型调用和上下文统计复用。"""
+        funcs = [get_custom_tool_func(tool) if isinstance(tool, str) else tool for tool in tools] if tools else []
+        parsed_tools = await self._parse_tools(funcs)
+        if remove_all_tools:
+            return {}
+        if remove_default_tools:
+            return parsed_tools
+        return self.default_tools | parsed_tools
+
+    async def count_tokens(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
+        *,
+        remove_all_tools: bool = False,
+        remove_default_tools: bool = False,
+    ) -> int:
+        """估算消息和实际启用的工具定义占用的上下文。"""
+        registered_tools = await self._resolve_tools(
+            tools, remove_all_tools=remove_all_tools, remove_default_tools=remove_default_tools
+        )
+        return await token_counter(messages, tools=[tool.tool_json for tool in registered_tools.values()] or None)
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -139,19 +169,9 @@ class LiteLLMProvider:
             )
         parameters = self.parameters if parameters is None else self.parameters.copy_with(parameters)
 
-        # 根据工具名称获取自定义工具，或使用工具函数
-        tools = [get_custom_tool_func(tool) if isinstance(tool, str) else tool for tool in tools] if tools else []
-        parsed_tools = await self._parse_tools(tools)
-
-        # 确定工具列表
-        if remove_all_tools:
-            registered_tools: ToolRegistry = {}
-        else:
-            if remove_default_tools:
-                registered_tools = parsed_tools
-            else:
-                registered_tools = self.default_tools | parsed_tools
-
+        registered_tools = await self._resolve_tools(
+            tools, remove_all_tools=remove_all_tools, remove_default_tools=remove_default_tools
+        )
         tool_jsons = [tool.tool_json for tool in registered_tools.values()]
         mapping_tool_call_funcs = {tool_name: tool.func for tool_name, tool in registered_tools.items()}
 

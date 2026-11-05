@@ -39,7 +39,7 @@ async def test_context_commands_continue_with_trailing_prompt(
         return {"role": "system", "content": "system"}
 
     monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
-    monkeypatch.setattr(loop_module, "token_counter", AsyncMock(return_value=10))
+    monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
 
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path

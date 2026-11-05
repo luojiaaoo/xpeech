@@ -215,11 +215,11 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         assert not_interactive is False
         return {"role": "system", "content": "system"}
 
-    async def count_test_tokens(_messages):
+    async def count_test_tokens(self, messages):
         return 10
 
     monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
-    monkeypatch.setattr(loop_module, "token_counter", count_test_tokens)
+    monkeypatch.setattr(AgentLoop, "_count_context_tokens", count_test_tokens)
 
     agent_loop = AgentLoop(
         provider=Provider(),

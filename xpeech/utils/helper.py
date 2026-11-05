@@ -65,9 +65,9 @@ def format_now(format_string: str = "%Y-%m-%d") -> str:
     return datetime.now().astimezone().strftime(format_string)
 
 
-async def token_counter(messages: list[dict]):
+async def token_counter(messages: list[dict], tools: list[dict] | None = None) -> int:
     cleaned_messages, video_tokens = await _strip_video_blocks_and_count_tokens(messages)
-    return _token_counter(model="gpt-4o", messages=cleaned_messages) + video_tokens
+    return _token_counter(model="gpt-4o", messages=cleaned_messages, tools=tools) + video_tokens
 
 
 def _parse_base64_url(url: str):

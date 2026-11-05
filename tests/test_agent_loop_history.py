@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -7,7 +8,9 @@ import pytest
 import xpeech.agent.loop as loop_module
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.server.schema import InboundMessage, InputText
-from xpeech.provider.schema import LLMResponse
+from xpeech.provider.litellm_provider import LiteLLMProvider
+from xpeech.provider.schema import LLMParameters, LLMResponse
+from xpeech.utils.helper import token_counter
 
 
 def make_response(content: str) -> LLMResponse:
@@ -15,6 +18,63 @@ def make_response(content: str) -> LLMResponse:
         yield "content", content
 
     return LLMResponse(iter_mix_chunks=chunks())
+
+
+@pytest.mark.asyncio
+async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path, monkeypatch):
+    async def build_test_system_prompt(**_kwargs):
+        return {"role": "system", "content": "system"}
+
+    async def search() -> str:
+        return "found"
+
+    monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
+    provider = LiteLLMProvider(
+        api_key="test",
+        api_base="https://example.test",
+        default_model="test",
+        parameters=LLMParameters(max_context_tokens=200),
+    )
+    provider.register_mcp_tool(
+        search,
+        tool_json={
+            "type": "function",
+            "function": {
+                "name": "search",
+                "description": "instructions " * 300,
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+    )
+    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[], summary_tokens=10, max_iterations=1)
+    messages = [{"role": "user", "timestamp": 1.0, "content": "hello"}]
+    assert await token_counter(messages) < agent_loop.max_accept_token
+    assert await agent_loop.compressor.should_compress(messages)
+    assert not await agent_loop.compressor._is_within_target(messages)
+
+    agent_loop.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
+    agent_loop.records = SimpleNamespace(append=AsyncMock())
+    agent_loop.memory_consolidator = SimpleNamespace(consolidate=AsyncMock())
+    agent_loop.compressor.compress = AsyncMock(side_effect=lambda messages: messages)
+    agent_loop.chat = AsyncMock(return_value=make_response("answer"))
+    message = InboundMessage(
+        user_id="user",
+        session_id="session",
+        sender_name="Alice",
+        channel="test",
+        session_metadata={},
+        content=[InputText(text="hello")],
+        timestamp="2026-09-06T10:00:00",
+        files=[],
+    )
+
+    events = [event async for event in agent_loop.run(message)]
+
+    agent_loop.compressor.compress.assert_awaited_once()
+    saved_messages = agent_loop.history.save.await_args.args[2]
+    count = await agent_loop._count_context_tokens(saved_messages)
+    assert 170 <= count < 1_000
+    assert json.loads(events[-1]["context"])["上下文使用率"] == (f"100.00% ({count} / 170) ♻️ 即将达到最大上下文")
 
 
 @pytest.mark.asyncio
@@ -27,7 +87,7 @@ async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, m
         return {"role": "system", "content": "system"}
 
     monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
-    monkeypatch.setattr(loop_module, "token_counter", AsyncMock(return_value=10))
+    monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
 
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
