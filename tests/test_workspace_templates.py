@@ -12,8 +12,10 @@ async def test_parallel_initialization_preserves_user_files(tmp_path):
         "AGENTS.md": "custom instructions",
         "memory/MEMORY.md": "remembered facts",
         "memory/HISTORY.md": "past events",
+        "memory/self-improving/coding/tests.md": "existing memo",
     }
     for relative, content in user_files.items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / relative).write_text(content, encoding="utf-8")
 
     await asyncio.gather(*(create_workspace_templates(tmp_path) for _ in range(8)))
@@ -24,4 +26,6 @@ async def test_parallel_initialization_preserves_user_files(tmp_path):
         assert (tmp_path / name).read_text(encoding="utf-8").startswith("# ")
     assert (tmp_path / "skills").is_dir()
     assert (tmp_path / "home").is_dir()
+    learning_dir = tmp_path / "memory/self-improving"
+    assert {path.name for path in learning_dir.iterdir()} == {"coding"}
     assert not list(tmp_path.rglob("*.tmp"))

@@ -149,7 +149,9 @@ async def build_system_prompt(
     parts.append(_load_bootstrap_files(workspace))
 
     # 长期记忆
-    parts.append(await MemoryStore(workspace).get_memory_context())
+    memory = MemoryStore(workspace)
+    parts.append(await memory.get_memory_context())
+    parts.append(await memory.get_self_improvement_context())
 
     skills_prompt = await SkillsLoader(
         workspace, channel_tag=channel_tag, user_organization=user_organization, not_interactive=not_interactive,

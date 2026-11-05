@@ -118,6 +118,9 @@ async def create_workspace_templates(workspace: Path):
     history_file = memory_dir / "HISTORY.md"
     await LockedFile(history_file).create_text("")
 
+    # Detailed lessons are kept outside the always-loaded long-term memory file.
+    await ensure_path_async(memory_dir / "self-improving")
+
     # Create skills directory for custom user skills
     await ensure_path_async(workspace / "skills")
 
