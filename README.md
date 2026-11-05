@@ -335,6 +335,15 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+`backend` 的沙盒需要 `SYS_ADMIN`（命名空间和挂载）、`NET_ADMIN`（TAP 网卡和
+loopback 配置）以及 `/dev/net/tun` 设备映射，Compose 已配置。如果旧容器运行 Shell 时出现
+`ioctl(TUNSETIFF): Operation not permitted` 或 `bwrap: loopback: Failed RTM_NEWADDR`，
+更新 Compose 配置后执行以下命令，使权限变更生效（仅 restart 不会更新容器权限，无需重建镜像）：
+
+```bash
+docker compose up -d --no-deps --force-recreate backend
+```
+
 后端默认暴露在 `http://localhost:7878`，Web 客户端默认暴露在
 `http://localhost:7939`。可通过环境变量 `BACKEND_REPLICAS` 修改后端副本数，
 通过 `BACKEND_PORT` 和 `WEB_CLIENT_PORT` 修改对外端口；lark-cli 使用设备授权流程，
@@ -830,7 +839,7 @@ Shell 命令会在 bwrap 进程沙盒中执行：
 
 `wrap_sandbox_command(..., network_isolation=True)` 默认开启网络隔离，通过 Python 标准库启动器协调 bwrap 和 slirp4netns；设为 `False` 时直接运行 bwrap，共享宿主机网络，同时保留文件系统、进程、IPC 和 HOME 隔离。Shell 使用默认值；stdio MCP 显式关闭网络隔离，可访问宿主机的 `localhost` 服务，仅依赖 `bwrap` 和 `bash`。
 
-Shell 的运行环境还需要 `slirp4netns`，Docker 镜像已安装；缺少依赖或网络初始化失败时拒绝启动，不会自动退回共享网络。Linux 必须允许创建所需命名空间，并提供 `/dev/net/tun`（Compose 已为 backend 配置设备映射）。不再依赖 RootlessKit、`uidmap`、`/etc/subuid` 或 `/etc/subgid`，也不再通过外层用户命名空间重映射 backend 的 UID/GID；root 按原身份进行 bwrap 挂载，普通用户由 bwrap 自行创建用户命名空间。Shell 的 `/etc/resolv.conf` 使用只读的私有配置，指向 slirp DNS `10.0.2.3`，以兼容宿主机 loopback DNS；stdio MCP 仍只读挂载宿主机的 DNS 配置。沙盒退出、启动失败或启动器终止时，网络辅助进程也会回收。
+Shell 的运行环境还需要 `slirp4netns`，Docker 镜像已安装；缺少依赖或网络初始化失败时拒绝启动，不会自动退回共享网络。Linux 必须允许创建所需命名空间，并提供 `/dev/net/tun`；Docker 中以 root 运行时还需要 `SYS_ADMIN` 和 `NET_ADMIN`（Compose 已为 backend 配置权限和设备映射）。不再依赖 RootlessKit、`uidmap`、`/etc/subuid` 或 `/etc/subgid`，也不再通过外层用户命名空间重映射 backend 的 UID/GID；root 按原身份进行 bwrap 挂载，普通用户由 bwrap 自行创建用户命名空间。Shell 的 `/etc/resolv.conf` 使用只读的私有配置，指向 slirp DNS `10.0.2.3`，以兼容宿主机 loopback DNS；stdio MCP 仍只读挂载宿主机的 DNS 配置。沙盒退出、启动失败或启动器终止时，网络辅助进程也会回收。
 
 Shell 工具首次运行时会在工作区内执行 `uv venv .venv`，为该工作区创建独立 Python 环境。
 Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `pip` 会被安全检查拦截。

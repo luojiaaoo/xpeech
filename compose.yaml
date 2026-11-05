@@ -70,6 +70,8 @@ services:
       - ./assets:/app/assets:ro
     cap_add:
       - SYS_ADMIN
+      # slirp4netns 创建 TAP 网卡、bwrap 配置独立网络中的 loopback
+      - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
     security_opt:
