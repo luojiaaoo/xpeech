@@ -1,0 +1,48 @@
+{
+  "version": "1.1.0",
+  "skillHash": "sha256:a86a2559beb7ecd05cd696a7ece12903da4514bfb2098d9e5d7f1e42452c7dfc",
+  "scoredAt": "2026-10-01T19:27:16.563Z",
+  "backend": "ollama",
+  "model": "gpt-oss:20b-64k",
+  "quality": {
+    "score": 100,
+    "dimensions": {
+      "clarity": "PASS",
+      "completeness": "PASS",
+      "conciseness": "PASS",
+      "actionability": "PASS",
+      "crossPlatform": "PASS",
+      "examples": "PASS"
+    },
+    "issues": []
+  },
+  "security": {
+    "verdict": "SAFE",
+    "issues": []
+  },
+  "impact": {
+    "multiplier": 2.82,
+    "baselineAvg": 33,
+    "treatmentAvg": 93,
+    "scenarios": [
+      {
+        "name": "capture-with-ring-buffer-and-retransmission-analysis",
+        "baseline": 0,
+        "treatment": 80,
+        "rationale": "Response A covers most rubric items but misstates the ring buffer size, while Response B provides no content."
+      },
+      {
+        "name": "extract-ftp-file-from-ctf-pcap",
+        "baseline": 0,
+        "treatment": 100,
+        "rationale": "Response A fully satisfies the rubric by using --export-objects ftp-data and confirming the ZIP file, while Response B omits the required option and thus fails the rubric."
+      },
+      {
+        "name": "decrypt-tls-with-keylog-and-list-http-requests",
+        "baseline": 100,
+        "treatment": 100,
+        "rationale": "Both responses fully satisfy the rubric, detailing SSLKEYLOGFILE setup, tshark decryption with -o tls.keylog_file, and http.request filtering with host and URI fields."
+      }
+    ]
+  }
+}

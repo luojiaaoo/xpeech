@@ -113,6 +113,11 @@ async def wrap_sandbox_command(
         "/lib64",
         "/opt",
         "/etc/alternatives",
+        # TShark uses system protocol preferences and Lua configuration here.
+        "/etc/wireshark",
+        # Headless LibreOffice resolves shared registry links through /etc.
+        "/etc/libreoffice",
+        "/etc/papersize",
         # Fontconfig needs its configuration as well as fonts under /usr.
         "/etc/fonts",
         "/var/cache/fontconfig",

@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/MarsDoge/hardware-firmware-linux-stack-skills",
+  "commit": "85d3bb2cb48812ec95c34e91504cdd52d51c276b",
+  "path": "skills/linux-kernel-driver-enablement",
+  "license": "MIT"
+}

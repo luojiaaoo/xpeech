@@ -1,5 +1,6 @@
 ---
 name: lark-cli-auth
+short_description: 飞书用户授权管理
 description: 飞书用户授权管理。通过 lark-token-manager 生成非阻塞设备授权链接、查看状态、注销授权和按 scope/domain 申请权限；不要使用 lark-cli 内置登录。
 ---
 

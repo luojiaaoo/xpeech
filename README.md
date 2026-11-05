@@ -336,6 +336,8 @@ docker compose up -d --build
 ```
 
 镜像内置 `build-essential`（GCC、G++、Make 和 C/C++ 开发头文件），可在容器及 Shell 沙盒中编译、运行 C/C++ 代码。
+镜像内置 TShark，Shell 沙盒共享其程序、协议库和只读系统配置，可使用 `tshark -n -r data.cap` 离线分析 CAP、PCAP、PCAPNG 报文，或通过 `-T json` 导出解析结果。
+镜像内置 LibreOffice Writer、Calc、Impress 和 Draw，沙盒共享只读系统配置，支持使用 `libreoffice --headless --convert-to pdf --outdir output document.docx` 无界面转换文档。
 镜像内置 Noto CJK 中文字体（黑体、宋体，含常规和粗体）和 DejaVu 字体，
 Shell 沙盒以只读方式共享 Fontconfig 配置与字体缓存。旧镜像需要重新构建并重建 backend：
 

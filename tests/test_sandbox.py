@@ -5,6 +5,7 @@ import platform
 import shlex
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -385,6 +386,95 @@ async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
     assert process.returncode == 0, stderr.decode(errors="replace")
     assert b"Fontconfig error" not in stderr
     assert set(stdout.splitlines()) == set(host_fonts.stdout.splitlines())
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux" or any(
+        shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "tshark")
+    ),
+    reason="Requires Linux sandbox dependencies and TShark",
+)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("network_isolation", [False, True])
+async def test_sandbox_analyzes_ethernet_capture_with_tshark(tmp_path, monkeypatch, network_isolation):
+    workspace = tmp_path / "capture-workspace"
+    workspace.mkdir()
+    # Ethernet broadcast containing an ARP request: who has 192.0.2.2?
+    frame = bytes.fromhex(
+        "ffffffffffff0200000000010806"
+        "0001080006040001"
+        "020000000001c0000201"
+        "000000000000c0000202"
+    ).ljust(60, b"\0")
+    capture = struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+    capture += struct.pack("<IIII", 1, 0, len(frame), len(frame)) + frame
+    (workspace / "sample.cap").write_bytes(capture)
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+
+    command = await sandbox.wrap_sandbox_command(
+        ["tshark", "-n", "-r", "sample.cap", "-Y", "arp", "-T", "json"],
+        workspace, skills_loader=SkillsLoader(workspace), network_isolation=network_isolation,
+    )
+    process = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
+
+    assert process.returncode == 0, stderr.decode(errors="replace")
+    packets = json.loads(stdout)
+    assert len(packets) == 1
+    layers = packets[0]["_source"]["layers"]
+    assert layers["eth"]["eth.src"] == "02:00:00:00:00:01"
+    assert layers["eth"]["eth.dst"] == "ff:ff:ff:ff:ff:ff"
+    assert layers["arp"]["arp.opcode"] == "1"
+    assert layers["arp"]["arp.src.proto_ipv4"] == "192.0.2.1"
+    assert layers["arp"]["arp.dst.proto_ipv4"] == "192.0.2.2"
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux" or any(
+        shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "libreoffice", "pdftotext")
+    ),
+    reason="Requires Linux sandbox dependencies, LibreOffice and Poppler",
+)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("network_isolation", [False, True])
+async def test_sandbox_converts_document_with_libreoffice(tmp_path, monkeypatch, network_isolation):
+    workspace = tmp_path / "office-workspace"
+    workspace.mkdir()
+    source = workspace / "sample.fodt"
+    source.write_text('''<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+ office:version="1.2" office:mimetype="application/vnd.oasis.opendocument.text">
+ <office:body><office:text>
+  <text:p>LibreOffice sandbox conversion</text:p><text:p>文档转换测试</text:p>
+ </office:text></office:body>
+</office:document>
+''', encoding="utf-8")
+    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+
+    command = await sandbox.wrap_sandbox_command(
+        [
+            "libreoffice", "--headless", f"-env:UserInstallation={(workspace / 'lo-profile').as_uri()}",
+            "--convert-to", "pdf", "--outdir", str(workspace), str(source),
+        ],
+        workspace, skills_loader=SkillsLoader(workspace), network_isolation=network_isolation,
+    )
+    process = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), 60)
+
+    assert process.returncode == 0, (stdout + stderr).decode(errors="replace")
+    pdf = workspace / "sample.pdf"
+    assert pdf.read_bytes().startswith(b"%PDF-")
+    extracted = subprocess.run(["pdftotext", str(pdf), "-"], check=True, capture_output=True, timeout=10)
+    text = extracted.stdout.decode("utf-8")
+    assert "LibreOffice sandbox conversion" in text
+    assert "文档转换测试" in "".join(text.split())
 
 
 @pytest.mark.skipif(

@@ -1,3 +1,5 @@
+import json
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock
 from xml.etree import ElementTree
@@ -9,6 +11,63 @@ from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.server.context import lark_user_access_token_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillInfo, SkillMetadata, SkillsLoader
+
+
+def test_public_builtin_short_descriptions_are_present_and_readable():
+    for skill_file in sorted(skill_module.BUILTIN_SKILLS_DIR.glob("*/SKILL.md")):
+        content = skill_file.read_bytes().decode("utf-8")
+        skill = SkillInfo(source="builtin", path=str(skill_file), content=content)
+        if skill.metadata.internal:
+            continue
+
+        summary = skill.metadata.kwargs.get("short_description")
+        assert isinstance(summary, str) and summary.strip(), skill_file
+        assert re.search(r"[\u4e00-\u9fff]", summary), skill_file
+        assert not re.search(r"\?{3,}|\ufffd|\u951f\u65a4\u62f7", content), skill_file
+
+
+@pytest.mark.parametrize(
+    "skill_name",
+    [
+        "autosar-arxml",
+        "uds-diagnostics",
+        "can-bus-analysis",
+        "embedded-c-review",
+        "embedded-systems",
+        "cpp-pro",
+        "linux-kernel-driver-enablement",
+        "datasheets",
+        "cad-code-generation",
+        "cadquery-export",
+        "automotive-ethernet-analysis",
+        "iso26262-hara",
+        "capl-writer",
+        "iso26262-fmea",
+        "aspice-review",
+        "misra-c-review",
+        "documents",
+    ],
+)
+def test_engineering_skill_metadata_and_upstream_integrity(skill_name: str):
+    root = skill_module.BUILTIN_SKILLS_DIR / skill_name
+    content = (root / "SKILL.md").read_bytes().decode("utf-8")
+    skill = SkillInfo(source="builtin", path=str(root / "SKILL.md"), content=content)
+
+    assert skill.metadata.name == {"automotive-ethernet-analysis": "wireshark"}.get(skill_name, skill_name)
+    assert skill.metadata.description.strip()
+    assert re.search(r"[\u4e00-\u9fff]", skill.metadata.kwargs["short_description"])
+    assert "???" not in content
+    assert "\ufffd" not in content
+    assert skill.metadata.always is False
+
+    source = json.loads((root / "SOURCE.json").read_text(encoding="utf-8"))
+    assert set(source) == {"repository", "commit", "path", "license"}
+    assert re.fullmatch(r"[0-9a-f]{40}", source["commit"])
+    assert source["repository"].startswith("https://github.com/")
+    assert source["path"]
+    assert source["license"] in {"MIT", "Apache-2.0"}
+    assert not (root / "LICENSE").exists()
+    assert not (root / "UPSTREAM.md").exists()
 
 
 @pytest.mark.asyncio
@@ -66,7 +125,7 @@ def test_skill_content_is_frozen_after_creation():
 @pytest.mark.parametrize("skill_name", ["ask-user-question", "memory", "skill-creator"])
 def test_internal_builtin_skills_are_marked(skill_name: str):
     skill_file = skill_module.BUILTIN_SKILLS_DIR / skill_name / "SKILL.md"
-    skill = SkillInfo(source="builtin", path=str(skill_file), content=skill_file.read_text())
+    skill = SkillInfo(source="builtin", path=str(skill_file), content=skill_file.read_text(encoding="utf-8"))
 
     assert skill.metadata.internal is True
     assert skill.metadata.kwargs == {}
@@ -140,7 +199,7 @@ def test_builtin_short_descriptions_match_backend_server(
     skill_name: str, short_description: str
 ):
     skill_file = skill_module.BUILTIN_SKILLS_DIR / skill_name / "SKILL.md"
-    skill = SkillInfo(source="builtin", path=str(skill_file), content=skill_file.read_text())
+    skill = SkillInfo(source="builtin", path=str(skill_file), content=skill_file.read_text(encoding="utf-8"))
 
     assert skill.metadata.kwargs["short_description"] == short_description
 

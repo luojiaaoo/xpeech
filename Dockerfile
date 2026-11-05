@@ -57,8 +57,11 @@ RUN sed -i \
     apt-get -o Acquire::https::Verify-Peer=false update && \
     apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential \
         bubblewrap slirp4netns cron curl ffmpeg git jq zip tzdata xz-utils \
+        build-essential cppcheck tshark libgl1 libglu1-mesa \
+        cmake ninja-build pkg-config gdb clang-format \
+        libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-draw \
+        poppler-utils pandoc tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
         fontconfig fonts-dejavu-core fonts-noto-cjk && \
     fc-cache -f && \
     apt-get clean && \
