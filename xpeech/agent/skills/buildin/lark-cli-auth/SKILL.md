@@ -25,4 +25,4 @@ lark-cli-auth logout
 
 `status` 只显示授权状态、绑定的飞书用户、scope 和过期时间。lark-token-manager 不可用时报告服务不可用，等待服务恢复后重试。不要运行 `lark-cli auth login`、`lark-cli config`，也不要创建 profile 或手动修改 token 文件。
 
-授权以当前 Xpeech session 为边界。不要把授权链接、scope 或状态跨 session 复用；不要并发为同一 session 创建多个授权请求。
+授权以当前会话（session） 为边界。不要把授权链接、scope 或状态跨 session 复用；不要并发为同一 session 创建多个授权请求。

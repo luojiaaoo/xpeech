@@ -132,7 +132,7 @@ async def test_interactive_skill_filter_applies_to_list_and_prompt(
         ("chat2duckdb", "DuckDB 数据分析"),
         ("lark-skills", "飞书全能力助手"),
         ("markdown-formatter", "Markdown 格式化"),
-        ("presentation-generation", "演示文稿生成"),
+        ("presentation-generation", "HTML 演示文稿生成"),
         ("weather", "天气查询与预报"),
     ],
 )

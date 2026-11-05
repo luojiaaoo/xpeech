@@ -1,0 +1,105 @@
+{
+  "meta": {
+    "title": "2026年度产品发布会",
+    "category": "产品研发",
+    "author": "产品团队",
+    "page_count": 8
+  },
+  "style": {
+    "color_primary": "#6A1B9A",
+    "color_secondary": "#AB47BC",
+    "color_accent": "#CE93D8",
+    "color_background": "#F8F0FC",
+    "color_text": "#4A148C",
+    "font_title": "微软雅黑",
+    "font_body": "微软雅黑",
+    "font_title_size": 36,
+    "font_section_size": 24,
+    "font_body_size": 16,
+    "font_caption_size": 12,
+    "bullet_style": "dot",
+    "wordart": false,
+    "animation": false
+  },
+  "slides": [
+    {
+      "type": "cover",
+      "title": "2026年度产品发布会",
+      "subtitle": "新一代智能协作平台",
+      "date": "2026-08-10",
+      "author": "产品研发部"
+    },
+    {
+      "type": "toc",
+      "items": [
+        "产品背景与市场分析",
+        "核心功能亮点",
+        "技术架构与创新",
+        "竞品对比优势",
+        "发布计划与路线图"
+      ]
+    },
+    {
+      "type": "section",
+      "section_number": 1,
+      "title": "产品背景与市场分析"
+    },
+    {
+      "type": "content",
+      "section_number": 1,
+      "title": "市场机遇",
+      "content": [
+        {"text": "远程协作市场规模预计2026年突破500亿美元", "level": 0, "bold": true},
+        {"text": "年复合增长率达18.5%，企业数字化转型加速", "level": 1, "bold": false},
+        {"text": "用户痛点分析", "level": 0, "bold": true},
+        {"text": "现有工具碎片化，需要在多个应用间切换", "level": 1, "bold": false},
+        {"text": "数据孤岛严重，信息无法互通", "level": 1, "bold": false},
+        {"text": "目标用户画像", "level": 0, "bold": true},
+        {"text": "中型企业（50-500人），IT/互联网/金融行业", "level": 1, "bold": false}
+      ],
+      "notes": "重点强调市场规模数据的来源和可信度"
+    },
+    {
+      "type": "chart",
+      "title": "近三年市场份额增长趋势",
+      "chart_type": "line_markers",
+      "categories": ["2024Q1", "2024Q2", "2024Q3", "2024Q4", "2025Q1", "2025Q2", "2025Q3", "2025Q4"],
+      "series": [
+        {"name": "市场份额(%)", "values": [3.2, 4.1, 5.3, 6.8, 8.5, 10.2, 12.1, 14.5]}
+      ]
+    },
+    {
+      "type": "section",
+      "section_number": 2,
+      "title": "核心功能亮点"
+    },
+    {
+      "type": "content",
+      "section_number": 2,
+      "title": "三大核心功能",
+      "content": [
+        {"text": "智能协作引擎 — AI驱动的实时协同", "level": 0, "bold": true},
+        {"text": "多人实时编辑，毫秒级同步", "level": 1, "bold": false},
+        {"text": "统一数据中台 — 打破信息孤岛", "level": 0, "bold": true},
+        {"text": "跨应用数据互通，一键关联", "level": 1, "bold": false},
+        {"text": "企业级安全体系 — 合规无忧", "level": 0, "bold": true},
+        {"text": "端到端加密，通过等保三级认证", "level": 1, "bold": false}
+      ]
+    },
+    {
+      "type": "chart",
+      "title": "各季度用户增长对比",
+      "chart_type": "bar_clustered",
+      "categories": ["Q1", "Q2", "Q3", "Q4"],
+      "series": [
+        {"name": "新增用户(万)", "values": [12, 18, 25, 32]}
+      ]
+    },
+    {
+      "type": "ending",
+      "title": "谢谢",
+      "subtitle": "期待您的反馈与交流",
+      "contact": "产品研发部 | product@example.com"
+    }
+  ]
+}

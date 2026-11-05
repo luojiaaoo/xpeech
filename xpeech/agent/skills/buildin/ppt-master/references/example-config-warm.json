@@ -1,0 +1,84 @@
+{
+  "meta": {
+    "title": "季度经营分析报告",
+    "category": "汇报总结",
+    "author": "运营部",
+    "page_count": 6
+  },
+  "style": {
+    "color_primary": "#8D9B8A",
+    "color_secondary": "#B8C4B5",
+    "color_accent": "#D4C5A9",
+    "color_background": "#F7F5F0",
+    "color_text": "#4A4A4A",
+    "font_title": "微软雅黑",
+    "font_body": "微软雅黑",
+    "font_title_size": 34,
+    "font_section_size": 22,
+    "font_body_size": 16,
+    "font_caption_size": 12,
+    "bullet_style": "dot",
+    "wordart": false,
+    "animation": false
+  },
+  "slides": [
+    {
+      "type": "cover",
+      "title": "2026年第二季度经营分析",
+      "subtitle": "稳中求进 · 提质增效",
+      "date": "2026-08-10",
+      "author": "运营管理部"
+    },
+    {
+      "type": "toc",
+      "items": [
+        "整体经营概况",
+        "各区域业绩对比",
+        "核心指标分析",
+        "下季度工作重点"
+      ]
+    },
+    {
+      "type": "section",
+      "section_number": 1,
+      "title": "整体经营概况"
+    },
+    {
+      "type": "content",
+      "section_number": 1,
+      "title": "季度核心数据",
+      "content": [
+        {"text": "总营收：1.28亿元（同比增长18%）", "level": 0, "bold": true},
+        {"text": "净利润：3200万元（同比增长22%）", "level": 0, "bold": true},
+        {"text": "经营亮点", "level": 0, "bold": true},
+        {"text": "新客户数增长25%，复购率提升至68%", "level": 1, "bold": false},
+        {"text": "运营成本同比下降5%，效率提升显著", "level": 1, "bold": false}
+      ]
+    },
+    {
+      "type": "chart",
+      "title": "各区域季度营收对比",
+      "chart_type": "bar_horizontal",
+      "categories": ["华东", "华南", "华北", "西南", "华中"],
+      "series": [
+        {"name": "营收(万元)", "values": [4200, 3800, 2500, 1300, 1000]}
+      ]
+    },
+    {
+      "type": "chart",
+      "title": "近两年季度营收趋势",
+      "chart_type": "area",
+      "categories": ["Q1", "Q2", "Q3", "Q4"],
+      "series": [
+        {"name": "2025年", "values": [1800, 2200, 2600, 3100]},
+        {"name": "2026年", "values": [2300, 2900, 3500, 4200]}
+      ]
+    },
+    {
+      "type": "ending",
+      "title": "感谢聆听",
+      "subtitle": "期待您的指导与建议",
+      "contact": "运营管理部 | ops@example.com"
+    }
+  ]
+}
