@@ -454,7 +454,7 @@ class AgentLoop:
                     }
                 )
 
-        if final_content is None:
+        if not final_content or not final_content.strip():
             final_content = "I've completed processing but have no response to give."
             final_content_error = True
             logger.warning("Agent loop finished without final content")

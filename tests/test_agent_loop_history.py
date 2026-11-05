@@ -21,6 +21,68 @@ def make_response(content: str) -> LLMResponse:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response_chunks, expected_content",
+    [
+        ([], "I've completed processing but have no response to give."),
+        ([("content", "")], "I've completed processing but have no response to give."),
+        ([("content", " \n\t")], "I've completed processing but have no response to give."),
+        ([("reasoning_content", "thinking")], "I've completed processing but have no response to give."),
+        ([("content", " answer ")], " answer "),
+    ],
+    ids=["no-chunks", "empty-content", "whitespace-content", "reasoning-only", "visible-content"],
+)
+async def test_final_response_is_emitted_and_persisted_when_model_returns_no_text(
+    tmp_path, monkeypatch, response_chunks, expected_content,
+):
+    async def chunks():
+        for chunk in response_chunks:
+            yield chunk
+
+    async def build_test_system_prompt(**_kwargs):
+        return {"role": "system", "content": "system"}
+
+    monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
+    monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
+
+    agent_loop = AgentLoop.__new__(AgentLoop)
+    agent_loop.workspace = tmp_path
+    agent_loop.channel_tag = None
+    agent_loop.user_organization = None
+    agent_loop.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
+    agent_loop.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))
+    agent_loop.chat = AsyncMock(return_value=LLMResponse(iter_mix_chunks=chunks()))
+    agent_loop.records = SimpleNamespace(append=AsyncMock())
+    agent_loop.tools = []
+    agent_loop.max_iterations = 2
+    agent_loop.max_accept_token = 100_000
+    agent_loop._input_tokens = 0
+    agent_loop._output_tokens = 0
+    agent_loop._model_call_count = 0
+    message = InboundMessage(
+        user_id="user",
+        session_id="session",
+        sender_name="Alice",
+        channel="test",
+        session_metadata={},
+        content=[InputText(text="hello")],
+        timestamp="2026-11-05T17:53:00",
+        files=[],
+    )
+
+    events = [event async for event in agent_loop.run(message)]
+
+    assert [event for event in events if event["event"] == "assistant"] == [
+        {"event": "assistant", "context": expected_content},
+    ]
+    agent_loop.history.save.assert_awaited_once()
+    assert agent_loop.history.save.await_args.args[2][-1] == {
+        "role": "assistant", "content": expected_content,
+    }
+    assert agent_loop.records.append.await_args.args[0].model_response == expected_content
+
+
+@pytest.mark.asyncio
 async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path, monkeypatch):
     async def build_test_system_prompt(**_kwargs):
         return {"role": "system", "content": "system"}
