@@ -61,7 +61,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
     dispatchEvent(_event: unknown) {},
   };
   const context = vm.createContext({
-    window, URL, Error, CustomEvent, AbortController, atob, TextDecoder,
+    window, URL, Error, CustomEvent, AbortController, atob, TextDecoder, File,
     document: {
       body: { appendChild(host: Element) { hosts.push(host); } },
       createElement(tag: string) {
@@ -93,7 +93,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { init: Function; hideButton: Function; showButton: Function; open: Function; close: Function; destroy: Function; setInput: Function; chatSync: Function; onReply: Function };
+  const api = module.namespace as { init: Function; hideButton: Function; showButton: Function; open: Function; close: Function; destroy: Function; setInput: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function };
   return { window, context, frames, calls, hosts, sent, message, listeners, timers, api };
 }
 
@@ -105,7 +105,7 @@ test('loading the SDK creates no UI or requests until init and leaves website gl
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['chatSync', 'close', 'destroy', 'hideButton', 'init', 'onReply', 'open', 'setInput', 'showButton']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'onChatFile', 'onReply', 'open', 'setInput', 'showButton']);
 });
 
 test('init validates the original JWT without exchanging it and only delivers to its own iframe', async () => {
@@ -391,10 +391,138 @@ test('interaction requests wait for the composer and correlate responses from th
   assert.equal(settled, false);
   const events = [{ event: 'assistant', context: 'answer' }];
   app.message({ type: 'xpeech:response', request_id: commands[1].request_id, session_id: 'first', result: { events } });
-  assert.deepEqual((await chat).events, events);
+  const result = await chat;
+  assert.deepEqual(result.events, events);
+  assert.equal(result.files.length, 0);
   app.message(inputResponse);
   assert.equal((await input).session_id, 'first');
   app.api.destroy();
+});
+
+test('concurrent sync results return their own file metadata beside unchanged events without file notifications', async () => {
+  const app = await runtime();
+  const dispatched: any[] = [];
+  app.window.dispatchEvent = (event: any) => { dispatched.push(event); };
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const chatFiles: any[] = [];
+  app.api.onChatFile((file: any) => chatFiles.push(file));
+  const first = app.api.chatSync('first');
+  const firstRequest = app.sent.at(-1)!.data;
+  const second = app.api.chatSync('second');
+  const secondRequest = app.sent.at(-1)!.data;
+  const firstEvents = [
+    { event: 'assistant', context: 'done' },
+    { event: 'send_file', context: 'reports/报告 #1 & 2.pdf' },
+    { event: 'send_file', context: 'other.bin' },
+    { event: 'error', context: 'partial failure' },
+  ];
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: secondRequest.request_id,
+    result: { session_id: 'first', events: [{ event: 'send_file', context: 'second.txt' }] } });
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: firstRequest.request_id,
+    result: { session_id: 'first', events: firstEvents } });
+  const a = await first;
+  const b = await second;
+  assert.equal(a.events, firstEvents);
+  assert.equal(a.session_id, 'first');
+  assert.equal(a.files.length, 2);
+  assert.equal(a.files[0].path, firstEvents[1].context);
+  assert.equal(a.files[1].path, 'other.bin');
+  const url = new URL(a.files[0].url);
+  assert.equal(url.origin, 'https://assistant.test');
+  assert.equal(url.pathname, '/api/files');
+  assert.equal(url.searchParams.get('path'), firstEvents[1].context);
+  assert.deepEqual([...url.searchParams.keys()], ['path']);
+  assert.equal(b.files.length, 1);
+  assert.equal(b.files[0].path, 'second.txt');
+  assert.equal(chatFiles.length, 0);
+  assert.equal(dispatched.filter(event => event.type.includes('file')).length, 0);
+  app.api.destroy();
+});
+
+test('sync attachments are snapshotted while queued and permit file-only requests', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  const file = new File([new Uint8Array([0, 128, 255])], '报告.bin', { type: 'application/octet-stream' });
+  const files = [file];
+  const pending = app.api.chatSync('', { files });
+  files.length = 0;
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const request = app.sent.at(-1)!.data;
+  assert.equal(request.method, 'chatSync');
+  assert.equal(request.text, '');
+  assert.equal(request.files.length, 1);
+  assert.equal(request.files[0].name, '报告.bin');
+  assert.equal(request.files[0].type, 'application/octet-stream');
+  assert.deepEqual(new Uint8Array(await request.files[0].arrayBuffer()), new Uint8Array([0, 128, 255]));
+  for (const invalid of [null, file, ['path.txt'], [new Blob(['text'])], [null], new Array(1)]) {
+    await assert.rejects(app.api.chatSync('hello', { files: invalid }), /files/);
+  }
+  await assert.rejects(app.api.chatSync(' ', { files: [] }), /不能为空/);
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: request.request_id, result: { events: [] } });
+  await pending;
+  app.api.destroy();
+});
+
+test('download requests use the trusted iframe and propagate errors without opening the panel', async () => {
+  const app = await runtime();
+  await assert.rejects(app.api.downloadFile('report.txt'), /init/);
+  app.api.init(jwtFor(), 'Alice');
+  const pending = app.api.downloadFile('reports/报告 #1.pdf');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const request = app.sent.at(-1)!.data;
+  assert.equal(request.method, 'downloadFile');
+  assert.equal(request.text, 'reports/报告 #1.pdf');
+  assert.equal(app.hosts[0].getElementById('panel').classList.contains('open'), false);
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: request.request_id, result: { session_id: 'first' } });
+  assert.equal((await pending).session_id, 'first');
+  await assert.rejects(app.api.downloadFile(' '), /路径不能为空/);
+  const failed = assert.rejects(app.api.downloadFile('missing.pdf'), /文件下载失败/);
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: app.sent.at(-1)!.data.request_id, error: '文件下载失败' });
+  await failed;
+  app.api.destroy();
+});
+
+test('getFile resolves to a File from the trusted iframe and rejects invalid paths and stale responses', async () => {
+  const app = await runtime();
+  await assert.rejects(app.api.getFile('report.bin'), /init/);
+  app.api.init(jwtFor(), 'Alice');
+  const pending = app.api.getFile('reports/报告.bin');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const request = app.sent.at(-1)!.data;
+  assert.equal(request.method, 'getFile');
+  assert.equal(request.text, 'reports/报告.bin');
+  const file = new File([new Uint8Array([0, 255, 128])], '报告.bin', { type: 'application/octet-stream' });
+  const response = { type: 'xpeech:response', session_id: 'first', request_id: request.request_id, result: { session_id: 'first', file } };
+  let settled = false;
+  pending.then(() => { settled = true; });
+  app.message(response, 'https://attacker.test');
+  app.message(response, 'https://assistant.test', {});
+  app.message({ ...response, session_id: 'other' });
+  await tick();
+  assert.equal(settled, false);
+  app.message(response);
+  const result = await pending;
+  assert.ok(result instanceof File);
+  assert.equal(result.name, '报告.bin');
+  assert.deepEqual(new Uint8Array(await result.arrayBuffer()), new Uint8Array([0, 255, 128]));
+  assert.equal(app.hosts[0].getElementById('panel').classList.contains('open'), false);
+  await assert.rejects(app.api.getFile(' '), /路径不能为空/);
+  await assert.rejects(app.api.getFile(null), /path/);
+  const failed = assert.rejects(app.api.getFile('missing.bin'), /文件下载失败/);
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: app.sent.at(-1)!.data.request_id, error: '文件下载失败' });
+  await failed;
+  const closed = assert.rejects(app.api.getFile('report.bin'), /关闭/);
+  app.api.destroy();
+  await closed;
 });
 
 test('reply subscriptions filter frames and sessions and can be removed', async () => {
@@ -416,6 +544,54 @@ test('reply subscriptions filter frames and sessions and can be removed', async 
   unsubscribe();
   app.message(reply);
   assert.equal(replies.length, 1);
+  app.api.destroy();
+});
+
+test('chat file subscriptions include URLs and ignore sync, untrusted or stale notifications', async () => {
+  const app = await runtime();
+  const dispatched: any[] = [];
+  app.window.dispatchEvent = (event: any) => { dispatched.push(event); };
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const chatFiles: any[] = [];
+  const unsubscribeChat = app.api.onChatFile((file: any) => chatFiles.push(file));
+  assert.throws(() => app.api.onChatFile(null), /listener/);
+  const file = { type: 'xpeech:file', session_id: 'first', path: 'reports/报告 #1 & 2.pdf', request_id: null };
+  app.message(file, 'https://attacker.test');
+  app.message(file, 'https://assistant.test', {});
+  app.message({ ...file, session_id: 'old' });
+  app.message({ ...file, path: '' });
+  app.message({ ...file, path: 123 });
+  app.message({ ...file, request_id: {} });
+  assert.equal(chatFiles.length, 0);
+  app.message(file);
+  assert.equal(chatFiles.length, 1);
+  assert.equal(chatFiles[0].path, file.path);
+  assert.equal(chatFiles[0].request_id, null);
+  const url = new URL(chatFiles[0].url);
+  assert.equal(url.origin, 'https://assistant.test');
+  assert.equal(url.pathname, '/api/files');
+  assert.equal(url.searchParams.get('path'), file.path);
+  assert.deepEqual([...url.searchParams.keys()], ['path']);
+  assert.equal(dispatched.at(-1).type, 'xpeech:chat-file');
+  assert.equal(dispatched.at(-1).detail, chatFiles[0]);
+  app.message({ ...file, request_id: 'sync-1' });
+  assert.equal(chatFiles.length, 1);
+  assert.equal(dispatched.filter(event => event.type === 'xpeech:chat-file').length, 1);
+  unsubscribeChat();
+  app.message(file);
+  assert.equal(chatFiles.length, 1);
+  app.api.onChatFile((file: any) => chatFiles.push(file));
+  app.api.destroy();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'second' });
+  app.message({ ...file, session_id: 'second' });
+  app.message({ ...file, session_id: 'second', request_id: 'sync-4' });
+  assert.equal(chatFiles.length, 1);
   app.api.destroy();
 });
 

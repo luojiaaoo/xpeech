@@ -32,6 +32,11 @@
     .reply-box { padding: 14px 16px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
     .reply-box h3 { margin: 0 0 8px; font-size: 13px; color: #5b6578; }
     .reply-content { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 3.2em; }
+    .file-hint { margin: 6px 0 12px; font-size: 13px; overflow-wrap: anywhere; }
+    .file-box { margin-top: 16px; }
+    .file-box ul { padding-left: 22px; }
+    .file-box li { margin: 8px 0; overflow-wrap: anywhere; }
+    .file-meta { display: block; color: #5b6578; font-size: 12px; overflow-wrap: anywhere; }
     .test-notice { padding: 16px; border: 1px solid #f2cc7a; border-radius: 9px; background: #fff8e6; color: #775414; }
     @media (max-width: 600px) { main { margin: 24px auto; padding: 16px; } article { padding: 24px; } .reply-boxes { grid-template-columns: 1fr; } }
   </style>
@@ -64,10 +69,16 @@
     <button id="toggle" class="secondary" disabled>退出演示登录</button>
     <label for="prompt">主页面交互内容</label>
     <textarea id="prompt" rows="3">请介绍一下你能做什么</textarea>
+    <label for="files">后台请求附件（可多选）</label>
+    <input id="files" type="file" multiple disabled>
+    <button id="generate-file" class="secondary" disabled>添加 JS 示例文件</button>
+    <button id="clear-files" class="secondary" disabled>清空附件</button>
+    <p id="selected-files" class="file-hint">未选择附件</p>
     <button id="fill" class="secondary" disabled>填入对话输入框</button>
     <button id="sync" disabled>同步发送（纯后台）</button>
     <p class="test-notice">同步发送是纯后台交互：不展开聊天窗口，消息和回复都不渲染到对话框，
-      结果只回传主页面。可对照聊天窗口确认对话框无任何变化。</p>
+      结果只回传主页面。附件仅随同步请求上传，不会填入聊天框；有附件时文字可留空。
+      可输入「分析附件并生成报告文件」测试文件上传和下载。</p>
     <h2 class="log-title">模型回复展示</h2>
     <div class="reply-boxes">
       <section class="reply-box">
@@ -79,6 +90,27 @@
         <div id="sync-last-reply" class="reply-content" aria-live="polite">—</div>
       </section>
     </div>
+    <section class="reply-box file-box" aria-live="polite">
+      <h2 class="log-title">发现的 sync 文件</h2>
+      <p class="file-hint">收到 sync 的 send_file 后自动尝试浏览器下载，并展示事件里的文件路径；可点击按钮重新下载。</p>
+      <p id="sync-files-empty" class="file-hint">尚未发现 sync 文件</p>
+      <ul id="sync-files"></ul>
+    </section>
+    <section class="reply-box file-box" aria-live="polite">
+      <h2 class="log-title">发现的对话框文件</h2>
+      <p class="file-hint">在对话框中让助手生成并发送文件，主站通过 onChatFile 收到路径及 URL，并显示在这里。</p>
+      <p id="chat-files-empty" class="file-hint">尚未发现对话框 send_file</p>
+      <ul id="chat-files"></ul>
+    </section>
+    <section class="reply-box file-box">
+      <h2 class="log-title">填写文件路径下载</h2>
+      <form id="file-download-form">
+        <label for="file-path">send_file 事件里的文件路径</label>
+        <input id="file-path" required placeholder="粘贴上面展示的文件路径" disabled>
+        <button id="download-path" type="submit" disabled>获取 File 并下载</button>
+      </form>
+      <p class="file-hint">先调用 getFile() 将二进制交给主站 JS，再由主站触发浏览器下载。文件也可放进 FormData 上传业务后台。</p>
+    </section>
     <h2 class="log-title">主页面交互记录</h2>
     <div id="replies" aria-live="polite"></div>
     <p id="status" role="status">正在加载聊天组件…</p>
@@ -97,6 +129,17 @@
     const secretKey = document.querySelector('#secret-key');
     const streamReply = document.querySelector('#stream-reply');
     const syncLastReply = document.querySelector('#sync-last-reply');
+    const fileInput = document.querySelector('#files');
+    const generateFile = document.querySelector('#generate-file');
+    const clearFiles = document.querySelector('#clear-files');
+    const selectedFiles = document.querySelector('#selected-files');
+    const syncFiles = document.querySelector('#sync-files');
+    const chatFiles = document.querySelector('#chat-files');
+    const syncFilesEmpty = document.querySelector('#sync-files-empty');
+    const chatFilesEmpty = document.querySelector('#chat-files-empty');
+    const filePath = document.querySelector('#file-path');
+    const downloadPath = document.querySelector('#download-path');
+    let attachments = [];
     let assistant;
     let senderName;
     let assistantTitle;
@@ -111,6 +154,93 @@
       entry.textContent = text;
       if (className) entry.className = className;
       replies.appendChild(entry);
+    }
+    function showAttachments() {
+      selectedFiles.textContent = attachments.length
+        ? attachments.map(file => `${file.name}（${file.size} 字节）`).join('、')
+        : '未选择附件';
+      clearFiles.disabled = !loggedIn || attachments.length === 0;
+    }
+    function resetFiles() {
+      attachments = [];
+      fileInput.value = '';
+      showAttachments();
+      syncFiles.replaceChildren();
+      chatFiles.replaceChildren();
+      syncFilesEmpty.hidden = chatFilesEmpty.hidden = false;
+      filePath.value = '';
+    }
+    function saveFile(file) {
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.name;
+      document.body.appendChild(link);
+      try { link.click(); } finally {
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    }
+    function addDownload({ path, url, session_id }, version, fromSync) {
+      const item = document.createElement('li');
+      const name = document.createElement('span');
+      name.textContent = path;
+      const metadata = document.createElement('small');
+      metadata.className = 'file-meta';
+      metadata.textContent = `会话 ${session_id}${fromSync ? '，sync' : '，对话框'}\n${url}`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = '直接浏览器下载';
+      async function download() {
+        if (version !== connectionVersion || !loggedIn) return;
+        button.disabled = true;
+        status.textContent = `正在下载：${path}`;
+        try {
+          await assistant.downloadFile(path);
+          if (version !== connectionVersion) return;
+          log(`已触发文件下载：${path}`, 'sync-reply');
+          status.textContent = `已触发浏览器下载：${path}`;
+        } catch (error) {
+          if (version === connectionVersion) {
+            log(`文件下载失败：${error.message}`, 'log-error');
+            status.textContent = `文件下载失败：${error.message}`;
+          }
+        } finally {
+          if (version === connectionVersion) button.disabled = !loggedIn;
+        }
+      }
+      button.addEventListener('click', download);
+      item.appendChild(name);
+      item.appendChild(metadata);
+      item.appendChild(button);
+      const getBinary = document.createElement('button');
+      getBinary.type = 'button';
+      getBinary.className = 'secondary';
+      getBinary.textContent = 'JS 获取二进制';
+      getBinary.addEventListener('click', async () => {
+        if (version !== connectionVersion || !loggedIn) return;
+        getBinary.disabled = true;
+        status.textContent = `正在获取文件二进制：${path}`;
+        try {
+          const file = await assistant.getFile(path);
+          if (version !== connectionVersion) return;
+          // file 是浏览器 File，可用 FormData 上传到主站自己的存储接口。
+          // const form = new FormData(); form.append('file', file, file.name);
+          log(`主站 JS 已收到文件：${file.name}，${file.size} 字节，类型 ${file.type || '未知'}`, 'sync-reply');
+          status.textContent = `JS 已获取 ${file.name} 的二进制，未触发浏览器保存。`;
+        } catch (error) {
+          if (version === connectionVersion) {
+            log(`文件获取失败：${error.message}`, 'log-error');
+            status.textContent = `文件获取失败：${error.message}`;
+          }
+        } finally {
+          if (version === connectionVersion) getBinary.disabled = !loggedIn;
+        }
+      });
+      item.appendChild(getBinary);
+      (fromSync ? syncFiles : chatFiles).appendChild(item);
+      (fromSync ? syncFilesEmpty : chatFilesEmpty).hidden = true;
+      if (fromSync) void download();
     }
     async function loadJWT(credentials) {
       // Test-only: production must obtain JWTs from the business backend without sending a signing key.
@@ -127,6 +257,12 @@
       // Freeze these test parameters for renewal until the next connection/login.
       const credentials = { channel: channel.value.trim(), secret_key: secretKey.value };
       assistant.init(() => loadJWT(credentials), senderName, assistantTitle, sessionMetadata);
+      const version = connectionVersion;
+      assistant.onChatFile(file => {
+        if (version !== connectionVersion || !loggedIn) return;
+        addDownload(file, version, false);
+        log(`发现对话框文件：${file.path}`);
+      });
       assistant.onReply(({ content, request_id }) => {
         // request_id 为空表示用户在对话框手动聊天（流式）；否则是 chatSync 的后台回复。
         if (request_id == null) {
@@ -138,6 +274,8 @@
         }
       });
       loggedIn = true;
+      fileInput.disabled = generateFile.disabled = filePath.disabled = downloadPath.disabled = false;
+      showAttachments();
       open.disabled = false;
       fill.disabled = sync.disabled = false;
       toggle.textContent = '退出演示登录';
@@ -156,6 +294,8 @@
       service.disabled = channel.disabled = secretKey.disabled = connect.disabled = true;
       open.disabled = fill.disabled = sync.disabled = toggle.disabled = true;
       loggedIn = false;
+      fileInput.disabled = generateFile.disabled = filePath.disabled = downloadPath.disabled = true;
+      resetFiles();
       assistant?.destroy();
       assistant = undefined;
       replies.replaceChildren();
@@ -192,6 +332,47 @@
         void connectService();
       });
       open.addEventListener('click', () => assistant.open());
+      document.querySelector('#file-download-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!loggedIn || downloadPath.disabled) return;
+        const path = filePath.value.trim();
+        if (!path) { status.textContent = '请填写文件路径'; return; }
+        const version = connectionVersion;
+        downloadPath.disabled = true;
+        status.textContent = `正在获取 File：${path}`;
+        try {
+          const file = await assistant.getFile(path);
+          if (version !== connectionVersion) return;
+          saveFile(file);
+          log(`主站获取 File 后触发下载：${file.name}，${file.size} 字节`, 'sync-reply');
+          status.textContent = `已获取 File 并触发浏览器下载：${file.name}`;
+        } catch (error) {
+          if (version === connectionVersion) {
+            log(`按路径下载失败：${error.message}`, 'log-error');
+            status.textContent = `按路径下载失败：${error.message}`;
+          }
+        } finally {
+          if (version === connectionVersion) downloadPath.disabled = !loggedIn;
+        }
+      });
+      fileInput.addEventListener('change', () => {
+        attachments = Array.from(fileInput.files);
+        showAttachments();
+      });
+      generateFile.addEventListener('click', () => {
+        // 业务数据可直接在 JS 中生成 File，无需提前上传或转 Base64。
+        const data = { orders: [{ id: 'DEMO-001', amount: 128 }, { id: 'DEMO-002', amount: 256 }] };
+        const file = new File([JSON.stringify(data, null, 2)], 'demo-orders.json', {
+          type: 'application/json',
+        });
+        attachments = [...attachments.filter(item => item.name !== file.name), file];
+        showAttachments();
+      });
+      clearFiles.addEventListener('click', () => {
+        attachments = [];
+        fileInput.value = '';
+        showAttachments();
+      });
       fill.addEventListener('click', async () => {
         const version = connectionVersion;
         try {
@@ -202,14 +383,20 @@
       });
       sync.addEventListener('click', async () => {
         const version = connectionVersion;
+        const uploadFiles = attachments.slice();
         sync.disabled = true;
         const started = Date.now();
         log(`发起后台同步请求：${prompt.value}`, 'sync-call');
+        if (uploadFiles.length) log(`本次上传附件：${uploadFiles.map(file => file.name).join('、')}`, 'sync-call');
         status.textContent = '正在后台同步调用，不会显示在对话框…';
         try {
           // 纯后台交互：不展开聊天窗口，消息和回复都不渲染到对话框。
-          const { session_id, events } = await assistant.chatSync(prompt.value);
+          const { session_id, events, files } = await assistant.chatSync(prompt.value, { files: uploadFiles });
           if (version !== connectionVersion) return;
+          for (const file of files) {
+            addDownload({ ...file, session_id }, version, true);
+            log(`发现 sync 文件：${file.path}`);
+          }
           const failure = events.find(event => event.event === 'error');
           const lastAss = events.filter(event => event.event === 'assistant').at(-1);
           syncLastReply.textContent = lastAss ? lastAss.context : '（本次同步没有 assistant 消息）';
@@ -232,6 +419,8 @@
           connectionVersion++;
           assistant.destroy();
           loggedIn = false;
+          fileInput.disabled = generateFile.disabled = filePath.disabled = downloadPath.disabled = true;
+          resetFiles();
           open.disabled = true;
           fill.disabled = sync.disabled = true;
           toggle.textContent = '重新登录演示';

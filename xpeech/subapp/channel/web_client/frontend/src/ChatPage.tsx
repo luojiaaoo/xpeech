@@ -14,7 +14,7 @@ import {
   DownOutlined,
   RobotOutlined,
 } from '@ant-design/icons';
-import { chatSync, downloadFile, streamChat } from './api';
+import { chatSync, downloadFile, getFile, streamChat } from './api';
 import { collectReplies, connectEmbedBridge, postToParent } from './embedBridge';
 import type { SyncOptions } from './embedBridge';
 import { appendChatEvent, finishChatTurn, startChatTurn } from './chatState';
@@ -165,6 +165,8 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
         senderRef.current?.focus();
       },
       chatSync: (text, options) => sendRef.current(text, options),
+      downloadFile,
+      getFile,
     });
   }, [embedded, sessionId]);
 
@@ -202,9 +204,9 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
   async function send(text: string, sync?: SyncOptions): Promise<ChatEvent[]> {
     // 同步调用可与对话框手动聊天、其他同步调用并发；后端每次同步执行使用独立生成的会话。
     if (!sync && (!active || loading || requestRef.current)) return [];
-    if (!text.trim() && (sync || files.length === 0)) return [];
+    const sentFiles = sync ? sync.files ?? [] : files;
+    if (!text.trim() && sentFiles.length === 0) return [];
     const controller = new AbortController();
-    const sentFiles = sync ? [] : files;
     // 同步交互纯后台执行：不写入对话、不影响输入框和加载状态，
     // 结果只经 Promise 与 onReply（xpeech:reply）回传主页面。
     if (sync) {
@@ -231,6 +233,10 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
         if (!controller.signal.aborted) {
           if (!sync) appendEvent(event);
           replies.push(event);
+          if (embedded && !sync && event.event === 'send_file') postToParent({
+            type: 'xpeech:file', session_id: sessionId, path: event.context,
+            request_id: null,
+          });
         }
       };
       let events: ChatEvent[] = [];

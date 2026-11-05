@@ -11,6 +11,36 @@
 以及 Promise 返回的原始事件列表；对照聊天窗口可确认对话框无任何变化。
 手动聊天的回复同样记录在此，并与同步回复区分标注。
 
+「后台请求附件」支持多选本地文件，也可点击「添加 JS 示例文件」，使用 `new File()`
+生成一份订单 JSON。同步发送会通过 `assistant.chatSync(text, { files })` 上传这些文件，
+有附件时文字可留空；「填入对话输入框」只填入文字。附件会保留以便重复测试，点击
+「清空附件」可移除；退出登录或重新连接会清空附件、文件路径输入和两个文件列表。
+
+文件演示包含四种场景：
+
+1. **sync 上传附件**：选择本地文件或添加 JS 示例文件，输入「分析附件并生成报告文件」，点击同步发送。
+2. **sync 文件发现及直接下载**：通过 `const { events, files } = await assistant.chatSync(...)` 接收结果。在「发现的 sync 文件」框展示返回的 `files` 中的路径和下载 URL，并自动调用 `assistant.downloadFile(path)` 尝试浏览器下载。列表中的「直接浏览器下载」可重复触发；浏览器可能要求允许自动或多文件下载。
+3. **按路径获取 File 后下载**：将文件路径粘贴到「填写文件路径下载」框，点击「获取 File 并下载」。主站先调用 `assistant.getFile(path)` 得到 `File` 对象，再创建对象 URL 触发浏览器下载。
+4. **对话框文件发现**：打开聊天窗口，让助手生成并发送文件。「发现的对话框文件」框通过 `onChatFile()` 显示路径和下载 URL，不自动下载；可点击下载或获取二进制。
+
+对话框文件通过 `onChatFile()` 接收；sync 文件通过本次 `chatSync()` 返回的 `files` 接收，无需订阅。
+返回的 `files` 为 `{ path, url }[]`，无文件时为 `[]`；原始 `events` 中仍保留 `send_file`。
+两个列表分别在通知到达和 sync 完成时更新；sync 的原始事件仍显示在交互记录里，不重复添加文件条目。
+下载 URL 仍要求当前 JWT 认证，下载按钮通过 SDK 自动携带凭证。失败会显示在状态和交互记录中。
+「JS 获取二进制」按钮调用 `assistant.getFile(event.context)`，返回带文件名及 MIME 类型的
+浏览器 `File` 对象，并展示名称、大小和类型，不触发浏览器保存。主站可继续把文件放进
+`FormData` 上传到自己的后台；演示页面只获取文件，不对接业务存储：
+
+```javascript
+const file = await assistant.getFile(event.context);
+const form = new FormData();
+form.append('file', file, file.name);
+// 将 form 作为 fetch 的 body，上传到主站自己的存储接口。
+// 也可使用 await file.arrayBuffer() 读取原始字节。
+```
+
+目标聊天服务需部署支持文件上传、下载、`onChatFile()` 和 sync 返回 `files` 的新版 `embed.js` 与前端构建产物。
+
 在仓库根目录创建 `data/embed-demo/config.json`（该目录已被 Git 忽略）：
 
 ```json

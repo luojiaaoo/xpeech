@@ -72,8 +72,11 @@ function onLogout() {
 | `assistant.open()` | 通过代码主动展开聊天 iframe，无需用户点击浮动按钮 |
 | `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
 | `assistant.setInput(text, { timeoutMs? } = {})` | 替换当前对话输入框内容（允许空字符串清空），不自动发送；返回 `Promise<{ session_id }>` |
-| `assistant.chatSync(text, { jsonOutput?, timeoutMs? } = {})` | 在当前会话后台调用 `/api/chat_sync`，不渲染到对话框，返回 `Promise<{ session_id, events }>` |
+| `assistant.chatSync(text, { files?, jsonOutput?, timeoutMs? } = {})` | 在当前会话后台调用 `/api/chat_sync`，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id, events, files }>`，其中返回的 `files` 为 `{ path, url }[]` |
+| `assistant.downloadFile(path, { timeoutMs? } = {})` | 下载 `send_file` 事件 `context` 指定的文件，自动携带当前 JWT 并触发浏览器保存，返回 `Promise<{ session_id }>` |
+| `assistant.getFile(path, { timeoutMs? } = {})` | 获取文件二进制，返回 `Promise<File>`，包含文件名和 MIME 类型，供主站 JS 处理，不触发浏览器保存 |
 | `assistant.onReply(callback)` | 订阅每条完整模型回复，返回取消订阅函数 |
+| `assistant.onChatFile(callback)` | 仅订阅对话框的 `send_file`，回传 `{ session_id, path, url, request_id: null }`，返回取消订阅函数 |
 | `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存中的身份和 JWT，不发送服务端撤销请求 |
 
 `setUserId()` 和 `setChannelName()` 已移除。`init()` 的无效字符串参数会同步抛出异常，
@@ -114,6 +117,83 @@ try {
 unsubscribe();
 ```
 
+通过 `files` 传入浏览器 `File` 对象数组，文件随本次请求上传，无需提前上传或转 Base64：
+
+```javascript
+// fileInput 是 <input type="file" multiple> 元素。
+const { events } = await assistant.chatSync('分析这些文件', {
+  files: Array.from(fileInput.files),
+});
+
+// 也可发送 JS 生成的文件。
+await assistant.chatSync('总结这些数据', {
+  files: [new File([JSON.stringify({ orders: [1, 2, 3] })], 'orders.json', {
+    type: 'application/json',
+  })],
+});
+```
+
+有附件时允许 `text` 为空字符串；文本和附件不能同时为空。
+
+`chatSync()` 在保留原始 `events` 的同时，将 `send_file` 事件整理到返回的 `files` 数组中：
+
+```javascript
+const { session_id, events, files } = await assistant.chatSync('生成报告', {
+  files: Array.from(fileInput.files),
+});
+for (const file of files) {
+  console.log(file.path, file.url);
+  await assistant.downloadFile(file.path);
+}
+```
+
+`files` 每项为 `{ path, url }`，按 `send_file` 事件顺序返回；没有文件时为 `[]`。
+它是文件信息列表，二进制内容可通过 `getFile(file.path)` 单独获取。
+输入选项的 `files` 仍是待上传的 `File[]`，与返回的文件信息列表用途不同。
+
+下载复用 `GET /api/files?path=...`，服务端只允许访问当前用户工作区中的文件。
+`downloadFile` 不展开聊天窗口；默认超时 30 秒，可通过 `timeoutMs` 调整。
+Promise 在文件获取成功并触发浏览器下载后完成，不表示用户已保存到磁盘。
+浏览器可能要求用户允许多文件下载，也可在业务页面的下载按钮中调用该接口。
+
+主站需要把文件存入自己的后台时，调用 `getFile()` 获取 `File`，再使用业务网站自己的认证上传：
+
+```javascript
+const file = await assistant.getFile(event.context);
+const form = new FormData();
+form.append('file', file, file.name);
+const response = await fetch('/api/your-file-storage', { // 替换为主站自己的存储接口。
+  method: 'POST', credentials: 'same-origin', body: form,
+});
+if (!response.ok) throw new Error('保存到业务后台失败');
+
+// 需要原始字节时也可读取：const bytes = await file.arrayBuffer();
+```
+
+`getFile()` 使用当前 JWT 获取完整文件后，通过 iframe 消息返回 `File` 对象，不做 Base64 编码。
+默认超时 30 秒，可通过 `timeoutMs` 调整；切换会话或销毁组件会取消尚未完成的文件获取。
+
+对话框中的 `send_file` 通过 `onChatFile()` 通知主站，无需点击对话框里的下载按钮。
+sync 的文件直接通过 `chatSync()` 返回的 `files` 接收：
+
+```javascript
+const unsubscribeChatFiles = assistant.onChatFile(({ session_id, path, url }) => {
+  console.log('对话框文件', session_id, path, url);
+});
+
+const { files } = await assistant.chatSync('生成报告');
+console.log('sync 文件', files);
+// 主站可按需调用 assistant.getFile(path) 或 assistant.downloadFile(path)。
+```
+
+`path` 原样保留事件中的文件路径；`url` 是带编码路径参数的绝对下载接口 URL，
+例如 `https://assistant.example.com/api/files?path=reports%2Freport.pdf`。
+该 URL 仍要求 JWT 认证；使用 `getFile(path)` / `downloadFile(path)` 会自动携带当前凭证。
+`onChatFile()` 只接收对话框文件，通知的 `request_id` 为 `null`。
+也可监听主页面的 `CustomEvent('xpeech:chat-file')`，其 `detail` 与该订阅参数相同；选择一种通知方式即可。
+sync 文件只随本次调用的结果返回，不派发文件订阅或文件事件通知。
+SDK 本身收到通知不会自动下载；调用方决定如何处理。`destroy()` 会清除文件订阅。
+
 回复还会通过主页面的 `window` 派发 `CustomEvent("xpeech:reply")`，其 `detail`
 与 `onReply` 参数相同。选择一种订阅方式即可，避免重复处理。
 流式文本在一条回复结束时合并回传，一轮工具调用产生多条模型回复时分别通知；
@@ -121,7 +201,7 @@ unsubscribe();
 同步请求的回复在后端返回全部事件后逐条通知。
 
 `chatSync()` 使用当前 JWT、发送者名称及初始化时的 `sessionMetadata`，
-保留输入框草稿和待发送附件，不携带这些附件。它使用后端的非交互模式，不等待用户填写问题表单；
+保留输入框草稿和待发送附件，只携带调用时通过 `files` 显式传入的附件。它使用后端的非交互模式，不等待用户填写问题表单；
 后端为每次同步执行生成独立会话，不读取也不写入对话历史。
 本轮消息和回复只经 Promise 与 `onReply` 回传主页面，不渲染到对话框，窗口收起时也可执行。
 `jsonOutput: true` 原样转发 JSON 输出选项，需模型配置支持；不支持时返回 HTTP 400。

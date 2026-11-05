@@ -112,19 +112,28 @@ export const appApi = {
   config: () => request<AppConfig>('/api/config'),
 };
 
-export async function downloadFile(path: string) {
+export async function getFile(path: string, signal?: AbortSignal): Promise<File> {
   const response = await fetch(`/api/files?${new URLSearchParams({ path })}`, {
     credentials: memoryJWT ? 'omit' : 'same-origin',
     headers: authHeaders(),
+    signal,
   });
   if (!response.ok) {
     if (response.status === 401) jwtExpired();
     throw new Error('文件下载失败');
   }
-  const url = URL.createObjectURL(await response.blob());
+  const blob = await response.blob();
+  signal?.throwIfAborted();
+  return new File([blob], path.split(/[\\/]/).pop() || 'download', { type: blob.type });
+}
+
+export async function downloadFile(path: string, signal?: AbortSignal) {
+  const file = await getFile(path, signal);
+  signal?.throwIfAborted();
+  const url = URL.createObjectURL(file);
   const link = document.createElement('a');
   link.href = url;
-  link.download = path.split(/[\\/]/).pop() || 'download';
+  link.download = file.name;
   document.body.appendChild(link);
   link.click();
   link.remove();

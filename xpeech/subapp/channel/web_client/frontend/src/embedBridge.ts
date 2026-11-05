@@ -1,6 +1,6 @@
 import type { ChatEvent } from './types';
 
-export type SyncOptions = { jsonOutput?: boolean; requestId?: string };
+export type SyncOptions = { files?: File[]; jsonOutput?: boolean; requestId?: string };
 
 function parentOrigin() {
   const origin = new URLSearchParams(window.location.search).get('parent_origin');
@@ -16,10 +16,13 @@ export function postToParent(data: Record<string, unknown>) {
 export function connectEmbedBridge(sessionId: string, handlers: {
   setInput: (text: string) => void;
   chatSync: (text: string, options: SyncOptions) => Promise<ChatEvent[]>;
+  downloadFile: (path: string, signal?: AbortSignal) => Promise<void>;
+  getFile: (path: string, signal?: AbortSignal) => Promise<File>;
 }) {
   const origin = parentOrigin();
   if (!origin) return () => {};
   let active = true;
+  const downloads = new Set<AbortController>();
   async function receive(event: MessageEvent) {
     if (event.origin !== origin || event.source !== window.parent) return;
     const data = event.data;
@@ -34,14 +37,33 @@ export function connectEmbedBridge(sessionId: string, handlers: {
         handlers.setInput(data.text);
         respond({ result: { session_id: sessionId } });
       } else if (data.method === 'chatSync') {
-        if (!data.text.trim()) throw new Error('消息不能为空');
+        const files = data.files === undefined ? [] : data.files;
+        if (!Array.isArray(files) || !Array.from(files).every((file) => file instanceof File)) {
+          throw new Error('files 必须为 File 数组');
+        }
+        if (!data.text.trim() && files.length === 0) throw new Error('消息不能为空');
         if (data.json_output !== undefined && typeof data.json_output !== 'boolean') {
           throw new Error('jsonOutput 必须为布尔值');
         }
         const events = await handlers.chatSync(data.text, {
-          jsonOutput: data.json_output, requestId: data.request_id,
+          files, jsonOutput: data.json_output, requestId: data.request_id,
         });
         respond({ result: { session_id: sessionId, events } });
+      } else if (data.method === 'downloadFile' || data.method === 'getFile') {
+        if (!data.text.trim()) throw new Error('文件路径不能为空');
+        const controller = new AbortController();
+        downloads.add(controller);
+        try {
+          if (data.method === 'getFile') {
+            const file = await handlers.getFile(data.text, controller.signal);
+            respond({ result: { session_id: sessionId, file } });
+          } else {
+            await handlers.downloadFile(data.text, controller.signal);
+            respond({ result: { session_id: sessionId } });
+          }
+        } finally {
+          downloads.delete(controller);
+        }
       } else {
         throw new Error('未知的 iframe 交互方法');
       }
@@ -56,6 +78,8 @@ export function connectEmbedBridge(sessionId: string, handlers: {
   });
   return () => {
     active = false;
+    downloads.forEach((controller) => controller.abort());
+    downloads.clear();
     window.removeEventListener('message', receive);
     postToParent({ type: 'xpeech:interaction-unavailable', session_id: sessionId });
   };

@@ -31,6 +31,7 @@ var interactionSession = null;
 var requestSequence = 0;
 var pendingRequests = new Map();
 var replyListeners = new Set();
+var chatFileListeners = new Set();
 
 function rejectRequests(message, sentOnly = false) {
   pendingRequests.forEach(function (pending, id) {
@@ -51,11 +52,26 @@ function flushRequests() {
 }
 function requestInteraction(method, text, options = {}) {
   if (!identityConfigured) return Promise.reject(new Error('请先调用 init()'));
-  if (typeof text !== 'string' || (method === 'chatSync' && !text.trim())) {
-    return Promise.reject(new TypeError('text 必须为字符串，聊天消息不能为空'));
+  var fileRequest = method === 'downloadFile' || method === 'getFile';
+  if (typeof text !== 'string') {
+    return Promise.reject(new TypeError(fileRequest ? 'path 必须为字符串' : 'text 必须为字符串'));
   }
   if (!options || typeof options !== 'object' || Array.isArray(options)) {
     return Promise.reject(new TypeError('options 必须为对象'));
+  }
+  if (fileRequest && !text.trim()) {
+    return Promise.reject(new TypeError('文件路径不能为空'));
+  }
+  var files = [];
+  if (method === 'chatSync' && options.files !== undefined) {
+    if (!Array.isArray(options.files)) return Promise.reject(new TypeError('files 必须为 File 数组'));
+    files = Array.from(options.files);
+    if (!files.every(function (file) { return file instanceof File; })) {
+      return Promise.reject(new TypeError('files 必须为 File 数组'));
+    }
+  }
+  if (method === 'chatSync' && !text.trim() && !files.length) {
+    return Promise.reject(new TypeError('聊天消息不能为空'));
   }
   var timeout = options.timeoutMs === undefined ? (method === 'chatSync' ? 300000 : 30000) : options.timeoutMs;
   if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 2147483647) {
@@ -67,7 +83,7 @@ function requestInteraction(method, text, options = {}) {
   return new Promise(function (resolve, reject) {
     var id = String(++requestSequence);
     var pending = {
-      data: { type: 'xpeech:request', request_id: id, method: method, text: text, json_output: options.jsonOutput },
+      data: { type: 'xpeech:request', request_id: id, method: method, text: text, json_output: options.jsonOutput, files: files },
       resolve: resolve, reject: reject, sent: false, sessionId: null,
       timer: setTimeout(function () {
         pendingRequests.delete(id);
@@ -80,11 +96,32 @@ function requestInteraction(method, text, options = {}) {
   });
 }
 function setInput(text, options) { return requestInteraction('setInput', text, options); }
-function chatSync(text, options) { return requestInteraction('chatSync', text, options); }
+function fileInfo(path) {
+  var url = new URL('/api/files', origin);
+  url.searchParams.set('path', path);
+  return { path: path, url: url.href };
+}
+function chatSync(text, options) {
+  return requestInteraction('chatSync', text, options).then(function (result) {
+    var files = result.events
+      .filter(function (event) { return event.event === 'send_file' && typeof event.context === 'string' && event.context.trim(); })
+      .map(function (event) { return fileInfo(event.context); });
+    return Object.assign({}, result, { files: files });
+  });
+}
+function downloadFile(path, options) { return requestInteraction('downloadFile', path, options); }
+function getFile(path, options) {
+  return requestInteraction('getFile', path, options).then(function (result) { return result.file; });
+}
 function onReply(listener) {
   if (typeof listener !== 'function') throw new TypeError('listener 必须为函数');
   replyListeners.add(listener);
   return function () { replyListeners.delete(listener); };
+}
+function onChatFile(listener) {
+  if (typeof listener !== 'function') throw new TypeError('listener 必须为函数');
+  chatFileListeners.add(listener);
+  return function () { chatFileListeners.delete(listener); };
 }
 
 function initialize() {
@@ -283,6 +320,14 @@ function onMessage(event) {
       try { listener(reply); } catch (error) { console.error('Xpeech onReply callback failed', error); }
     });
     window.dispatchEvent(new CustomEvent('xpeech:reply', { detail: reply }));
+  } else if (data.type === 'xpeech:file' && data.session_id === interactionSession &&
+      typeof data.path === 'string' && data.path.trim() &&
+      data.request_id == null) {
+    var file = Object.assign({ session_id: data.session_id, request_id: null }, fileInfo(data.path));
+    chatFileListeners.forEach(function (listener) {
+      try { listener(file); } catch (error) { console.error('Xpeech file callback failed', error); }
+    });
+    window.dispatchEvent(new CustomEvent('xpeech:chat-file', { detail: file }));
   } else if (data.type === "xpeech:expired") {
     refresh();
   } else if (data.type === "xpeech:error") {
@@ -436,6 +481,7 @@ function destroy() {
   needsRetry = false;
   removeFrame();
   replyListeners.clear();
+  chatFileListeners.clear();
   window.removeEventListener("message", onMessage);
   window.removeEventListener("resize", keepInViewport);
   if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
@@ -444,4 +490,4 @@ function destroy() {
   host = root = panel = launcher = closeButton = body = status = null;
 }
 
-export { init, hideButton, showButton, open, close, destroy, setInput, chatSync, onReply };
+export { init, hideButton, showButton, open, close, destroy, setInput, chatSync, downloadFile, getFile, onReply, onChatFile };
