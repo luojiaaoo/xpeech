@@ -137,11 +137,12 @@ function renderStreamContent(type: StreamEventType, content: string, streaming: 
   return markdown;
 }
 
-export default function ChatPage({ systemName, sessionId, active = true, embedded = false }: {
+export default function ChatPage({ systemName, sessionId, active = true, embedded = false, onNewConversation }: {
   systemName: string;
   sessionId: string;
   active?: boolean;
   embedded?: boolean;
+  onNewConversation?: () => string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [value, setValue] = useState('');
@@ -156,13 +157,35 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
   const syncRequests = useRef(new Set<AbortController>());
   const sendRef = useRef(send);
   sendRef.current = send;
+  // Bridge commands may arrive before React renders the updated composer.
+  const composerRef = useRef({ value, files });
+  composerRef.current = { value, files };
+  const newConversationRef = useRef(onNewConversation);
+  newConversationRef.current = onNewConversation;
 
   useEffect(() => {
     if (!embedded) return;
     return connectEmbedBridge(sessionId, {
       setInput(text) {
+        composerRef.current.value = text;
         setValue(text);
         senderRef.current?.focus();
+      },
+      addFiles(added) {
+        const nextFiles = [...composerRef.current.files, ...added];
+        composerRef.current.files = nextFiles;
+        setFiles(nextFiles);
+        if (added.length) setAttachmentsOpen(true);
+      },
+      newConversation() {
+        if (!newConversationRef.current) throw new Error('无法新建会话');
+        return newConversationRef.current();
+      },
+      send() {
+        if (requestRef.current) throw new Error('正在回复，请稍后再发送');
+        const { value: text, files } = composerRef.current;
+        if (!text.trim() && !files.length) throw new Error('消息不能为空');
+        void sendRef.current(text);
       },
       chatSync: (text, options) => sendRef.current(text, options),
       downloadFile,
@@ -203,8 +226,8 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
 
   async function send(text: string, sync?: SyncOptions): Promise<ChatEvent[]> {
     // 同步调用可与对话框手动聊天、其他同步调用并发；后端每次同步执行使用独立生成的会话。
-    if (!sync && (!active || loading || requestRef.current)) return [];
-    const sentFiles = sync ? sync.files ?? [] : files;
+    if (!sync && (!active || requestRef.current)) return [];
+    const sentFiles = sync ? sync.files ?? [] : composerRef.current.files;
     if (!text.trim() && sentFiles.length === 0) return [];
     const controller = new AbortController();
     // 同步交互纯后台执行：不写入对话、不影响输入框和加载状态，
@@ -215,6 +238,7 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
       requestRef.current = controller;
       const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
       setMessages((current) => startChatTurn(current, display));
+      composerRef.current = { value: '', files: [] };
       setValue('');
       setFiles([]);
       setAttachmentsOpen(false);

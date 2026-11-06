@@ -72,6 +72,9 @@ function onLogout() {
 | `assistant.open()` | 通过代码主动展开聊天 iframe，无需用户点击浮动按钮 |
 | `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
 | `assistant.setInput(text, { timeoutMs? } = {})` | 替换当前对话输入框内容（允许空字符串清空），不自动发送；返回 `Promise<{ session_id }>` |
+| `assistant.addFiles(files, { timeoutMs? } = {})` | 将 `File[]` 追加到当前对话框的待发送附件，显示附件列表，不自动上传或发送；返回 `Promise<{ session_id }>` |
+| `assistant.newConversation({ timeoutMs? } = {})` | 新建临时会话，清空对话框及草稿，等待新输入框就绪后返回 `Promise<{ session_id }>` |
+| `assistant.send({ timeoutMs? } = {})` | 发送当前输入框的文字及待发送附件，消息与流式回复显示在对话框，提交后返回 `Promise<{ session_id }>` |
 | `assistant.chatSync(text, { files?, timeoutMs? } = {})` | 在当前会话后台调用 `/api/chat_sync`，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id, events, files }>`，其中返回的 `files` 为 `{ path, url }[]` |
 | `assistant.downloadFile(path, { timeoutMs? } = {})` | 下载 `send_file` 事件 `context` 指定的文件，自动携带当前 JWT 并触发浏览器保存，返回 `Promise<{ session_id }>` |
 | `assistant.getFile(path, { timeoutMs? } = {})` | 获取文件二进制，返回 `Promise<File>`，包含文件名和 MIME 类型，供主站 JS 处理，不触发浏览器保存 |
@@ -89,8 +92,25 @@ function onLogout() {
 ### 主页面与 iframe 双向交互
 
 调用 `init(...)` 后即可使用以下接口，SDK 会等待认证和输入框就绪再投递请求。
-`setInput()` 和 `chatSync()` 不会自动展开窗口；需要展示时调用 `open()`。
+交互函数不会自动展开窗口；需要展示时调用 `open()`。
 `chatSync()` 是纯后台交互：不在对话框渲染消息或回复，也不改变输入框和加载状态。
+
+控制对话框可按顺序调用以下函数，`files` 必须为浏览器 `File` 对象数组：
+
+```javascript
+assistant.open();
+const { session_id } = await assistant.newConversation();
+await assistant.setInput('请分析附件');
+await assistant.addFiles(Array.from(fileInput.files));
+await assistant.send();
+```
+
+`addFiles()` 追加附件，不替换已有附件；空数组不改变附件。附件在 `send()` 时上传，
+只发送附件时可不调用 `setInput()`。文字和附件均为空，或对话框正在回复时，`send()` 会拒绝 Promise。
+`send()` 返回表示已开始发送，不等待模型回复；使用 `onReply()` 接收完整回复（`request_id` 为 `null`）。
+后续网络错误显示在对话框中，与点击发送按钮一致。
+`newConversation()` 与点击「新建会话」使用相同流程：生成新的 UUIDv7 会话 ID，停止旧对话，
+清空消息、文字草稿和待发送附件，保留登录凭证；切换期间的新命令排队投递到新会话。
 
 ```javascript
 // 包括用户在 iframe 手动聊天、主页面调用 chatSync 产生的回复。
@@ -209,7 +229,7 @@ SDK 本身收到通知不会自动下载；调用方决定如何处理。`destro
 同步调用可与对话框手动聊天、其他同步调用并发执行，互不阻塞。
 HTTP 错误会拒绝 Promise；HTTP 200 返回的 `error` 事件保留在 `events` 中，调用方应自行检查。
 
-`setInput` 默认等待 30 秒，`chatSync` 默认等待 5 分钟，可通过 `timeoutMs` 调整。
+`setInput`、`addFiles`、`newConversation`、`send` 默认等待 30 秒，`chatSync` 默认等待 5 分钟，可通过 `timeoutMs` 调整。
 超时只停止主页面等待，不代表后端执行已取消，请勿据此自动重复提交。
 未初始化、认证失败、会话切换、页面重载或销毁时，相应 Promise 会拒绝；JWT 自动续期不切换会话。
 双方都校验 `postMessage` 的 origin 和窗口来源，请求和响应还使用 `request_id`、`session_id` 关联。

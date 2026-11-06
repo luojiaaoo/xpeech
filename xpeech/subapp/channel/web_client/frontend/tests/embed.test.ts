@@ -93,7 +93,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { init: Function; hideButton: Function; showButton: Function; open: Function; close: Function; destroy: Function; setInput: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function };
+  const api = module.namespace as { init: Function; hideButton: Function; showButton: Function; open: Function; close: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function };
   return { window, context, frames, calls, hosts, sent, message, listeners, timers, api };
 }
 
@@ -105,7 +105,7 @@ test('loading the SDK creates no UI or requests until init and leaves website gl
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'onChatFile', 'onReply', 'open', 'setInput', 'showButton']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'newConversation', 'onChatFile', 'onReply', 'open', 'send', 'setInput', 'showButton']);
 });
 
 test('init validates the original JWT without exchanging it and only delivers to its own iframe', async () => {
@@ -467,6 +467,88 @@ test('sync attachments are snapshotted while queued and permit file-only request
   app.message({ type: 'xpeech:response', session_id: 'first', request_id: request.request_id, result: { events: [] } });
   await pending;
   app.api.destroy();
+});
+
+test('composer files and send use authenticated requests and snapshot queued files', async () => {
+  const app = await runtime();
+  for (const method of ['send', 'newConversation']) await assert.rejects(app.api[method](), /init/);
+  app.api.init(jwtFor(), 'Alice');
+  const file = new File([new Uint8Array([0, 255])], '附件.bin');
+  const files = [file];
+  const added = app.api.addFiles(files);
+  files.length = 0;
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const request = app.sent.at(-1)!.data;
+  assert.equal(request.method, 'addFiles');
+  assert.equal(request.files.length, 1);
+  assert.equal(request.files[0], file);
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: request.request_id, result: { session_id: 'first' } });
+  assert.equal((await added).session_id, 'first');
+  for (const invalid of [null, file, ['path.txt'], [new Blob(['text'])], new Array(1)]) {
+    await assert.rejects(app.api.addFiles(invalid), /files/);
+  }
+  await assert.rejects(app.api.addFiles([], null), /options/);
+  const sent = app.api.send();
+  const sendRequest = app.sent.at(-1)!.data;
+  assert.equal(sendRequest.method, 'send');
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: sendRequest.request_id, result: { session_id: 'first' } });
+  await sent;
+  assert.equal(app.hosts[0].getElementById('panel').classList.contains('open'), false);
+  app.api.destroy();
+});
+
+test('newConversation waits for the new composer and queues subsequent commands for it', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const old = assert.rejects(app.api.chatSync('old'), /会话已切换/);
+  const created = app.api.newConversation();
+  const request = app.sent.at(-1)!.data;
+  assert.equal(request.method, 'newConversation');
+  const queued = app.api.setInput('new draft');
+  assert.equal(app.sent.at(-1)!.data.request_id, request.request_id);
+  let settled = false;
+  created.then(() => { settled = true; });
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: request.request_id, result: { session_id: 'second' } });
+  await old;
+  app.message({ type: 'xpeech:interaction-unavailable', session_id: 'first' });
+  await tick();
+  assert.equal(settled, false);
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'second' });
+  assert.equal((await created).session_id, 'second');
+  const draft = app.sent.at(-1)!.data;
+  assert.equal(draft.method, 'setInput');
+  assert.equal(draft.session_id, 'second');
+  app.message({ type: 'xpeech:response', session_id: 'second', request_id: draft.request_id, result: { session_id: 'second' } });
+  await queued;
+  assert.equal(app.frames.length, 1);
+  app.api.destroy();
+});
+
+test('failed newConversation releases queued commands, and destroy rejects an unfinished switch', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const failed = assert.rejects(app.api.newConversation(), /无法新建/);
+  const request = app.sent.at(-1)!.data;
+  const draft = app.api.setInput('draft');
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: request.request_id, error: '无法新建' });
+  await failed;
+  const draftRequest = app.sent.at(-1)!.data;
+  assert.equal(draftRequest.method, 'setInput');
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: draftRequest.request_id, result: {} });
+  await draft;
+  const closed = assert.rejects(app.api.newConversation(), /关闭/);
+  const switching = app.sent.at(-1)!.data;
+  app.message({ type: 'xpeech:response', session_id: 'first', request_id: switching.request_id, result: { session_id: 'second' } });
+  app.api.destroy();
+  await closed;
 });
 
 test('download requests use the trusted iframe and propagate errors without opening the panel', async () => {

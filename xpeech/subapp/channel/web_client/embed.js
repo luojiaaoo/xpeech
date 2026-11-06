@@ -33,8 +33,9 @@ var pendingRequests = new Map();
 var replyListeners = new Set();
 var chatFileListeners = new Set();
 
-function rejectRequests(message, sentOnly = false) {
+function rejectRequests(message, sentOnly = false, keepRequestId = null) {
   pendingRequests.forEach(function (pending, id) {
+    if (id === keepRequestId) return;
     if (sentOnly && !pending.sent) return;
     clearTimeout(pending.timer);
     pendingRequests.delete(id);
@@ -43,12 +44,16 @@ function rejectRequests(message, sentOnly = false) {
 }
 function flushRequests() {
   if (!frame || !interactionSession || !verifiedJWT) return;
-  pendingRequests.forEach(function (pending) {
-    if (pending.sent) return;
+  for (var pending of pendingRequests.values()) {
+    if (pending.sent) {
+      if (pending.data.method === 'newConversation') return;
+      continue;
+    }
     pending.sent = true;
     pending.sessionId = interactionSession;
     frame.contentWindow.postMessage(Object.assign({}, pending.data, { session_id: interactionSession }), origin);
-  });
+    if (pending.data.method === 'newConversation') return;
+  }
 }
 function requestInteraction(method, text, options = {}) {
   if (!identityConfigured) return Promise.reject(new Error('请先调用 init()'));
@@ -63,7 +68,7 @@ function requestInteraction(method, text, options = {}) {
     return Promise.reject(new TypeError('文件路径不能为空'));
   }
   var files = [];
-  if (method === 'chatSync' && options.files !== undefined) {
+  if ((method === 'chatSync' || method === 'addFiles') && options.files !== undefined) {
     if (!Array.isArray(options.files)) return Promise.reject(new TypeError('files 必须为 File 数组'));
     files = Array.from(options.files);
     if (!files.every(function (file) { return file instanceof File; })) {
@@ -85,6 +90,7 @@ function requestInteraction(method, text, options = {}) {
       timer: setTimeout(function () {
         pendingRequests.delete(id);
         reject(new Error('iframe 交互超时'));
+        flushRequests();
       }, timeout)
     };
     pendingRequests.set(id, pending);
@@ -93,6 +99,15 @@ function requestInteraction(method, text, options = {}) {
   });
 }
 function setInput(text, options) { return requestInteraction('setInput', text, options); }
+function addFiles(files, options = {}) {
+  if (!Array.isArray(files)) return Promise.reject(new TypeError('files 必须为 File 数组'));
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    return Promise.reject(new TypeError('options 必须为对象'));
+  }
+  return requestInteraction('addFiles', '', Object.assign({}, options, { files: files }));
+}
+function newConversation(options) { return requestInteraction('newConversation', '', options); }
+function send(options) { return requestInteraction('send', '', options); }
 function fileInfo(path) {
   var url = new URL('/api/files', origin);
   url.searchParams.set('path', path);
@@ -300,6 +315,13 @@ function onMessage(event) {
   } else if (data.type === "xpeech:interaction-ready" && typeof data.session_id === 'string') {
     if (interactionSession && interactionSession !== data.session_id) rejectRequests('会话已切换', true);
     interactionSession = data.session_id;
+    pendingRequests.forEach(function (pending, id) {
+      if (!pending.nextSessionId) return;
+      clearTimeout(pending.timer);
+      pendingRequests.delete(id);
+      if (pending.nextSessionId === interactionSession) pending.resolve({ session_id: interactionSession });
+      else pending.reject(new Error('会话已切换'));
+    });
     flushRequests();
   } else if (data.type === "xpeech:interaction-unavailable" && data.session_id === interactionSession) {
     interactionSession = null;
@@ -307,10 +329,18 @@ function onMessage(event) {
   } else if (data.type === "xpeech:response") {
     var pending = pendingRequests.get(data.request_id);
     if (!pending || !pending.sent || data.session_id !== pending.sessionId) return;
+    if (pending.data.method === 'newConversation' && typeof data.error !== 'string') {
+      if (!data.result || typeof data.result.session_id !== 'string' || !data.result.session_id) return;
+      pending.nextSessionId = data.result.session_id;
+      interactionSession = null;
+      rejectRequests('会话已切换', true, data.request_id);
+      return;
+    }
     clearTimeout(pending.timer);
     pendingRequests.delete(data.request_id);
     if (typeof data.error === 'string') pending.reject(new Error(data.error));
     else pending.resolve(data.result);
+    flushRequests();
   } else if (data.type === "xpeech:reply" && data.session_id === interactionSession && typeof data.content === 'string') {
     var reply = { session_id: data.session_id, content: data.content, request_id: data.request_id ?? null };
     replyListeners.forEach(function (listener) {
@@ -487,4 +517,4 @@ function destroy() {
   host = root = panel = launcher = closeButton = body = status = null;
 }
 
-export { init, hideButton, showButton, open, close, destroy, setInput, chatSync, downloadFile, getFile, onReply, onChatFile };
+export { init, hideButton, showButton, open, close, destroy, setInput, addFiles, newConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile };

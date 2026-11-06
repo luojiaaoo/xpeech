@@ -14,6 +14,12 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
   const [sessionId, setSessionId] = useState(() => embedded ? uuidv7() : MAIN_SESSION_ID);
   const title = embedded ? '临时会话' : '主会话';
 
+  function newConversation() {
+    const nextSessionId = uuidv7();
+    setSessionId(nextSessionId);
+    return nextSessionId;
+  }
+
   return (
     <section className={`chat-workspace${embedded ? ' chat-workspace-embedded' : ''}`} aria-label="会话工作区">
       {embedded ? (
@@ -22,7 +28,7 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
             className="new-conversation-button"
             type="text"
             icon={<PlusOutlined aria-hidden />}
-            onClick={() => setSessionId(uuidv7())}
+            onClick={newConversation}
           >
             新建会话
           </Button>
@@ -35,6 +41,7 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
             systemName={systemName}
             sessionId={sessionId}
             embedded={embedded}
+            onNewConversation={newConversation}
           />
         </Suspense>
       </section>

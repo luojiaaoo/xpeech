@@ -81,6 +81,40 @@ test('iframe bridge forwards binary attachments and rejects invalid files', asyn
   dispose();
 });
 
+test('composer commands validate the parent and session, preserve files and report send errors', async () => {
+  const app = await runtime();
+  const added: File[][] = [];
+  let sends = 0;
+  let conversations = 0;
+  const dispose = app.api.connectEmbedBridge('first', {
+    addFiles(files: File[]) { added.push(files); },
+    newConversation() { conversations++; return 'second'; },
+    send() {
+      if (sends++) throw new Error('正在回复');
+    },
+  });
+  const file = new File([new Uint8Array([128, 255])], '图片.png', { type: 'image/png' });
+  const request = { type: 'xpeech:request', request_id: '1', session_id: 'first', method: 'addFiles', text: '', files: [file] };
+  await app.message(request, 'https://attacker.test');
+  await app.message(request, 'https://portal.test', {});
+  await app.message({ ...request, session_id: 'old' });
+  assert.equal(added.length, 0);
+  await app.message(request);
+  assert.equal(added[0][0], file);
+  for (const files of [null, file, ['file.txt'], new Array(1)]) {
+    await app.message({ ...request, files });
+    assert.match(app.sent.at(-1).data.error, /files/);
+  }
+  await app.message({ ...request, method: 'send' });
+  assert.equal(app.sent.at(-1).data.result.session_id, 'first');
+  await app.message({ ...request, method: 'send' });
+  assert.match(app.sent.at(-1).data.error, /正在回复/);
+  await app.message({ ...request, method: 'newConversation' });
+  assert.equal(app.sent.at(-1).data.result.session_id, 'second');
+  assert.equal(conversations, 1);
+  dispose();
+});
+
 test('iframe bridge downloads event paths and reports download errors', async () => {
   const app = await runtime();
   const paths: string[] = [];

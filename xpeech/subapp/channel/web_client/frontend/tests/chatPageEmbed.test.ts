@@ -26,6 +26,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
   const Sender = { Header: 'SenderHeader' };
   let receiveStream!: (event: any) => void;
   let finishStream!: () => void;
+  const streamCalls: { text: string; files: File[]; options: any }[] = [];
   const exports: Record<string, Record<string, any>> = {
     react: {
       lazy: () => 'Lazy', Suspense: 'Suspense',
@@ -42,7 +43,8 @@ test('dialog files notify the parent while sync files stay in the result, and no
     ].map(name => [name, name])),
     './api': {
       getFile() {}, downloadFile() {},
-      async streamChat(_text: string, _files: File[], receive: (event: any) => void) {
+      async streamChat(text: string, files: File[], receive: (event: any) => void, options: any) {
+        streamCalls.push({ text, files, options });
         receiveStream = receive;
         receive({ event: 'send_file', context: 'reports/对话框.pdf' });
         await new Promise<void>(resolve => { finishStream = resolve; });
@@ -68,18 +70,34 @@ test('dialog files notify the parent while sync files stay in the result, and no
     }, { context });
   });
   await component.evaluate();
-  const tree = (component.namespace.default as Function)({ systemName: '助手', sessionId: 'first', embedded: true });
+  let newConversations = 0;
+  (component.namespace.default as Function)({
+    systemName: '助手', sessionId: 'first', embedded: true,
+    onNewConversation() { newConversations++; return 'second'; },
+  });
   const disposeBridge = effects[0]();
   const disposeRequests = effects[1]();
-  function findSender(node: any): any {
-    if (!node || typeof node !== 'object') return;
-    if (node.type === Sender) return node;
-    for (const child of [node.props?.children].flat()) {
-      const sender = findSender(child);
-      if (sender) return sender;
-    }
+  let commandId = 0;
+  async function command(method: string, data: any = {}) {
+    const requestId = String(++commandId);
+    await Promise.all([...listeners].map(receive => receive({
+      source: parent, origin: 'https://portal.test',
+      data: { type: 'xpeech:request', method, text: '', request_id: requestId, session_id: 'first', ...data },
+    })));
+    return sent.find(item => item.data.type === 'xpeech:response' && item.data.request_id === requestId).data;
   }
-  findSender(tree).props.onSubmit('生成对话框文件');
+  assert.match((await command('send')).error, /不能为空/);
+  const first = new File(['first'], 'first.txt');
+  const second = new File(['second'], 'second.txt');
+  await command('addFiles', { files: [first] });
+  await command('addFiles', { files: [second] });
+  await command('setInput', { text: '生成对话框文件' });
+  assert.equal((await command('send')).result.session_id, 'first');
+  assert.equal(streamCalls.length, 1);
+  assert.equal(streamCalls[0].text, '生成对话框文件');
+  assert.deepEqual(Array.from(streamCalls[0].files), [first, second]);
+  assert.equal(streamCalls[0].options.sessionId, 'first');
+  assert.match((await command('send')).error, /正在回复/);
   await Promise.all([...listeners].map(receive => receive({
     source: parent, origin: 'https://portal.test',
     data: { type: 'xpeech:request', method: 'chatSync', text: '生成 sync 文件', request_id: 'sync-1', session_id: 'first' },
@@ -92,9 +110,18 @@ test('dialog files notify the parent while sync files stay in the result, and no
   assert.equal(sync.data.result.events[1].event, 'send_file');
   assert.equal(sync.data.result.events[1].context, 'reports/sync.pdf');
   assert.ok(files.every(item => item.data.session_id === 'first' && item.origin === 'https://portal.test'));
+  finishStream();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.match((await command('send')).error, /不能为空/);
+  await command('addFiles', { files: [first] });
+  await command('send');
+  assert.equal(streamCalls[1].text, '');
+  assert.deepEqual(Array.from(streamCalls[1].files), [first]);
+  assert.equal((await command('newConversation')).result.session_id, 'second');
+  assert.equal(newConversations, 1);
   disposeRequests();
   receiveStream({ event: 'send_file', context: 'stale.pdf' });
-  assert.equal(sent.filter(item => item.data.type === 'xpeech:file').length, 1);
+  assert.equal(sent.filter(item => item.data.type === 'xpeech:file').length, 2);
   finishStream();
   await new Promise<void>(resolve => setImmediate(resolve));
   disposeBridge();

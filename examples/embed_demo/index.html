@@ -69,15 +69,18 @@
     <button id="toggle" class="secondary" disabled>退出演示登录</button>
     <label for="prompt">主页面交互内容</label>
     <textarea id="prompt" rows="3">请介绍一下你能做什么</textarea>
-    <label for="files">后台请求附件（可多选）</label>
+    <label for="files">请求附件（可多选）</label>
     <input id="files" type="file" multiple disabled>
     <button id="generate-file" class="secondary" disabled>添加 JS 示例文件</button>
     <button id="clear-files" class="secondary" disabled>清空附件</button>
     <p id="selected-files" class="file-hint">未选择附件</p>
     <button id="fill" class="secondary" disabled>填入对话输入框</button>
+    <button id="add-chat-files" class="secondary" disabled>插入附件到对话框</button>
+    <button id="new-conversation" class="secondary" disabled>新建会话</button>
+    <button id="send-chat" disabled>发送对话框内容</button>
     <button id="sync" disabled>同步发送（纯后台）</button>
     <p class="test-notice">同步发送是纯后台交互：不展开聊天窗口，消息和回复都不渲染到对话框，
-      结果只回传主页面。附件仅随同步请求上传，不会填入聊天框；有附件时文字可留空。
+      结果只回传主页面。「插入附件到对话框」可追加所选文件，再点击「发送对话框内容」发送；有附件时文字可留空。
       可输入「分析附件并生成报告文件」测试文件上传和下载。</p>
     <h2 class="log-title">模型回复展示</h2>
     <div class="reply-boxes">
@@ -120,6 +123,9 @@
     const open = document.querySelector('#open');
     const toggle = document.querySelector('#toggle');
     const fill = document.querySelector('#fill');
+    const addChatFiles = document.querySelector('#add-chat-files');
+    const newConversation = document.querySelector('#new-conversation');
+    const sendChat = document.querySelector('#send-chat');
     const sync = document.querySelector('#sync');
     const prompt = document.querySelector('#prompt');
     const replies = document.querySelector('#replies');
@@ -277,7 +283,7 @@
       fileInput.disabled = generateFile.disabled = filePath.disabled = downloadPath.disabled = false;
       showAttachments();
       open.disabled = false;
-      fill.disabled = sync.disabled = false;
+      fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = false;
       toggle.textContent = '退出演示登录';
       status.textContent = '演示用户已登录，聊天组件自动获取并续签凭证。';
     }
@@ -292,7 +298,7 @@
       }
       connectionVersion++;
       service.disabled = channel.disabled = secretKey.disabled = connect.disabled = true;
-      open.disabled = fill.disabled = sync.disabled = toggle.disabled = true;
+      open.disabled = fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = toggle.disabled = true;
       loggedIn = false;
       fileInput.disabled = generateFile.disabled = filePath.disabled = downloadPath.disabled = true;
       resetFiles();
@@ -381,6 +387,25 @@
           if (version === connectionVersion) status.textContent = '已填入输入框，等待用户发送。';
         } catch (error) { if (version === connectionVersion) status.textContent = error.message; }
       });
+      for (const [button, action, success] of [
+        [addChatFiles, () => assistant.addFiles([...attachments]), '已追加附件到对话框，等待发送。'],
+        [newConversation, () => assistant.newConversation(), '已新建会话，输入框和附件已清空。'],
+        [sendChat, () => assistant.send(), '已开始发送对话框内容，回复将显示在聊天窗口。'],
+      ]) {
+        button.addEventListener('click', async () => {
+          const version = connectionVersion;
+          button.disabled = true;
+          try {
+            assistant.open();
+            await action();
+            if (version === connectionVersion) status.textContent = success;
+          } catch (error) {
+            if (version === connectionVersion) status.textContent = error.message;
+          } finally {
+            if (version === connectionVersion && loggedIn) button.disabled = false;
+          }
+        });
+      }
       sync.addEventListener('click', async () => {
         const version = connectionVersion;
         const uploadFiles = attachments.slice();
@@ -422,7 +447,7 @@
           fileInput.disabled = generateFile.disabled = filePath.disabled = downloadPath.disabled = true;
           resetFiles();
           open.disabled = true;
-          fill.disabled = sync.disabled = true;
+          fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = true;
           toggle.textContent = '重新登录演示';
           status.textContent = '已退出演示登录，聊天组件已销毁。';
         } else login();

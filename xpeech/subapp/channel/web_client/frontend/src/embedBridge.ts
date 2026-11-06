@@ -15,6 +15,9 @@ export function postToParent(data: Record<string, unknown>) {
 /** Mounted only after authentication and the conversation composer are ready. */
 export function connectEmbedBridge(sessionId: string, handlers: {
   setInput: (text: string) => void;
+  addFiles: (files: File[]) => void;
+  newConversation: () => string;
+  send: () => void;
   chatSync: (text: string, options: SyncOptions) => Promise<ChatEvent[]>;
   downloadFile: (path: string, signal?: AbortSignal) => Promise<void>;
   getFile: (path: string, signal?: AbortSignal) => Promise<File>;
@@ -36,10 +39,21 @@ export function connectEmbedBridge(sessionId: string, handlers: {
       if (data.method === 'setInput') {
         handlers.setInput(data.text);
         respond({ result: { session_id: sessionId } });
-      } else if (data.method === 'chatSync') {
+      } else if (data.method === 'newConversation') {
+        const nextSessionId = handlers.newConversation();
+        respond({ result: { session_id: nextSessionId } });
+      } else if (data.method === 'send') {
+        handlers.send();
+        respond({ result: { session_id: sessionId } });
+      } else if (data.method === 'chatSync' || data.method === 'addFiles') {
         const files = data.files === undefined ? [] : data.files;
         if (!Array.isArray(files) || !Array.from(files).every((file) => file instanceof File)) {
           throw new Error('files 必须为 File 数组');
+        }
+        if (data.method === 'addFiles') {
+          handlers.addFiles(files);
+          respond({ result: { session_id: sessionId } });
+          return;
         }
         if (!data.text.trim() && files.length === 0) throw new Error('消息不能为空');
         const events = await handlers.chatSync(data.text, {
