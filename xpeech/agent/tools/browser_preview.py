@@ -32,7 +32,7 @@ def build_browser_preview_tool(
         For a directory, the returned URL opens navigation for the copied directory;
         it does not select a particular file. To open a specific file, append its path
         relative to the copied directory, for example `<preview_url>pages/index.html`.
-        For a single HTML file, the returned URL is the complete file URL.
+        For a single HTML file only without assets, the returned URL is the complete file URL.
 
         Args:
             path: A directory containing assets and HTML files, or a single HTML file.
