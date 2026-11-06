@@ -1,7 +1,5 @@
 ARG GO_VERSION=1.27.3
-FROM docker.1ms.run/library/golang:${GO_VERSION}-bookworm AS go-toolchain
-
-FROM docker.1ms.run/library/golang:1.23-bookworm AS lark-cli-builder
+FROM docker.1ms.run/library/golang:${GO_VERSION}-bookworm AS lark-cli-builder
 
 ENV GOPROXY=https://goproxy.cn,direct \
     UV_PYTHON=3.12 \
@@ -41,7 +39,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM docker.1panel.live/library/ubuntu:22.04
 
-COPY --from=go-toolchain /usr/local/go /usr/local/go
+COPY --from=lark-cli-builder /usr/local/go /usr/local/go
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
