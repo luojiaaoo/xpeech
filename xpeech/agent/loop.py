@@ -237,8 +237,8 @@ class AgentLoop:
                 # 发送文件
                 logger.info("Sending file {}", result)
                 yield {"event": "send_file", "context": result}
-                append_tool_result_messages_yaml(tool_call, result)
-                tool_result_content = f"已发送：{result}"
+                tool_result_content = f"文件已发送：{result}"
+                append_tool_result_messages_yaml(tool_call, tool_result_content)
             elif tool_call.name == "ask_user_question" and success:
                 # 等待用户输入
                 logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
