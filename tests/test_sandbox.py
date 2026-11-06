@@ -14,23 +14,21 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 
-from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.server.context import lark_user_access_token_var, user_id_var
-from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR
 from xpeech.agent.skills import skill as skill_module
+from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR, SkillsLoader
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import safe_resolve_workspace_path
-from xpeech.agent.tools.shell import tool as shell_module
-from xpeech.agent.tools.shell.session import SandboxManager
-from xpeech.agent.tools.shell.tool import _run_wrapped_command
 from xpeech.exceptions import PathProtectionError
 from xpeech.utils.security import sandbox
+from xpeech.utils.security.sandbox import executor as executor_module
+from xpeech.utils.security.sandbox.session import SandboxManager
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def shell_sessions(monkeypatch):
     manager = SandboxManager()
-    monkeypatch.setattr(shell_module, "sandbox_manager", manager)
+    monkeypatch.setattr(executor_module, "sandbox_manager", manager)
     try:
         yield manager
     finally:
@@ -580,7 +578,7 @@ try {
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
     monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
 
-    result = await _run_wrapped_command(
+    result = await executor_module.sandbox_manager.run(
         "npm install --offline --ignore-scripts --no-audit --no-fund && npm run build && "
         "npx --offline --no-install sandbox-local-bin",
         workspace, timeout_ms=20_000, skills_loader=SkillsLoader(workspace),
@@ -629,7 +627,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
         + ("true" if termination == "exit" else "sleep 30")
     )
     task = asyncio.create_task(
-        _run_wrapped_command(command, workspace, timeout_ms=1_000 if termination == "timeout" else 10_000, skills_loader=SkillsLoader(workspace))
+        executor_module.sandbox_manager.run(command, workspace, timeout_ms=1_000 if termination == "timeout" else 10_000, skills_loader=SkillsLoader(workspace))
     )
     if termination == "cancel":
         try:

@@ -8,11 +8,12 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent import loop as loop_module
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.server.routes.chat import answer_question
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
+from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.ask_user_question import QuestionArgs, ask_user_question
 from xpeech.agent.tools.execution_request import (
     EXECUTION_REQUEST,
@@ -22,12 +23,13 @@ from xpeech.agent.tools.execution_request import (
 )
 from xpeech.agent.tools.helper import as_tool
 from xpeech.agent.tools.mcp_client import create_mcp_registration
-from xpeech.agent.tools.shell import tool as shell_module
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
 from xpeech.subapp.channel.feishu.cards import build_feishu_question_card
 from xpeech.utils.question import validate_confirm_question_json, validate_question_form_json
 from xpeech.utils.security import dcg as dcg_module
+from xpeech.utils.security import sandbox
+from xpeech.utils.security.sandbox import executor as executor_module
 
 
 class CommandArgs(BaseModel):
@@ -107,12 +109,12 @@ def test_noninteractive_wrapper_requires_confirmation_callback_at_registration(k
 @pytest.mark.asyncio
 @pytest.mark.parametrize("command", ["shutdown -h now", "reboot", "poweroff", "init 6", "telinit 0"])
 async def test_power_commands_are_rejected_without_prompting(tmp_path, monkeypatch, command):
-    monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(executor_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
     initialize = AsyncMock()
     execute = AsyncMock()
-    monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", initialize)
-    monkeypatch.setattr(shell_module, "_run_wrapped_command", execute)
+    monkeypatch.setattr(executor_module.SandboxExecutor, "ensure_python_environment", initialize)
+    monkeypatch.setattr(executor_module.sandbox_manager, "run", execute)
     process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(b'{"decision":"deny"}', b"")))
     monkeypatch.setattr(dcg_module.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
     current_provider = provider()
@@ -137,12 +139,12 @@ async def test_power_commands_are_rejected_without_prompting(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_shell_checks_once_before_confirmed_execution(tmp_path, monkeypatch):
-    monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(executor_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
     initialize = AsyncMock()
-    execute = AsyncMock(return_value=shell_module.ShellCommandResult(b"removed", b"", 0))
-    monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", initialize)
-    monkeypatch.setattr(shell_module, "_run_wrapped_command", execute)
+    execute = AsyncMock(return_value=sandbox.CommandResult(b"removed", b"", 0))
+    monkeypatch.setattr(executor_module.SandboxExecutor, "ensure_python_environment", initialize)
+    monkeypatch.setattr(executor_module.sandbox_manager, "run", execute)
     process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(b'{"decision":"ask"}', b"")))
     check = AsyncMock(return_value=process)
     monkeypatch.setattr(dcg_module.asyncio, "create_subprocess_exec", check)
@@ -595,9 +597,9 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
 @pytest.mark.parametrize(
     ("existing_names", "custom_name"),
     [
-        (["name"], "user_customization"),
-        ([], "user_customization"),
-        (["user_customization", "user_customization_1"], "user_customization_2"),
+        (["name"], "user_customization_input"),
+        ([], "user_customization_input"),
+        (["user_customization_input", "user_customization_input_1"], "user_customization_input_2"),
     ],
 )
 async def test_existing_ask_user_question_still_returns_user_answer(tmp_path, existing_names, custom_name):

@@ -10,9 +10,15 @@ class QuestionArgs(StrictBaseModel):
 
     def validate_and_format(self) -> str:
         question = validate_question_form_json(self.question)
+        existing_names = {field["name"] for field in question["fields"]}
+        custom_name = "user_customization_input"
+        suffix = 1
+        while custom_name in existing_names:
+            custom_name = f"user_customization_input_{suffix}"
+            suffix += 1
         question["fields"].append(
             InputField(
-                name="user_customization_input",
+                name=custom_name,
                 label="补充说明",
                 placeholder="填写其他想法或补充信息（选填）",
             ).model_dump()

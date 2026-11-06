@@ -12,11 +12,11 @@ from pathlib import Path
 
 from loguru import logger
 
+from ....agent.server.context import get_lark_user_access_token, get_user_id
+from ....agent.skills.skill import SkillsLoader
 from ....config.settings import settings
-from ....utils.security import sandbox
-from ...server.context import get_lark_user_access_token, get_user_id
-from ...skills.skill import SkillsLoader
-from .schema import ShellCommandResult
+from .isolation import wrap_sandbox_command
+from .schema import DEFAULT_EXEC_TIMEOUT_MS, CommandResult
 
 _WORKER_SOURCE = (Path(__file__).parent / "scripts" / "worker.py").read_text(encoding="utf-8")
 SandboxScope = tuple[str | None, Path]
@@ -47,7 +47,7 @@ class SandboxSession:
         self.idle_task = None
         self.wrapped_command: list[str] | None = None
         self.reader_task = None
-        self.pending: dict[int, asyncio.Future[ShellCommandResult]] = {}
+        self.pending: dict[int, asyncio.Future[CommandResult]] = {}
         self.next_request_id = 0
         self.retired = False
 
@@ -56,7 +56,7 @@ class SandboxSession:
         # The backend venv is deliberately not mounted. Use its base interpreter
         # and expose only that runtime when installed outside /usr or /opt.
         python = Path(sys._base_executable).resolve()
-        command = await sandbox.wrap_sandbox_command(
+        command = await wrap_sandbox_command(
             [str(python), "-I", "-u", "-c", _WORKER_SOURCE], self.workspace, skills_loader=skills_loader,
         )
         runtime = Path(sys.base_prefix).resolve()
@@ -145,7 +145,7 @@ class SandboxSession:
                     response.set_exception(RuntimeError(message["error"]))
                 else:
                     response.set_result(
-                        ShellCommandResult(
+                        CommandResult(
                             base64.b64decode(message["stdout"]),
                             base64.b64decode(message["stderr"]),
                             message["returncode"],
@@ -164,7 +164,7 @@ class SandboxSession:
 
     async def execute(
         self, command: str, timeout_ms: int, *, skills_loader: SkillsLoader,
-    ) -> ShellCommandResult:
+    ) -> CommandResult:
         # Only lifecycle changes and writes share the lock, never command waits.
         async with self.lock:
             await self.start(skills_loader)
@@ -194,7 +194,10 @@ class SandboxSession:
                 raise
         try:
             async with asyncio.timeout(timeout_ms / 1000 + 5):
-                return await asyncio.shield(response)
+                result = await asyncio.shield(response)
+            if result.timed_out:
+                logger.error("Shell command timed out after {}ms; terminating command process group", timeout_ms)
+            return result
         except asyncio.CancelledError:
             try:
                 async with self.lock:
@@ -245,8 +248,8 @@ class SandboxManager:
                 session.idle_task = asyncio.create_task(self._expire(scope, session))
 
     async def run(
-        self, command: str, workspace: Path, timeout_ms: int, *, skills_loader: SkillsLoader,
-    ) -> ShellCommandResult:
+        self, command: str, workspace: Path, timeout_ms: int = DEFAULT_EXEC_TIMEOUT_MS, *, skills_loader: SkillsLoader,
+    ) -> CommandResult:
         async with self.use(workspace) as session:
             return await session.execute(command, timeout_ms, skills_loader=skills_loader)
 
@@ -289,5 +292,5 @@ class SandboxManager:
 sandbox_manager = SandboxManager()
 
 
-async def close_all_shell_sandboxes() -> None:
+async def close_all_sandboxes() -> None:
     await sandbox_manager.close()

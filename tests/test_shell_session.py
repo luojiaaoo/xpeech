@@ -12,12 +12,14 @@ from pydantic import ValidationError
 from xpeech.agent.server.context import lark_user_access_token_var, session_id_var, user_id_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
-from xpeech.agent.tools.shell import tool as shell_module
-from xpeech.agent.tools.shell import session as session_module
-from xpeech.agent.tools.shell.schema import ShellArgs, ShellCommandResult
-from xpeech.agent.tools.shell.session import SandboxConnectionError, SandboxManager, SandboxSession
+from xpeech.agent.tools import shell as shell_module
+from xpeech.agent.tools.shell import ShellArgs
 from xpeech.config.settings import Settings, ShellConfig, ToolConfig
 from xpeech.utils.security import sandbox
+from xpeech.utils.security.sandbox import CommandResult
+from xpeech.utils.security.sandbox import executor as executor_module
+from xpeech.utils.security.sandbox import session as session_module
+from xpeech.utils.security.sandbox.session import SandboxConnectionError, SandboxManager, SandboxSession
 
 
 def test_existing_tool_configs_keep_the_default_sandbox_lifetime():
@@ -211,7 +213,7 @@ async def test_sandbox_rebuild_waits_for_pending_commands(stubbed_sandbox):
         assert not task.done()
         assert spawn.await_count == 1
         async with session.lock:
-            response.set_result(ShellCommandResult(b"finished", b"", 0))
+            response.set_result(CommandResult(b"finished", b"", 0))
             session.pending.pop(0)
             session.drained.notify_all()
         await asyncio.wait_for(task, 1)
@@ -302,7 +304,7 @@ async def test_request_credentials_are_refreshed_without_replaying_commands(tmp_
 
     async def send(request):
         requests.append(request)
-        session.pending[request["id"]].set_result(ShellCommandResult(b"", b"", 0))
+        session.pending[request["id"]].set_result(CommandResult(b"", b"", 0))
 
     monkeypatch.setattr(session, "start", start)
     monkeypatch.setattr(session, "send", send)
@@ -342,12 +344,12 @@ async def test_concurrent_first_shell_calls_share_initialization_then_execute_in
         else:
             executing.put_nowait(command)
             await finish.wait()
-        return ShellCommandResult(command.encode(), b"", 0)
+        return CommandResult(command.encode(), b"", 0)
 
-    monkeypatch.setattr(shell_module, "sandbox_manager", manager)
-    monkeypatch.setattr(shell_module, "_run_wrapped_command", run)
-    monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(executor_module, "sandbox_manager", manager)
+    monkeypatch.setattr(executor_module.sandbox_manager, "run", run)
+    monkeypatch.setattr(executor_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
     first_shell = shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
     second_shell = shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
     first = asyncio.create_task(first_shell(ShellArgs(command="first")))

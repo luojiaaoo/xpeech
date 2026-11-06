@@ -7,6 +7,7 @@ from typing import Annotated
 
 import pytest
 import pytest_asyncio
+from loguru import logger
 from openai import pydantic_function_tool
 from pydantic import BaseModel, Field, ValidationError, create_model
 
@@ -14,20 +15,21 @@ from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
-from xpeech.agent.tools.shell import build_shell_tools
-from xpeech.agent.tools.shell import tool as shell_module
-from xpeech.agent.tools.shell.schema import MAX_EXEC_TIMEOUT_MS, ShellArgs, ShellCommandResult
-from xpeech.agent.tools.shell.session import SandboxManager
-from xpeech.agent.tools.shell.tool import _format_command_output, _guard_command, _run_wrapped_command
+from xpeech.agent.tools.shell import MAX_EXEC_TIMEOUT_MS, ShellArgs, _format_command_output, build_shell_tools
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 from xpeech.provider.schema import ToolCallRequest
 from xpeech.utils.security import sandbox
+from xpeech.utils.security.sandbox import CommandResult
+from xpeech.utils.security.sandbox import executor as executor_module
+from xpeech.utils.security.sandbox import policy as policy_module
+from xpeech.utils.security.sandbox.policy import guard_command as _guard_command
+from xpeech.utils.security.sandbox.session import SandboxManager
 
 
 @pytest_asyncio.fixture
 async def shell_session_manager(monkeypatch):
     manager = SandboxManager()
-    monkeypatch.setattr(shell_module, "sandbox_manager", manager)
+    monkeypatch.setattr(executor_module, "sandbox_manager", manager)
     try:
         yield manager
     finally:
@@ -171,7 +173,7 @@ class TestToolExecutor:
             return command.endswith("blocked_test_command")
 
         monkeypatch.setitem(
-            shell_module.SHELL_BLOCK_RULES,
+            policy_module.SHELL_BLOCK_RULES,
             is_blocked,
             "Custom command is prohibited.",
         )
@@ -213,8 +215,8 @@ class TestToolExecutor:
         workspace.mkdir(parents=True)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("HOME", str(tmp_path / "backend-home"))
-        monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(executor_module.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
 
         assert build_shell_tools(workspace, skills_loader=SkillsLoader(workspace)).__name__ == "shell"
 
@@ -228,13 +230,13 @@ class TestToolExecutor:
     ):
         logged_errors: list[str] = []
         monkeypatch.setattr(
-            shell_module.logger,
+            logger,
             "error",
             lambda message, *args: logged_errors.append(message.format(*args)),
         )
 
         result = await asyncio.wait_for(
-            _run_wrapped_command("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500, skills_loader=SkillsLoader(tmp_path)),
+            executor_module.sandbox_manager.run("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500, skills_loader=SkillsLoader(tmp_path)),
             timeout=5,
         )
 
@@ -260,7 +262,7 @@ class TestToolExecutor:
     @pytest.mark.asyncio
     async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, shell_session_manager):
 
-        result = await _run_wrapped_command("printf done", tmp_path, timeout_ms=1_000, skills_loader=SkillsLoader(tmp_path))
+        result = await executor_module.sandbox_manager.run("printf done", tmp_path, timeout_ms=1_000, skills_loader=SkillsLoader(tmp_path))
 
         assert result.stdout == b"done"
         assert result.returncode == 0
@@ -268,21 +270,21 @@ class TestToolExecutor:
 
     @pytest.mark.asyncio
     async def test_shell_timeout_result_is_limited_normally(self, tmp_path: Path, monkeypatch):
-        async def skip_venv(_workspace: Path, **_kwargs) -> None:
+        async def skip_venv(_executor, **_kwargs) -> None:
             return None
 
-        async def timed_out_command(*_args, **_kwargs) -> ShellCommandResult:
-            return ShellCommandResult(
+        async def timed_out_command(*_args, **_kwargs) -> CommandResult:
+            return CommandResult(
                 stdout=b"partial output\n",
                 stderr=b"still running\n",
                 returncode=-9,
                 timed_out=True,
             )
 
-        monkeypatch.setattr(shell_module.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(shell_module.shutil, "which", lambda name: f"/usr/bin/{name}")
-        monkeypatch.setattr(shell_module, "_ensure_workspace_uv_venv", skip_venv)
-        monkeypatch.setattr(shell_module, "_run_wrapped_command", timed_out_command)
+        monkeypatch.setattr(executor_module.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(executor_module.SandboxExecutor, "ensure_python_environment", skip_venv)
+        monkeypatch.setattr(executor_module.sandbox_manager, "run", timed_out_command)
         shell = build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
 
         [result] = [

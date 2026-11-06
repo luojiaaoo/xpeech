@@ -13,7 +13,7 @@ from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import mcp_client, registry
 from xpeech.agent.tools.execution_request import EXECUTION_REQUEST, ExecutionDecision
 from xpeech.agent.tools.helper import get_tool_model_cls
-from xpeech.agent.tools.shell.schema import ShellArgs
+from xpeech.agent.tools.shell import ShellArgs
 from xpeech.config.settings import ToolConfig
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
