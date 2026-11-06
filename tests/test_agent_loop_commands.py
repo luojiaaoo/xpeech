@@ -10,6 +10,11 @@ from xpeech.agent.server.schema import InboundMessage, InputText
 from xpeech.provider.schema import LLMResponse
 
 
+@pytest.fixture(autouse=True)
+def request_context(monkeypatch):
+    monkeypatch.setattr(loop_module, "get_request_id", lambda: "00000000-0000-4000-8000-000000000001")
+
+
 def make_response(content: str) -> LLMResponse:
     async def chunks():
         yield "content", content

@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import yaml
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel, select
@@ -59,7 +60,10 @@ class TestSqliteConversationRecordRepository:
         first_created_at = datetime(2026, 8, 19, 1, 2, 3, tzinfo=UTC)
         second_created_at = datetime(2026, 8, 19, 1, 3, 4, tzinfo=UTC)
         record = ConversationRecord(
-            user_id="session-1",
+            user_id="user-1",
+            channel="test",
+            session_id="default",
+            request_id="00000000-0000-4000-8000-000000000001",
             sender_name="张三",
             user_question="你好",
             model_response="你好！",
@@ -70,7 +74,10 @@ class TestSqliteConversationRecordRepository:
             duration_s=1.25,
         )
         second_record = ConversationRecord(
-            user_id="session-2",
+            user_id="user-1",
+            channel="test",
+            session_id="018f0000-0000-7000-8000-000000000001",
+            request_id="00000000-0000-4000-8000-000000000002",
             sender_name="张三",
             user_question="再见",
             model_response="再见！",
@@ -101,12 +108,17 @@ class TestSqliteConversationRecordRepository:
         assert {
             "ix_conversation_records_sender_session_record",
             "ix_conversation_records_created_sender_session",
+            "ix_conversation_records_session_id",
+            "ix_conversation_records_request_id",
         } <= indexes
         assert ConversationRecord.metadata is not SQLModel.metadata
         assert records == [
             ConversationRecord(
                 id=1,
-                user_id="session-1",
+                user_id="user-1",
+                channel="test",
+                session_id="default",
+                request_id="00000000-0000-4000-8000-000000000001",
                 sender_name="张三",
                 user_question="你好",
                 model_response="你好！",
@@ -118,7 +130,10 @@ class TestSqliteConversationRecordRepository:
             ),
             ConversationRecord(
                 id=2,
-                user_id="session-2",
+                user_id="user-1",
+                channel="test",
+                session_id="018f0000-0000-7000-8000-000000000001",
+                request_id="00000000-0000-4000-8000-000000000002",
                 sender_name="张三",
                 user_question="再见",
                 model_response="再见！",
@@ -218,6 +233,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     async def count_test_tokens(self, messages):
         return 10
 
+    monkeypatch.setattr(loop_module, "get_request_id", lambda: "00000000-0000-4000-8000-000000000003")
     monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", count_test_tokens)
 
@@ -245,6 +261,11 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         files=[],
     )
 
+    await agent_loop.history.save(
+        message.user_id, message.session_id,
+        [{"role": "user", "content": "previous question"}, {"role": "assistant", "content": "previous answer"}],
+        channel=message.channel,
+    )
     started_at = datetime.now(UTC)
     events = [event async for event in agent_loop.run(message)]
     completed_at = datetime.now(UTC)
@@ -270,6 +291,18 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     record = records[0]
     assert record.id == 1
     assert record.user_id == "session"
+    assert record.request_id == "00000000-0000-4000-8000-000000000003"
+    archive_path = tmp_path / "record" / f"{record.request_id}.yaml"
+    archive = yaml.safe_load(archive_path.read_text())
+    assert [item["role"] for item in archive] == ["user", "assistant", "tool", "assistant"]
+    assert "first question" in str(archive[0]["content"])
+    assert archive[1]["tool_calls"][0]["function"]["name"] == "fake_tool"
+    assert archive[2] == {"role": "tool", "tool_call_id": "call-1", "content": "tool result"}
+    assert archive[3] == {"role": "assistant", "content": "final answer"}
+    assert "previous question" not in archive_path.read_text()
+    assert "previous answer" not in archive_path.read_text()
+    assert record.session_id == message.session_id
+    assert record.channel == "test"
     assert record.sender_name == "alice"
     assert record.user_question == "first question\nsecond line"
     assert record.model_response == "final answer"

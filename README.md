@@ -545,11 +545,13 @@ API 不再通过 `json_output` 表单参数控制输出格式，仅按本次消�
 
 每次成功完成的普通对话都会通过 SQLModel 追加到统一的
 `session_record_path` 数据库文件。SQLite 表名为 `conversation_records`，
-包含 `user_id`、`sender_name`、`user_question`、`model_response`、`input_tokens`、
-`output_tokens`、`model_call_count`、`created_at` 和 `duration_s` 九个业务字段，以及 ORM 使用的自增
-`id`。`created_at` 是应用写入记录时的 UTC 时间，`duration_s` 是本轮 Agent 处理耗时（秒）。
+包含 `user_id`、`session_id`、`request_id`、`channel`、`sender_name`、`user_question`、`model_response`、
+`input_tokens`、`output_tokens`、`model_call_count`、`created_at` 和 `duration_s`，以及自增 `id`。`created_at` 是应用写入记录时的 UTC 时间，`duration_s` 是本轮 Agent 处理耗时（秒）。
 `session_record_path` 默认是
-`data/session/record.db`，可在 `conf.toml` 的 `[path]` 中覆盖。
+`data/session/record.db`，可在 `conf.toml` 的 `[path]` 中覆盖。每次问答新增的消息另存为
+`data/session/record/<request_id>.yaml`；目录取数据库路径去掉扩展名，文件名使用当前请求的 `request_id`。
+YAML 包含本轮用户消息、工具调用、工具结果和最终回答，不包含旧会话历史；上下文压缩前的本轮原始消息也会保留。
+大屏的会话查询结果支持逐条下载 YAML。
 
 对话记录、Web 用户与会话、飞书令牌的建表和业务读写统一使用 SQLModel；
 定时任务保留 APScheduler 自带的 SQLAlchemyJobStore，并接入公共 SQLite 连接配置。
@@ -588,12 +590,16 @@ session_schedule_path = "data/session/schedule.db"
 
 统计接口使用以 `jwt.secret_key` 签发的内部 Bearer JWT，统一位于 `/statistics`：
 
-- `GET /statistics`：问答量、活跃用户、会话数、模型调用次数、Token 和平均耗时总览。
+- `GET /statistics`：问答量、活跃用户（按 `user_id` 去重）、模型调用次数、Token 和平均耗时总览。
 - `GET /statistics/timeseries`：按 `hour`、`day`、`week` 或 `month` 返回使用趋势，默认使用
   `Asia/Shanghai` 时区分桶。
 - `GET /statistics/users`：按问答次数倒序返回用户统计。
-- `GET /statistics/sessions`：按最近活跃顺序返回会话统计。
+- `GET /statistics/sessions`：按最近活跃顺序返回用户统计，按 `user_id` 聚合。
 - `GET /statistics/records/latest?limit=20`：按 ID 倒序返回最新完整问答，供滚动大屏使用。
+- `GET /statistics/channels`：返回可查询的渠道；完整问答记录包含 `channel`。
+- `GET /statistics/records/<record_id>/yaml`：下载指定问答本轮新增消息的 `<request_id>.yaml` 文件。
+- `GET /statistics/records/export?channel=<channel>&user_id=<user_id>`：按渠道、用户和可选 `keyword` 导出全部匹配问答为 CSV；渠道必填。
+- `GET /statistics/records?channel=<channel>&user_id=<user_id>`：按渠道、用户和可选问题关键词 `keyword` 分页查询。
 - `GET /statistics/records?after_id=<id>`：按 ID 正序返回指定 ID 之后的完整问答，供大屏增量刷新使用。
 
 统计时间筛选使用左闭右开区间：`start_at <= created_at < end_at`。列表接口支持 `limit` 和

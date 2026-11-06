@@ -35,7 +35,6 @@ export type OAuth2PollResult =
 export interface StatisticsOverview {
   question_count: number;
   active_user_count: number;
-  session_count: number;
   model_call_count: number;
   input_tokens: number;
   output_tokens: number;
@@ -49,7 +48,6 @@ export interface StatisticsTimeseriesPoint {
   bucket: string;
   question_count: number;
   active_user_count: number;
-  session_count: number;
   model_call_count: number;
   input_tokens: number;
   output_tokens: number;
@@ -68,7 +66,6 @@ export interface StatisticsUser {
   user_id: string;
   question_count: number;
   active_day_count: number;
-  session_count: number;
   model_call_count: number;
   input_tokens: number;
   output_tokens: number;
@@ -105,6 +102,8 @@ export interface StatisticsSessions {
 }
 
 export interface StatisticsRecord {
+  request_id: string;
+  channel: string;
   id: number;
   created_at: string;
   duration_s: number;

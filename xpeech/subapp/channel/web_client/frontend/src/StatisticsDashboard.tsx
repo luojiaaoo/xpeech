@@ -8,7 +8,7 @@ import {
   DatabaseOutlined,
   MessageOutlined,
   ReloadOutlined,
-  RobotOutlined,
+  DownloadOutlined,
   SearchOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
@@ -49,6 +49,10 @@ function rangeStartAt(days: number) {
   shanghaiDay.setUTCHours(0, 0, 0, 0);
   shanghaiDay.setUTCDate(shanghaiDay.getUTCDate() - (days - 1));
   return new Date(shanghaiDay.getTime() - SHANGHAI_UTC_OFFSET_MS).toISOString();
+}
+
+function channelLabel(channel: string) {
+  return channel === 'unknown' ? '未知渠道' : channel;
 }
 
 function formatNumber(value: number) {
@@ -115,6 +119,7 @@ function LatestRecordRow({ record, onSelect }: {
         {record.sender_name.slice(0, 1).toUpperCase()}
       </span>
       <span className="statistics-qa-copy">
+        <small className="statistics-qa-channel">渠道：{channelLabel(record.channel)}</small>
         <strong>{record.user_question || '（无文本问题）'}</strong>
         <small>{record.model_response || '（无回答）'}</small>
       </span>
@@ -127,31 +132,72 @@ function LatestRecordRow({ record, onSelect }: {
   );
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
 function RecordResultList({ records, onSelect }: {
   records: StatisticsRecord[];
   onSelect: (record: StatisticsRecord) => void;
 }) {
+  const [downloadingId, setDownloadingId] = useState<number>();
+  const [downloadError, setDownloadError] = useState<string>();
+
+  async function downloadYaml(record: StatisticsRecord) {
+    setDownloadingId(record.id);
+    setDownloadError(undefined);
+    try {
+      const blob = await statisticsApi.recordYaml(record.id);
+      downloadBlob(blob, `${record.request_id}.yaml`);
+    } catch (error) {
+      setDownloadError(String(error));
+    } finally {
+      setDownloadingId(undefined);
+    }
+  }
+
   return (
-    <div className="statistics-user-record-list">
-      {records.map((record) => (
-        <button
-          type="button"
-          className="statistics-user-record-row"
-          key={record.id}
-          onClick={() => onSelect(record)}
-        >
-          <span className="statistics-user-record-order">#{record.id}</span>
-          <span className="statistics-user-record-copy">
-            <strong>{record.user_question || '（无文本问题）'}</strong>
-            <small>{record.model_response || '（无回答）'}</small>
-          </span>
-          <span className="statistics-user-record-meta">
-            <time>{formatTime(record.created_at, true)}</time>
-            <small>{formatDuration(record.duration_s)} · {formatCompact(record.total_tokens)} Token</small>
-          </span>
-        </button>
-      ))}
-    </div>
+    <>
+      {downloadError ? <Alert type="error" showIcon message="YAML 下载失败" description={downloadError} /> : null}
+      <div className="statistics-user-record-list">
+        {records.map((record) => (
+          <div className="statistics-user-record-row" key={record.id}>
+            <button
+              type="button"
+              className="statistics-user-record-open"
+              onClick={() => onSelect(record)}
+            >
+              <span className="statistics-user-record-order">#{record.id}</span>
+              <span className="statistics-user-record-copy">
+                <strong>{record.user_question || '（无文本问题）'}</strong>
+                <small>{record.model_response || '（无回答）'}</small>
+              </span>
+              <span className="statistics-user-record-meta">
+                <time>{formatTime(record.created_at, true)}</time>
+                <small>{formatDuration(record.duration_s)} · {formatCompact(record.total_tokens)} Token</small>
+              </span>
+            </button>
+            <Button
+              size="small"
+              icon={<DownloadOutlined />}
+              loading={downloadingId === record.id}
+              disabled={downloadingId !== undefined && downloadingId !== record.id}
+              aria-label={`下载问答 #${record.id} YAML`}
+              onClick={() => void downloadYaml(record)}
+            >
+              下载 YAML
+            </Button>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -170,6 +216,9 @@ export default function StatisticsDashboard({ systemName, onBack }: {
   const [userRecordsLoading, setUserRecordsLoading] = useState(false);
   const [userRecordsError, setUserRecordsError] = useState<string>();
   const [queryModalOpen, setQueryModalOpen] = useState(false);
+  const [queryChannels, setQueryChannels] = useState<string[]>([]);
+  const [queryChannel, setQueryChannel] = useState<string>();
+  const [queryExporting, setQueryExporting] = useState(false);
   const [queryUsers, setQueryUsers] = useState<StatisticsUser[]>([]);
   const [queryUsersLoading, setQueryUsersLoading] = useState(false);
   const [queryUserIds, setQueryUserIds] = useState<string[]>([]);
@@ -251,8 +300,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
 
   const kpis = useMemo(() => data ? [
     { label: '总问答数', value: data.overview.question_count, icon: <MessageOutlined />, tone: 'blue' },
-    { label: '活跃用户 / 会话', value: data.overview.active_user_count, icon: <TeamOutlined />, tone: 'cyan' },
-    { label: '会话数', value: data.overview.session_count, icon: <RobotOutlined />, tone: 'violet' },
+    { label: '活跃用户', value: data.overview.active_user_count, icon: <TeamOutlined />, tone: 'cyan' },
     { label: '模型调用', value: data.overview.model_call_count, icon: <ApiOutlined />, tone: 'blue' },
     { label: '输入 Token', value: data.overview.input_tokens, icon: <DatabaseOutlined />, tone: 'cyan' },
     { label: '输出 Token', value: data.overview.output_tokens, icon: <DatabaseOutlined />, tone: 'violet' },
@@ -285,7 +333,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
     }
     setUserRecordsLoading(true);
     try {
-      const result = await statisticsApi.records(user.sender_name, user.user_id, 10);
+      const result = await statisticsApi.records(user.user_id, 10);
       if (currentRequest === userRecordsRequestId.current) setUserRecords(result);
     } catch (recordsError) {
       if (currentRequest === userRecordsRequestId.current) setUserRecordsError(String(recordsError));
@@ -305,23 +353,42 @@ export default function StatisticsDashboard({ systemName, onBack }: {
   async function openQueryModal() {
     setQueryModalOpen(true);
     setQueryError(undefined);
-    if (queryUsers.length) return;
-    setQueryUsersLoading(true);
     try {
-      const firstPage = await statisticsApi.users(undefined, 100);
-      const offsets = Array.from(
-        { length: Math.max(0, Math.ceil(firstPage.total / firstPage.limit) - 1) },
-        (_, index) => (index + 1) * firstPage.limit,
-      );
-      const remainingPages = await Promise.all(
-        offsets.map((offset) => statisticsApi.users(undefined, firstPage.limit, offset)),
-      );
-      setQueryUsers([firstPage, ...remainingPages].flatMap((page) => page.data));
-    } catch (usersError) {
-      setQueryError(String(usersError));
-    } finally {
-      setQueryUsersLoading(false);
+      setQueryChannels(await statisticsApi.channels());
+    } catch (channelsError) {
+      setQueryError(String(channelsError));
     }
+  }
+
+  useEffect(() => {
+    if (!queryModalOpen || !queryChannel) return;
+    let cancelled = false;
+    setQueryUsersLoading(true);
+    void (async () => {
+      try {
+        const firstPage = await statisticsApi.users(undefined, 100, 0, queryChannel);
+        const offsets = Array.from(
+          { length: Math.max(0, Math.ceil(firstPage.total / firstPage.limit) - 1) },
+          (_, index) => (index + 1) * firstPage.limit,
+        );
+        const remainingPages = await Promise.all(
+          offsets.map((offset) => statisticsApi.users(undefined, firstPage.limit, offset, queryChannel)),
+        );
+        if (!cancelled) setQueryUsers([firstPage, ...remainingPages].flatMap((page) => page.data));
+      } catch (usersError) {
+        if (!cancelled) setQueryError(String(usersError));
+      } finally {
+        if (!cancelled) setQueryUsersLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [queryModalOpen, queryChannel]);
+
+  function invalidateQuery() {
+    queryRequestId.current += 1;
+    setQueryResult(undefined);
+    setQueryError(undefined);
+    setQueryLoading(false);
   }
 
   function closeQueryModal() {
@@ -333,20 +400,41 @@ export default function StatisticsDashboard({ systemName, onBack }: {
   }
 
   async function executeRecordQuery() {
+    if (!queryChannel) {
+      setQueryError('请先选择渠道。');
+      return;
+    }
     if (!queryUserIds.length) {
-      setQueryError('请至少选择一个用户 / 会话。');
+      setQueryError('请至少选择一个用户。');
       return;
     }
     const currentRequest = ++queryRequestId.current;
     setQueryLoading(true);
     setQueryError(undefined);
     try {
-      const result = await statisticsApi.searchRecords(queryUserIds, queryKeyword.trim(), 10);
+      const result = await statisticsApi.searchRecords(queryChannel, queryUserIds, queryKeyword.trim(), 10);
       if (currentRequest === queryRequestId.current) setQueryResult(result);
     } catch (recordsError) {
       if (currentRequest === queryRequestId.current) setQueryError(String(recordsError));
     } finally {
       if (currentRequest === queryRequestId.current) setQueryLoading(false);
+    }
+  }
+
+  async function exportRecordQuery() {
+    if (!queryChannel || !queryUserIds.length) {
+      setQueryError('请先选择渠道和用户。');
+      return;
+    }
+    setQueryExporting(true);
+    setQueryError(undefined);
+    try {
+      const blob = await statisticsApi.exportRecords(queryChannel, queryUserIds, queryKeyword.trim());
+      downloadBlob(blob, 'conversation-records.csv');
+    } catch (exportError) {
+      setQueryError(String(exportError));
+    } finally {
+      setQueryExporting(false);
     }
   }
 
@@ -426,7 +514,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
             </Panel>
 
             <Panel
-              title="活跃用户 / 会话排行"
+              title="活跃用户排行"
               className="statistics-users-panel"
               extra={<span className="statistics-panel-note">共 {data.users.total} 个</span>}
             >
@@ -437,7 +525,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
                     className="statistics-rank-row"
                     key={`${user.sender_name}-${user.user_id}`}
                     onClick={() => void openUserRecords(user)}
-                    aria-label={`查看 ${user.sender_name} / ${user.user_id} 最近 10 次会话`}
+                    aria-label={`查看 ${user.sender_name} / ${user.user_id} 最近 10 次问答`}
                   >
                     <span className={`statistics-rank-number rank-${index + 1}`}>{index + 1}</span>
                     <span className="statistics-rank-name" title={`${user.sender_name} / ${user.user_id}`}>
@@ -453,12 +541,12 @@ export default function StatisticsDashboard({ systemName, onBack }: {
             </Panel>
 
             <Panel
-              title="最新活跃会话"
+              title="最新活跃用户"
               className="statistics-sessions-panel"
               extra={<span className="statistics-panel-note">平均耗时 {formatDuration(data.overview.average_duration_s)}</span>}
             >
               <div className="statistics-session-head">
-                <span>用户 / 会话</span><span>问答</span><span>Token</span><span>最后活跃</span>
+                <span>用户</span><span>问答</span><span>Token</span><span>最后活跃</span>
               </div>
               <div className="statistics-session-list">
                 {data.sessions.data.length ? data.sessions.data.map((session) => (
@@ -468,7 +556,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
                     <span>{formatCompact(session.total_tokens)}</span>
                     <time>{formatTime(session.last_active_at, true)}</time>
                   </div>
-                )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无会话数据" />}
+                )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无用户数据" />}
               </div>
             </Panel>
 
@@ -514,29 +602,44 @@ export default function StatisticsDashboard({ systemName, onBack }: {
         <div className="statistics-query-content">
           <div className="statistics-query-controls">
             <Select
+              showSearch
+              value={queryChannel}
+              options={queryChannels.map((channel) => ({ value: channel, label: channelLabel(channel) }))}
+              placeholder="选择渠道（必选）"
+              aria-label="查询渠道"
+              disabled={queryExporting}
+              onChange={(value) => {
+                setQueryChannel(value);
+                setQueryUserIds([]);
+                setQueryUsers([]);
+                invalidateQuery();
+              }}
+            />
+            <Select
               mode="multiple"
               allowClear
               showSearch
               loading={queryUsersLoading}
+              disabled={!queryChannel || queryExporting}
               optionFilterProp="label"
               maxTagCount="responsive"
               value={queryUserIds}
               options={queryUserOptions}
-              placeholder="选择一个或多个用户 / 会话"
+              placeholder="选择一个或多个用户"
               onChange={(values) => {
                 setQueryUserIds(values);
-                setQueryResult(undefined);
+                invalidateQuery();
               }}
-              onClear={() => setQueryResult(undefined)}
             />
             <Input
               allowClear
               value={queryKeyword}
+              disabled={queryExporting}
               prefix={<SearchOutlined />}
               placeholder="搜索问题内容关键词（可选）"
               onChange={(event) => {
                 setQueryKeyword(event.target.value);
-                setQueryResult(undefined);
+                invalidateQuery();
               }}
               onPressEnter={() => void executeRecordQuery()}
             />
@@ -544,18 +647,28 @@ export default function StatisticsDashboard({ systemName, onBack }: {
               type="primary"
               icon={<SearchOutlined />}
               loading={queryLoading}
+              disabled={!queryChannel || !queryUserIds.length || queryExporting}
               onClick={() => void executeRecordQuery()}
             >
               确定查询
             </Button>
+            <Button
+              icon={<DownloadOutlined />}
+              loading={queryExporting}
+              disabled={!queryChannel || !queryUserIds.length || queryLoading}
+              onClick={() => void exportRecordQuery()}
+            >
+              导出下载
+            </Button>
           </div>
-          <small className="statistics-query-hint">支持多选用户 / 会话；关键词仅搜索用户问题内容。</small>
+          <small className="statistics-query-hint">请先指定渠道，支持多选用户；关键词仅搜索用户问题内容，导出包含全部匹配问答。</small>
           {queryError ? <Alert type="error" showIcon message="查询失败" description={queryError} /> : null}
           {queryLoading ? <Skeleton active paragraph={{ rows: 7 }} /> : null}
           {!queryLoading && queryResult ? (
             <div className="statistics-query-result">
               <div className="statistics-record-meta">
-                <span>已选 {queryUserIds.length} 个用户 / 会话</span>
+                <span>渠道：{channelLabel(queryChannel || '')}</span>
+                <span>已选 {queryUserIds.length} 个用户</span>
                 <span>匹配 {formatNumber(queryResult.total)} 次问答</span>
                 <span>{formatNumber(queryResult.total_tokens)} Token</span>
               </div>
@@ -565,7 +678,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
             </div>
           ) : null}
           {!queryLoading && !queryResult && !queryError ? (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请选择用户 / 会话后查询" />
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请选择渠道和用户后查询" />
           ) : null}
         </div>
       </Modal>
@@ -576,7 +689,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
         footer={null}
         width={860}
         zIndex={2100}
-        title="最近 10 次会话"
+        title="最近 10 次问答"
         className="statistics-user-records-modal"
       >
         {selectedUser ? (
@@ -611,6 +724,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
           <div className="statistics-record-detail">
             <div className="statistics-record-meta">
               <span>{selectedRecord.sender_name} / {selectedRecord.user_id}</span>
+              <span>渠道：{channelLabel(selectedRecord.channel)}</span>
               <span>{formatTime(selectedRecord.created_at, true)}</span>
               <span>{formatDuration(selectedRecord.duration_s)}</span>
               <span>{formatNumber(selectedRecord.total_tokens)} Token</span>

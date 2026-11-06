@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
@@ -25,6 +26,7 @@ from .prompt.helper import (
 )
 from .prompt.system import build_system_prompt
 from .record import ConversationRecord, SqliteConversationRecordRepository
+from .server.context import get_request_id
 from .server.schema import InboundMessage
 from .tool_executor import TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS, ToolExecutor
 from .tools.execution_request import (
@@ -32,6 +34,17 @@ from .tools.execution_request import (
     EXECUTION_REQUEST,
 )
 from .tools.helper import get_tool_model_cls
+
+
+def _append_turn_message(
+    messages_yaml: list[dict[str, Any]],
+    turn_messages: list[dict[str, Any]] | None,
+    message: dict[str, Any],
+) -> None:
+    """同步追加上下文和本轮独立归档，归档不受后续上下文压缩影响。"""
+    messages_yaml.append(message)
+    if turn_messages is not None:
+        turn_messages.append(deepcopy(message))
 
 
 @dataclass
@@ -104,6 +117,7 @@ class AgentLoop:
         sender_name: str,
         session_metadata: dict[str, str] | None = None,
         channel: str | None = None,
+        turn_messages: list[dict[str, Any]] | None = None,
     ):
         """执行模型发起的工具调用，并逐步产生工具相关事件。"""
         logger.info(
@@ -132,7 +146,7 @@ class AgentLoop:
         msg: dict[str, Any] = {"role": "assistant", "content": response.content or ""}
         if tool_call_dicts:
             msg["tool_calls"] = tool_call_dicts
-        messages_yaml.append(msg)
+        _append_turn_message(messages_yaml, turn_messages, msg)
 
         # 执行工具调用
         with_metas = []
@@ -155,7 +169,8 @@ class AgentLoop:
                 """将一次工具调用结果转换为对话历史消息。"""
                 # 创建工具调用结果消息
                 if isinstance(result_, str):
-                    messages_yaml.append(
+                    _append_turn_message(
+                        messages_yaml, turn_messages,
                         {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -172,7 +187,8 @@ class AgentLoop:
                             with_metas.extend([{"type": "text", "text": _meta}, i])
                         else:
                             others.append(i)
-                    messages_yaml.append(
+                    _append_turn_message(
+                        messages_yaml, turn_messages,
                         {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -273,7 +289,8 @@ class AgentLoop:
 
         # 如果包含_meta属性，则把这类消息转成user消息
         if with_metas:
-            messages_yaml.append(
+            _append_turn_message(
+                messages_yaml, turn_messages,
                 {
                     "role": "user",
                     "content": with_metas,
@@ -285,6 +302,9 @@ class AgentLoop:
     async def run(self, message: InboundMessage, *, not_interactive: bool = False):
         """运行一次Agent循环，处理一次用户消息。"""
         start_time = time.perf_counter()
+        request_id = get_request_id()
+        if request_id is None:
+            raise RuntimeError("Agent run requires a request_id")
         logger.info("Agent run started workspace={}", self.workspace)
 
         # 用户命令拦截器
@@ -339,7 +359,9 @@ class AgentLoop:
             ),
         )
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
-        messages_yaml.append(
+        turn_messages: list[dict[str, Any]] = []
+        _append_turn_message(
+            messages_yaml, turn_messages,
             await build_user_prompt(
                 message=message,
                 workspace=self.workspace,
@@ -395,7 +417,8 @@ class AgentLoop:
                     "Provider chat failed loop_count={}",
                     loop_count,
                 )
-                messages_yaml.append(
+                _append_turn_message(
+                    messages_yaml, turn_messages,
                     {
                         "role": "user",
                         "content": (
@@ -433,6 +456,7 @@ class AgentLoop:
                     message.sender_name,
                     session_metadata=message.session_metadata,
                     channel=message.channel,
+                    turn_messages=turn_messages,
                 ):
                     yield i
             else:
@@ -447,7 +471,8 @@ class AgentLoop:
                     loop_count,
                     self.max_iterations,
                 )
-                messages_yaml.append(
+                _append_turn_message(
+                    messages_yaml, turn_messages,
                     {
                         "role": "user",
                         "content": self.ITERATION_STOP_PROMPT,
@@ -464,7 +489,7 @@ class AgentLoop:
             yield {"event": "assistant", "context": final_content}
 
         # 拼接助手消息
-        messages_yaml.append({"role": "assistant", "content": final_content})
+        _append_turn_message(messages_yaml, turn_messages, {"role": "assistant", "content": final_content})
 
         # 保存历史记录
         await self.history.save(
@@ -483,6 +508,9 @@ class AgentLoop:
         await self.records.append(
             ConversationRecord(
                 user_id=message.user_id,
+                session_id=message.session_id,
+                request_id=request_id,
+                channel=message.channel,
                 sender_name=message.sender_name,
                 user_question=user_question,
                 model_response=final_content,
@@ -491,6 +519,7 @@ class AgentLoop:
                 model_call_count=self._model_call_count,
                 duration_s=duration_s,
             ),
+            messages=turn_messages,
         )
 
         def format_token_count(value: int) -> str:

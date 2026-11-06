@@ -8,9 +8,15 @@ import pytest
 import xpeech.agent.loop as loop_module
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.server.schema import InboundMessage, InputText
+from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.provider.litellm_provider import LiteLLMProvider
-from xpeech.provider.schema import LLMParameters, LLMResponse
+from xpeech.provider.schema import LLMParameters, LLMResponse, ToolCallChunk
 from xpeech.utils.helper import token_counter
+
+
+@pytest.fixture(autouse=True)
+def request_context(monkeypatch):
+    monkeypatch.setattr(loop_module, "get_request_id", lambda: "00000000-0000-4000-8000-000000000001")
 
 
 def make_response(content: str) -> LLMResponse:
@@ -283,3 +289,68 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
         for part in saved_messages[-2]["content"]
         if isinstance(part, dict)
     )
+
+
+@pytest.mark.asyncio
+async def test_request_yaml_retains_new_messages_across_multiple_compressions(tmp_path, monkeypatch):
+    async def system_prompt(**_kwargs):
+        return {"role": "system", "content": "system"}
+
+    monkeypatch.setattr(loop_module, "build_system_prompt", system_prompt)
+    monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
+    agent_loop = AgentLoop.__new__(AgentLoop)
+    agent_loop.workspace = tmp_path
+    agent_loop.channel_tag = None
+    agent_loop.user_organization = None
+    agent_loop.history = SimpleNamespace(
+        load=AsyncMock(return_value=[{"role": "user", "content": "previous question"}]),
+        save=AsyncMock(),
+    )
+    agent_loop.compressor = SimpleNamespace(
+        should_compress=AsyncMock(side_effect=[True, True]),
+        compress=AsyncMock(side_effect=lambda _: [{"role": "assistant", "content": "compressed summary"}]),
+    )
+    agent_loop.memory_consolidator = SimpleNamespace(consolidate=AsyncMock())
+    async def tool_chunks():
+        yield "content", "working"
+        yield "tool_calls", ToolCallChunk(index=0, id="call-1", name="search", arguments="{}")
+
+    async def search() -> str:
+        return "uncompressed tool output"
+
+    response = LLMResponse(iter_mix_chunks=tool_chunks(), mapping_tool_call_funcs={"search": search})
+    agent_loop.chat = AsyncMock(side_effect=[response, make_response("final answer")])
+
+    agent_loop.tool_executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+    agent_loop.records = SimpleNamespace(append=AsyncMock())
+    agent_loop.tools = []
+    agent_loop.max_iterations = 4
+    agent_loop.max_accept_token = 100_000
+    agent_loop._input_tokens = agent_loop._output_tokens = agent_loop._model_call_count = 0
+    message = InboundMessage(
+        user_id="user", session_id="default", sender_name="Alice", channel="test",
+        session_metadata={}, content=[InputText(text="new question")], files=[],
+    )
+
+    _events = [event async for event in agent_loop.run(message)]
+
+    saved = agent_loop.records.append.await_args.kwargs["messages"]
+    assert [item["role"] for item in saved] == ["user", "assistant", "tool", "assistant"]
+    assert "new question" in str(saved[0]["content"])
+    assert saved[2]["content"] == "uncompressed tool output"
+    assert saved[3]["content"] == "final answer"
+    assert "previous question" not in str(saved)
+    assert "compressed summary" not in str(saved)
+    assert agent_loop.compressor.compress.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_run_requires_request_id(monkeypatch):
+    monkeypatch.setattr(loop_module, "get_request_id", lambda: None)
+    agent_loop = AgentLoop.__new__(AgentLoop)
+    message = InboundMessage(
+        user_id="user", session_id="default", sender_name="Alice", channel="test",
+        session_metadata={}, content=[InputText(text="hello")], files=[],
+    )
+    with pytest.raises(RuntimeError, match="requires a request_id"):
+        _events = [event async for event in agent_loop.run(message)]

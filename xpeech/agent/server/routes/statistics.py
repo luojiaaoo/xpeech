@@ -1,16 +1,22 @@
+import csv
+import io
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from async_lru import alru_cache
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import asc, desc, distinct, func
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.orm import aliased
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ...record import ConversationRecord, record_engine
+from ....config.settings import settings
+from ...record import ConversationRecord, record_engine, record_yaml_path
 
 STATISTICS_CACHE_TTL_S = 5
 
@@ -30,6 +36,7 @@ class SqliteConversationStatisticsRepository:
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         sender_name: str | None = None,
+        channel: str | None = None,
         user_ids: tuple[str, ...] = (),
         question_keyword: str | None = None,
         after_id: int | None = None,
@@ -40,6 +47,8 @@ class SqliteConversationStatisticsRepository:
             statement = statement.where(ConversationRecord.created_at < end_at)
         if sender_name is not None:
             statement = statement.where(ConversationRecord.sender_name == sender_name)
+        if channel is not None:
+            statement = statement.where(ConversationRecord.channel == channel)
         if user_ids:
             statement = statement.where(ConversationRecord.user_id.in_(user_ids))
         if question_keyword:
@@ -58,17 +67,9 @@ class SqliteConversationStatisticsRepository:
         end_at: datetime | None = None,
         sender_name: str | None = None,
     ) -> dict[str, Any]:
-        users = self._with_filters(
-            select(ConversationRecord.sender_name, ConversationRecord.user_id),
-            start_at=start_at,
-            end_at=end_at,
-            sender_name=sender_name,
-        ).group_by(ConversationRecord.sender_name, ConversationRecord.user_id)
-        active_user_count = select(func.count()).select_from(users.subquery()).scalar_subquery()
         statement = select(
             func.count(ConversationRecord.id).label("question_count"),
-            active_user_count.label("active_user_count"),
-            func.count(distinct(ConversationRecord.user_id)).label("session_count"),
+            func.count(distinct(ConversationRecord.user_id)).label("active_user_count"),
             func.coalesce(func.sum(ConversationRecord.model_call_count), 0).label("model_call_count"),
             func.coalesce(func.sum(ConversationRecord.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(ConversationRecord.output_tokens), 0).label("output_tokens"),
@@ -110,7 +111,6 @@ class SqliteConversationStatisticsRepository:
         per_user_statement = (
             select(
                 bucket,
-                ConversationRecord.sender_name,
                 ConversationRecord.user_id,
                 func.count(ConversationRecord.id).label("question_count"),
                 func.coalesce(func.sum(ConversationRecord.model_call_count), 0).label("model_call_count"),
@@ -120,7 +120,7 @@ class SqliteConversationStatisticsRepository:
                 func.count(ConversationRecord.duration_s).label("duration_count"),
             )
             .where(ConversationRecord.created_at.is_not(None))
-            .group_by(bucket, ConversationRecord.sender_name, ConversationRecord.user_id)
+            .group_by(bucket, ConversationRecord.user_id)
         )
         per_user_statement = self._with_filters(
             per_user_statement,
@@ -134,7 +134,6 @@ class SqliteConversationStatisticsRepository:
                 per_user.c.bucket,
                 func.sum(per_user.c.question_count).label("question_count"),
                 func.count().label("active_user_count"),
-                func.count(distinct(per_user.c.user_id)).label("session_count"),
                 func.sum(per_user.c.model_call_count).label("model_call_count"),
                 func.sum(per_user.c.input_tokens).label("input_tokens"),
                 func.sum(per_user.c.output_tokens).label("output_tokens"),
@@ -150,11 +149,25 @@ class SqliteConversationStatisticsRepository:
             rows = (await session.exec(statement)).all()
         return [dict(row._mapping) for row in rows]
 
+    @staticmethod
+    def _latest_sender_name():
+        latest = aliased(ConversationRecord)
+        return (
+            select(latest.sender_name)
+            .where(latest.user_id == ConversationRecord.user_id)
+            .order_by(desc(latest.id))
+            .limit(1)
+            .correlate(ConversationRecord)
+            .scalar_subquery()
+            .label("sender_name")
+        )
+
     @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
     async def users(
         self,
         *,
         timezone_offset_minutes: int,
+        channel: str | None = None,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         limit: int = 20,
@@ -167,32 +180,32 @@ class SqliteConversationStatisticsRepository:
         )
         statement = (
             select(
-                ConversationRecord.sender_name,
+                self._latest_sender_name(),
                 ConversationRecord.user_id,
                 question_count,
                 func.count(distinct(local_day)).label("active_day_count"),
-                func.count(distinct(ConversationRecord.user_id)).label("session_count"),
                 func.coalesce(func.sum(ConversationRecord.model_call_count), 0).label("model_call_count"),
                 func.coalesce(func.sum(ConversationRecord.input_tokens), 0).label("input_tokens"),
                 func.coalesce(func.sum(ConversationRecord.output_tokens), 0).label("output_tokens"),
                 func.avg(ConversationRecord.duration_s).label("average_duration_s"),
                 func.max(ConversationRecord.created_at).label("last_active_at"),
             )
-            .group_by(ConversationRecord.sender_name, ConversationRecord.user_id)
+            .group_by(ConversationRecord.user_id)
             .order_by(
                 desc(question_count),
-                asc(ConversationRecord.sender_name),
+                asc("sender_name"),
                 asc(ConversationRecord.user_id),
             )
             .offset(offset)
             .limit(limit)
         )
-        statement = self._with_filters(statement, start_at=start_at, end_at=end_at)
+        statement = self._with_filters(statement, start_at=start_at, end_at=end_at, channel=channel)
         filtered_users = self._with_filters(
-            select(ConversationRecord.sender_name, ConversationRecord.user_id),
+            select(ConversationRecord.user_id),
             start_at=start_at,
             end_at=end_at,
-        ).group_by(ConversationRecord.sender_name, ConversationRecord.user_id)
+            channel=channel,
+        ).group_by(ConversationRecord.user_id)
         total_statement = select(func.count()).select_from(filtered_users.subquery())
         async with AsyncSession(self._engine) as session:
             rows = (await session.exec(statement)).all()
@@ -213,7 +226,7 @@ class SqliteConversationStatisticsRepository:
         statement = (
             select(
                 ConversationRecord.user_id,
-                ConversationRecord.sender_name,
+                self._latest_sender_name(),
                 question_count,
                 func.coalesce(func.sum(ConversationRecord.model_call_count), 0).label("model_call_count"),
                 func.coalesce(func.sum(ConversationRecord.input_tokens), 0).label("input_tokens"),
@@ -222,7 +235,7 @@ class SqliteConversationStatisticsRepository:
                 func.min(ConversationRecord.created_at).label("first_active_at"),
                 func.max(ConversationRecord.created_at).label("last_active_at"),
             )
-            .group_by(ConversationRecord.user_id, ConversationRecord.sender_name)
+            .group_by(ConversationRecord.user_id)
             .order_by(desc(func.max(ConversationRecord.id)))
             .offset(offset)
             .limit(limit)
@@ -234,16 +247,40 @@ class SqliteConversationStatisticsRepository:
             sender_name=sender_name,
         )
         filtered_groups = self._with_filters(
-            select(ConversationRecord.user_id, ConversationRecord.sender_name),
+            select(ConversationRecord.user_id),
             start_at=start_at,
             end_at=end_at,
             sender_name=sender_name,
-        ).group_by(ConversationRecord.user_id, ConversationRecord.sender_name)
+        ).group_by(ConversationRecord.user_id)
         total_statement = select(func.count()).select_from(filtered_groups.subquery())
         async with AsyncSession(self._engine) as session:
             rows = (await session.exec(statement)).all()
             total = (await session.exec(total_statement)).one()
         return [dict(row._mapping) for row in rows], int(total)
+
+    @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
+    async def channels(self) -> list[str]:
+        async with AsyncSession(self._engine) as session:
+            return list((await session.exec(select(distinct(ConversationRecord.channel)))).all())
+
+    async def record_yaml(self, record_id: int):
+        async with AsyncSession(self._engine) as session:
+            record = await session.get(ConversationRecord, record_id)
+        if record is None:
+            return None
+        return record_yaml_path(record.request_id, self._engine)
+
+    async def export_records(
+        self, *, channel: str, user_ids: tuple[str, ...], question_keyword: str | None,
+    ) -> AsyncIterator[ConversationRecord]:
+        statement = self._with_filters(
+            select(ConversationRecord), channel=channel,
+            user_ids=user_ids, question_keyword=question_keyword,
+        ).order_by(desc(ConversationRecord.id)).execution_options(yield_per=100)
+        async with AsyncSession(self._engine) as session:
+            result = await session.stream(statement)
+            async for record in result.scalars():
+                yield record
 
     @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
     async def latest_records(self, *, limit: int = 20) -> list[ConversationRecord]:
@@ -271,6 +308,7 @@ class SqliteConversationStatisticsRepository:
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         sender_name: str | None = None,
+        channel: str | None = None,
         user_ids: tuple[str, ...] = (),
         question_keyword: str | None = None,
         after_id: int | None = None,
@@ -283,6 +321,7 @@ class SqliteConversationStatisticsRepository:
             start_at=start_at,
             end_at=end_at,
             sender_name=sender_name,
+            channel=channel,
             user_ids=user_ids,
             question_keyword=question_keyword,
             after_id=after_id,
@@ -300,6 +339,7 @@ class SqliteConversationStatisticsRepository:
             start_at=start_at,
             end_at=end_at,
             sender_name=sender_name,
+            channel=channel,
             user_ids=user_ids,
             question_keyword=question_keyword,
             after_id=after_id,
@@ -317,7 +357,6 @@ _statistics_repository = SqliteConversationStatisticsRepository()
 class OverviewResponse(BaseModel):
     question_count: int
     active_user_count: int
-    session_count: int
     model_call_count: int
     input_tokens: int
     output_tokens: int
@@ -331,7 +370,6 @@ class TimeseriesPoint(BaseModel):
     bucket: str
     question_count: int
     active_user_count: int
-    session_count: int
     model_call_count: int
     input_tokens: int
     output_tokens: int
@@ -350,7 +388,6 @@ class UserStatistics(BaseModel):
     user_id: str
     question_count: int
     active_day_count: int
-    session_count: int
     model_call_count: int
     input_tokens: int
     output_tokens: int
@@ -388,8 +425,10 @@ class SessionStatisticsResponse(BaseModel):
 
 class ConversationRecordResponse(BaseModel):
     id: int
+    request_id: str
     created_at: datetime
     duration_s: float
+    channel: str
     user_id: str
     sender_name: str
     user_question: str
@@ -479,8 +518,10 @@ def _rounded_duration(value: float | None) -> float | None:
 def _record_response(record: ConversationRecord) -> ConversationRecordResponse:
     return ConversationRecordResponse(
         id=record.id,
+        request_id=record.request_id,
         created_at=_as_utc(record.created_at),
         duration_s=_rounded_duration(record.duration_s),
+        channel=record.channel,
         user_id=record.user_id,
         sender_name=record.sender_name,
         user_question=record.user_question,
@@ -513,7 +554,6 @@ async def overview(
     return OverviewResponse(
         question_count=question_count,
         active_user_count=int(values["active_user_count"]),
-        session_count=int(values["session_count"]),
         model_call_count=int(values["model_call_count"]),
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -552,7 +592,6 @@ async def timeseries(
                 bucket=row["bucket"],
                 question_count=int(row["question_count"]),
                 active_user_count=int(row["active_user_count"]),
-                session_count=int(row["session_count"]),
                 model_call_count=int(row["model_call_count"]),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -568,6 +607,7 @@ async def users(
     repository: StatisticsRepository,
     start_at: Annotated[datetime | None, Query(description="统计开始时间，包含该时间")] = None,
     end_at: Annotated[datetime | None, Query(description="统计结束时间，不包含该时间")] = None,
+    channel: Annotated[str | None, Query(min_length=1, description="按渠道筛选")] = None,
     timezone: Annotated[str, Query(description="活跃天数使用的 IANA 时区")] = "Asia/Shanghai",
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -577,6 +617,7 @@ async def users(
     offset_minutes = _timezone_offset_minutes(timezone, start_at)
     rows, total = await repository.users(
         timezone_offset_minutes=offset_minutes,
+        channel=channel,
         start_at=normalized_start,
         end_at=normalized_end,
         limit=limit,
@@ -592,7 +633,6 @@ async def users(
                 user_id=row["user_id"],
                 question_count=int(row["question_count"]),
                 active_day_count=int(row["active_day_count"]),
-                session_count=int(row["session_count"]),
                 model_call_count=int(row["model_call_count"]),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -613,7 +653,7 @@ async def sessions(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> SessionStatisticsResponse:
-    """返回最近活跃的会话及其累计用量。"""
+    """按用户 ID 返回最近活跃用户及其累计用量。"""
     normalized_start, normalized_end = _period(start_at, end_at)
     rows, total = await repository.sessions(
         start_at=normalized_start,
@@ -682,6 +722,7 @@ async def records(
     start_at: Annotated[datetime | None, Query(description="统计开始时间，包含该时间")] = None,
     end_at: Annotated[datetime | None, Query(description="统计结束时间，不包含该时间")] = None,
     sender_name: Annotated[str | None, Query(description="按发送者用户名筛选")] = None,
+    channel: Annotated[str | None, Query(min_length=1, description="按渠道筛选")] = None,
     user_id: Annotated[list[str] | None, Query(description="按一个或多个用户 ID 筛选")] = None,
     keyword: Annotated[str | None, Query(max_length=200, description="按问题内容关键词筛选")] = None,
     after_id: Annotated[int | None, Query(ge=0, description="只返回 ID 大于该值的新记录")] = None,
@@ -697,6 +738,7 @@ async def records(
         start_at=normalized_start,
         end_at=normalized_end,
         sender_name=sender_name,
+        channel=channel,
         user_ids=user_ids,
         question_keyword=normalized_keyword,
         after_id=after_id,
@@ -716,4 +758,69 @@ async def records(
         total_tokens=input_tokens + output_tokens,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.get("/channels", response_model=list[str])
+async def channels(repository: StatisticsRepository) -> list[str]:
+    return sorted(set(settings.jwt.channels) | set(await repository.channels()))
+
+
+@router.get("/records/{record_id}/yaml")
+async def record_yaml(
+    repository: StatisticsRepository,
+    record_id: Annotated[int, Path(ge=1)],
+) -> FileResponse:
+    """下载一条问答记录对应的本轮新增消息 YAML。"""
+    path = await repository.record_yaml(record_id)
+    if path is None or path.is_symlink() or not path.is_file():
+        raise HTTPException(status_code=404, detail="问答 YAML 文件不存在")
+    return FileResponse(
+        path, filename=path.name, media_type="application/yaml",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/records/export")
+async def export_records(
+    repository: StatisticsRepository,
+    channel: Annotated[str, Query(min_length=1, description="导出渠道")],
+    user_id: Annotated[list[str] | None, Query(description="按一个或多个用户 ID 筛选")] = None,
+    keyword: Annotated[str | None, Query(max_length=200, description="按问题内容关键词筛选")] = None,
+) -> StreamingResponse:
+    """下载指定渠道内全部匹配问答，包含渠道信息，不受列表分页限制。"""
+    user_ids = tuple(dict.fromkeys(value.strip() for value in (user_id or []) if value.strip()))
+    normalized_keyword = keyword.strip() if keyword and keyword.strip() else None
+
+    async def content():
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer)
+
+        def row(values):
+            buffer.seek(0)
+            buffer.truncate()
+            # Keep user-controlled text from being interpreted as spreadsheet formulas.
+            writer.writerow([
+                "'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")) else value
+                for value in values
+            ])
+            return buffer.getvalue().encode("utf-8")
+
+        yield b"\xef\xbb\xbf" + row([
+            "ID", "时间", "渠道", "用户 ID", "用户名", "用户问题", "模型回答",
+            "输入 Token", "输出 Token", "总 Token", "模型调用次数", "耗时（秒）",
+        ])
+        async for record in repository.export_records(
+            channel=channel, user_ids=user_ids, question_keyword=normalized_keyword,
+        ):
+            yield row([
+                record.id, _as_utc(record.created_at).isoformat(), record.channel,
+                record.user_id, record.sender_name, record.user_question, record.model_response,
+                record.input_tokens, record.output_tokens, record.input_tokens + record.output_tokens,
+                record.model_call_count, _rounded_duration(record.duration_s),
+            ])
+
+    return StreamingResponse(
+        content(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="conversation-records.csv"', "Cache-Control": "no-store"},
     )

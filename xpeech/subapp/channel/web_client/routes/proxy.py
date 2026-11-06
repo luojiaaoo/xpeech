@@ -220,6 +220,8 @@ def create_proxy_router(
         headers = {}
         if cache_control := upstream.headers.get("cache-control"):
             headers["Cache-Control"] = cache_control
+        if content_disposition := upstream.headers.get("content-disposition"):
+            headers["Content-Disposition"] = content_disposition
         return Response(
             upstream.content,
             status_code=upstream.status_code,

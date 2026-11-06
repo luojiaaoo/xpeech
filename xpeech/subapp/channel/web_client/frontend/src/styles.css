@@ -944,7 +944,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 }
 .statistics-kpis {
   display: grid;
-  grid-template-columns: repeat(6, minmax(140px, 1fr));
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -1144,6 +1144,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   font-weight: 700;
 }
 .statistics-qa-copy { min-width: 0; }
+.statistics-qa-copy .statistics-qa-channel { margin-bottom: 3px; color: #63b9df; font-size: 9px; }
 .statistics-qa-copy strong, .statistics-qa-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .statistics-qa-copy strong { margin-bottom: 3px; color: #d5e9fa; font-size: 12px; }
 .statistics-qa-copy small { color: #6f91ae; font-size: 10px; }
@@ -1161,7 +1162,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .statistics-query-content, .statistics-query-result { display: flex; flex-direction: column; gap: 14px; }
 .statistics-query-controls {
   display: grid;
-  grid-template-columns: minmax(320px, 1.4fr) minmax(230px, 1fr) auto;
+  grid-template-columns: minmax(140px, .7fr) minmax(220px, 1.3fr) minmax(180px, 1fr) auto auto;
   align-items: start;
   gap: 10px;
 }
@@ -1171,6 +1172,17 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .statistics-query-modal .ant-modal-body { max-height: calc(100vh - 145px); overflow-y: auto; }
 .statistics-user-record-list { max-height: min(610px, calc(100vh - 230px)); overflow-y: auto; border: 1px solid #dfe8f0; border-radius: 10px; }
 .statistics-user-record-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 12px;
+  border-bottom: 1px solid #e8eef4;
+  background: #fff;
+}
+.statistics-user-record-row > .ant-btn { flex-shrink: 0; }
+.statistics-user-record-open {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   min-height: 68px;
   display: grid;
@@ -1179,8 +1191,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   gap: 12px;
   padding: 10px 14px;
   border: 0;
-  border-bottom: 1px solid #e8eef4;
-  background: #fff;
+  background: transparent;
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -1215,7 +1226,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 @media (max-width: 760px) {
   .statistics-query-controls { grid-template-columns: 1fr; }
   .statistics-query-controls .ant-btn { width: 100%; }
-  .statistics-user-record-row { grid-template-columns: 42px minmax(0, 1fr); }
+  .statistics-user-record-open { grid-template-columns: 42px minmax(0, 1fr); }
   .statistics-user-record-meta { display: none; }
 }
 @keyframes brandContentIn {

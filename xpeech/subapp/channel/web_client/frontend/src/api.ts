@@ -166,10 +166,12 @@ export const statisticsApi = {
     granularity: 'day',
     timezone: 'Asia/Shanghai',
   })),
-  users: (startAt?: string, limit = 20, offset = 0) => request<StatisticsUsers>(statisticsUrl('/users', startAt, {
+  channels: () => request<string[]>('/api/statistics/channels'),
+  users: (startAt?: string, limit = 20, offset = 0, channel?: string) => request<StatisticsUsers>(statisticsUrl('/users', startAt, {
     timezone: 'Asia/Shanghai',
     limit: String(limit),
     offset: String(offset),
+    ...(channel ? { channel } : {}),
   })),
   sessions: (startAt?: string) => request<StatisticsSessions>(statisticsUrl('/sessions', startAt, {
     limit: '8',
@@ -178,20 +180,52 @@ export const statisticsApi = {
   updates: (dataAsOf: string | null, startAt?: string) => request<StatisticsUpdates>(
     statisticsUrl('/updates', startAt, dataAsOf ? { data_as_of: dataAsOf } : {}),
   ),
-  records: (senderName: string, userId: string, limit = 10) => request<StatisticsRecords>(
+  records: (userId: string, limit = 10) => request<StatisticsRecords>(
     statisticsUrl('/records', undefined, {
-      sender_name: senderName,
       user_id: userId,
       limit: String(limit),
     }),
   ),
-  searchRecords: (userIds: string[], keyword: string, limit = 10) => request<StatisticsRecords>(
+  searchRecords: (channel: string, userIds: string[], keyword: string, limit = 10) => request<StatisticsRecords>(
     statisticsUrl('/records', undefined, {
+      channel,
       user_id: userIds,
       ...(keyword ? { keyword } : {}),
       limit: String(limit),
     }),
   ),
+  exportRecords: async (channel: string, userIds: string[], keyword: string) => {
+    const response = await fetch(statisticsUrl('/records/export', undefined, {
+      channel,
+      user_id: userIds,
+      ...(keyword ? { keyword } : {}),
+    }), {
+      credentials: memoryJWT ? 'omit' : 'same-origin',
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      if (response.status === 401) jwtExpired();
+      throw new Error(await response.text());
+    }
+    return response.blob();
+  },
+  recordYaml: async (recordId: number) => {
+    const response = await fetch(`/api/statistics/records/${recordId}/yaml`, {
+      credentials: memoryJWT ? 'omit' : 'same-origin',
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      if (response.status === 401) jwtExpired();
+      let detail = `${response.status} ${response.statusText}`;
+      try {
+        detail = (await response.json()).detail || detail;
+      } catch {
+        // Keep HTTP fallback.
+      }
+      throw new Error(detail);
+    }
+    return response.blob();
+  },
 };
 
 function parseEventBlock(block: string): ChatEvent | null {

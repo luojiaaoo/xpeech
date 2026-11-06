@@ -28,6 +28,27 @@ class FakeAsyncClient:
 
     async def get(self, url: str, *, headers: dict[str, str], params: list[tuple[str, str]]):
         self.requests.append({"url": url, "headers": headers, "params": params})
+        if url.endswith("/yaml"):
+            return httpx.Response(
+                200, content=b"- role: user\n  content: hello\n",
+                headers={
+                    "Content-Type": "application/yaml",
+                    "Content-Disposition": 'attachment; filename="00000000-0000-4000-8000-000000000001.yaml"',
+                    "Cache-Control": "no-store",
+                },
+                request=httpx.Request("GET", url),
+            )
+        if url.endswith("/records/export"):
+            return httpx.Response(
+                200,
+                content="\ufeffID,渠道\r\n1,feishu\r\n".encode(),
+                headers={
+                    "Content-Type": "text/csv; charset=utf-8",
+                    "Content-Disposition": 'attachment; filename="conversation-records.csv"',
+                    "Cache-Control": "no-store",
+                },
+                request=httpx.Request("GET", url),
+            )
         return httpx.Response(
             200,
             json={"data": [{"id": 20, "user_question": "问题", "model_response": "回答"}]},
@@ -77,12 +98,18 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
             params=[("limit", "20"), ("tag", "first"), ("tag", "second")],
         )
         passthrough = client.get("/api/statistics/future/report", params={"range": "week"})
+        exported = client.get(
+            "/api/statistics/records/export",
+            params=[("channel", "feishu"), ("user_id", "alice"), ("user_id", "bob")],
+        )
+        yaml_file = client.get("/api/statistics/records/20/yaml")
         client.post("/api/auth/logout")
         viewer_login = client.post(
             "/api/auth/login",
             json={"user_id": "viewer-session-updated", "password": "viewer123456"},
         )
         forbidden = client.get("/api/statistics")
+        forbidden_yaml = client.get("/api/statistics/records/20/yaml")
 
     assert unauthorized.status_code == 401
     assert login.status_code == 200
@@ -96,17 +123,30 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
     assert updated_user.json()["user_id"] == "viewer-session-updated"
     assert viewer_login.status_code == 200
     assert forbidden.status_code == 403
+    assert forbidden_yaml.status_code == 403
     assert proxied.status_code == 200
     assert proxied.json()["data"][0]["user_question"] == "问题"
     assert proxied.headers["cache-control"] == "no-store"
     assert passthrough.status_code == 200
-    assert len(FakeAsyncClient.requests) == 2
-    first_request, second_request = FakeAsyncClient.requests
+    assert exported.status_code == 200
+    assert exported.content.decode("utf-8-sig") == "ID,渠道\r\n1,feishu\r\n"
+    assert exported.headers["content-type"] == "text/csv; charset=utf-8"
+    assert exported.headers["content-disposition"] == 'attachment; filename="conversation-records.csv"'
+    assert exported.headers["cache-control"] == "no-store"
+    assert yaml_file.status_code == 200
+    assert yaml_file.content == b"- role: user\n  content: hello\n"
+    assert yaml_file.headers["content-type"] == "application/yaml"
+    assert yaml_file.headers["content-disposition"].endswith('00000000-0000-4000-8000-000000000001.yaml"')
+    assert yaml_file.headers["cache-control"] == "no-store"
+    assert len(FakeAsyncClient.requests) == 4
+    first_request, second_request, export_request, yaml_request = FakeAsyncClient.requests
+    assert yaml_request["url"] == "http://backend.test/statistics/records/20/yaml"
     assert first_request["url"] == "http://backend.test/statistics/records/latest"
     assert first_request["params"] == [("limit", "20"), ("tag", "first"), ("tag", "second")]
     assert first_request["headers"]["authorization"].startswith("Bearer ")
     assert second_request["url"] == "http://backend.test/statistics/future/report"
     assert second_request["params"] == [("range", "week")]
+    assert export_request["params"] == [("channel", "feishu"), ("user_id", "alice"), ("user_id", "bob")]
     for request in FakeAsyncClient.requests:
         assert "x-user-id" not in request["headers"]
         token = request["headers"]["authorization"].removeprefix("Bearer ")
