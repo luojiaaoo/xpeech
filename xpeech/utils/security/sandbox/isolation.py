@@ -33,6 +33,8 @@ def _sandbox_path(home: Path) -> str:
     path_entries = [
         str(home / ".local" / "bin"),
         str(home / ".npm-global" / "bin"),
+        str(home / "go" / "bin"),
+        "/usr/local/go/bin",
         inherited_path,
         _DEFAULT_PATH,
     ]
@@ -95,6 +97,10 @@ async def wrap_sandbox_command(
         "UV_PROJECT_ENVIRONMENT": str(workspace_python_env),  # uv虚拟py环境路径
         "UV_CACHE_DIR": str(home / ".cache" / "uv"),  # 包缓存目录
         "NPM_CONFIG_PREFIX": str(home / ".npm-global"),  # npm 全局安装目录
+        "GOPATH": str(home / "go"),
+        "GOMODCACHE": str(home / "go" / "pkg" / "mod"),
+        "GOCACHE": str(home / ".cache" / "go-build"),
+        "GOENV": str(home / ".config" / "go" / "env"),
         "SHELL_USER_ID": str(user_id), # 注入 user_id，给插件使用
     }
     lark_user_access_token = get_lark_user_access_token()

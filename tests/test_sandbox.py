@@ -255,6 +255,7 @@ async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
         Path(".config/uv/uv.toml"),
         Path(".pip/pip.conf"),
         Path(".npmrc"),
+        Path(".config/go/env"),
         Path("nested/custom/config.ini"),
     )
     for relative_path in config_files:
@@ -264,6 +265,8 @@ async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
 
     monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    for key in ("GOPATH", "GOMODCACHE", "GOCACHE", "GOENV"):
+        monkeypatch.setenv(key, str(tmp_path / "backend-go" / key))
     user_id = "test-session"
 
     session_token = user_id_var.set(user_id)
@@ -279,6 +282,12 @@ async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
     assert environment["HOME"] == str(home)
     assert environment["UV_CACHE_DIR"] == str(home / ".cache/uv")
     assert environment["NPM_CONFIG_PREFIX"] == str(home / ".npm-global")
+    assert environment["GOPATH"] == str(home / "go")
+    assert environment["GOMODCACHE"] == str(home / "go/pkg/mod")
+    assert environment["GOCACHE"] == str(home / ".cache/go-build")
+    assert environment["GOENV"] == str(home / ".config/go/env")
+    assert str(home / "go/bin") in environment["PATH"].split(":")
+    assert "/usr/local/go/bin" in environment["PATH"].split(":")
     assert environment["SHELL_USER_ID"] == user_id
     assert environment["PATH"].startswith(f"{home / '.local/bin'}:{home / '.npm-global/bin'}:")
     assert writable_binds == {(str(workspace), str(workspace))}
@@ -591,6 +600,87 @@ try {
     assert b"node-runtime-ok" in result.stdout
     assert b"local-bin-ok" in result.stdout
     assert (workspace / "build-result.txt").read_text() == "build-ok"
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux" or any(
+        shutil.which(name) is None for name in (*NETWORK_SANDBOX_EXECUTABLES, "go")
+    ),
+    reason="Requires Linux sandbox dependencies and Go installed under /usr or /opt",
+)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("network_isolation", [False, True])
+@pytest.mark.parametrize("third_party", [
+    pytest.param(False, id="stdlib"),
+    pytest.param(True, id="google-uuid", marks=pytest.mark.skipif(
+        os.environ.get("XPEECH_TEST_GO_NETWORK") != "1",
+        reason="Set XPEECH_TEST_GO_NETWORK=1 to download a third-party Go module",
+    )),
+])
+async def test_go_cross_compiles_windows_and_linux_amd64(tmp_path, monkeypatch, network_isolation, third_party):
+    workspace = tmp_path / "go-workspace"
+    workspace.mkdir()
+    (workspace / "go.mod").write_text("module example.com/crosshello\n\ngo 1.23\n")
+    (workspace / "main.go").write_text(
+        'package main\nimport "fmt"\nfunc main() { fmt.Println("go-sandbox-ok") }\n'
+    )
+    expected_output = "go-sandbox-ok"
+    download_command = ""
+    if third_party:
+        with (workspace / "go.mod").open("a") as module_file:
+            module_file.write("\nrequire github.com/google/uuid v1.6.0\n")
+        (workspace / "main.go").write_text(
+            'package main\nimport ("fmt"; "github.com/google/uuid")\n'
+            'func main() {\n'
+            '  id, err := uuid.Parse("123e4567-e89b-12d3-a456-426614174000")\n'
+            '  if err != nil { panic(err) }\n'
+            '  fmt.Println("go-sandbox-ok", id.String())\n'
+            '}\n'
+        )
+        expected_output += " 123e4567-e89b-12d3-a456-426614174000"
+        # Download and verify through the sandbox network, then build solely
+        # from the workspace's module cache for both target platforms.
+        download_command = "go mod download all; go mod verify >&2; export GOPROXY=off; "
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(settings.path, "sandbox_home_path", Path("assets/sandbox-home").resolve())
+
+    command = await sandbox.wrap_sandbox_command(
+        f"set -eu; go env -json GOPATH GOMODCACHE GOCACHE GOPROXY; {download_command}"
+        "CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o app.exe .; "
+        "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o app-linux .; "
+        "CGO_ENABLED=0 go install .; crosshello",
+        workspace, skills_loader=SkillsLoader(workspace), network_isolation=network_isolation,
+    )
+    process = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), 180)
+    assert process.returncode == 0, stderr.decode()
+    environment_json, output = stdout.decode().split("}\n", 1)
+    environment = json.loads(environment_json + "}")
+    assert environment["GOPATH"] == str(workspace / "home/go")
+    assert environment["GOMODCACHE"] == str(workspace / "home/go/pkg/mod")
+    assert environment["GOCACHE"] == str(workspace / "home/.cache/go-build")
+    assert environment["GOPROXY"] == "https://goproxy.cn,direct"
+    assert output.strip() == expected_output
+    assert any((workspace / "home/.cache/go-build").iterdir())
+    if third_party:
+        module_cache = workspace / "home/go/pkg/mod"
+        assert (module_cache / "github.com/google/uuid@v1.6.0/uuid.go").is_file()
+        assert (module_cache / "cache/download/github.com/google/uuid/@v/v1.6.0.zip").is_file()
+        checksums = (workspace / "go.sum").read_text()
+        assert "github.com/google/uuid v1.6.0 h1:" in checksums
+        assert "github.com/google/uuid v1.6.0/go.mod h1:" in checksums
+        assert b"all modules verified" in stderr
+
+    windows = (workspace / "app.exe").read_bytes()
+    assert windows[:2] == b"MZ"
+    pe_offset = struct.unpack_from("<I", windows, 0x3C)[0]
+    assert windows[pe_offset:pe_offset + 4] == b"PE\0\0"
+    assert struct.unpack_from("<H", windows, pe_offset + 4)[0] == 0x8664  # AMD64
+    linux = (workspace / "app-linux").read_bytes()
+    assert linux[:6] == b"\x7fELF\x02\x01"  # 64-bit little-endian ELF
+    assert struct.unpack_from("<H", linux, 18)[0] == 62  # x86-64
 
 
 @pytest.mark.skipif(

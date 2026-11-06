@@ -1,3 +1,6 @@
+ARG GO_VERSION=1.27.3
+FROM docker.1ms.run/library/golang:${GO_VERSION}-bookworm AS go-toolchain
+
 FROM docker.1ms.run/library/golang:1.23-bookworm AS lark-cli-builder
 
 ENV GOPROXY=https://goproxy.cn,direct \
@@ -38,6 +41,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM docker.1panel.live/library/ubuntu:22.04
 
+COPY --from=go-toolchain /usr/local/go /usr/local/go
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -47,7 +52,10 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PYTHON_INSTALL_MIRROR=https://registry.npmmirror.com/-/binary/python-build-standalone/ \
     UV_PYTHON_INSTALL_DIR=/opt/uv/python \
     UV_INSTALL_DIR=/usr/local/bin \
-    UV_NO_MODIFY_PATH=1
+    UV_NO_MODIFY_PATH=1 \
+    PATH=/usr/local/go/bin:${PATH}
+
+RUN go version
 
 RUN sed -i \
         -e 's|http://archive.ubuntu.com/ubuntu/|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \

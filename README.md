@@ -336,6 +336,17 @@ docker compose up -d --build
 ```
 
 镜像内置 `build-essential`（GCC、G++、Make 和 C/C++ 开发头文件），可在容器及 Shell 沙盒中编译、运行 C/C++ 代码。
+镜像内置 Go 工具链，Shell 沙盒可交叉编译 Windows x64 和 Linux x64 的纯 Go 程序。在含 `go.mod` 的项目目录中执行：
+
+```bash
+mkdir -p dist
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/app-windows-amd64.exe .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/app-linux-amd64 .
+```
+
+`x64` 对应 Go 的 `amd64`。这些命令关闭 CGO；跨平台构建依赖 CGO 的项目时，还需目标平台的 C 工具链及相关库。
+Go 模块默认通过 `goproxy.cn` 下载，可在 `assets/sandbox-home/.config/go/env` 调整代理。
+
 镜像内置 TShark，Shell 沙盒共享其程序、协议库和只读系统配置，可使用 `tshark -n -r data.cap` 离线分析 CAP、PCAP、PCAPNG 报文，或通过 `-T json` 导出解析结果。
 镜像内置 LibreOffice Writer、Calc、Impress 和 Draw，沙盒共享只读系统配置，支持使用 `libreoffice --headless --convert-to pdf --outdir output document.docx` 无界面转换文档。
 镜像内置 Noto CJK 中文字体（黑体、宋体，含常规和粗体）和 DejaVu 字体，
@@ -897,7 +908,7 @@ Shell 命令会在 bwrap 进程沙盒中执行：
 - `/tmp` 和工作区父目录会使用临时文件系统隔离，避免命令看到其他工作区。
 - `/usr`、`/bin`、`/lib`、证书和 DNS 配置等系统路径以只读方式挂载，提供基础运行环境。
 - `HOME` 会指向当前会话的 `<workspace>/home`；路径参数中的 `~` 也会解析到这个目录。
-- `PATH` 会优先包含当前 HOME 下的 `.local/bin` 和 `.npm-global/bin`，`uv tool install`、`npm install -g` 的命令只在当前会话持久化。
+- `PATH` 会优先包含当前 HOME 下的 `.local/bin`、`.npm-global/bin` 和 `go/bin`，`uv tool install`、`npm install -g`、`go install` 的命令只在当前工作区持久化。
 - `sandbox_home_path` 指定公共 HOME 配置源目录（默认为 `assets/sandbox-home`）；其中的所有文件都会保留相对路径，通过 bwrap 只读映射到每个 HOME。
 
 `wrap_sandbox_command(..., network_isolation=True)` 默认开启网络隔离，通过 Python 标准库启动器协调 bwrap 和 slirp4netns；设为 `False` 时直接运行 bwrap，共享宿主机网络，同时保留文件系统、进程、IPC 和 HOME 隔离。Shell 使用默认值；stdio MCP 显式关闭网络隔离，可访问宿主机的 `localhost` 服务，仅依赖 `bwrap` 和 `bash`。
@@ -908,6 +919,7 @@ Shell 工具首次运行时会在工作区内执行 `uv venv .venv`，为该工�
 Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `pip` 会被安全检查拦截。
 沙盒内设置了 `PIP_REQUIRE_VIRTUALENV=true` 和 `UV_PROJECT_ENVIRONMENT=<workspace>/.venv`，确保项目 Python 依赖安装进入当前工作区的 `.venv`。
 同时设置 `UV_CACHE_DIR=<workspace>/home/.cache/uv` 和 `NPM_CONFIG_PREFIX=<workspace>/home/.npm-global`，让 uv 缓存、uv tool 工具和 npm 全局工具都保留在当前会话 HOME 内。
+Go 的 `GOPATH`、`GOMODCACHE` 和 `GOCACHE` 分别指向 `<workspace>/home/go`、`<workspace>/home/go/pkg/mod` 和 `<workspace>/home/.cache/go-build`，依赖、安装的命令和编译缓存均保留在当前工作区。
 
 如果 `npx` 来自 nvm 或真实用户 HOME 中的 Node 安装，沙盒默认看不到它；需要把 Node/npm/npx 安装到 `/usr`、`/bin`、`/opt` 等沙盒可见路径，或在沙盒内通过可见的 npm 安装全局工具。
 
@@ -917,6 +929,14 @@ Python 命令必须通过 `uv run python ...` 启动，直接执行 `python` / `
 uv sync
 uv run pytest
 ```
+
+Go 第三方库集成测试需要联网，会在真实沙盒内下载并校验 `github.com/google/uuid v1.6.0`，随后关闭模块代理，使用缓存交叉编译 Windows x64、Linux x64 并运行本机程序：
+
+```bash
+XPEECH_TEST_GO_NETWORK=1 uv run pytest tests/test_sandbox.py -k go_cross_compiles
+```
+
+独立网络沙盒无法访问宿主机的 `127.0.0.1` 代理；运行联网测试时，需取消此类 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`（含小写变量），或改用沙盒可访问的代理地址。
 
 如果需要检查配置是否能读取：
 
