@@ -10,12 +10,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.server.context import lark_user_access_token_var
 from xpeech.agent.skills import skill as skill_module
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import mcp_client
-from xpeech.config.settings import MCPServerSettings, ToolConfig
-from xpeech.utils.security import sandbox
+from xpeech.config.settings import MCPServerSettings, ToolConfig, settings
 
 
 @pytest.fixture
@@ -27,7 +26,7 @@ def stdio_transport(tmp_path, monkeypatch):
     builtin_root = tmp_path / "builtin"
     builtin_root.mkdir()
     monkeypatch.setattr(skill_module, "BUILTIN_SKILLS_DIR", builtin_root)
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
     monkeypatch.setattr(mcp_client.platform, "system", lambda: "Linux")
     monkeypatch.setattr(mcp_client.shutil, "which", lambda name: f"/usr/bin/{name}")
     sessions = []
@@ -97,7 +96,7 @@ async def test_stdio_rebuilds_when_wrapped_command_changes(tmp_path, stdio_trans
         elif change == "remove_skill":
             (skill_dir / "SKILL.md").unlink()
         elif change == "home_config":
-            config_home = sandbox.settings.path.sandbox_home_path
+            config_home = settings.path.sandbox_home_path
             config_home.mkdir()
             (config_home / ".npmrc").write_text("managed config")
 
@@ -582,7 +581,7 @@ async def test_stdio_sandbox_isolates_files_and_cleans_up_children(tmp_path, mon
     config_home.mkdir()
     (config_home / ".mcp-config").write_text("managed config")
     monkeypatch.setenv("HOME", str(backend_home))
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
+    monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
     (workspace / "worker.py").write_text(
         "import time\nfrom pathlib import Path\nwhile True:\n"
@@ -1260,7 +1259,7 @@ async def test_new_discovery_waits_for_failed_connection_cleanup_without_being_c
 async def test_stdio_server_reconnects_immediately_after_failed_initialization(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
     server = workspace / "server.py"
     server.write_text('''

@@ -19,9 +19,11 @@ from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR, SkillsLoader
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import safe_resolve_workspace_path
+from xpeech.config.settings import settings
 from xpeech.exceptions import PathProtectionError
 from xpeech.utils.security import sandbox
 from xpeech.utils.security.sandbox import executor as executor_module
+from xpeech.utils.security.sandbox.isolation import NETWORK_SANDBOX_EXECUTABLES, SANDBOX_EXECUTABLES
 from xpeech.utils.security.sandbox.session import SandboxManager
 
 
@@ -66,7 +68,7 @@ def test_sandbox_home_rejects_symlink(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypatch):
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
 
     args = await sandbox.wrap_sandbox_command("true", tmp_path, skills_loader=SkillsLoader(tmp_path))
@@ -82,7 +84,7 @@ async def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypa
 
 @pytest.mark.asyncio
 async def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monkeypatch):
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
 
     args = await sandbox.wrap_sandbox_command("true", tmp_path, network_isolation=False, skills_loader=SkillsLoader(tmp_path))
@@ -107,7 +109,7 @@ async def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path
     workspace.mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(backend_home))
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
 
     relative_workspace = Path("~/workspace")
@@ -178,7 +180,7 @@ def test_sandbox_home_config_paths_map_to_managed_files_for_reading(
     config_file = config_home / ".config/uv/uv.toml"
     config_file.parent.mkdir(parents=True)
     config_file.write_text("managed config", encoding="utf-8")
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
+    monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
 
     assert (
         safe_resolve_workspace_path(
@@ -200,7 +202,7 @@ def test_sandbox_home_config_paths_are_read_only_to_file_tools(
     config_file = config_home / ".npmrc"
     config_home.mkdir()
     config_file.write_text("managed config", encoding="utf-8")
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
+    monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
 
     with pytest.raises(PathProtectionError, match="HOME config files are read-only"):
         safe_resolve_workspace_path(Path("~/.npmrc"), workspace)
@@ -214,7 +216,7 @@ def test_unmapped_sandbox_home_paths_stay_in_workspace(
     workspace.mkdir()
     config_home = tmp_path / "sandbox-home"
     config_home.mkdir()
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
+    monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
 
     assert safe_resolve_workspace_path(Path("~/notes/todo.md"), workspace) == workspace / "home/notes/todo.md"
 
@@ -230,7 +232,7 @@ async def test_file_tools_can_read_but_not_write_mapped_home_configs(
     config_home.mkdir()
     config_file = config_home / ".npmrc"
     config_file.write_text("registry=https://example.invalid\n", encoding="utf-8")
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
+    monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
     _, _, read_file, write_file, _ = build_file_tools(workspace)
 
     result = await read_file(ReadFileArgs(path="~/.npmrc"))
@@ -260,7 +262,7 @@ async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
         config_file.parent.mkdir(parents=True, exist_ok=True)
         config_file.write_text("mirror config", encoding="utf-8")
 
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
+    monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
     user_id = "test-session"
 
@@ -359,7 +361,7 @@ async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
 
 @pytest.mark.skipif(
     platform.system() != "Linux" or any(
-        shutil.which(name) is None for name in (*sandbox.SANDBOX_EXECUTABLES, "fc-list")
+        shutil.which(name) is None for name in (*SANDBOX_EXECUTABLES, "fc-list")
     ),
     reason="Requires Linux sandbox dependencies and Fontconfig",
 )
@@ -370,7 +372,7 @@ async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
     assert b"Fontconfig error" not in host_fonts.stderr
     if not host_fonts.stdout.strip():
         pytest.skip("Requires system Chinese fonts (e.g. fonts-noto-cjk)")
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
 
     command = await sandbox.wrap_sandbox_command(
@@ -388,7 +390,7 @@ async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(
     platform.system() != "Linux" or any(
-        shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "tshark")
+        shutil.which(name) is None for name in (*NETWORK_SANDBOX_EXECUTABLES, "tshark")
     ),
     reason="Requires Linux sandbox dependencies and TShark",
 )
@@ -407,7 +409,7 @@ async def test_sandbox_analyzes_ethernet_capture_with_tshark(tmp_path, monkeypat
     capture = struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     capture += struct.pack("<IIII", 1, 0, len(frame), len(frame)) + frame
     (workspace / "sample.cap").write_bytes(capture)
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
 
     command = await sandbox.wrap_sandbox_command(
@@ -432,7 +434,7 @@ async def test_sandbox_analyzes_ethernet_capture_with_tshark(tmp_path, monkeypat
 
 @pytest.mark.skipif(
     platform.system() != "Linux" or any(
-        shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "libreoffice", "pdftotext")
+        shutil.which(name) is None for name in (*NETWORK_SANDBOX_EXECUTABLES, "libreoffice", "pdftotext")
     ),
     reason="Requires Linux sandbox dependencies, LibreOffice and Poppler",
 )
@@ -451,7 +453,7 @@ async def test_sandbox_converts_document_with_libreoffice(tmp_path, monkeypatch,
  </office:text></office:body>
 </office:document>
 ''', encoding="utf-8")
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
 
     command = await sandbox.wrap_sandbox_command(
@@ -476,7 +478,7 @@ async def test_sandbox_converts_document_with_libreoffice(tmp_path, monkeypatch,
 
 
 @pytest.mark.skipif(
-    platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.NETWORK_SANDBOX_EXECUTABLES),
+    platform.system() != "Linux" or any(shutil.which(name) is None for name in NETWORK_SANDBOX_EXECUTABLES),
     reason="Requires Linux sandbox dependencies",
 )
 @pytest.mark.asyncio
@@ -496,7 +498,7 @@ async def test_root_can_read_restricted_builtin_permissions_but_not_write_read_o
     resource_file.chmod(0o000)
     skill_dir.chmod(0o111)
     monkeypatch.setattr(skill_module, "BUILTIN_SKILLS_DIR", builtin_root)
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
     try:
         command = await sandbox.wrap_sandbox_command(
             "set -e; test $(id -u) = 0; ls skills/weather; cat skills/weather/resources/data.txt; "
@@ -526,7 +528,7 @@ async def test_root_can_read_restricted_builtin_permissions_but_not_write_read_o
 
 @pytest.mark.skipif(
     platform.system() != "Linux" or any(
-        shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "node", "npm", "npx")
+        shutil.which(name) is None for name in (*NETWORK_SANDBOX_EXECUTABLES, "node", "npm", "npx")
     ),
     reason="Requires Linux sandbox dependencies and Node.js/npm/npx",
 )
@@ -576,7 +578,7 @@ try {
 }
 ''')
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
 
     result = await executor_module.sandbox_manager.run(
         "npm install --offline --ignore-scripts --no-audit --no-fund && npm run build && "
@@ -593,7 +595,7 @@ try {
 
 @pytest.mark.skipif(
     platform.system() != "Linux" or any(
-        shutil.which(name) is None for name in (*sandbox.NETWORK_SANDBOX_EXECUTABLES, "setsid")
+        shutil.which(name) is None for name in (*NETWORK_SANDBOX_EXECUTABLES, "setsid")
     ),
     reason="Requires Linux with bubblewrap, slirp4netns, bash and setsid",
 )
@@ -611,7 +613,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
     config_home.mkdir()
     managed_config = config_home / ".audit-config"
     managed_config.write_text("read-only config", encoding="utf-8")
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", config_home)
+    monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
     heartbeat = workspace / "heartbeat"
     worker = "for ((i=0; i<40; i++)); do printf x >> heartbeat; sleep 0.05; done"
@@ -663,13 +665,13 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
 
 @pytest.mark.skipif(
     platform.system() != "Linux" or any(
-        shutil.which(name) is None for name in sandbox.NETWORK_SANDBOX_EXECUTABLES
+        shutil.which(name) is None for name in NETWORK_SANDBOX_EXECUTABLES
     ) or not Path("/usr/bin/python3").exists(),
     reason="Requires Linux sandbox dependencies and system Python",
 )
 @pytest.mark.asyncio
 async def test_concurrent_sandboxes_have_private_ports_and_ipc(tmp_path, monkeypatch):
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
     program = """
 import json, os, socket, sys

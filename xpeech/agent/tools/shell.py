@@ -6,9 +6,9 @@ from textwrap import dedent
 from pydantic import BaseModel, Field
 
 from ...utils.security import sandbox
+from ...utils.security.sandbox.schema import DEFAULT_EXEC_TIMEOUT_MS
 from ..skills.skill import SkillsLoader
 
-DEFAULT_EXEC_TIMEOUT_MS = sandbox.DEFAULT_EXEC_TIMEOUT_MS
 MAX_EXEC_TIMEOUT_MS = 240_000
 
 
@@ -18,7 +18,9 @@ class ShellArgs(BaseModel):
         default=DEFAULT_EXEC_TIMEOUT_MS,
         gt=0,
         le=MAX_EXEC_TIMEOUT_MS,
-        description="Command execution timeout in milliseconds (maximum 240000).",
+        description=(
+            f"Command execution timeout in milliseconds (default {DEFAULT_EXEC_TIMEOUT_MS}, maximum {MAX_EXEC_TIMEOUT_MS})."
+        ),
     )
 
 

@@ -9,19 +9,19 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent import execute as execute_module
 from xpeech.agent.server.api import app
 from xpeech.agent.server.context import get_lark_user_access_token
 from xpeech.agent.skills import skill as skill_module
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, settings
 from xpeech.utils import internal_jwt
-from xpeech.utils.security import sandbox
 from xpeech.utils.channel_jwt import ChannelJWTAuth, ChannelTokenParams, UserTokenParams, create_token
 from xpeech.utils.internal_jwt import (
     create_internal_access_token,
     decode_internal_access_token,
 )
+from xpeech.utils.security import sandbox
 
 TEST_SECRET_KEY = "test-secret-key-that-is-at-least-32-bytes"
 TEST_CHANNEL = "test"
@@ -144,8 +144,8 @@ def test_api_rejects_invalid_lark_user_access_token_claim(channel, lark_user_acc
 
 @pytest.mark.asyncio
 async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_path, monkeypatch):
-    monkeypatch.setattr(sandbox.settings.path, "cache_path", tmp_path / "cache")
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "sandbox-home")
+    monkeypatch.setattr(settings.path, "cache_path", tmp_path / "cache")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "sandbox-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
     monkeypatch.setenv("LARKSUITE_CLI_USER_ACCESS_TOKEN", "u-process-token")
     both_started = asyncio.Event()

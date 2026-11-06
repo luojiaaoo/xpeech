@@ -14,11 +14,11 @@ from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.shell import ShellArgs
-from xpeech.config.settings import Settings, ShellConfig, ToolConfig
-from xpeech.utils.security import sandbox
-from xpeech.utils.security.sandbox import CommandResult
+from xpeech.config.settings import Settings, ShellConfig, ToolConfig, settings
 from xpeech.utils.security.sandbox import executor as executor_module
 from xpeech.utils.security.sandbox import session as session_module
+from xpeech.utils.security.sandbox.isolation import NETWORK_SANDBOX_EXECUTABLES
+from xpeech.utils.security.sandbox.schema import CommandResult
 from xpeech.utils.security.sandbox.session import SandboxConnectionError, SandboxManager, SandboxSession
 
 
@@ -40,7 +40,7 @@ def test_sandbox_idle_timeout_loads_from_toml(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
     loaded = Settings()
-    monkeypatch.setattr(sandbox.settings.tool, "shell", loaded.tool.shell)
+    monkeypatch.setattr(settings.tool, "shell", loaded.tool.shell)
     assert SandboxManager().idle_timeout == 0.15
 
 
@@ -104,7 +104,7 @@ async def stubbed_sandbox(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.setattr(skill_module, "BUILTIN_SKILLS_DIR", builtin_root)
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "managed-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
 
     def process(*_args, **_kwargs):
         return SimpleNamespace(returncode=None, stdout=SimpleNamespace(readline=AsyncMock(return_value=b"ready\n")))
@@ -150,7 +150,7 @@ async def test_sandbox_rebuilds_when_wrapped_command_changes(stubbed_sandbox, ch
             elif change == "remove_skill":
                 (skill_dir / "SKILL.md").unlink()
             elif change == "home_config":
-                config_home = sandbox.settings.path.sandbox_home_path
+                config_home = settings.path.sandbox_home_path
                 config_home.mkdir()
                 (config_home / ".npmrc").write_text("managed config")
 
@@ -374,17 +374,17 @@ async def test_concurrent_first_shell_calls_share_initialization_then_execute_in
 
 
 linux_sandbox = pytest.mark.skipif(
-    platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.NETWORK_SANDBOX_EXECUTABLES),
+    platform.system() != "Linux" or any(shutil.which(name) is None for name in NETWORK_SANDBOX_EXECUTABLES),
     reason="Requires Linux sandbox dependencies",
 )
 
 
 @pytest_asyncio.fixture
 async def manager(tmp_path, monkeypatch, request):
-    monkeypatch.setattr(sandbox.settings.path, "sandbox_home_path", tmp_path / "config-home")
+    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
     if hasattr(request, "param"):
-        monkeypatch.setattr(sandbox.settings.tool.shell, "sandbox_idle_timeout_seconds", request.param)
+        monkeypatch.setattr(settings.tool.shell, "sandbox_idle_timeout_seconds", request.param)
     manager = SandboxManager()
     try:
         yield manager

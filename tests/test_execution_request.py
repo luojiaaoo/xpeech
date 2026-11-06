@@ -28,8 +28,8 @@ from xpeech.provider.schema import LLMParameters, ToolCallRequest
 from xpeech.subapp.channel.feishu.cards import build_feishu_question_card
 from xpeech.utils.question import validate_confirm_question_json, validate_question_form_json
 from xpeech.utils.security import dcg as dcg_module
-from xpeech.utils.security import sandbox
 from xpeech.utils.security.sandbox import executor as executor_module
+from xpeech.utils.security.sandbox.schema import CommandResult
 
 
 class CommandArgs(BaseModel):
@@ -142,7 +142,7 @@ async def test_shell_checks_once_before_confirmed_execution(tmp_path, monkeypatc
     monkeypatch.setattr(executor_module.platform, "system", lambda: "Linux")
     monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
     initialize = AsyncMock()
-    execute = AsyncMock(return_value=sandbox.CommandResult(b"removed", b"", 0))
+    execute = AsyncMock(return_value=CommandResult(b"removed", b"", 0))
     monkeypatch.setattr(executor_module.SandboxExecutor, "ensure_python_environment", initialize)
     monkeypatch.setattr(executor_module.sandbox_manager, "run", execute)
     process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(b'{"decision":"ask"}', b"")))

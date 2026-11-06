@@ -18,11 +18,11 @@ from xpeech.agent.tools.mcp_client import _render_mcp_result
 from xpeech.agent.tools.shell import MAX_EXEC_TIMEOUT_MS, ShellArgs, _format_command_output, build_shell_tools
 from xpeech.config.settings import MCPServerSettings, ToolConfig
 from xpeech.provider.schema import ToolCallRequest
-from xpeech.utils.security import sandbox
-from xpeech.utils.security.sandbox import CommandResult
 from xpeech.utils.security.sandbox import executor as executor_module
 from xpeech.utils.security.sandbox import policy as policy_module
+from xpeech.utils.security.sandbox.isolation import SANDBOX_EXECUTABLES
 from xpeech.utils.security.sandbox.policy import guard_command as _guard_command
+from xpeech.utils.security.sandbox.schema import CommandResult
 from xpeech.utils.security.sandbox.session import SandboxManager
 
 
@@ -221,7 +221,7 @@ class TestToolExecutor:
         assert build_shell_tools(workspace, skills_loader=SkillsLoader(workspace)).__name__ == "shell"
 
     @pytest.mark.skipif(
-        platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.SANDBOX_EXECUTABLES),
+        platform.system() != "Linux" or any(shutil.which(name) is None for name in SANDBOX_EXECUTABLES),
         reason="Requires Linux sandbox dependencies",
     )
     @pytest.mark.asyncio
@@ -256,7 +256,7 @@ class TestToolExecutor:
         assert "Command timed out after 0.5s" in output
 
     @pytest.mark.skipif(
-        platform.system() != "Linux" or any(shutil.which(name) is None for name in sandbox.SANDBOX_EXECUTABLES),
+        platform.system() != "Linux" or any(shutil.which(name) is None for name in SANDBOX_EXECUTABLES),
         reason="Requires Linux sandbox dependencies",
     )
     @pytest.mark.asyncio
