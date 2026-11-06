@@ -1,14 +1,16 @@
-```markdown
 ---
 name: gio-desktop-app
-short_description: Go Gio 桌面软件开发
+short_description: Go 桌面软件开发
 description: "Build cross-platform desktop GUI software in pure Go with Gio (gioui.org). Use when the user wants to develop a desktop application or program (Windows/Linux/macOS), a GUI tool with windows and buttons, a standalone exe, or to package and publish a desktop app. Keywords: 桌面软件、桌面应用、桌面程序、图形界面、GUI、窗口程序、Gio、gioui、Golang、Go、exe、打包发布、纯Go。Before writing any code, confirm the user's runtime environment (Windows x64 / Linux x64 / Linux arm64) in plain language, guiding non-technical users to identify their computer."
 ---
 
 # 桌面软件开发说明书（Gio + 纯 Go）
 
 用 Gio 框架（gioui.org）+ 纯 Go 开发带图形界面的桌面软件（Windows / Linux / macOS），并按目标平台打包交付。
-业务代码 100% Go，**不需要 CGO**，不写 C 或其他语言。
+业务代码 100% Go，不写 C 或其他语言。
+
+**选 Gio 的理由：Windows 目标零 cgo、零 C 编译器**——装了 Go 就能编译出 .exe，交叉编译也是纯 Go 链路。
+（注意与 Fyne 的区别：Fyne 构建必须有 gcc/mingw；Gio 在 Windows 上用纯 Go syscall 调 D3D/Win32。）
 
 ## 工作流程
 
@@ -48,7 +50,7 @@ description: "Build cross-platform desktop GUI software in pure Go with Gio (gio
     {
       "type": "input",
       "name": "device_hint",
-      "label": "若选"不确定"，简单描述一下这台电脑（可留空）",
+      "label": "若选“不确定”，简单描述一下这台电脑（可留空）",
       "placeholder": "例如：公司的 Windows 笔记本 / 家里的树莓派 4 / 一台黑色小主机"
     }
   ]
@@ -61,11 +63,11 @@ description: "Build cross-platform desktop GUI software in pure Go with Gio (gio
 
 | 用户的说法 | 构建目标 | 说明 |
 |---|---|---|
-| Windows 电脑 / 笔记本 / 办公电脑 | `windows/amd64`（Windows x64） | 主流默认 |
-| Linux 电脑 / 服务器 / Ubuntu / Debian | `linux/amd64`（Linux x64） | |
+| Windows 电脑 / 笔记本 / 办公电脑 | `windows/amd64`（Windows x64） | 主流默认，**纯 Go 直接交叉编译** |
+| Linux 电脑 / 服务器 / Ubuntu / Debian | `linux/amd64`（Linux x64） | 构建需 cgo，见第 5 步依赖 |
 | 树莓派 3/4/5、开发板、工控机、信创电脑（鲲鹏 / 飞腾 / 麒麟 / 统信） | `linux/arm64`（Linux arm64） | 树莓派 1/2/Zero 是 armv6/armv7，按 `GOARCH=arm` 单独处理 |
-| MacBook / iMac | `darwin/arm64` 或 `darwin/amd64` | |
-| 骁龙笔记本 / 明确说 ARM 版 Windows | `windows/arm64` | 少见 |
+| 骁龙笔记本 / 明确说 ARM 版 Windows | `windows/arm64` | 纯 Go 直接交叉编译 |
+| MacBook / iMac | `darwin/*` | 少见，Gio 同样支持（纯 Go） |
 | 多种都要支持 | 逐个平台打包 | 文件名带平台名 |
 
 ### 用户说"不确定"时的引导方法（大白话）
@@ -79,7 +81,7 @@ description: "Build cross-platform desktop GUI software in pure Go with Gio (gio
 
 ## 第 2 步：确认需求
 
-用一两句话复述软件要做什么，列出主要窗口和控件（按钮、表格、输入框、托盘图标……）。关键信息缺失时用表单补问一次即可，不要反复追问；先做出能跑的最小版本再迭代。
+用一两句话复述软件要做什么，列出主要窗口和控件（按钮、表格、输入框……）。关键信息缺失时用表单补问一次即可，不要反复追问；先做出能跑的最小版本再迭代。
 
 ## 第 3 步：项目骨架（纯 Go）
 
@@ -87,10 +89,11 @@ description: "Build cross-platform desktop GUI software in pure Go with Gio (gio
 mkdir myapp && cd myapp
 go mod init example.com/myapp
 go get gioui.org@latest
-go get gioui.org/x@latest
 ```
 
-最小 `main.go`：
+注意模块路径就是 `gioui.org`（不是 gioui.org/v2），且**没有 `import "C"`、不设置 `CGO_ENABLED=1`**（Windows 目标）。
+
+最小可运行骨架 `cmd/myapp/main.go`（API 对应 Gio v0.10.x）：
 
 ```go
 package main
@@ -101,67 +104,74 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/font/gofont"
-	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/text"
+	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 )
 
 func main() {
+	// Gio 要求 app.Main() 在主 goroutine；窗口循环放子 goroutine
 	go func() {
-		w := app.NewWindow(app.Title("我的桌面软件"), app.Size(600, 400))
-		if err := run(w); err != nil {
-			log.Fatal(err)
+		var w app.Window // 零值即可用，第一次 Event() 时创建系统窗口
+		w.Option(app.Title("我的桌面软件"), app.Size(unit.Dp(400), unit.Dp(300)))
+		th := material.NewTheme()
+		th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+		var ops op.Ops
+		var btn widget.Clickable
+		for {
+			switch e := w.Event().(type) {
+			case app.DestroyEvent:
+				if e.Err != nil {
+					log.Fatal(e.Err)
+				}
+				os.Exit(0)
+			case app.FrameEvent:
+				gtx := app.NewContext(&ops, e)
+				if btn.Clicked(gtx) {
+					os.Exit(0)
+				}
+				layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return material.H3(th, "你好，桌面软件已运行").Layout(gtx)
+						}),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return material.Button(th, &btn, "退出").Layout(gtx)
+						}),
+					)
+				})
+				e.Frame(gtx.Ops)
+			}
 		}
-		os.Exit(0)
 	}()
 	app.Main()
 }
-
-func run(w *app.Window) error {
-	th := material.NewTheme()
-	th.Shaper = gofont.Collection()
-
-	var ops op.Ops
-	var btn widget.Clickable
-
-	for {
-		switch e := w.Event().(type) {
-		case system.DestroyEvent:
-			return e.Err
-		case system.FrameEvent:
-			gtx := layout.NewContext(&ops, e)
-			if btn.Clicked(gtx) {
-				os.Exit(0)
-			}
-			layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(material.H1(th, "你好，桌面软件已运行").Layout),
-					layout.Rigid(material.Button(th, &btn, "退出").Layout),
-				)
-			})
-			e.Frame(gtx.Ops)
-		}
-	}
-}
 ```
 
-> 注意：`run` 函数里需要 `"gioui.org/widget"` 包来使用 `widget.Clickable`。
+要点：
 
-- 目录保持简单：`main.go` + 按功能分包（`ui/`、`core/`），不要过度设计。
-- Gio 是**即时模式**（每帧重绘），状态用局部变量 / 结构体保存，UI 函数每帧执行一次。
-- 界面含中文时捆绑中文字体（`go:embed` 引入 .ttf），追加到 `go font.FontFace` 列表后设 `th.Shaper`，保证精简系统上也能正常显示中文。
-- **Gio 不需要 CGO**，纯 Go 编译，无 C 编译器依赖。这是相比 Fyne 的核心优势。
+- **事件循环**：`w.Event()` 阻塞等事件；`app.FrameEvent` 来一帧画一帧（立即模式：每帧重绘整个界面），`app.DestroyEvent` 表示窗口关闭。
+- 目录保持简单：`cmd/myapp/main.go` + 按功能分包（`ui/`、`core/`），不要过度设计。
+- 常用控件在 `widget/material`：`material.Button(th, &clickable, "文本")`、`material.Label(th, unit.Sp(14), "文本")`、`material.Editor(th, &editor, "提示")`、`material.CheckBox`、`material.Switch`、`material.Slider`、`material.ProgressBar`、`material.List`；布局用 `layout.Flex`（`layout.Rigid`/`layout.Flexed`）、`layout.Stack`（层叠）、`layout.Inset`（边距）、`layout.Spacer`。需要导航栏、抽屉等更丰富组件时加扩展模块 `go get gioui.org/x@latest`（`gioui.org/x/component`）。
+- 状态存局部变量 / 结构体，UI 每帧重建；goroutine 里异步更新数据后调用 `w.Invalidate()` 触发重绘。
+- **界面含中文必须捆绑中文字体**（内置 gofont 只有拉丁字形，中文会显示为方块）：
 
-### 核心编写要点
+  ```go
+  //go:embed NotoSansSC-Regular.ttf
+  var fontCN []byte
 
-- 事件循环：`for { switch e := w.Event().(type) { case system.DestroyEvent: ...; case system.FrameEvent: ... } }`
-- 布局：`layout.Flex`（水平/垂直排列）、`layout.Stack`（层叠）、`layout.Center`（居中）、`layout.Inset`（边距）
-- 组件：`material.Button`、`material.Label`、`material.Editor`（输入框）、`material.List`（滚动列表）、`material.CheckBox`、`material.Switch`、`material.Slider`
-- 点击：`var clickable widget.Clickable`，在 FrameEvent 中检查 `clickable.Clicked(gtx)`
-- 异步数据更新：goroutine 中完成后调用 `w.Invalidate()` 触发重绘
-- 填充背景：`material.Background(th, color)` 或 `paint.FillShape()`
-- 图片/资源用 `go:embed` 嵌入
+  faces, err := opentype.ParseCollection(fontCN) // 包: gioui.org/font/opentype
+  if err != nil { log.Fatal(err) }
+  th.Shaper = text.NewShaper(text.WithCollection(faces))
+  ```
+
+  字体文件可用沙盒自带的 `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`，或网上下载 Noto Sans SC。
+- 数据文件存 `app.DataDir()` 返回的目录（跨平台各平台惯例位置），交付说明里写给用户听。
+- `go` 命令找不到时检查 `/usr/local/go/bin` 是否在 PATH 中。
 
 ## 第 4 步：编译验证
 
@@ -169,43 +179,50 @@ func run(w *app.Window) error {
 go vet ./... && go build ./...
 ```
 
-沙盒 / SSH 等无图形界面环境里编译通过即算验证成功（Gio 无 CGO，编译简单），可执行文件交给用户在自己电脑上运行确认。
+沙盒 / SSH 等无图形界面环境里 `go run .` 弹不出窗口属正常现象：用编译通过做开发期验证，可执行文件交给用户在自己电脑上运行确认。
 
 ## 第 5 步：按目标平台打包
 
-**Gio 无需 CGO，无需安装 gcc / mesa / xorg 等系统包，直接交叉编译即可。**
+**Windows 目标（本说明书的主场景）：零额外依赖，只要 Go。**
 
-构建命令：
+```bash
+# Windows x64（从 Linux 沙盒直接交叉编译；-H windowsgui 去掉黑色控制台窗口）
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+  go build -ldflags="-s -w -H windowsgui" -o dist/myapp-windows-x64.exe ./cmd/myapp
+
+# Windows ARM64（骁龙笔记本，同样是纯 Go）
+CGO_ENABLED=0 GOOS=windows GOARCH=arm64 \
+  go build -ldflags="-s -w -H windowsgui" -o dist/myapp-windows-arm64.exe ./cmd/myapp
+
+# macOS（Apple Silicon，同样是纯 Go；交付裸二进制即可，双击可运行）
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+  go build -ldflags="-s -w" -o dist/myapp-mac-arm64 ./cmd/myapp
+```
+
+**Linux 目标（例外：Gio 在 Linux 上经 cgo 加载 Vulkan，需要构建期依赖）：**
+
+- `gcc`（沙盒已预装 build-essential）+ 图形开发头文件 `libvulkan-dev libwayland-dev xorg-dev`（沙盒未预装，按需 `apt-get install`）
+- 报 wayland 相关编译错误、或不需要 Wayland 时，加 `-tags nowayland` 只保留 X11 后端
 
 ```bash
 # Linux x64
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-  go build -ldflags="-s -w" -o dist/myapp-linux-x64
-
-# Windows x64（-H windowsgui 去掉黑色控制台窗口）
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-  go build -ldflags="-s -w" -H windowsgui -o dist/myapp-windows-x64.exe
-
-# Linux arm64（树莓派 / 开发板 / 信创电脑）
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-  go build -ldflags="-s -w" -o dist/myapp-linux-arm64
-
-# macOS (Apple Silicon)
-GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
-  go build -ldflags="-s -w" -o dist/myapp-mac-arm64
+CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+  go build -ldflags="-s -w" -o dist/myapp-linux-x64 ./cmd/myapp
 ```
 
-- 全部命令都设 `CGO_ENABLED=0`，任意平台交叉编译均无 C 依赖。
-- Windows 下用 `-H windowsgui` 去掉控制台窗口。
-- macOS 若需要 .app 图标/Info.plist，可用 `fyne package` 风格手工组装目录，或交付裸二进制。
-- Linux 运行需要图形环境（X11 / Wayland），桌面发行版自带运行库，无需额外安装。
+Linux arm64 交叉编译需要 `gcc-aarch64-linux-gnu` + arm64 版头文件，链路较繁琐，建议在目标机上直接 `go build`。
+
+其他打包细节：
+
+- 在 Windows 本机开发时：装好 Go 直接 `go build`，什么都不用配。
+- Windows exe 加图标 / 版本信息：用纯 Go 工具 `go install github.com/tc-hib/go-winres@latest`，`go-winres make --in icon.json` 生成 `.syso` 放在包目录，`go build` 时自动嵌入。
 
 ## 交付物
 
 每个目标平台交付：
 
-1. 可执行文件：Windows 为 `.exe`（双击即用）；Linux 为二进制（首次运行前 `chmod +x`）；macOS 为裸二进制或 .app。
-2. 一页大白话使用说明：怎么启动、数据存哪儿、出问题找谁，不用技术术语。
+1. 可执行文件：Windows 为 `.exe`（双击即用）；Linux 为二进制或 .tar.gz（首次运行前 `chmod +x`）。
+2. 一页大白话使用说明：怎么启动、数据存哪儿（`app.DataDir()` 的位置）、出问题找谁，不用技术术语。
 3. 多平台时逐个说清哪个文件对应哪种电脑，文件名带平台名（如 `myapp-windows-x64.exe`）。
 
 ## 常见问题
@@ -213,11 +230,8 @@ GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
 | 现象 | 原因与解决 |
 |---|---|
 | Windows 双击 .exe 弹出黑色控制台 | 缺 `-H windowsgui` |
-| Linux 上报 X11 / Wayland / GL 连接错误 | 服务器 / 无桌面环境跑不了 GUI；桌面发行版一般自带运行库 |
-| 中文显示为方块或乱码 | 捆绑中文字体并设置为 `th.Shaper`，不要只依赖 `gofont` |
-| `go get gioui.org` 报错 | 检查 Go 版本 ≥ 1.21，网络不通时配 GOPROXY |
-| 编译通过但窗口不显示 | 无图形环境（SSH / 容器）属正常；交付给用户在桌面环境运行 |
-| 界面卡顿 | 减少每帧分配；用 `op.Record` 缓存静态内容；避免在 Layout 中做 I/O |
-| 点击按钮没反应 | 确认在 FrameEvent 中调用了 `clickable.Clicked(gtx)` 且 widget 在约束范围内 |
+| 中文显示为方块 | 没捆绑中文字体；见第 3 步的 `opentype.ParseCollection`，不能只用 gofont |
+| Linux 编译报 vulkan.h / wayland-client 找不到 | 缺构建期头文件：`apt-get install libvulkan-dev libwayland-dev xorg-dev`；或加 `-tags nowayland` |
+| `internal/vk: build constraints exclude all Go files` | 在 Linux 上把 `CGO_ENABLED=0` 用于了 Linux 目标；Linux 目标必须 `CGO_ENABLED=1`，Windows 目标才是 0 |
+| 运行报打不开显示 / 找不到显示器 | 服务器 / 无桌面环境跑不了 GUI；交付给用户的桌面电脑运行 |
 | 用户需求含糊 | 先交付最小可用窗口，再按反馈迭代 |
-```
