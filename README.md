@@ -368,7 +368,7 @@ docker compose up -d --build --no-deps --force-recreate backend
 不依赖这两个端口：
 
 ```bash
-BACKEND_REPLICAS=16 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
+BACKEND_REPLICAS=8 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 ```
 
 Nginx 按 JWT `sub`（对外请求）或 `x-user-id`（内部请求）做一致性哈希分流；两者都没有时正常轮询。

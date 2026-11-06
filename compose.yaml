@@ -45,7 +45,7 @@ services:
       <<: *common-environment
       XPEECH_TOKEN_MANAGER_URL: http://lark-token-manager:7883
     deploy:
-      replicas: ${BACKEND_REPLICAS:-16}
+      replicas: ${BACKEND_REPLICAS:-8}
     depends_on:
       lark-token-manager:
         condition: service_healthy
