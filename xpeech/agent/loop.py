@@ -479,7 +479,7 @@ class AgentLoop:
                     }
                 )
 
-        if not final_content or not final_content.strip():
+        if final_content is None:
             final_content = "I've completed processing but have no response to give."
             final_content_error = True
             logger.warning("Agent loop finished without final content")
@@ -487,6 +487,7 @@ class AgentLoop:
         # 发送异常兜底内容
         if final_content_error:
             yield {"event": "assistant", "context": final_content}
+            yield {"event": "assistant_end", "context": final_content}
 
         # 拼接助手消息
         _append_turn_message(messages_yaml, turn_messages, {"role": "assistant", "content": final_content})
