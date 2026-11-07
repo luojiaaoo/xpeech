@@ -66,24 +66,22 @@ def build_shell_tools(workspace: Path, *, skills_loader: SkillsLoader):
         f"""
             Execute a bash command in the current workspace and return the output.
 
-            Commands run on Linux inside a bubblewrap sandbox. The current
-            workspace is isolated from other workspaces.
+            **Access boundary (important):** except for files inside the current workspace, everything else in this sandbox — the network, the filesystem (e.g. /tmp, system paths, other directories), and background processes — is reachable **only through this shell tool**. Non-shell tools cannot see or touch any of it. So:
+            - any task that needs network access, reads/writes paths outside the workspace, or interacts with running processes must be done via a bash command here;
+            - only workspace files are shared with the rest of the toolchain; anything else stays inside the sandbox and is shell-only.
 
-            The workspace is writable; system paths and built-in skills are
-            read-only. Calls in this user workspace reuse the same sandbox,
-            including /tmp, network and background processes. Multiple commands
-            can run concurrently, with separate output, timeouts and cancellation.
-            After {executor.idle_timeout:g} seconds without active shell requests,
-            the sandbox and all its processes are stopped. Workspace files remain on disk. Each call
-            starts a new bash in the workspace; shell variables and cd do not
-            carry over.
+            Commands run on Linux inside a bubblewrap sandbox. The current workspace is isolated from other workspaces.
 
-            Commands time out after 120 seconds by default; timeout_ms can
-            request up to 240 seconds. On timeout, partial output is returned.
+            The workspace is writable; system paths and built-in skills are read-only. Calls in this user workspace reuse the same sandbox, including /tmp, network and background processes. Multiple commands can run concurrently, with separate output, timeouts and cancellation. After {executor.idle_timeout:g} seconds without active shell requests, the sandbox and all its processes are stopped. Workspace files remain on disk. Each call starts a new bash in the workspace; shell variables and `cd` do not carry over.
+
+            Commands time out after 120 seconds by default; `timeout_ms` can request up to 240 seconds. On timeout, partial output is returned.
 
             Run Python and pip through uv:
+            ```
             uv run python script.py
             uv pip install package
+            ```
+
         """
     ).lstrip()
     return shell
