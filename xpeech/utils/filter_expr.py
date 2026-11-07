@@ -18,7 +18,7 @@
 
 安全模型：表达式经 ``ast.parse`` 解析后按严格节点白名单校验，再由本模块
 直接解释执行，全程不调用 eval/exec/compile，不接触 Python 对象模型；
-表达式长度、嵌套深度和参数个数均有上限。
+表达式长度有上限。
 """
 
 import ast
@@ -26,9 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-FILTER_MAX_LENGTH = 256
-FILTER_MAX_DEPTH = 8
-FILTER_MAX_ARGS = 32
+FILTER_MAX_LENGTH = 1024
 
 
 class FilterExpressionError(ValueError):
@@ -66,20 +64,18 @@ def _check_arg(node: ast.expr, call_name: str) -> str:
     return value
 
 
-def _check(node: ast.AST, depth: int) -> None:
-    if depth > FILTER_MAX_DEPTH:
-        raise FilterExpressionError(f"filter nesting is limited to {FILTER_MAX_DEPTH} levels")
+def _check(node: ast.AST) -> None:
     if isinstance(node, ast.Expression):
-        _check(node.body, depth)
+        _check(node.body)
     elif isinstance(node, ast.BoolOp):
         if not isinstance(node.op, (ast.And, ast.Or)) or not node.values:
             raise FilterExpressionError("filter only supports 'and' / 'or'")
         for value in node.values:
-            _check(value, depth + 1)
+            _check(value)
     elif isinstance(node, ast.UnaryOp):
         if not isinstance(node.op, ast.Not):
             raise FilterExpressionError("filter only supports 'not'")
-        _check(node.operand, depth + 1)
+        _check(node.operand)
     elif isinstance(node, ast.Constant):
         if not isinstance(node.value, bool):
             raise FilterExpressionError("filter only accepts True / False constants")
@@ -88,8 +84,8 @@ def _check(node: ast.AST, depth: int) -> None:
             raise FilterExpressionError("filter only calls built-in functions: " + ", ".join(sorted(FILTER_FUNCTIONS)))
         if node.keywords:
             raise FilterExpressionError(f"{node.func.id}() does not accept keyword arguments")
-        if not node.args or len(node.args) > FILTER_MAX_ARGS:
-            raise FilterExpressionError(f"{node.func.id}() requires 1-{FILTER_MAX_ARGS} arguments")
+        if not node.args:
+            raise FilterExpressionError(f"{node.func.id}() requires at least one argument")
         for arg in node.args:
             _check_arg(arg, node.func.id)
     else:
@@ -133,7 +129,7 @@ def parse_filter(source: str) -> ParsedFilter:
         tree = ast.parse(source, mode="eval")
     except SyntaxError as exc:
         raise FilterExpressionError(f"filter syntax error: {exc.msg}") from exc
-    _check(tree, 0)
+    _check(tree)
     return ParsedFilter(source=source, _tree=tree)
 
 

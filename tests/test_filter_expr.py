@@ -5,8 +5,6 @@ import pytest
 from xpeech.agent.skills.skill import SkillMetadata
 from xpeech.config.settings import MCPServerSettings
 from xpeech.utils.filter_expr import (
-    FILTER_MAX_ARGS,
-    FILTER_MAX_DEPTH,
     FILTER_MAX_LENGTH,
     FilterContext,
     FilterExpressionError,
@@ -111,20 +109,6 @@ def test_filter_length_limit():
     longest = f"channel('{'x' * (FILTER_MAX_LENGTH - 11)}')"
     assert len(longest) == FILTER_MAX_LENGTH
     parse_filter(longest)
-
-
-def test_filter_depth_limit():
-    parse_filter("not " * FILTER_MAX_DEPTH + "True")
-    with pytest.raises(FilterExpressionError, match="nesting"):
-        parse_filter("not " * (FILTER_MAX_DEPTH + 1) + "True")
-
-
-def test_filter_argument_count_limit():
-    args = ", ".join(f"'{index}'" for index in range(FILTER_MAX_ARGS))
-    parse_filter(f"channel({args})")
-    args = ", ".join(f"'{index}'" for index in range(FILTER_MAX_ARGS + 1))
-    with pytest.raises(FilterExpressionError, match="arguments"):
-        parse_filter(f"channel({args})")
 
 
 @pytest.mark.parametrize("source", [None, 'channel("crm") or org("公司/")', "channel()", "import os"])
