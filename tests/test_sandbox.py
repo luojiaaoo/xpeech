@@ -328,7 +328,7 @@ async def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: P
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("channel_tag", "organization", "expected"),
+    ("channel", "organization", "expected"),
     [
         (None, None, {"public"}),
         ("crm", None, {"public", "tagged"}),
@@ -340,15 +340,15 @@ async def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: P
     ],
 )
 async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
-    tmp_path, monkeypatch, channel_tag, organization, expected,
+    tmp_path, monkeypatch, channel, organization, expected,
 ):
     builtin_root = tmp_path / "builtin"
     for name, restrictions in {
         "public": "",
-        "tagged": 'filter: tag("crm")\n',
+        "tagged": 'filter: channel("crm")\n',
         "organization": 'filter: org("公司/研发")\n',
-        "both": 'filter: tag("crm") and org("公司/研发")\n',
-        "invalid": "filter: tag()\n",
+        "both": 'filter: channel("crm") and org("公司/研发")\n',
+        "invalid": "filter: channel()\n",
     }.items():
         directory = builtin_root / name
         directory.mkdir(parents=True)
@@ -358,7 +358,7 @@ async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
     custom_skill = workspace / "skills/custom/SKILL.md"
     custom_skill.parent.mkdir(parents=True)
     custom_skill.write_text("---\nname: custom\n---\nCustom instructions")
-    loader = SkillsLoader(workspace, channel_tag=channel_tag, user_organization=organization)
+    loader = SkillsLoader(workspace, channel=channel, user_organization=organization)
     monkeypatch.setattr(loader, "list_skill_info", AsyncMock(side_effect=AssertionError("Workspace skills requested")))
 
     args = await sandbox.wrap_sandbox_command("true", workspace, skills_loader=loader)

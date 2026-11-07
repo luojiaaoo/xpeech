@@ -28,10 +28,8 @@ secret_key = "replace-with-a-different-web-channel-secret-key"
 secret_key = "replace-with-a-different-feishu-channel-secret"
 
 # Custom channels use their name as the JWT header kid and an independent key.
-# Each channel binds to one optional tag, configured here rather than in JWT claims.
 # [jwt.channels.crm]
 # secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
-# channel_tag = "crm"
 
 # 加载技能和 MCP 前按用户查询所属组织，此配置不绑定渠道。
 # 命令的 stdout 为 UTF-8 组织字符串，例如 company/engineering/platform。

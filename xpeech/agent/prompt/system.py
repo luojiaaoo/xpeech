@@ -132,7 +132,7 @@ def _get_ethical_guidelines() -> str:
 async def build_system_prompt(
     workspace: Path,
     *,
-    channel_tag: str | None = None,
+    channel: str | None = None,
     user_organization: str | None = None,
     not_interactive: bool = False,
 ) -> dict[str, Any]:
@@ -154,7 +154,7 @@ async def build_system_prompt(
     parts.append(await memory.get_self_improvement_context())
 
     skills_prompt = await SkillsLoader(
-        workspace, channel_tag=channel_tag, user_organization=user_organization, not_interactive=not_interactive,
+        workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
     ).build_skills_prompt()
     if skills_prompt:
         parts.append(skills_prompt)

@@ -96,7 +96,7 @@ def test_chat_initializes_all_tools_for_every_session(
     )
 
     assert response.status_code == 200
-    create.assert_awaited_once_with("user", not_interactive=False, channel_tag=None)
+    create.assert_awaited_once_with("user", not_interactive=False, channel=channel)
     assert messages[0].session_id == session_id
     assert messages[0].channel == channel
     assert messages[0].json_output is json_requested

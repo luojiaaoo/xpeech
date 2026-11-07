@@ -197,21 +197,11 @@ class LarkCLIConfig(BaseModel):
 
 
 class JWTChannelConfig(BaseModel):
-    """A JWT channel and its single optional resource tag."""
+    """A JWT channel identified by its name (the JWT header kid)."""
 
     model_config = ConfigDict(extra="forbid")
 
     secret_key: str = Field(min_length=32, repr=False)
-    channel_tag: str | None = None
-
-    @field_validator("channel_tag")
-    @classmethod
-    def validate_channel_tag(cls, value: str | None) -> str | None:
-        if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", value):
-            raise ValueError(
-                "channel_tag must be a 1-64 character string using letters, numbers, '.', '_', ':', or '-'"
-            )
-        return value
 
 
 class JWTConfig(BaseModel):
@@ -224,16 +214,16 @@ class JWTConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_distinct_secrets(self) -> "JWTConfig":
-        channel_names = set(self.channels)
+        names = set(self.channels)
         reserved_names = {"internal"}
         invalid_names: list[str] = []
-        for name in channel_names:
+        for name in names:
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", name) or name in reserved_names:
                 invalid_names.append(name)
         if invalid_names:
             raise ValueError(
-                "JWT channel names must be valid channel tags and cannot use reserved names: "
-                + ", ".join(sorted(invalid_names))
+                "JWT channel names must be 1-64 characters using letters, numbers, '.', '_', ':', '-' "
+                "and cannot use reserved names: " + ", ".join(sorted(invalid_names))
             )
 
         all_secrets = [

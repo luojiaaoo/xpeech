@@ -10,7 +10,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ...exceptions import PathProtectionError
 from ...utils.ids import validate_user_id
 from ...utils.internal_jwt import decode_internal_access_token
-from .auth import AuthenticatedChannel, _authenticate_channel_token
+from ...utils.channel_jwt import ChannelJWTAuth
+from .auth import _authenticate_channel_token
 from .context import (
     lark_user_access_token_var,
     request_id_var,
@@ -26,7 +27,7 @@ def _request_identity(headers: Headers) -> tuple[str | None, str | None, str | N
         return None, None, None
     try:
         if "kid" in jwt.get_unverified_header(token):
-            auth = _authenticate_channel_token(token, AuthenticatedChannel)
+            auth = _authenticate_channel_token(token, ChannelJWTAuth)
             subject = auth.claims.get("sub")
             user_id = validate_user_id(subject) if subject is not None else None
             return user_id, auth.channel, auth.claims.get("lark_user_access_token")

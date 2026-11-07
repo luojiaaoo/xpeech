@@ -8,7 +8,8 @@ from fastapi import Depends, Form, Header, HTTPException, status
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
 from ...utils.ids import validate_session_id
-from .auth import AuthenticatedUser, require_user_jwt
+from ...utils.channel_jwt import UserJWTAuth
+from .auth import require_user_jwt
 from .schema import InputContent
 from .session_guard import SessionChatGuard
 
@@ -24,7 +25,7 @@ def internal_user_id(
 
 
 def authenticated_user_id(
-    auth: Annotated[AuthenticatedUser, Depends(require_user_jwt)],
+    auth: Annotated[UserJWTAuth, Depends(require_user_jwt)],
 ) -> str:
     """Use only the verified JWT subject as the external user identity."""
     return auth.user_id

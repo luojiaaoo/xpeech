@@ -32,13 +32,13 @@ async def register_tools(
     workspace: Path,
     config: ToolConfig,
     not_interactive: bool = False,
-    channel_tag: str | None = None,
+    channel: str | None = None,
     user_organization: str | None = None,
 ) -> None:
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
     workspace = workspace.resolve()
     skills_loader = SkillsLoader(
-        workspace, channel_tag=channel_tag, user_organization=user_organization, not_interactive=not_interactive,
+        workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
     )
     read_image, read_video, read_file, write_file, edit_file = build_file_tools(
         workspace=workspace,
@@ -87,7 +87,7 @@ async def register_tools(
             provider.register_function_tool(tool)
 
     registrations: dict[str, MCPServerRegistration] = {}
-    filter_context = FilterContext(tag=channel_tag, org=user_organization)
+    filter_context = FilterContext(channel=channel, org=user_organization)
     for server_name, server_config in config.mcp_servers.items():
         if not filter_allows_access(server_config.filter, filter_context):
             continue

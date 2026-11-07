@@ -73,7 +73,7 @@ def test_chat_sync_returns_collected_events(fake_runner, monkeypatch):
     ]
     assert fake_runner.created == {
         "user_id": "user",
-        "kwargs": {"not_interactive": True, "channel_tag": None},
+        "kwargs": {"not_interactive": True, "channel": "web_client"},
     }
     [message] = fake_runner.messages
     # 会话 ID 由服务端生成，忽略请求头里的 x-session-id。
@@ -129,7 +129,7 @@ def test_chat_sync_initializes_non_interactive_tools_without_session_header(
     )
 
     assert response.status_code == 200
-    assert fake_runner.created["kwargs"] == {"not_interactive": True, "channel_tag": None}
+    assert fake_runner.created["kwargs"] == {"not_interactive": True, "channel": "web_client"}
 
 
 def test_chat_sync_recognizes_json_output_keyword(monkeypatch, fake_runner):

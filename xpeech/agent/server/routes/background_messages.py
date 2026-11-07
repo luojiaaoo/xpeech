@@ -5,7 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from ...tools.schedule.client import scheduler_request
-from ..auth import AuthenticatedChannel, require_channel_jwt
+from ....utils.channel_jwt import ChannelJWTAuth
+from ..auth import require_channel_jwt
 from ..schema import FeishuBackgroundMessage
 
 router = APIRouter()
@@ -13,7 +14,7 @@ router = APIRouter()
 
 @router.get("/background_message", response_model=FeishuBackgroundMessage)
 async def poll_background_message(
-    auth: Annotated[AuthenticatedChannel, Depends(require_channel_jwt)],
+    auth: Annotated[ChannelJWTAuth, Depends(require_channel_jwt)],
 ) -> FeishuBackgroundMessage | Response:
     """Any backend can long-poll the shared scheduler for a channel message."""
     if auth.channel != "feishu":

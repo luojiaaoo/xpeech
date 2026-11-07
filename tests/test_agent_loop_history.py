@@ -53,7 +53,7 @@ async def test_final_response_is_emitted_and_persisted_when_model_returns_no_tex
 
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
-    agent_loop.channel_tag = None
+    agent_loop.channel = None
     agent_loop.user_organization = None
     agent_loop.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
     agent_loop.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))
@@ -148,7 +148,7 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
 @pytest.mark.asyncio
 @pytest.mark.parametrize("json_output", [False, True])
 async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
-    async def build_test_system_prompt(workspace: Path, *, channel_tag, user_organization, not_interactive):
+    async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive):
         assert workspace == tmp_path
         assert user_organization == "公司/研发/平台"
         assert not_interactive is True
@@ -159,7 +159,7 @@ async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, m
 
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
-    agent_loop.channel_tag = None
+    agent_loop.channel = None
     agent_loop.user_organization = "公司/研发/平台"
     agent_loop.history = SimpleNamespace(
         load=AsyncMock(return_value=[{"role": "user", "content": "old context"}]),
@@ -225,7 +225,7 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
 ):
     expected_not_interactive = not_interactive
 
-    async def build_test_system_prompt(workspace: Path, *, channel_tag, user_organization, not_interactive):
+    async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive):
         assert workspace == tmp_path
         assert user_organization is None
         assert not_interactive is expected_not_interactive
@@ -235,7 +235,7 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
 
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
-    agent_loop.channel_tag = None
+    agent_loop.channel = None
     agent_loop.user_organization = None
     agent_loop.history = SimpleNamespace(
         load=AsyncMock(return_value=[]),
@@ -300,7 +300,7 @@ async def test_request_yaml_retains_new_messages_across_multiple_compressions(tm
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
-    agent_loop.channel_tag = None
+    agent_loop.channel = None
     agent_loop.user_organization = None
     agent_loop.history = SimpleNamespace(
         load=AsyncMock(return_value=[{"role": "user", "content": "previous question"}]),

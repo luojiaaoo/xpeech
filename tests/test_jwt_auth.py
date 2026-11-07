@@ -48,7 +48,7 @@ def test_example_jwt_config_defines_web_and_feishu_as_channels():
     assert set(jwt_config.channels) == {"web_client", "feishu"}
     for name, channel in jwt_config.channels.items():
         assert channel.secret_key == config["jwt"]["channels"][name]["secret_key"]
-        assert channel.channel_tag is None
+        assert set(config["jwt"]["channels"][name]) == {"secret_key"}
     assert "jwt" not in config["web_client"]
     assert "jwt" not in config["feishu"]
 

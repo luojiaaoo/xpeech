@@ -962,7 +962,7 @@ async def test_connection_scope_and_cleanup(tmp_path, options, user_scoped):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stdio", [True, False])
 @pytest.mark.parametrize("access", [
-    {"channel_tag": "crm"},
+    {"channel": "crm"},
     {"user_organization": "company/engineering"},
     {"not_interactive": True},
 ])

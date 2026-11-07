@@ -126,13 +126,13 @@ class SkillsLoader:
         self,
         workspace: Path | None,
         *,
-        channel_tag: str | None = None,
+        channel: str | None = None,
         user_organization: str | None = None,
         not_interactive: bool = False,
     ):
         self.workspace_skills = workspace / "skills" if workspace is not None else None
         self.builtin_skills = BUILTIN_SKILLS_DIR
-        self.channel_tag = channel_tag
+        self.channel = channel
         self.user_organization = user_organization
         self.not_interactive = not_interactive
 
@@ -181,7 +181,7 @@ class SkillsLoader:
             if self.not_interactive and metadata.name in INTERACTIVE_SKILL_NAMES:
                 continue
             if not filter_allows_access(
-                metadata.filter, FilterContext(tag=self.channel_tag, org=self.user_organization)
+                metadata.filter, FilterContext(channel=self.channel, org=self.user_organization)
             ):
                 continue
             if metadata.name in seen_names:

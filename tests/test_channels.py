@@ -26,8 +26,8 @@ UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 def channels(monkeypatch):
     channels = {
         **settings.jwt.channels,
-        "crm": JWTChannelConfig(secret_key=CRM_KEY, channel_tag="crm"),
-        "erp": JWTChannelConfig(secret_key=ERP_KEY, channel_tag="erp"),
+        "crm": JWTChannelConfig(secret_key=CRM_KEY),
+        "erp": JWTChannelConfig(secret_key=ERP_KEY),
     }
     monkeypatch.setattr(settings.jwt, "channels", channels)
     return channels
@@ -36,7 +36,7 @@ def channels(monkeypatch):
 @pytest.mark.parametrize("name", ["internal", "", "bad name"])
 def test_custom_channels_reject_reserved_or_invalid_names(name):
     config = settings.jwt.model_dump()
-    config["channels"] = {name: {"secret_key": CRM_KEY, "channel_tag": "crm"}}
+    config["channels"] = {name: {"secret_key": CRM_KEY}}
 
     with pytest.raises(ValueError, match="channel names"):
         JWTConfig.model_validate(config)
@@ -46,7 +46,7 @@ def test_custom_channels_reject_reserved_or_invalid_names(name):
 def test_custom_channel_cannot_reuse_builtin_key(key_source):
     config = settings.jwt.model_dump()
     secret_key = config["secret_key"] if key_source == "internal" else config["channels"][key_source]["secret_key"]
-    config["channels"]["crm"] = {"secret_key": secret_key, "channel_tag": "crm"}
+    config["channels"]["crm"] = {"secret_key": secret_key}
 
     with pytest.raises(ValueError, match="distinct values"):
         JWTConfig.model_validate(config)
@@ -54,26 +54,9 @@ def test_custom_channel_cannot_reuse_builtin_key(key_source):
 
 def test_custom_channels_cannot_share_keys():
     config = settings.jwt.model_dump()
-    config["channels"] = {name: {"secret_key": CRM_KEY, "channel_tag": name} for name in ["crm", "erp"]}
+    config["channels"] = {name: {"secret_key": CRM_KEY} for name in ["crm", "erp"]}
     with pytest.raises(ValueError, match="distinct values"):
         JWTConfig.model_validate(config)
-
-
-@pytest.mark.parametrize("channel_tag", [None, "crm", "sales.apac:team-1_v2", "a" * 64])
-def test_jwt_channel_accepts_one_optional_tag(channel_tag):
-    channel = JWTChannelConfig(secret_key=CRM_KEY, channel_tag=channel_tag)
-    assert channel.channel_tag == channel_tag
-
-
-@pytest.mark.parametrize("channel_tag", [[], ["crm"], ["crm", "sales"], 1, "", "bad tag", "*", "a" * 65])
-def test_jwt_channel_rejects_lists_and_invalid_tags(channel_tag):
-    with pytest.raises(ValueError):
-        JWTChannelConfig(secret_key=CRM_KEY, channel_tag=channel_tag)
-
-
-def test_jwt_channel_rejects_plural_tags_config():
-    with pytest.raises(ValueError, match="Extra inputs"):
-        JWTChannelConfig(secret_key=CRM_KEY, channel_tags=["crm", "sales"])
 
 
 @pytest.mark.parametrize("session_id", ["default", UUID7_SESSION_ID])
@@ -107,7 +90,7 @@ def test_custom_channel_rejects_wrong_key(channels):
     assert response.status_code == 401
 
 
-def test_skill_api_filters_using_server_channel_tag(
+def test_skill_api_filters_using_channel(
     channels,
     monkeypatch,
     tmp_path,
@@ -116,10 +99,10 @@ def test_skill_api_filters_using_server_channel_tag(
     builtin_dirs = []
     for name, filter_expr in [
         ("public", None),
-        ("crm-skill", 'tag("crm")'),
-        ("erp-skill", 'tag("erp")'),
-        ("shared", 'tag("crm", "erp")'),
-        ("sales-skill", 'tag("sales")'),
+        ("crm-skill", 'channel("crm")'),
+        ("erp-skill", 'channel("erp")'),
+        ("shared", 'channel("crm", "erp")'),
+        ("web-skill", 'channel("web_client")'),
     ]:
         skill_file = tmp_path / "builtin" / name / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
@@ -127,7 +110,7 @@ def test_skill_api_filters_using_server_channel_tag(
         skill_file.write_text(f"---\nname: {name}\n{filter_line}---\n# {name}\n")
         builtin_dirs.append(skill_file.parent)
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: builtin_dirs)
-    for name, filter_expr in [("user-public", None), ("user-crm", 'tag("crm")'), ("user-erp", 'tag("erp")')]:
+    for name, filter_expr in [("user-public", None), ("user-crm", 'channel("crm")'), ("user-erp", 'channel("erp")')]:
         skill_file = tmp_path / "tag-user" / "skills" / name / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
         filter_line = f"filter: {filter_expr}\n" if filter_expr else ""
@@ -135,12 +118,12 @@ def test_skill_api_filters_using_server_channel_tag(
 
     client = TestClient(app)
 
-    def visible_skills(channel, key, **extra_claims):
+    def visible_skills(kid, key, **extra_claims):
         token = jwt.encode(
             {"exp": datetime.now(UTC) + timedelta(seconds=60), "sub": "tag-user", **extra_claims},
             key,
             algorithm=settings.jwt.algorithm,
-            headers={"kid": channel},
+            headers={"kid": kid},
         )
         response = client.get(
             "/skills",
@@ -150,16 +133,12 @@ def test_skill_api_filters_using_server_channel_tag(
         return {skill["metadata"]["name"] for skill in response.json()}
 
     assert visible_skills(
-        "crm", CRM_KEY, channel_tag="erp", channel_tags=["erp"]
+        "crm", CRM_KEY, channel="erp"
     ) == {"user-public", "user-crm"} | {"public", "crm-skill", "shared"}
     assert visible_skills("erp", ERP_KEY) == {"user-public", "user-erp"} | {"public", "erp-skill", "shared"}
     assert visible_skills(
-        "web_client", settings.jwt.channels["web_client"].secret_key, channel_tags=["crm"]
-    ) == {"user-public"} | {"public"}
-    monkeypatch.setattr(settings.jwt.channels["web_client"], "channel_tag", "crm")
-    assert visible_skills(
-        "web_client", settings.jwt.channels["web_client"].secret_key
-    ) == {"user-public", "user-crm"} | {"public", "crm-skill", "shared"}
+        "web_client", settings.jwt.channels["web_client"].secret_key, channel="crm"
+    ) == {"user-public"} | {"public", "web-skill"}
 
 
 @pytest.mark.asyncio
@@ -176,7 +155,7 @@ async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tm
 
 @pytest.mark.parametrize("path, not_interactive", [("/chat", False), ("/chat_sync", True)])
 @pytest.mark.parametrize("session_id", ["default", UUID7_SESSION_ID])
-def test_chat_passes_verified_channel_tag_to_registration(
+def test_chat_passes_verified_channel_to_registration(
     channels,
     monkeypatch,
     tmp_path,
@@ -201,8 +180,8 @@ def test_chat_passes_verified_channel_tag_to_registration(
         {
             "exp": datetime.now(UTC) + timedelta(seconds=60),
             "sub": "tag-user",
-            "channel_tag": "erp",
-            "channel_tags": ["erp"],
+            "channel": "erp",
+
         },
         CRM_KEY,
         algorithm=settings.jwt.algorithm,
@@ -218,11 +197,11 @@ def test_chat_passes_verified_channel_tag_to_registration(
         headers=headers,
         data={
             "content": '[{"text":"hello"}]',
-            "session_metadata": '{"channel":"erp","channel_tag":"erp","channel_tags":"erp"}',
+            "session_metadata": '{"channel":"erp","channel_name":"erp","channel_tag":"erp"}',
         },
     )
     assert response.status_code == 200
-    assert created == [("tag-user", {"not_interactive": not_interactive, "channel_tag": "crm"})]
+    assert created == [("tag-user", {"not_interactive": not_interactive, "channel": "crm"})]
 
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
@@ -231,23 +210,23 @@ async def test_always_skill_filter_restricts_every_source(monkeypatch, tmp_path,
     skill_root = tmp_path / "builtin" if source == "builtin" else tmp_path / "skills"
     skill_file = skill_root / "dedicated" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
-    skill_file.write_text('---\nname: dedicated\nfilter: tag("crm")\nalways: true\n---\n# CRM instructions')
+    skill_file.write_text('---\nname: dedicated\nfilter: channel("crm")\nalways: true\n---\n# CRM instructions')
     builtin_dirs = [skill_file.parent] if source == "builtin" else []
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: builtin_dirs)
     loader = SkillsLoader(tmp_path)
     prompt = await loader.build_skills_prompt()
     assert prompt == ""
-    loader = SkillsLoader(tmp_path, channel_tag="crm")
+    loader = SkillsLoader(tmp_path, channel="crm")
     prompt = await loader.build_skills_prompt()
     assert "# CRM instructions" in prompt
     skill = (await loader.list_skill_info())[0]
-    assert skill.metadata.filter == 'tag("crm")'
+    assert skill.metadata.filter == 'channel("crm")'
     assert "filter" not in skill.metadata.kwargs
-    system_prompt = await build_system_prompt(tmp_path, channel_tag="crm")
+    system_prompt = await build_system_prompt(tmp_path, channel="crm")
     assert "# CRM instructions" in system_prompt["content"]
 
 
-@pytest.mark.parametrize("filter_yaml", ["tag()", "[1]", "['crm']", "import os", "123"])
+@pytest.mark.parametrize("filter_yaml", ["channel()", "[1]", "['crm']", "import os", "123"])
 @pytest.mark.asyncio
 async def test_invalid_skill_filters_are_skipped(monkeypatch, tmp_path, filter_yaml):
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
@@ -258,7 +237,7 @@ async def test_invalid_skill_filters_are_skipped(monkeypatch, tmp_path, filter_y
 
 
 @pytest.mark.parametrize(
-    "channel_tag, expected",
+    "channel, expected",
     [
         (None, ["public"]),
         ("crm", ["public", "crm", "shared"]),
@@ -272,7 +251,7 @@ async def test_invalid_skill_filters_are_skipped(monkeypatch, tmp_path, filter_y
 @pytest.mark.parametrize("include_public", [False, True])
 @pytest.mark.asyncio
 async def test_mcp_only_registers_public_and_matching_servers(
-    monkeypatch, tmp_path, channel_tag, expected, not_interactive, include_public
+    monkeypatch, tmp_path, channel, expected, not_interactive, include_public
 ):
     async def shell():
         return "unused"
@@ -282,9 +261,9 @@ async def test_mcp_only_registers_public_and_matching_servers(
         {
             "mcpServers": {
                 "public": {"command": "demo"},
-                "crm": {"command": "demo", "filter": 'tag("crm")'},
-                "erp": {"command": "demo", "filter": 'tag("erp")'},
-                "shared": {"command": "demo", "filter": 'tag("crm", "erp")'},
+                "crm": {"command": "demo", "filter": 'channel("crm")'},
+                "erp": {"command": "demo", "filter": 'channel("erp")'},
+                "shared": {"command": "demo", "filter": 'channel("crm", "erp")'},
             }
         }
     )
@@ -325,7 +304,7 @@ async def test_mcp_only_registers_public_and_matching_servers(
         provider=provider,
         workspace=tmp_path,
         config=config,
-        channel_tag=channel_tag,
+        channel=channel,
         not_interactive=not_interactive,
     )
     assert requested == registered == expected
@@ -346,11 +325,11 @@ def test_mcp_preserves_filter_in_registration_and_cache_key(tmp_path):
     )
     dedicated = mcp_client.create_mcp_registration_from_config(
         "demo",
-        MCPServerSettings(command="demo", filter='tag("crm")'),
+        MCPServerSettings(command="demo", filter='channel("crm")'),
         workspace=tmp_path,
         skills_loader=SkillsLoader(tmp_path),
     )
-    assert dedicated.config.filter == 'tag("crm")'
+    assert dedicated.config.filter == 'channel("crm")'
     assert mcp_client._persistent_registration_key(public.config) != mcp_client._persistent_registration_key(
         dedicated.config
     )

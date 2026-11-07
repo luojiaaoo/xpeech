@@ -27,19 +27,6 @@ class TokenResponse(BaseModel):
     token_type: str
 
 
-class AuthenticatedChannel(ChannelJWTAuth):
-    """Verified channel identity and its server-configured resource tag."""
-
-    @property
-    def channel_tag(self) -> str | None:
-        channel = settings.jwt.channels.get(self.channel)
-        return channel.channel_tag if channel is not None else None
-
-
-class AuthenticatedUser(UserJWTAuth, AuthenticatedChannel):
-    """Verified user identity with a server-configured resource tag."""
-
-
 @router.post("/token", response_model=TokenResponse, include_in_schema=False)
 async def issue_access_token(
     response: Response,
@@ -71,7 +58,7 @@ async def issue_access_token(
     )
 
 
-def _authenticate_channel_token[Auth: AuthenticatedChannel](
+def _authenticate_channel_token[Auth: ChannelJWTAuth](
     token: str | None, auth_type: type[Auth],
 ) -> Auth:
     if not token:
@@ -96,17 +83,17 @@ def _authenticate_channel_token[Auth: AuthenticatedChannel](
 
 async def require_channel_jwt(
     token: Annotated[str, Depends(oauth2_scheme)],
-) -> AuthenticatedChannel:
+) -> ChannelJWTAuth:
     """Authenticate business API callers using a channel JWT with kid."""
 
-    return _authenticate_channel_token(token, AuthenticatedChannel)
+    return _authenticate_channel_token(token, ChannelJWTAuth)
 
 
 async def require_user_jwt(
     token: Annotated[str, Depends(oauth2_scheme)],
-) -> AuthenticatedUser:
+) -> UserJWTAuth:
     """Authenticate an external user exclusively through the signed subject."""
-    return _authenticate_channel_token(token, AuthenticatedUser)
+    return _authenticate_channel_token(token, UserJWTAuth)
 
 
 async def require_internal_jwt(

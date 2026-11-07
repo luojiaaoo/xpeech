@@ -7,11 +7,11 @@
     and    := not_ ("and" not_)*
     not_   := "not" not_ | primary
     primary := "(" or ")" | call | "True" | "False"
-    call   := ("tag" | "org") "(" STRING ("," STRING)* ")"
+    call   := ("channel" | "org") "(" STRING ("," STRING)* ")"
 
 内置短名函数（参数为非空字符串字面量）：
 
-- ``tag("crm", ...)``：当前通道标签等于任一参数时为真。
+- ``channel("crm", ...)``：当前 JWT 通道名（kid）等于任一参数时为真。
 - ``org("公司/研发/", ...)``：用户组织字符串以任一参数为前缀时为真。
 
 未配置过滤器的资源公开；已配置的资源仅在表达式求值为真时可见。
@@ -39,12 +39,12 @@ class FilterExpressionError(ValueError):
 class FilterContext:
     """过滤表达式可见的上下文；None 表示未知，任何匹配函数都视为不命中。"""
 
-    tag: str | None = None
+    channel: str | None = None
     org: str | None = None
 
 
-def _match_tag(context: FilterContext, args: tuple[str, ...]) -> bool:
-    return context.tag is not None and context.tag in args
+def _match_channel(context: FilterContext, args: tuple[str, ...]) -> bool:
+    return context.channel is not None and context.channel in args
 
 
 def _match_org(context: FilterContext, args: tuple[str, ...]) -> bool:
@@ -52,7 +52,7 @@ def _match_org(context: FilterContext, args: tuple[str, ...]) -> bool:
 
 
 FILTER_FUNCTIONS: dict[str, Callable[[FilterContext, tuple[str, ...]], bool]] = {
-    "tag": _match_tag,
+    "channel": _match_channel,
     "org": _match_org,
 }
 

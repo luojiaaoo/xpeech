@@ -170,7 +170,7 @@ async def test_sandbox_rebuilds_when_wrapped_command_changes(stubbed_sandbox, ch
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("restrictions", "access"), [
-    ('filter: tag("crm")\n', {"channel_tag": "crm"}),
+    ('filter: channel("crm")\n', {"channel": "crm"}),
     ('filter: org("company/engineering")\n', {"user_organization": "company/engineering"}),
 ])
 async def test_sandbox_rebuilds_when_skill_visibility_changes(stubbed_sandbox, restrictions, access):

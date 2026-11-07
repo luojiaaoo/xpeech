@@ -67,7 +67,6 @@ secret_key = "replace-with-a-distinct-feishu-secret-at-least-32-characters"
 
 [jwt.channels.crm]
 secret_key = "replace-with-a-distinct-crm-secret-at-least-32-characters"
-channel_tag = "crm"
 ```
 
 | 项 | 约定 |
@@ -80,7 +79,7 @@ channel_tag = "crm"
 
 `jwt.secret_key` 仅供 backend、scheduler 等内部服务互信。内部 JWT 不带 `kid` 或 `sub`，不能调用本文的聊天、答题、文件、技能接口；`/statistics` 及其子接口、内部调度接口也不属于外部通道的权限范围。
 
-每个通道只绑定一个 `channel_tag`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能、用户工作区技能与 MCP 使用 `filter` 过滤表达式：省略 `filter` 的资源为公共资源，一律展示或注册；配置 `filter` 的资源仅在表达式求值为真时可见。表达式为 Python 布尔表达式极小子集，内置 `tag("...")`（匹配通道标签）与 `org("...")`（匹配组织前缀）两个短名函数，服务端按白名单解析求值，不使用 eval。
+通道名就是 JWT header 的 `kid`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能、用户工作区技能与 MCP 使用 `filter` 过滤表达式：省略 `filter` 的资源为公共资源，一律展示或注册；配置 `filter` 的资源仅在表达式求值为真时可见。表达式为 Python 布尔表达式极小子集，内置 `channel("...")`（匹配通道名）与 `org("...")`（匹配组织前缀）两个短名函数，服务端按白名单解析求值，不使用 eval。
 
 `org()` 依赖服务端通过 `[organization].command_template` 查询当前已鉴权 `user_id` 的组织字符串，使用 stdout 作为组织值。命令必须包含 `${user_id}` 或 `$user_id`，默认超时 10 秒；JWT 或请求元数据不能覆盖组织。无查询命令、查询失败或空结果时组织视为未知，`org()` 不匹配任何前缀。过滤表达式的完整语法与配置示例见 README。
 

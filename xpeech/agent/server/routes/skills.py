@@ -8,7 +8,8 @@ from ....exceptions import PathProtectionError
 from ....utils.file_io import is_relative_path
 from ....utils.ids import validate_user_id
 from ...skills.skill import SkillInfo, SkillsLoader
-from ..auth import AuthenticatedUser, require_user_jwt
+from ....utils.channel_jwt import UserJWTAuth
+from ..auth import require_user_jwt
 from ..dependencies import authenticated_user_id
 
 router = APIRouter(prefix="/skills", tags=["skills"])
@@ -69,14 +70,14 @@ def _import_skill_file(data: bytes, workspace: Path) -> SkillInfo:
 
 @router.get("", response_model=list[SkillInfo])
 async def list_skills(
-    channel: Annotated[AuthenticatedUser, Depends(require_user_jwt)],
+    auth: Annotated[UserJWTAuth, Depends(require_user_jwt)],
     user_id: Annotated[str, Depends(authenticated_user_id)],
 ) -> list[SkillInfo]:
     """返回内置技能，以及 JWT 用户可用的 SKILL 列表。"""
     workspace = _user_workspace(user_id)
     user_organization = await settings.organization.resolve_user_organization(user_id)
     return await SkillsLoader(
-        workspace, channel_tag=channel.channel_tag, user_organization=user_organization,
+        workspace, channel=auth.channel, user_organization=user_organization,
     ).list_skill_info()
 
 

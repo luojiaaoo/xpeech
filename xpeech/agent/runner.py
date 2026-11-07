@@ -19,12 +19,12 @@ class AgentRunner:
         *,
         config: Settings,
         not_interactive: bool = False,
-        channel_tag: str | None = None,
+        channel: str | None = None,
     ) -> None:
         self.user_id = user_id
         self.config = config
         self.not_interactive = not_interactive
-        self.channel_tag = channel_tag
+        self.channel = channel
         self.user_organization: str | None = None
         self.workspace = (config.path.workspace_base_path / self.user_id).resolve()
         self._agent_loop: AgentLoop | None = None
@@ -36,10 +36,10 @@ class AgentRunner:
         *,
         config: Settings = settings,
         not_interactive: bool = False,
-        channel_tag: str | None = None,
+        channel: str | None = None,
     ) -> Self:
         """Create a fully initialized runner for one user."""
-        runner = cls(user_id, config=config, not_interactive=not_interactive, channel_tag=channel_tag)
+        runner = cls(user_id, config=config, not_interactive=not_interactive, channel=channel)
         await runner._initialize()
         return runner
 
@@ -67,7 +67,7 @@ class AgentRunner:
             tools=llm_config.default_tools,
             summary_tokens=llm_config.summary_tokens,
             max_iterations=llm_config.max_iterations,
-            channel_tag=self.channel_tag,
+            channel=self.channel,
             user_organization=self.user_organization,
         )
         await register_tools(
@@ -76,7 +76,7 @@ class AgentRunner:
             workspace=self.workspace,
             config=self.config.tool,
             not_interactive=self.not_interactive,
-            channel_tag=self.channel_tag,
+            channel=self.channel,
             user_organization=self.user_organization,
         )
         self._agent_loop = agent_loop

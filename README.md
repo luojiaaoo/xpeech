@@ -112,14 +112,13 @@ secret_key = "replace-with-a-different-feishu-random-value"
 ```toml
 [jwt.channels.crm]
 secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
-channel_tag = "crm"
 ```
 
 所有通道密钥至少 32 个字符，必须与内部密钥及其他通道密钥互不相同；通道名不能使用
 `internal`。所有通道使用统一的 JWT 算法和有效期，支持业务接口，
 也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口和内部接口使用内部 JWT。
-每个通道只绑定一个 `channel_tag`，由服务端配置确定，JWT payload 或会话元数据中的标签不授予任何权限。
-鉴权后的 `channel_tag` 以单个字符串或 `None` 显式传递到 Runner、技能加载和工具注册，供资源过滤表达式使用。
+通道名就是 JWT header 的 `kid`，由服务端 `jwt.channels` 配置确定，JWT payload 或会话元数据不授予任何权限。
+鉴权后的通道名（内部调用和定时任务为 `None`）以单个字符串显式传递到 Runner、技能加载和工具注册，供资源过滤表达式使用。
 
 Skill 的 YAML frontmatter 和 MCP 配置都支持 `filter` 过滤表达式。配置了 `filter` 的资源仅在表达式
 求值为真时展示或注册；省略 `filter` 的资源是公共资源，一律可见。同一条件作用于内建技能、
@@ -129,30 +128,30 @@ MCP 在注册阶段过滤，不匹配时不会建立连接；同步聊天和定�
 
 表达式是 Python 布尔表达式的极小子集，用 `and` / `or` / `not` 和括号组合两个内置短名函数：
 
-- `tag("crm", ...)`：当前通道的 `channel_tag` 等于任一参数时为真，区分大小写精确匹配。
+- `channel("crm", ...)`：当前通道的名称（JWT `kid`）等于任一参数时为真，区分大小写精确匹配。
 - `org("公司/研发/", ...)`：用户组织字符串以任一参数为前缀时为真，区分大小写按字面匹配，不解析通配符或自动补充分隔符。例如组织 `公司/研发/平台` 匹配 `org("公司/研发/")`，不匹配 `org("公司/销售/")`。
 
-参数是 1–32 个非空字符串字面量，支持中文，不能有首尾空白；通道标签或组织未知（含查询失败）时对应函数为假。
+参数是 1–32 个非空字符串字面量，支持中文，不能有首尾空白；通道或组织未知（含查询失败）时对应函数为假。
 表达式最长 256 个字符，嵌套不超过 8 层。无需给 Skill 名称增加特殊前缀。例如：
 
 ```yaml
 ---
 name: crm-report
 description: CRM 报表助手
-filter: tag("crm") or org("公司/研发/", "公司/平台/")
+filter: channel("crm") or org("公司/研发/", "公司/平台/")
 ---
 ```
 
 ```toml
 [tool.mcpServers.crm-api]
 url = "https://crm.example.com/mcp"
-filter = 'tag("crm") and not org("公司/销售/")'
+filter = 'channel("crm") and not org("公司/销售/")'
 ```
 
 表达式经 `ast.parse` 解析后按严格节点白名单校验，再由服务端自行解释求值，不使用 `eval`/`exec`：
 只允许 `and` / `or` / `not`、布尔常量和上述函数调用；属性访问、下标、lambda、推导式、f-string
-等节点一律拒绝，无法执行任意代码或接触 Python 对象模型。旧的 `channel_tags` /
-`organization_prefixes` 字段已移除，请改写为 `filter`。
+等节点一律拒绝，无法执行任意代码或接触 Python 对象模型。旧的 `channel_tag`、`channel_tags`、
+`organization_prefixes` 概念已移除：通道一律按名称（`kid`）匹配，资源条件统一写 `filter`。
 
 `org()` 依赖 `[organization]` 配置的组织查询命令：
 
@@ -670,7 +669,7 @@ def echo(message: Message):
 
 Agent 可调用无参数的 `query_mcp_status` 工具，立即查询当前通道允许访问的 MCP 状态。返回的 `servers` 按配置名称列出 `description`、`status`（`connecting`、`ready`、`unavailable`、`disconnected`）、`transport`、`tool_count`、`tools` 和 `error`。`error` 仅包含异常类型；查询不会等待连接或发起网络请求。连接失败后，下次对话会立即在后台重新连接，无需等待固定冷却时间；正在进行的连接和工具发现任务仍由并发会话共享。
 
-每个 MCP 可配置 `description` 说明用途。当前通道可访问的服务名称和用途会直接写入 `query_mcp_status` 的工具描述，模型从首次请求起就能判断是否需要等待某个 MCP，无需先完成连接或调用状态查询。状态查询结果也会返回用途说明。服务名称、用途、状态和工具均先按 `channel_tag` 筛选；未匹配的 MCP 不会连接或展示。未配置 MCP 或筛选后为空时，不注册 `query_mcp_status`。
+每个 MCP 可配置 `description` 说明用途。当前通道可访问的服务名称和用途会直接写入 `query_mcp_status` 的工具描述，模型从首次请求起就能判断是否需要等待某个 MCP，无需先完成连接或调用状态查询。状态查询结果也会返回用途说明。服务名称、用途、状态和工具均先按 `filter` 筛选；未匹配的 MCP 不会连接或展示。未配置 MCP 或筛选后为空时，不注册 `query_mcp_status`。
 
 stdio Server 示例：
 

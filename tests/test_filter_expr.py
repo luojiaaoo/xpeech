@@ -18,12 +18,12 @@ from xpeech.utils.filter_expr import (
 @pytest.mark.parametrize(
     ("source", "context", "expected"),
     [
-        ('tag("crm")', FilterContext(tag="crm"), True),
-        ('tag("crm")', FilterContext(tag="erp"), False),
-        ('tag("crm")', FilterContext(), False),
-        ('tag("CRM")', FilterContext(tag="crm"), False),
-        ('tag("crm", "erp")', FilterContext(tag="erp"), True),
-        ('tag("crm", "erp")', FilterContext(tag="sales"), False),
+        ('channel("crm")', FilterContext(channel="crm"), True),
+        ('channel("crm")', FilterContext(channel="erp"), False),
+        ('channel("crm")', FilterContext(), False),
+        ('channel("CRM")', FilterContext(channel="crm"), False),
+        ('channel("crm", "erp")', FilterContext(channel="erp"), True),
+        ('channel("crm", "erp")', FilterContext(channel="sales"), False),
         ('org("公司/研发/")', FilterContext(org="公司/研发/平台"), True),
         ('org("公司/研发/")', FilterContext(org="公司/销售/"), False),
         ('org("公司/研发/")', FilterContext(), False),
@@ -32,18 +32,18 @@ from xpeech.utils.filter_expr import (
         ('org("company/eng/")', FilterContext(org="company/engineering"), False),
         ('org("Company/")', FilterContext(org="company/eng"), False),
         ('org("公司/销售/", "公司/研发/")', FilterContext(org="公司/研发/平台"), True),
-        ('not tag("crm")', FilterContext(), True),
-        ('not tag("crm")', FilterContext(tag="crm"), False),
-        ('tag("crm") or org("公司/")', FilterContext(org="公司/研发/"), True),
-        ('tag("crm") or org("公司/")', FilterContext(tag="erp"), False),
-        ('tag("crm") and org("公司/")', FilterContext(tag="crm", org="公司/研发/"), True),
-        ('tag("crm") and org("公司/")', FilterContext(tag="crm"), False),
-        ('tag("crm") and not org("公司/销售/")', FilterContext(tag="crm", org="公司/研发/"), True),
-        ('tag("crm") and not org("公司/销售/")', FilterContext(tag="crm", org="公司/销售/"), False),
-        ('(tag("crm") or tag("erp")) and org("p/")', FilterContext(tag="erp", org="p/q"), True),
-        ('(tag("crm") or tag("erp")) and org("p/")', FilterContext(tag="erp", org="x"), False),
+        ('not channel("crm")', FilterContext(), True),
+        ('not channel("crm")', FilterContext(channel="crm"), False),
+        ('channel("crm") or org("公司/")', FilterContext(org="公司/研发/"), True),
+        ('channel("crm") or org("公司/")', FilterContext(channel="erp"), False),
+        ('channel("crm") and org("公司/")', FilterContext(channel="crm", org="公司/研发/"), True),
+        ('channel("crm") and org("公司/")', FilterContext(channel="crm"), False),
+        ('channel("crm") and not org("公司/销售/")', FilterContext(channel="crm", org="公司/研发/"), True),
+        ('channel("crm") and not org("公司/销售/")', FilterContext(channel="crm", org="公司/销售/"), False),
+        ('(channel("crm") or channel("erp")) and org("p/")', FilterContext(channel="erp", org="p/q"), True),
+        ('(channel("crm") or channel("erp")) and org("p/")', FilterContext(channel="erp", org="x"), False),
         ("True", FilterContext(), True),
-        ("False", FilterContext(tag="crm"), False),
+        ("False", FilterContext(channel="crm"), False),
     ],
 )
 def test_filter_evaluation(source, context, expected):
@@ -60,15 +60,15 @@ def test_missing_filter_is_public():
     [
         "",
         "   ",
-        "tag()",
+        "channel()",
         "org()",
-        "tag(1)",
-        'tag("")',
-        'tag(" a")',
+        "channel(1)",
+        'channel("")',
+        'channel(" a")',
         'org("a ")',
-        "tag(name='a')",
-        "tag(*['a'])",
-        'tag("a") == "a"',
+        "channel(name='a')",
+        "channel(*['a'])",
+        'channel("a") == "a"',
         "1",
         '"crm"',
         "None",
@@ -77,18 +77,18 @@ def test_missing_filter_is_public():
         "1 + 1",
         "not",
         "True and",
-        "(tag('a')",
-        "tag('a') if True else False",
+        "(channel('a')",
+        "channel('a') if True else False",
         "{'a': 1}",
         "f'{1}'",
         "lambda: True",
         "[x for x in ()]",
-        "tag.__class__",
-        "tag('a').upper",
+        "channel.__class__",
+        "channel('a').upper",
         "().__class__",
         "[].__class__.__bases__",
         "import os",
-        "tag('a'); import os",
+        "channel('a'); import os",
         "__import__('os')",
         "__import__('os').system('id')",
         "eval('1')",
@@ -96,8 +96,8 @@ def test_missing_filter_is_public():
         "open('x')",
         "compile('1', '1', 'eval')",
         "(lambda: __import__('os'))()",
-        "getattr(tag, 'x')",
-        "tag('x') or __import__('os')",
+        "getattr(channel, 'x')",
+        "channel('x') or __import__('os')",
     ],
 )
 def test_invalid_or_malicious_filter_is_rejected(source):
@@ -107,8 +107,8 @@ def test_invalid_or_malicious_filter_is_rejected(source):
 
 def test_filter_length_limit():
     with pytest.raises(FilterExpressionError, match="characters"):
-        parse_filter(f"tag({'x' * FILTER_MAX_LENGTH})")
-    parse_filter(f"tag('{'x' * (FILTER_MAX_LENGTH - 8)}')")
+        parse_filter(f"channel({'x' * FILTER_MAX_LENGTH})")
+    parse_filter(f"channel('{'x' * (FILTER_MAX_LENGTH - 8)}')")
 
 
 def test_filter_depth_limit():
@@ -119,13 +119,13 @@ def test_filter_depth_limit():
 
 def test_filter_argument_count_limit():
     args = ", ".join(f"'{index}'" for index in range(FILTER_MAX_ARGS))
-    parse_filter(f"tag({args})")
+    parse_filter(f"channel({args})")
     args = ", ".join(f"'{index}'" for index in range(FILTER_MAX_ARGS + 1))
     with pytest.raises(FilterExpressionError, match="arguments"):
-        parse_filter(f"tag({args})")
+        parse_filter(f"channel({args})")
 
 
-@pytest.mark.parametrize("source", [None, 'tag("crm") or org("公司/")', "tag()", "import os"])
+@pytest.mark.parametrize("source", [None, 'channel("crm") or org("公司/")', "channel()", "import os"])
 def test_config_surfaces_validate_identically(source):
     if source is not None:
         try:

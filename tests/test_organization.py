@@ -65,7 +65,7 @@ async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_
         ("public", ""),
         ("engineering", 'filter: org("公司/研发/", "公司/研发/")\n'),
         ("sales", 'filter: org("公司/销售/")\n'),
-        ("other-channel", 'filter: org("公司/研发/") and tag("other")\n'),
+        ("other-channel", 'filter: org("公司/研发/") and channel("other")\n'),
         ("invalid", 'filter: org("")\n'),
     ]:
         path = root / name / "SKILL.md"
@@ -95,7 +95,7 @@ async def test_mcp_filters_before_connections_status_and_discovery(monkeypatch, 
         "public": {"command": "demo"},
         "engineering": {"command": "demo", "filter": 'org("公司/研发/")'},
         "sales": {"command": "demo", "filter": 'org("公司/销售/")'},
-        "other-channel": {"command": "demo", "filter": 'tag("other")'},
+        "other-channel": {"command": "demo", "filter": 'channel("other")'},
     }})
     requested = []
     discovered = []

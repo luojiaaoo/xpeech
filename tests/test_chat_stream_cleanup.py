@@ -75,7 +75,7 @@ def streaming_chat(monkeypatch, tmp_path):
 
     agent = AgentLoop.__new__(AgentLoop)
     agent.workspace = tmp_path
-    agent.channel_tag = None
+    agent.channel = None
     agent.user_organization = None
     agent.history = SimpleNamespace(load=AsyncMock(return_value=[]))
     agent.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))
@@ -94,9 +94,9 @@ def streaming_chat(monkeypatch, tmp_path):
         files=[],
     )
     monkeypatch.setattr(execute, "_prepare_chat", AsyncMock(return_value=(runner, message)))
-    state.auth = SimpleNamespace(user_id=message.user_id, channel="test", channel_tag=None)
+    state.auth = SimpleNamespace(user_id=message.user_id, channel="test")
     state.stream = chat(
-        channel=state.auth,
+        auth=state.auth,
         user_id=message.user_id,
         session_id=message.session_id,
         sender_name=message.sender_name,

@@ -223,9 +223,9 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         async def chat(self, **_kwargs):
             return next(responses)
 
-    async def build_test_system_prompt(workspace: Path, *, channel_tag, user_organization, not_interactive):
+    async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive):
         assert workspace == tmp_path / "workspace"
-        assert channel_tag == "crm"
+        assert channel == "crm"
         assert user_organization is None
         assert not_interactive is False
         return {"role": "system", "content": "system"}
@@ -243,7 +243,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         tools=[],
         summary_tokens=100,
         max_iterations=3,
-        channel_tag="crm",
+        channel="crm",
     )
     agent_loop.history = YamlHistoryRepository(tmp_path / "history")
     database_path = tmp_path / "record.db"
