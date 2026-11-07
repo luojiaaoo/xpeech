@@ -487,7 +487,7 @@ class AgentLoop:
         # 发送异常兜底内容
         if final_content_error:
             yield {"event": "assistant", "context": final_content}
-            yield {"event": "assistant_end", "context": final_content}
+            yield {"event": "assistant_end", "context": ""}
 
         # 拼接助手消息
         _append_turn_message(messages_yaml, turn_messages, {"role": "assistant", "content": final_content})
