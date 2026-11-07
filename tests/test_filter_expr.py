@@ -108,7 +108,9 @@ def test_invalid_or_malicious_filter_is_rejected(source):
 def test_filter_length_limit():
     with pytest.raises(FilterExpressionError, match="characters"):
         parse_filter(f"channel({'x' * FILTER_MAX_LENGTH})")
-    parse_filter(f"channel('{'x' * (FILTER_MAX_LENGTH - 8)}')")
+    longest = f"channel('{'x' * (FILTER_MAX_LENGTH - 11)}')"
+    assert len(longest) == FILTER_MAX_LENGTH
+    parse_filter(longest)
 
 
 def test_filter_depth_limit():
