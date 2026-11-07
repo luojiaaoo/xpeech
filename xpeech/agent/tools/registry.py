@@ -89,9 +89,9 @@ async def register_tools(
 
     registrations: dict[str, MCPServerRegistration] = {}
     for server_name, server_config in config.mcp_servers.items():
-        if not channel_tag_allows_access(server_config.channel_tags, channel_tag):
-            continue
-        if not organization_allows_access(server_config.organization_prefixes, user_organization):
+        donot_allow_channel = not channel_tag_allows_access(server_config.channel_tags, channel_tag)
+        donot_allow_organization = not organization_allows_access(server_config.organization_prefixes, user_organization)
+        if donot_allow_channel and donot_allow_organization:
             continue
         registration = await get_session_mcp_registration_from_config(
             user_id,
