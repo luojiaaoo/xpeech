@@ -10,41 +10,13 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.server.api import app
 from xpeech.agent.skills import skill as skill_module
-from xpeech.agent.skills.skill import SkillMetadata, SkillsLoader
+from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import mcp_client, registry
+import xpeech.config.settings as settings_module
 from xpeech.config.settings import MCPServerSettings, OrganizationConfig, ToolConfig, settings
-from xpeech.utils import organization as organization_module
-from xpeech.utils.organization import organization_allows_access, resolve_user_organization
-
-
-@pytest.mark.parametrize("prefixes", [None, "company/", [1], [""], [" "], [" company/"]])
-def test_resource_organization_prefix_validation(prefixes):
-    with pytest.raises(ValueError):
-        SkillMetadata(name="test", description="Test", organization_prefixes=prefixes)
-    with pytest.raises(ValueError):
-        MCPServerSettings(command="demo", organization_prefixes=prefixes)
-
-
-@pytest.mark.parametrize(
-    "prefixes, organization, allowed",
-    [
-        ([], None, True),
-        (["公司/研发/"], "公司/研发/平台", True),
-        (["公司/销售/", "公司/研发/"], "公司/研发/平台", True),
-        (["company/eng"], "company/engineering", True),
-        (["company/eng/"], "company/engineering", False),
-        (["Company/"], "company/eng", False),
-        (["company/*"], "company/eng", False),
-        (["company/"], None, False),
-        (["company/"], "", False),
-    ],
-)
-def test_organization_prefix_matching(prefixes, organization, allowed):
-    assert organization_allows_access(prefixes, organization) is allowed
 
 
 @pytest.mark.asyncio
@@ -52,7 +24,8 @@ async def test_lookup_uses_literal_user_argument_and_strips_stdout():
     user_id = "a user; $(touch should-not-exist)"
     script = "import sys; print('  公司/研发/' + sys.argv[1] + '  ')"
     command = shlex.join([sys.executable, "-c", script, "${user_id}"])
-    assert await resolve_user_organization(user_id, command_template=command) == "公司/研发/" + user_id
+    config = OrganizationConfig(command_template=command)
+    assert await config.resolve_user_organization(user_id) == "公司/研发/" + user_id
 
 
 @pytest.mark.asyncio
@@ -67,13 +40,20 @@ async def test_lookup_uses_literal_user_argument_and_strips_stdout():
 )
 async def test_lookup_failures_grant_no_organization(script):
     command = shlex.join([sys.executable, "-c", script, "$user_id"])
-    assert await resolve_user_organization("alice", command_template=command, timeout=0.1) is None
+    config = OrganizationConfig(command_template=command, timeout=0.1)
+    assert await config.resolve_user_organization("alice") is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", [None, "", "'", "/missing-command $user_id", "echo company/admin"])
+@pytest.mark.parametrize("command", [None, "'", "/missing-command $user_id", "echo company/admin"])
 async def test_disabled_or_invalid_lookup_grants_no_organization(command):
-    assert await resolve_user_organization("alice", command_template=command) is None
+    assert await OrganizationConfig(command_template=command).resolve_user_organization("alice") is None
+
+
+@pytest.mark.parametrize("command", ["", "   "])
+def test_empty_lookup_command_is_rejected(command):
+    with pytest.raises(ValueError):
+        OrganizationConfig(command_template=command)
 
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
@@ -83,10 +63,10 @@ async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_
     builtin_dirs = []
     for name, extra in [
         ("public", ""),
-        ("engineering", "organization_prefixes: ['公司/研发/', '公司/研发/']\n"),
-        ("sales", "organization_prefixes: ['公司/销售/']\n"),
-        ("other-channel", "organization_prefixes: ['公司/研发/']\nchannel_tags: [other]\n"),
-        ("invalid", "organization_prefixes: ['']\n"),
+        ("engineering", 'filter: org("公司/研发/", "公司/研发/")\n'),
+        ("sales", 'filter: org("公司/销售/")\n'),
+        ("other-channel", 'filter: org("公司/研发/") and tag("other")\n'),
+        ("invalid", 'filter: org("")\n'),
     ]:
         path = root / name / "SKILL.md"
         path.parent.mkdir(parents=True)
@@ -99,10 +79,9 @@ async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_
     assert {skill.metadata.name for skill in public} == {"public"}
     loader = SkillsLoader(tmp_path, user_organization="公司/研发/平台")
     skills = {skill.metadata.name: skill for skill in await loader.list_skill_info()}
-    expected = {"public", "engineering"} | ({"other-channel"} if source == "workspace" else set())
-    assert set(skills) == expected
-    assert skills["engineering"].metadata.organization_prefixes == ["公司/研发/"]
-    assert "organization_prefixes" not in skills["engineering"].metadata.kwargs
+    assert set(skills) == {"public", "engineering"}
+    assert skills["engineering"].metadata.filter == 'org("公司/研发/", "公司/研发/")'
+    assert "filter" not in skills["engineering"].metadata.kwargs
     system = await build_system_prompt(tmp_path, user_organization="公司/研发/平台")
     assert "# Instructions for engineering" in system["content"]
     assert "# Instructions for sales" not in system["content"]
@@ -114,9 +93,9 @@ async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_
 async def test_mcp_filters_before_connections_status_and_discovery(monkeypatch, tmp_path, user_organization):
     config = ToolConfig.model_validate({"mcpServers": {
         "public": {"command": "demo"},
-        "engineering": {"command": "demo", "organization_prefixes": ["公司/研发/"]},
-        "sales": {"command": "demo", "organization_prefixes": ["公司/销售/"]},
-        "other-channel": {"command": "demo", "channel_tags": ["other"]},
+        "engineering": {"command": "demo", "filter": 'org("公司/研发/")'},
+        "sales": {"command": "demo", "filter": 'org("公司/销售/")'},
+        "other-channel": {"command": "demo", "filter": 'tag("other")'},
     }})
     requested = []
     discovered = []
@@ -149,16 +128,16 @@ async def test_mcp_filters_before_connections_status_and_discovery(monkeypatch, 
     assert "other-channel" not in status.__doc__
 
 
-def test_mcp_organization_settings_are_preserved_in_cache_key(tmp_path):
+def test_mcp_filter_is_preserved_in_cache_key(tmp_path):
     public = mcp_client.create_mcp_registration_from_config(
         "demo", MCPServerSettings(command="demo"), workspace=tmp_path,
         skills_loader=SkillsLoader(tmp_path),
     )
     private = mcp_client.create_mcp_registration_from_config(
-        "demo", MCPServerSettings(command="demo", organization_prefixes=["公司/", "公司/"]), workspace=tmp_path,
+        "demo", MCPServerSettings(command="demo", filter='org("公司/")'), workspace=tmp_path,
         skills_loader=SkillsLoader(tmp_path),
     )
-    assert private.config.organization_prefixes == ["公司/"]
+    assert private.config.filter == 'org("公司/")'
     assert mcp_client._persistent_registration_key(public.config) != mcp_client._persistent_registration_key(private.config)
 
 
@@ -169,7 +148,7 @@ def test_skill_api_looks_up_authenticated_user_and_ignores_claims(monkeypatch, t
     for name in ("engineering", "sales"):
         path = tmp_path / "builtin" / name / "SKILL.md"
         path.parent.mkdir(parents=True)
-        path.write_text(f"---\nname: {name}\norganization_prefixes: [company/{name}/]\n---\n")
+        path.write_text(f'---\nname: {name}\nfilter: org("company/{name}/")\n---\n')
         directories.append(path.parent)
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: directories)
     calls = []
@@ -178,7 +157,7 @@ def test_skill_api_looks_up_authenticated_user_and_ignores_claims(monkeypatch, t
         calls.append(variables["user_id"])
         return "company/engineering/team" if variables["user_id"] == "alice" else "company/sales/team"
 
-    monkeypatch.setattr(organization_module, "execute_command_template", execute)
+    monkeypatch.setattr(settings_module, "execute_command_template", execute)
     client = TestClient(app)
     for user_id, expected in [("alice", "engineering"), ("bob", "sales")]:
         token = jwt.encode(

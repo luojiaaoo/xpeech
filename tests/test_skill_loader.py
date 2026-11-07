@@ -317,7 +317,7 @@ async def test_builtin_name_takes_precedence_over_workspace_name(
 async def test_filtered_builtin_directory_still_takes_precedence_over_workspace(tmp_path, monkeypatch):
     builtin_dir = tmp_path / "builtin/shared-folder"
     builtin_dir.mkdir(parents=True)
-    (builtin_dir / "SKILL.md").write_text("---\nname: shared-name\nchannel_tags: [crm]\n---\nBuilt-in")
+    (builtin_dir / "SKILL.md").write_text('---\nname: shared-name\nfilter: tag("crm")\n---\nBuilt-in')
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [builtin_dir])
     workspace = tmp_path / "workspace"
     for folder in ("shared-folder", "other-folder"):

@@ -3,8 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config.settings import ToolConfig, settings
-from ...utils.channel_tag import channel_tag_allows_access
-from ...utils.organization import organization_allows_access
+from ...utils.filter_expr import FilterContext, filter_allows_access
 from ...utils.security.dcg import shell_requires_confirmation
 from ..skills.skill import SkillsLoader
 from .browser_preview import build_browser_preview_tool
@@ -88,10 +87,9 @@ async def register_tools(
             provider.register_function_tool(tool)
 
     registrations: dict[str, MCPServerRegistration] = {}
+    filter_context = FilterContext(tag=channel_tag, org=user_organization)
     for server_name, server_config in config.mcp_servers.items():
-        donot_allow_channel = not channel_tag_allows_access(server_config.channel_tags, channel_tag)
-        donot_allow_organization = not organization_allows_access(server_config.organization_prefixes, user_organization)
-        if donot_allow_channel and donot_allow_organization:
+        if not filter_allows_access(server_config.filter, filter_context):
             continue
         registration = await get_session_mcp_registration_from_config(
             user_id,

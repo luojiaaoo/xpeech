@@ -4,7 +4,6 @@ from typing import Any, Self
 from ..config.settings import Settings, settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..utils.file_io import ensure_path_async
-from ..utils.organization import resolve_user_organization
 from ..utils.session import create_workspace_templates
 from .loop import AgentLoop
 from .server.schema import InboundMessage
@@ -48,9 +47,7 @@ class AgentRunner:
         """Initialize the user workspace, provider, tools, and agent loop."""
         await create_workspace_templates(await ensure_path_async(self.workspace))
         organization = self.config.organization
-        self.user_organization = await resolve_user_organization(
-            self.user_id, command_template=organization.command_template, timeout=organization.timeout,
-        )
+        self.user_organization = await organization.resolve_user_organization(self.user_id)
 
         llm_config = self.config.llm
         api_key = llm_config.api_key

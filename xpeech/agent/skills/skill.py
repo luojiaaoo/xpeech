@@ -10,9 +10,8 @@ import yaml
 from loguru import logger
 from pydantic import BaseModel, Field, computed_field, field_validator
 
-from ...utils.channel_tag import channel_tag_allows_access, normalize_channel_tags
 from ...utils.file_io import LockedFile, ensure_path_async
-from ...utils.organization import normalize_organization_prefixes, organization_allows_access
+from ...utils.filter_expr import FilterContext, filter_allows_access, validate_filter_source
 from ..server.context import get_lark_user_access_token
 
 # Default builtin skills directory (relative to this file)
@@ -31,19 +30,13 @@ class SkillMetadata(BaseModel):
     description: str
     always: bool = False
     internal: bool = False
-    channel_tags: list[str] = Field(default_factory=list)
-    organization_prefixes: list[str] = Field(default_factory=list)
+    filter: str | None = None
     kwargs: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("organization_prefixes")
+    @field_validator("filter")
     @classmethod
-    def validate_organization_prefixes(cls, value: list[str]) -> list[str]:
-        return normalize_organization_prefixes(value)
-
-    @field_validator("channel_tags")
-    @classmethod
-    def validate_channel_tags(cls, value: list[str]) -> list[str]:
-        return normalize_channel_tags(value)
+    def validate_filter(cls, value: str | None) -> str | None:
+        return validate_filter_source(value)
 
 
 class SkillInfo(BaseModel):
@@ -75,15 +68,14 @@ class SkillInfo(BaseModel):
             kwargs = {
                 key: value
                 for key, value in frontmatter.items()
-                if key not in {"name", "description", "always", "internal", "channel_tags", "organization_prefixes"}
+                if key not in {"name", "description", "always", "internal", "filter"}
             }
             return SkillMetadata(
                 name=name,
                 description=description.strip() if isinstance(description, str) and description.strip() else name,
                 always=always if isinstance(always, bool) else False,
                 internal=internal if isinstance(internal, bool) else False,
-                channel_tags=frontmatter.get("channel_tags", []),
-                organization_prefixes=frontmatter.get("organization_prefixes", []),
+                filter=frontmatter.get("filter"),
                 kwargs=kwargs,
             )
 
@@ -188,9 +180,9 @@ class SkillsLoader:
                 continue
             if self.not_interactive and metadata.name in INTERACTIVE_SKILL_NAMES:
                 continue
-            donot_allow_channel = (source == "builtin" and not channel_tag_allows_access(metadata.channel_tags, self.channel_tag))
-            donot_allow_organization =  not organization_allows_access(metadata.organization_prefixes, self.user_organization)
-            if donot_allow_channel and donot_allow_organization:
+            if not filter_allows_access(
+                metadata.filter, FilterContext(tag=self.channel_tag, org=self.user_organization)
+            ):
                 continue
             if metadata.name in seen_names:
                 logger.warning("Skipping duplicate skill '{}' at '{}'", metadata.name, skill_file)

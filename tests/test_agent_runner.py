@@ -111,11 +111,11 @@ async def test_runner_resolves_organization_once_before_registering_tools(
     config = make_config(tmp_path)
     config.organization = OrganizationConfig(command_template="lookup ${user_id}", timeout=2.0)
     lookup = AsyncMock(return_value="公司/研发/平台")
-    monkeypatch.setattr(runner_module, "resolve_user_organization", lookup)
+    monkeypatch.setattr(OrganizationConfig, "resolve_user_organization", lookup)
     register_tools = runner_dependencies[2]
 
     async def check_registration(**kwargs):
-        lookup.assert_awaited_once_with("alice", command_template="lookup ${user_id}", timeout=2.0)
+        lookup.assert_awaited_once_with("alice")
         assert kwargs["user_organization"] == "公司/研发/平台"
 
     register_tools.side_effect = check_registration

@@ -119,64 +119,55 @@ channel_tag = "crm"
 `internal`。所有通道使用统一的 JWT 算法和有效期，支持业务接口，
 也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口和内部接口使用内部 JWT。
 每个通道只绑定一个 `channel_tag`，由服务端配置确定，JWT payload 或会话元数据中的标签不授予任何权限。
-省略通道 `channel_tag` 时，渠道筛选允许公共内建技能、公共 MCP，以及用户自己的技能；这些资源还需通过下面的组织筛选。
+鉴权后的 `channel_tag` 以单个字符串或 `None` 显式传递到 Runner、技能加载和工具注册，供资源过滤表达式使用。
 
-Skill 的 YAML frontmatter 和 MCP 配置都支持 `channel_tags`。标签筛选仅作用于内建技能和 MCP，
-用户工作区里的技能不受渠道标签匹配限制。内建技能和 MCP 省略 `channel_tags` 或配置 `[]` 表示公共资源；
-非空表示专属资源，仅向至少命中一个标签的 JWT 通道展示或注册。标签区分大小写，
-长度为 1–64 个字符，以英文字母或数字开头，可包含字母、数字、`.`、`_`、`:`、`-`。
-无需给 Skill 名称增加特殊前缀。例如：
+Skill 的 YAML frontmatter 和 MCP 配置都支持 `filter` 过滤表达式。配置了 `filter` 的资源仅在表达式
+求值为真时展示或注册；省略 `filter` 的资源是公共资源，一律可见。同一条件作用于内建技能、
+用户工作区技能（含 `always` 技能）、技能列表 API，以及 MCP 状态、用途和工具注册；未匹配的 MCP 不会发起连接。
+过滤控制资源加载，不是工作区文件的访问控制。同一 `user_id` 的工作区和历史仍然共享；需要系统间数据隔离时应使用独立的用户 ID。
+MCP 在注册阶段过滤，不匹配时不会建立连接；同步聊天和定时任务也在注册阶段跳过追问、创建/查看/取消调度等交互式工具。
+
+表达式是 Python 布尔表达式的极小子集，用 `and` / `or` / `not` 和括号组合两个内置短名函数：
+
+- `tag("crm", ...)`：当前通道的 `channel_tag` 等于任一参数时为真，区分大小写精确匹配。
+- `org("公司/研发/", ...)`：用户组织字符串以任一参数为前缀时为真，区分大小写按字面匹配，不解析通配符或自动补充分隔符。例如组织 `公司/研发/平台` 匹配 `org("公司/研发/")`，不匹配 `org("公司/销售/")`。
+
+参数是 1–32 个非空字符串字面量，支持中文，不能有首尾空白；通道标签或组织未知（含查询失败）时对应函数为假。
+表达式最长 256 个字符，嵌套不超过 8 层。无需给 Skill 名称增加特殊前缀。例如：
 
 ```yaml
 ---
 name: crm-report
 description: CRM 报表助手
-channel_tags: [crm]
+filter: tag("crm") or org("公司/研发/", "公司/平台/")
 ---
 ```
 
 ```toml
 [tool.mcpServers.crm-api]
 url = "https://crm.example.com/mcp"
-channel_tags = ["crm"]
+filter = 'tag("crm") and not org("公司/销售/")'
 ```
 
-标签筛选作用于内建技能的列表、系统提示词（含 `always` 技能）和 MCP 工具注册；
-它不是工作区文件的访问控制。同一 `user_id` 的工作区和历史仍然共享；需要系统间数据隔离时应使用独立的用户 ID。
-鉴权后的 `channel_tag` 以单个字符串或 `None` 显式传递到 Runner、技能加载和工具注册。MCP 在注册阶段按标签筛选，不匹配时不会建立连接；
-同步聊天和定时任务也在注册阶段跳过追问、创建/查看/取消调度等交互式工具。
+表达式经 `ast.parse` 解析后按严格节点白名单校验，再由服务端自行解释求值，不使用 `eval`/`exec`：
+只允许 `and` / `or` / `not`、布尔常量和上述函数调用；属性访问、下标、lambda、推导式、f-string
+等节点一律拒绝，无法执行任意代码或接触 Python 对象模型。旧的 `channel_tags` /
+`organization_prefixes` 字段已移除，请改写为 `filter`。
 
-Skill 的 YAML frontmatter 和 MCP 配置还支持 `organization_prefixes`，按用户的组织字符串筛选：
+`org()` 依赖 `[organization]` 配置的组织查询命令：
 
 ```toml
 [organization]
 command_template = "curl --fail --silent 'https://directory.example/organization?user_id=${user_id}'"
 timeout = 10.0
-
-[tool.mcpServers.engineering]
-url = "https://engineering.example.com/mcp"
-organization_prefixes = ["公司/研发/"]
-```
-
-```yaml
----
-name: engineering-report
-description: 研发报表助手
-organization_prefixes: ["公司/研发/", "公司/平台/"]
----
 ```
 
 查询命令在服务端执行，必须包含 `${user_id}` 或 `$user_id`，使用已鉴权的用户 ID，
 不经过 shell；命令成功退出后的 UTF-8 stdout 去除首尾空白后作为组织字符串。
 每次创建 Runner 时先查询一次，同一结果用于技能提示词和 MCP 注册；`GET /skills` 也先查询当前用户的组织。
 组织不从 JWT 额外字段、渠道配置或会话元数据读取，也不跨用户或跨 Runner 缓存。
-`organization_prefixes` 省略或为 `[]` 表示不限制组织；非空时，组织字符串必须以列表中任一前缀开头，
-区分大小写，按字面字符串匹配，不解析通配符或自动补充分隔符。前缀必须是无首尾空白的非空字符串，支持中文。
-例如 `公司/研发/平台` 匹配 `公司/研发/`，不匹配 `公司/销售/`。
-未配置查询命令、命令失败、超时（默认 10 秒）或输出为空时，只加载未配置组织前缀的资源。
-组织筛选适用于内建技能、工作区技能（含 `always` 技能）、技能列表 API，以及 MCP 状态、用途和工具注册；
-同时配置 `channel_tags` 时，两种条件都必须满足。未匹配的 MCP 不会发起连接。
-与渠道筛选一样，组织筛选控制资源加载，不是工作区文件的访问控制。
+未配置查询命令、命令失败、超时（默认 10 秒）或输出为空时，用户组织视为未知，`org()` 不匹配任何前缀，
+此时只有不依赖 `org()` 的过滤器和未配置 `filter` 的公共资源可见。
 
 `not_interactive=True` 的同步聊天和定时任务也会从技能列表及系统提示词中跳过
 `ask-user-question`，即使它标记为 `always: true`。交互式技能名称在代码中维护，
@@ -739,8 +730,7 @@ stdio MCP、内置文件工具和 Shell 的相对路径基准保持一致。远�
 - `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
 - `enabled_tools`：允许注册的 MCP 原始工具名或通配模式，默认 `["*"]` 表示全部注册；`[]` 表示全部禁用。
 - `execution_request_tools`：需要用户确认的 MCP 原始工具名或通配模式，默认 `[]`；`["*"]` 表示所有已启用工具都需要确认。例如 `["write_*", "delete_*"]`。
-- `channel_tags`：专属系统标签列表，省略或 `[]` 表示公共 MCP；当前 JWT 通道的 `channel_tag` 命中列表中的任一标签才连接并注册。
-- `organization_prefixes`：用户组织前缀列表，省略或 `[]` 表示不限制组织；组织字符串以任一前缀开头才连接并注册，查询方式见上文 `[organization]`。
+- `filter`：资源过滤表达式，省略表示公共 MCP；表达式求值为真才连接并注册，语法和内置短名函数见上文「过滤表达式」。
 - `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
 
 `command` 和 `url` 只能二选一。`command_authorization_token` 仅适用于远程 MCP，每次

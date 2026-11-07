@@ -334,6 +334,8 @@ async def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: P
         ("crm", None, {"public", "tagged"}),
         (None, "公司/研发/平台", {"public", "organization"}),
         ("crm", "公司/研发/平台", {"public", "tagged", "organization", "both"}),
+        ("crm", "公司/销售", {"public", "tagged"}),
+        ("other", "公司/研发/平台", {"public", "organization"}),
         ("other", "公司/销售", {"public"}),
     ],
 )
@@ -343,10 +345,10 @@ async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
     builtin_root = tmp_path / "builtin"
     for name, restrictions in {
         "public": "",
-        "tagged": "channel_tags: [crm]\n",
-        "organization": "organization_prefixes: [公司/研发]\n",
-        "both": "channel_tags: [crm]\norganization_prefixes: [公司/研发]\n",
-        "invalid": "channel_tags: invalid\n",
+        "tagged": 'filter: tag("crm")\n',
+        "organization": 'filter: org("公司/研发")\n',
+        "both": 'filter: tag("crm") and org("公司/研发")\n',
+        "invalid": "filter: tag()\n",
     }.items():
         directory = builtin_root / name
         directory.mkdir(parents=True)

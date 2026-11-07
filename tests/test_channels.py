@@ -59,14 +59,6 @@ def test_custom_channels_cannot_share_keys():
         JWTConfig.model_validate(config)
 
 
-@pytest.mark.parametrize("channel_tags", ["crm", None, [1], [""], ["bad tag"], ["*"]])
-def test_resource_tag_validation_is_consistent(channel_tags):
-    with pytest.raises(ValueError):
-        MCPServerSettings(command="demo", channel_tags=channel_tags)
-    with pytest.raises(ValueError):
-        skill_module.SkillMetadata(name="demo", description="Demo", channel_tags=channel_tags)
-
-
 @pytest.mark.parametrize("channel_tag", [None, "crm", "sales.apac:team-1_v2", "a" * 64])
 def test_jwt_channel_accepts_one_optional_tag(channel_tag):
     channel = JWTChannelConfig(secret_key=CRM_KEY, channel_tag=channel_tag)
@@ -122,23 +114,24 @@ def test_skill_api_filters_using_server_channel_tag(
 ):
     monkeypatch.setattr(settings.path, "workspace_base_path", tmp_path)
     builtin_dirs = []
-    for name, channel_tags in [
-        ("public", []),
-        ("crm-skill", ["crm"]),
-        ("erp-skill", ["erp"]),
-        ("shared", ["crm", "erp"]),
-        ("sales-skill", ["sales"]),
+    for name, filter_expr in [
+        ("public", None),
+        ("crm-skill", 'tag("crm")'),
+        ("erp-skill", 'tag("erp")'),
+        ("shared", 'tag("crm", "erp")'),
+        ("sales-skill", 'tag("sales")'),
     ]:
         skill_file = tmp_path / "builtin" / name / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
-        skill_file.write_text(f"---\nname: {name}\nchannel_tags: {channel_tags!r}\n---\n# {name}\n")
+        filter_line = f"filter: {filter_expr}\n" if filter_expr else ""
+        skill_file.write_text(f"---\nname: {name}\n{filter_line}---\n# {name}\n")
         builtin_dirs.append(skill_file.parent)
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: builtin_dirs)
-    user_skill_names = {"user-public", "user-crm", "user-erp"}
-    for name, channel_tags in [("user-public", []), ("user-crm", ["crm"]), ("user-erp", ["erp"])]:
+    for name, filter_expr in [("user-public", None), ("user-crm", 'tag("crm")'), ("user-erp", 'tag("erp")')]:
         skill_file = tmp_path / "tag-user" / "skills" / name / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
-        skill_file.write_text(f"---\nname: {name}\nchannel_tags: {channel_tags!r}\n---\n# {name}\n")
+        filter_line = f"filter: {filter_expr}\n" if filter_expr else ""
+        skill_file.write_text(f"---\nname: {name}\n{filter_line}---\n# {name}\n")
 
     client = TestClient(app)
 
@@ -158,15 +151,15 @@ def test_skill_api_filters_using_server_channel_tag(
 
     assert visible_skills(
         "crm", CRM_KEY, channel_tag="erp", channel_tags=["erp"]
-    ) == user_skill_names | {"public", "crm-skill", "shared"}
-    assert visible_skills("erp", ERP_KEY) == user_skill_names | {"public", "erp-skill", "shared"}
+    ) == {"user-public", "user-crm"} | {"public", "crm-skill", "shared"}
+    assert visible_skills("erp", ERP_KEY) == {"user-public", "user-erp"} | {"public", "erp-skill", "shared"}
     assert visible_skills(
         "web_client", settings.jwt.channels["web_client"].secret_key, channel_tags=["crm"]
-    ) == user_skill_names | {"public"}
+    ) == {"user-public"} | {"public"}
     monkeypatch.setattr(settings.jwt.channels["web_client"], "channel_tag", "crm")
     assert visible_skills(
         "web_client", settings.jwt.channels["web_client"].secret_key
-    ) == user_skill_names | {"public", "crm-skill", "shared"}
+    ) == {"user-public", "user-crm"} | {"public", "crm-skill", "shared"}
 
 
 @pytest.mark.asyncio
@@ -177,7 +170,7 @@ async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tm
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [skill_dir])
 
     [skill] = await SkillsLoader(tmp_path).list_skill_info()
-    assert skill.metadata.channel_tags == []
+    assert skill.metadata.filter is None
     assert skill.metadata.kwargs["tags"] == ["finance", "Long Form"]
 
 
@@ -234,37 +227,33 @@ def test_chat_passes_verified_channel_tag_to_registration(
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
 @pytest.mark.asyncio
-async def test_always_skill_channel_tags_only_restrict_builtins(monkeypatch, tmp_path, source):
+async def test_always_skill_filter_restricts_every_source(monkeypatch, tmp_path, source):
     skill_root = tmp_path / "builtin" if source == "builtin" else tmp_path / "skills"
     skill_file = skill_root / "dedicated" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
-    skill_file.write_text("---\nname: dedicated\nchannel_tags: [crm, crm]\nalways: true\n---\n# CRM instructions")
+    skill_file.write_text('---\nname: dedicated\nfilter: tag("crm")\nalways: true\n---\n# CRM instructions')
     builtin_dirs = [skill_file.parent] if source == "builtin" else []
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: builtin_dirs)
     loader = SkillsLoader(tmp_path)
     prompt = await loader.build_skills_prompt()
-    if source == "builtin":
-        assert prompt == ""
-    else:
-        assert "# CRM instructions" in prompt
+    assert prompt == ""
     loader = SkillsLoader(tmp_path, channel_tag="crm")
     prompt = await loader.build_skills_prompt()
     assert "# CRM instructions" in prompt
-    assert "channel_tags='crm'" in prompt
     skill = (await loader.list_skill_info())[0]
-    assert skill.metadata.channel_tags == ["crm"]
-    assert "channel_tags" not in skill.metadata.kwargs
+    assert skill.metadata.filter == 'tag("crm")'
+    assert "filter" not in skill.metadata.kwargs
     system_prompt = await build_system_prompt(tmp_path, channel_tag="crm")
     assert "# CRM instructions" in system_prompt["content"]
 
 
-@pytest.mark.parametrize("channel_tags_yaml", ["crm", "null", "[1]", "['']"])
+@pytest.mark.parametrize("filter_yaml", ["tag()", "[1]", "['crm']", "import os", "123"])
 @pytest.mark.asyncio
-async def test_invalid_skill_channel_tags_are_skipped(monkeypatch, tmp_path, channel_tags_yaml):
+async def test_invalid_skill_filters_are_skipped(monkeypatch, tmp_path, filter_yaml):
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
     skill_file = tmp_path / "skills" / "invalid" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
-    skill_file.write_text(f"---\nname: invalid\nchannel_tags: {channel_tags_yaml}\n---\n# Invalid")
+    skill_file.write_text(f"---\nname: invalid\nfilter: {filter_yaml}\n---\n# Invalid")
     assert await SkillsLoader(tmp_path).list_skill_info() == []
 
 
@@ -293,9 +282,9 @@ async def test_mcp_only_registers_public_and_matching_servers(
         {
             "mcpServers": {
                 "public": {"command": "demo"},
-                "crm": {"command": "demo", "channel_tags": ["crm"]},
-                "erp": {"command": "demo", "channel_tags": ["erp"]},
-                "shared": {"command": "demo", "channel_tags": ["crm", "erp"]},
+                "crm": {"command": "demo", "filter": 'tag("crm")'},
+                "erp": {"command": "demo", "filter": 'tag("erp")'},
+                "shared": {"command": "demo", "filter": 'tag("crm", "erp")'},
             }
         }
     )
@@ -350,18 +339,18 @@ async def test_mcp_only_registers_public_and_matching_servers(
         assert (f"purpose-{name}" in status_tool.__doc__) is (name in expected)
 
 
-def test_mcp_preserves_channel_tags_in_registration_and_cache_key(tmp_path):
+def test_mcp_preserves_filter_in_registration_and_cache_key(tmp_path):
     public = mcp_client.create_mcp_registration_from_config(
         "demo", MCPServerSettings(command="demo"), workspace=tmp_path,
         skills_loader=SkillsLoader(tmp_path),
     )
     dedicated = mcp_client.create_mcp_registration_from_config(
         "demo",
-        MCPServerSettings(command="demo", channel_tags=["crm", "crm"]),
+        MCPServerSettings(command="demo", filter='tag("crm")'),
         workspace=tmp_path,
         skills_loader=SkillsLoader(tmp_path),
     )
-    assert dedicated.config.channel_tags == ["crm"]
+    assert dedicated.config.filter == 'tag("crm")'
     assert mcp_client._persistent_registration_key(public.config) != mcp_client._persistent_registration_key(
         dedicated.config
     )

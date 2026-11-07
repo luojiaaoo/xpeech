@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Literal
@@ -5,6 +6,7 @@ from urllib.parse import urlsplit
 
 import jq
 from dotenv import load_dotenv
+from loguru import logger
 from pydantic import (
     BaseModel,
     AfterValidator,
@@ -22,9 +24,9 @@ from pydantic_settings import (
 )
 
 from ..provider.schema import LLMParameters
-from ..utils.channel_tag import normalize_channel_tags, validate_channel_tag
+from ..utils.command_template import CommandTemplateError, execute_command_template
 from ..utils.file_io import ensure_path
-from ..utils.organization import normalize_organization_prefixes
+from ..utils.filter_expr import validate_filter_source
 
 if Path(".env").exists():
     load_dotenv(".env")
@@ -128,18 +130,12 @@ class MCPServerSettings(BaseModel):
     execution_request_tools: list[str] = Field(default_factory=list)
     tool_timeout: float = Field(default=30.0, validation_alias="tool_timeout")
     connect_timeout: float = Field(default=30.0, gt=0, validation_alias="connect_timeout")
-    channel_tags: list[str] = Field(default_factory=list)
-    organization_prefixes: list[str] = Field(default_factory=list)
+    filter: str | None = Field(default=None, description="资源过滤表达式；省略表示公共 MCP")
 
-    @field_validator("organization_prefixes")
+    @field_validator("filter")
     @classmethod
-    def validate_organization_prefixes(cls, value: list[str]) -> list[str]:
-        return normalize_organization_prefixes(value)
-
-    @field_validator("channel_tags")
-    @classmethod
-    def validate_channel_tags(cls, value: list[str]) -> list[str]:
-        return normalize_channel_tags(value)
+    def validate_filter(cls, value: str | None) -> str | None:
+        return validate_filter_source(value)
 
     @model_validator(mode="after")
     def validate_stdio_env(self) -> "MCPServerSettings":
@@ -211,7 +207,11 @@ class JWTChannelConfig(BaseModel):
     @field_validator("channel_tag")
     @classmethod
     def validate_channel_tag(cls, value: str | None) -> str | None:
-        return validate_channel_tag(value) if value is not None else None
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", value):
+            raise ValueError(
+                "channel_tag must be a 1-64 character string using letters, numbers, '.', '_', ':', or '-'"
+            )
+        return value
 
 
 class JWTConfig(BaseModel):
@@ -228,13 +228,8 @@ class JWTConfig(BaseModel):
         reserved_names = {"internal"}
         invalid_names: list[str] = []
         for name in channel_names:
-            try:
-                validate_channel_tag(name)
-            except ValueError:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", name) or name in reserved_names:
                 invalid_names.append(name)
-            else:
-                if name in reserved_names:
-                    invalid_names.append(name)
         if invalid_names:
             raise ValueError(
                 "JWT channel names must be valid channel tags and cannot use reserved names: "
@@ -403,6 +398,23 @@ class OrganizationConfig(BaseModel):
             if not value:
                 raise ValueError("organization.command_template cannot be empty")
         return value
+
+    async def resolve_user_organization(self, user_id: str) -> str | None:
+        """通过服务端命令查询用户组织；查询失败返回 None，对应 org() 不匹配任何前缀。"""
+        if self.command_template is None:
+            return None
+        try:
+            organization = await execute_command_template(
+                self.command_template,
+                {"user_id": user_id},
+                operation="organization.command_template",
+                timeout=self.timeout,
+                required_variables=("user_id",),
+            )
+        except CommandTemplateError as exc:
+            logger.warning("Organization lookup failed: {}", exc)
+            return None
+        return organization or None
 
 
 class Settings(BaseSettings):

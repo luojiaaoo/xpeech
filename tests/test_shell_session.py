@@ -170,8 +170,8 @@ async def test_sandbox_rebuilds_when_wrapped_command_changes(stubbed_sandbox, ch
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("restrictions", "access"), [
-    ("channel_tags: [crm]\n", {"channel_tag": "crm"}),
-    ("organization_prefixes: [company/engineering]\n", {"user_organization": "company/engineering"}),
+    ('filter: tag("crm")\n', {"channel_tag": "crm"}),
+    ('filter: org("company/engineering")\n', {"user_organization": "company/engineering"}),
 ])
 async def test_sandbox_rebuilds_when_skill_visibility_changes(stubbed_sandbox, restrictions, access):
     session, spawn, builtin_root = stubbed_sandbox

@@ -655,7 +655,7 @@ async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(
     config = ToolConfig.model_validate({"mcpServers": {
         "slow": {"url": "https://example.test/mcp", "enabled_tools": ["echo"], "description": "查询客户订单"},
         "fast": {"url": "https://example.test/mcp", "enabled_tools": ["echo"], "description": "查询商品信息"},
-        "private": {"url": "https://example.test/mcp", "channel_tags": ["private"], "description": "查询内部薪资"},
+        "private": {"url": "https://example.test/mcp", "filter": 'tag("private")', "description": "查询内部薪资"},
     }})
     providers = [FakeProvider(), FakeProvider()]
     try:
