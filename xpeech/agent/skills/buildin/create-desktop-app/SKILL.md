@@ -1,5 +1,6 @@
 ---
 name: create-desktop-app
+short_description: 创建桌面应用
 description: 用户需要创建桌面软件时触发，无需用户指定技术栈。用 MyGo 框架（github.com/egoist/mygo）原生绘制（Go 包 ui）生成桌面应用；只允许生成原生绘制的软件，禁止 webview/网页前端方案。也适用于在 MyGo 项目中添加窗口、控件、界面。
 ---
 
