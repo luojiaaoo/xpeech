@@ -301,24 +301,26 @@ async def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: P
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    async def wrapped(token: str | None) -> tuple[dict[str, str], set[tuple[str, str]]]:
+    async def wrapped(token: str | None) -> list[str]:
         context = lark_user_access_token_var.set(token)
         try:
-            args = await sandbox.wrap_sandbox_command("true", workspace, skills_loader=SkillsLoader(workspace))
+            return await sandbox.wrap_sandbox_command("true", workspace, skills_loader=SkillsLoader(workspace))
         finally:
             lark_user_access_token_var.reset(context)
-        return dict(_option_pairs(args, "--setenv")), set(_option_pairs(args, "--ro-bind"))
 
-    plain_environment, plain_binds = await wrapped(None)
-    token_environment, token_binds = await wrapped("u-request-token")
+    plain_args = await wrapped(None)
+    token_args = await wrapped("u-request-token")
+    plain_binds = set(_option_pairs(plain_args, "--ro-bind"))
+    token_binds = set(_option_pairs(token_args, "--ro-bind"))
     skills_target = workspace / "skills"
     builtin_root = BUILTIN_SKILLS_DIR.resolve()
 
-    assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in plain_environment
+    # 令牌只随命令下发，沙盒参数完全不涉及。
+    assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in plain_args
     assert (str(builtin_root / "lark-skills"), str(skills_target / "lark-skills")) in plain_binds
     assert (str(builtin_root / "lark-cli-auth"), str(skills_target / "lark-cli-auth")) in plain_binds
 
-    assert token_environment["LARKSUITE_CLI_USER_ACCESS_TOKEN"] == "u-request-token"
+    assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in token_args
     assert (
         str(builtin_root / "lark-skills-token"),
         str(skills_target / "lark-skills-token"),

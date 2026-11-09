@@ -91,11 +91,13 @@ def test_expiration_property_follows_pyjwt_numeric_date_conversion():
     assert auth.exp == expires_at
 
 
-def test_token_issuance_keeps_optional_claims_isolated():
-    feishu_claim = UserJWTAuth(create_token(UserTokenParams("crm", user_id="alice", lark_user_access_token="user-access-token")))
+def test_token_issuance_emits_only_expected_claims():
+    user = UserJWTAuth(create_token(UserTokenParams("crm", user_id="alice")))
     plain = ChannelJWTAuth(_token())
     assert set(plain.claims) == {"exp"}
-    assert feishu_claim.claims["lark_user_access_token"] == "user-access-token"
+    assert set(user.claims) == {"exp", "sub"}
+    # 用户访问令牌改由表单参数携带，绝不进入 JWT。
+    assert "lark_user_access_token" not in user.claims
 
 
 def test_invalid_signature_and_unknown_channel_are_rejected():

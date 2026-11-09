@@ -69,9 +69,6 @@ def _authenticate_channel_token[Auth: ChannelJWTAuth](
         )
     try:
         auth = auth_type(token)
-        lark_user_access_token = auth.claims.get("lark_user_access_token")
-        if lark_user_access_token is not None and not isinstance(lark_user_access_token, str):
-            raise jwt.InvalidTokenError("Invalid lark_user_access_token claim")
     except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

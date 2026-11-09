@@ -104,7 +104,7 @@ dry-run 会展示两步调用链：
 
 ## 权限说明
 
-当前 shortcut 需要 `wiki:space:write_only` 和 `wiki:space:read` 权限。缺少任一权限时，报告所需 scope，由调用方在新的 JWT 中提供具备相应权限的 lark_user_access_token。
+当前 shortcut 需要 `wiki:space:write_only` 和 `wiki:space:read` 权限。缺少任一权限时，报告所需 scope，由调用方提供具备相应权限的 lark_user_access_token。
 
 异步超时后的 `lark-cli drive +task_result --scenario wiki_delete_space --task-id <TASK_ID>` 只需 `wiki:space:read`（纯读任务状态）。
 

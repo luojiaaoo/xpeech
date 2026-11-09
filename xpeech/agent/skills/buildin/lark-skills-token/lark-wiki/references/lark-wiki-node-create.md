@@ -63,7 +63,7 @@ lark-cli wiki +node-create \
 >
 > 以应用身份创建时，结果里会额外返回 `permission_grant` 字段，明确说明授权结果：
 > - `status = granted`：当前 CLI 用户已获得该知识库节点的可管理权限
-> - `status = skipped`：当前用户 `open_id` 不可用，无法自动授权。由调用方在新的 JWT 中提供有效用户令牌后重试；当前部署不提供 bot 身份。
+> - `status = skipped`：当前用户 `open_id` 不可用，无法自动授权。由调用方提供有效用户令牌后重试；当前部署不提供 bot 身份。
 > - `status = failed`：节点已创建成功，但自动授权用户失败；会带上失败原因，并提示稍后重试或继续使用 bot 身份处理该节点
 >
 > `permission_grant.perm = full_access` 表示该资源已授予“可管理权限”

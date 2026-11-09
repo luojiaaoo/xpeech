@@ -14,6 +14,7 @@ from ..dependencies import (
     authenticated_user_id,
     content,
     json_output_enabled,
+    lark_user_access_token,
     sender_name_header,
     session_id_header,
     session_metadata,
@@ -46,7 +47,10 @@ async def answer_question(
     "/chat",
     response_class=EventSourceResponse,
     responses={400: {"description": "The configured model does not support the requested JSON output mode"}},
-    dependencies=[Depends(acquire_chat_session, scope="request")],
+    dependencies=[
+        Depends(acquire_chat_session, scope="request"),
+        Depends(lark_user_access_token, scope="request"),
+    ],
 )
 async def chat(
     auth: Annotated[UserJWTAuth, Depends(require_user_jwt)],
@@ -75,6 +79,7 @@ async def chat(
 @router.post(
     "/chat_sync",
     responses={400: {"description": "The configured model does not support the requested JSON output mode"}},
+    dependencies=[Depends(lark_user_access_token, scope="request")],
 )
 async def chat_sync(
     auth: Annotated[UserJWTAuth, Depends(require_user_jwt)],

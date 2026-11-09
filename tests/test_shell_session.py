@@ -126,7 +126,7 @@ async def stubbed_sandbox(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["add_skill", "remove_skill", "token", "home_config"])
+@pytest.mark.parametrize("change", ["add_skill", "remove_skill", "home_config"])
 async def test_sandbox_rebuilds_when_wrapped_command_changes(stubbed_sandbox, change):
     session, spawn, builtin_root = stubbed_sandbox
     skill_dir = builtin_root / "new-skill"
@@ -154,16 +154,10 @@ async def test_sandbox_rebuilds_when_wrapped_command_changes(stubbed_sandbox, ch
                 config_home.mkdir()
                 (config_home / ".npmrc").write_text("managed config")
 
-            values = ("old-token", "new-token", None) if change == "token" else (None,)
-            for index, value in enumerate(values, start=2):
-                lark_user_access_token_var.set(value)
-                await session.start(skills_loader=SkillsLoader(session.workspace))
-                assert session.process is not first
-                assert spawn.await_count == index
-                assert session.wrapped_command == list(spawn.call_args.args)
-                if change == "token":
-                    assert (value in session.wrapped_command) if value else "--unsetenv" in session.wrapped_command
-                first = session.process
+            await session.start(skills_loader=SkillsLoader(session.workspace))
+            assert session.process is not first
+            assert spawn.await_count == 2
+            assert session.wrapped_command == list(spawn.call_args.args)
     finally:
         lark_user_access_token_var.reset(token_context)
 
@@ -193,19 +187,18 @@ async def test_sandbox_rebuilds_when_skill_visibility_changes(stubbed_sandbox, r
 
 @pytest.mark.asyncio
 async def test_sandbox_rebuild_waits_for_pending_commands(stubbed_sandbox):
-    session, spawn, _builtin_root = stubbed_sandbox
+    session, spawn, builtin_root = stubbed_sandbox
     async with session.lock:
         await session.start(skills_loader=SkillsLoader(session.workspace))
         response = asyncio.get_running_loop().create_future()
         session.pending[0] = response
 
     async def restart():
-        token = lark_user_access_token_var.set("new-token")
-        try:
-            async with session.lock:
-                await session.start(skills_loader=SkillsLoader(session.workspace))
-        finally:
-            lark_user_access_token_var.reset(token)
+        skill_dir = builtin_root / "new-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("---\nname: new-skill\n---\nInstructions")
+        async with session.lock:
+            await session.start(skills_loader=SkillsLoader(session.workspace))
 
     task = asyncio.create_task(restart())
     try:
@@ -321,9 +314,29 @@ async def test_request_credentials_are_refreshed_without_replaying_commands(tmp_
             "new-token",
             None,
         ]
-        assert all(r["env"]["SHELL_USER_ID"] == "alice" for r in requests)
+        # SHELL_USER_ID 由沙盒级设置，不随命令下发。
+        assert all("SHELL_USER_ID" not in r["env"] for r in requests)
     finally:
         user_id_var.reset(user_context)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_reuses_process_when_only_request_token_changes(stubbed_sandbox):
+    """令牌只随命令下发：token 刷新不重建沙盒，也不烘进 bwrap 参数。"""
+    session, spawn, _builtin_root = stubbed_sandbox
+    token_context = lark_user_access_token_var.set(None)
+    try:
+        async with session.lock:
+            await session.start(skills_loader=SkillsLoader(session.workspace))
+            first = session.process
+            for value in ("old-token", "new-token", None):
+                lark_user_access_token_var.set(value)
+                await session.start(skills_loader=SkillsLoader(session.workspace))
+                assert session.process is first
+                assert spawn.await_count == 1
+                assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in session.wrapped_command
+    finally:
+        lark_user_access_token_var.reset(token_context)
 
 
 @pytest.mark.asyncio

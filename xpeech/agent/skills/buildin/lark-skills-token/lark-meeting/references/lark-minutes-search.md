@@ -83,12 +83,12 @@ lark-cli minutes +search --query "预算复盘" --format json
 
 ### 2. 支持 user 和 bot 身份
 
-该接口原生支持 user 和 bot；当前部署仅提供 `--as user`。请求 JWT 中的 lark_user_access_token 需具备 `minutes:minutes.search:read` 权限。
+该接口原生支持 user 和 bot；当前部署仅提供 `--as user`。调用方提供的 lark_user_access_token 需具备 `minutes:minutes.search:read` 权限。
 
 ### 3. `me` 表示当前用户
 
 在 `--owner-ids` 和 `--participant-ids` 中可使用 `me`，表示当前登录用户。该值会在本地解析为当前用户的 `open_id`，无需手动先查询自己的用户 ID。`me` 只适合 user 身份；bot 身份没有“当前用户”，请直接传 `ou_` open_id。
-若用户令牌缺失、失效或无法解析当前用户 `open_id`，报告问题，由调用方在新的 JWT 中提供具备 `minutes:minutes.search:read` 权限的有效 lark_user_access_token 后重试。
+若用户令牌缺失、失效或无法解析当前用户 `open_id`，报告问题，由调用方提供具备 `minutes:minutes.search:read` 权限的有效 lark_user_access_token 后重试。
 
 ### 4. 自然语言中的“参与的妙记”默认按并集理解
 

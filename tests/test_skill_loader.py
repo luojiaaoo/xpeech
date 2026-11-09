@@ -214,7 +214,9 @@ async def test_injected_token_selects_dedicated_lark_skill(tmp_path: Path):
 
     lark_skills = [skill for skill in skills if skill.metadata.name == "lark-skills-token"]
     assert len(lark_skills) == 1
-    assert "用户访问令牌由请求 JWT 注入" in lark_skills[0].body
+    assert "不主动发起授权" in lark_skills[0].body
+    # 注入方式属于后端实现细节，不应暴露在技能文档里
+    assert "表单参数" not in lark_skills[0].body
     assert lark_skills[0].path == str(tmp_path / "workspace/skills/lark-skills-token/SKILL.md")
     assert all(skill.metadata.name not in {"lark-skills", "lark-cli-auth"} for skill in skills)
 

@@ -5,7 +5,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from ....agent.server.context import get_lark_user_access_token, get_user_id
+from ....agent.server.context import get_user_id
 from ....agent.skills.skill import SkillsLoader
 from ....config.settings import settings
 from ...file_io import ensure_path
@@ -103,12 +103,6 @@ async def wrap_sandbox_command(
         "GOENV": str(home / ".config" / "go" / "env"),
         "SHELL_USER_ID": str(user_id), # 注入 user_id，给插件使用
     }
-    lark_user_access_token = get_lark_user_access_token()
-    if lark_user_access_token:
-        sandbox_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = lark_user_access_token
-    else:
-        sandbox_env.pop("LARKSUITE_CLI_USER_ACCESS_TOKEN", None)
-        args.extend(["--unsetenv", "LARKSUITE_CLI_USER_ACCESS_TOKEN"])
     for key, value in sandbox_env.items():
         _add_setenv(args, key, value)
 

@@ -13,29 +13,28 @@ from ...utils.internal_jwt import decode_internal_access_token
 from ...utils.channel_jwt import ChannelJWTAuth
 from .auth import _authenticate_channel_token
 from .context import (
-    lark_user_access_token_var,
     request_id_var,
     session_id_var,
     user_id_var,
 )
 
 
-def _request_identity(headers: Headers) -> tuple[str | None, str | None, str | None]:
+def _request_identity(headers: Headers) -> tuple[str | None, str | None]:
     """Read context from verified credentials; route dependencies enforce access."""
     scheme, token = get_authorization_scheme_param(headers.get("authorization"))
     if scheme.lower() != "bearer":
-        return None, None, None
+        return None, None
     try:
         if "kid" in jwt.get_unverified_header(token):
             auth = _authenticate_channel_token(token, ChannelJWTAuth)
             subject = auth.claims.get("sub")
             user_id = validate_user_id(subject) if subject is not None else None
-            return user_id, auth.channel, auth.claims.get("lark_user_access_token")
+            return user_id, auth.channel
         else:
             decode_internal_access_token(token)
-            return headers.get("x-user-id"), None, None
+            return headers.get("x-user-id"), None
     except (jwt.InvalidTokenError, HTTPException, PathProtectionError):
-        return None, None, None
+        return None, None
 
 
 class ContextASGIMiddleware:
@@ -49,14 +48,13 @@ class ContextASGIMiddleware:
             return
 
         headers = Headers(scope=scope)
-        user_id, channel, lark_token = _request_identity(headers)
+        user_id, channel = _request_identity(headers)
         session_id = headers.get("x-session-id")
         request_id = str(uuid4())
 
         user_id_token = user_id_var.set(user_id)
         session_id_token = session_id_var.set(session_id)
         request_id_token = request_id_var.set(request_id)
-        lark_user_access_token = lark_user_access_token_var.set(lark_token)
 
         async def send_wrapper(message: Message):
 
@@ -75,7 +73,6 @@ class ContextASGIMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
-            lark_user_access_token_var.reset(lark_user_access_token)
             request_id_var.reset(request_id_token)
             session_id_var.reset(session_id_token)
             user_id_var.reset(user_id_token)

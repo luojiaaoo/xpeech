@@ -72,7 +72,7 @@ def stdio_transport(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["add_skill", "remove_skill", "token", "home_config"])
+@pytest.mark.parametrize("change", ["add_skill", "remove_skill", "home_config"])
 async def test_stdio_rebuilds_when_wrapped_command_changes(tmp_path, stdio_transport, change):
     state = stdio_transport
     skill_dir = state.builtin_root / "new-skill"
@@ -100,22 +100,36 @@ async def test_stdio_rebuilds_when_wrapped_command_changes(tmp_path, stdio_trans
             config_home.mkdir()
             (config_home / ".npmrc").write_text("managed config")
 
-        tokens = ("old-token", "new-token", None) if change == "token" else (None,)
-        for version, token in enumerate(tokens, start=2):
+        assert await registration.call_tool("echo", {}) == "session-2"
+        assert len(state.sessions) == 2
+        assert state.sessions[-2].closed
+        params = state.sessions[-1].params
+        assert registration._wrapped_command == [params.command, *params.args]
+        if change in {"add_skill", "remove_skill"}:
+            assert (str(skill_dir) in params.args) is (change == "add_skill")
+        assert state.calls == [(1, "echo"), (2, "echo")]
+    finally:
+        lark_user_access_token_var.reset(context)
+        await registration.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stdio_connection_ignores_request_tokens(tmp_path, stdio_transport):
+    """请求令牌不烘进参数，也不重建缓存的 stdio 连接。"""
+    state = stdio_transport
+    registration = mcp_client.create_mcp_registration(
+        server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
+    )
+    context = lark_user_access_token_var.set(None)
+    try:
+        await registration._get_tool_bindings()
+        for token in ("old-token", "new-token", None):
             lark_user_access_token_var.set(token)
-            assert await registration.call_tool("echo", {}) == f"session-{version}"
-            assert len(state.sessions) == version
-            assert state.sessions[-2].closed
+            assert await registration.call_tool("echo", {}) == "session-1"
+            assert len(state.sessions) == 1
             params = state.sessions[-1].params
-            assert registration._wrapped_command == [params.command, *params.args]
-            if change == "token":
-                if token is not None:
-                    assert token in params.args
-                else:
-                    assert "--unsetenv" in params.args
-            elif change in {"add_skill", "remove_skill"}:
-                assert (str(skill_dir) in params.args) is (change == "add_skill")
-        assert state.calls == [(1, "echo"), *[(version, "echo") for version in range(2, len(tokens) + 2)]]
+            assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in params.args
+        assert state.calls == [(1, "echo"), (1, "echo"), (1, "echo")]
     finally:
         lark_user_access_token_var.reset(context)
         await registration.aclose()
@@ -136,7 +150,9 @@ async def test_stdio_rebuild_waits_for_active_calls_without_serializing_unchange
     try:
         await asyncio.wait_for(state.started.wait(), 1)
         assert await asyncio.wait_for(registration.call_tool("fast", {}), 1) == "session-1"
-        lark_user_access_token_var.set("new-token")
+        skill_dir = state.builtin_root / "new-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("---\nname: new-skill\n---\nInstructions")
         rebuilding = asyncio.create_task(registration.call_tool("after", {}))
         await asyncio.sleep(0.02)
         assert not rebuilding.done()

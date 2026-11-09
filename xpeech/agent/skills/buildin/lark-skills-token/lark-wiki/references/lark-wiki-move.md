@@ -170,7 +170,7 @@ lark-cli wiki +move \
 
 ## 权限说明
 
-当前 shortcut 需要 `wiki:node:move`、`wiki:node:read`、`wiki:space:read` 权限。缺少任一权限时，报告所需 scope，由调用方在新的 JWT 中提供具备相应权限的 lark_user_access_token。
+当前 shortcut 需要 `wiki:node:move`、`wiki:node:read`、`wiki:space:read` 权限。缺少任一权限时，报告所需 scope，由调用方提供具备相应权限的 lark_user_access_token。
 
 当异步任务超时后，后续 `lark-cli drive +task_result --scenario wiki_move --task-id <TASK_ID>` 只需要 `wiki:space:read` 权限。
 

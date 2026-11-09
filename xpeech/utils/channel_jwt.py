@@ -1,7 +1,7 @@
 import re
 import secrets
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any
@@ -34,7 +34,6 @@ class UserTokenParams(ChannelTokenParams):
     """Parameters for issuing a channel JWT bound to one user."""
 
     user_id: str
-    lark_user_access_token: str | None = field(default=None, repr=False)
 
 
 class ChannelJWTAuth:
@@ -112,6 +111,4 @@ def create_token(params: ChannelTokenParams, *, secret_key4verify: str | None = 
     }
     if isinstance(params, UserTokenParams):
         claims["sub"] = validate_user_id(params.user_id)
-        if params.lark_user_access_token is not None:
-            claims["lark_user_access_token"] = params.lark_user_access_token
     return jwt.encode(claims, secret_key, algorithm=settings.jwt.algorithm, headers={"kid": channel})

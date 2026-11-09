@@ -10,6 +10,7 @@ from ...exceptions import PathProtectionError
 from ...utils.ids import validate_session_id
 from ...utils.channel_jwt import UserJWTAuth
 from .auth import require_user_jwt
+from .context import lark_user_access_token_var
 from .schema import InputContent
 from .session_guard import SessionChatGuard
 
@@ -131,6 +132,24 @@ def json_output_enabled(
             detail="The configured model does not support JSON output",
         )
     return enabled
+
+
+async def lark_user_access_token(
+    token: Annotated[
+        str | None,
+        Form(
+            alias="lark_user_access_token",
+            description="用户访问令牌；可选，仅本请求生效，不会保存",
+        ),
+    ] = None,
+) -> AsyncIterator[str | None]:
+    """将会话用户访问令牌注入请求上下文，随每条命令下发到沙盒。"""
+    token = token or None
+    context = lark_user_access_token_var.set(token)
+    try:
+        yield token
+    finally:
+        lark_user_access_token_var.reset(context)
 
 
 async def acquire_chat_session(

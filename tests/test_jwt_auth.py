@@ -108,42 +108,14 @@ def test_internal_and_channel_tokens_use_shared_jwt_settings(monkeypatch, algori
     assert expected_expiry <= channel_claims["exp"] <= int((after + timedelta(seconds=30)).timestamp())
 
 
-def test_access_token_can_carry_lark_user_access_token():
-    token = create_token(UserTokenParams(TEST_CHANNEL, user_id="test", lark_user_access_token="u-request-token"))
+def test_access_token_does_not_carry_lark_user_access_token():
+    token = create_token(UserTokenParams(TEST_CHANNEL, user_id="test"))
 
-    assert (
-        ChannelJWTAuth(token).claims[
-            "lark_user_access_token"
-        ]
-        == "u-request-token"
-    )
-
-
-@pytest.mark.parametrize("lark_user_access_token", [123, False, {}, []])
-@pytest.mark.parametrize("channel", ["feishu", "web_client", TEST_CHANNEL])
-def test_api_rejects_invalid_lark_user_access_token_claim(channel, lark_user_access_token):
-    token = jwt.encode(
-        {
-            "exp": datetime.now(UTC) + timedelta(seconds=60),
-            "sub": "test",
-            "lark_user_access_token": lark_user_access_token,
-        },
-        settings.jwt.channels[channel].secret_key,
-        algorithm=settings.jwt.algorithm,
-        headers={"kid": channel},
-    )
-    response = TestClient(app).post(
-        "/answer_question",
-        data={"answer": "ok"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
-    assert response.status_code == 401
-    assert response.json() == {"detail": "Invalid or expired bearer token"}
+    assert "lark_user_access_token" not in ChannelJWTAuth(token).claims
 
 
 @pytest.mark.asyncio
-async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_path, monkeypatch):
+async def test_chat_injects_isolated_shell_tokens_without_saving_them(tmp_path, monkeypatch):
     monkeypatch.setattr(settings.path, "cache_path", tmp_path / "cache")
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "sandbox-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
@@ -160,11 +132,9 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
             await asyncio.wait_for(both_started.wait(), timeout=5)
         await asyncio.sleep(0)
         args = await sandbox.wrap_sandbox_command("lark-cli whoami", tmp_path, skills_loader=SkillsLoader(tmp_path))
-        environment = {args[index + 1]: args[index + 2] for index, value in enumerate(args) if value == "--setenv"}
-        observed.append((message.user_id, environment.get("LARKSUITE_CLI_USER_ACCESS_TOKEN")))
-        if get_lark_user_access_token() is None:
-            index = args.index("--unsetenv")
-            assert args[index + 1] == "LARKSUITE_CLI_USER_ACCESS_TOKEN"
+        # 请求令牌只随命令下发，沙盒参数完全不涉及。
+        assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in args
+        observed.append((message.user_id, get_lark_user_access_token()))
         assert "lark_user_access_token" not in message.model_dump_json()
         yield {"event": "assistant", "context": "ok"}
 
@@ -174,7 +144,10 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
 
     async def send(client, user_id, lark_user_access_token):
-        token = create_token(UserTokenParams("feishu", user_id=user_id, lark_user_access_token=lark_user_access_token))
+        token = create_token(UserTokenParams("feishu", user_id=user_id))
+        data = {"content": '[{"text":"hello"}]'}
+        if lark_user_access_token is not None:
+            data["lark_user_access_token"] = lark_user_access_token
         return await client.post(
             "/chat",
             headers={
@@ -182,7 +155,7 @@ async def test_chat_jwt_injects_isolated_shell_tokens_without_saving_them(tmp_pa
                 "x-session-id": "default",
                 "x-sender-name": "test-user",
             },
-            data={"content": '[{"text":"hello"}]'},
+            data=data,
         )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -232,27 +205,6 @@ def test_channel_token_cannot_be_decoded_as_internal_token():
 
     with pytest.raises(jwt.InvalidTokenError):
         decode_internal_access_token(token)
-
-
-def test_api_rejects_lark_user_token_in_internal_jwt():
-    token = jwt.encode(
-        {
-            "exp": datetime.now(UTC) + timedelta(seconds=60),
-            "lark_user_access_token": "must-be-channel-scoped",
-        },
-        settings.jwt.secret_key,
-        algorithm=settings.jwt.algorithm,
-    )
-
-    response = TestClient(app).post(
-        "/answer_question",
-        data={"answer": "ok"},
-        headers={
-            "Authorization": f"Bearer {token}",
-        },
-    )
-
-    assert response.status_code == 401
 
 
 def test_one_channel_key_cannot_impersonate_another_channel():
@@ -334,22 +286,6 @@ def test_api_rejects_channel_token_without_kid(secret_key):
     )
 
     assert response.status_code == 401
-
-
-@pytest.mark.parametrize("channel", ["feishu", "web_client", TEST_CHANNEL])
-def test_backend_accepts_lark_user_token_from_any_configured_channel(channel):
-    token = create_token(UserTokenParams(channel, user_id="test", lark_user_access_token="u-request-token"))
-
-    response = TestClient(app).post(
-        "/answer_question",
-        data={"answer": "ok"},
-        headers={
-            "Authorization": f"Bearer {token}",
-            "x-session-id": "default",
-        },
-    )
-
-    assert response.status_code == 200
 
 
 @pytest.mark.parametrize(

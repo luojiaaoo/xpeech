@@ -22,9 +22,9 @@ metadata:
 仅支持 **user 身份**。执行前确保已授权：
 
 ```bash
-# 调用方需通过 JWT 提供具备本次会议、文档或妙记操作所需权限的 lark_user_access_token
-# 调用方需通过 JWT 提供具备本次会议、文档或妙记操作所需权限的 lark_user_access_token
-# 调用方需通过 JWT 提供具备本次会议、文档或妙记操作所需权限的 lark_user_access_token
+# 调用方需提供具备本次会议、文档或妙记操作所需权限的 lark_user_access_token
+# 调用方需提供具备本次会议、文档或妙记操作所需权限的 lark_user_access_token
+# 调用方需提供具备本次会议、文档或妙记操作所需权限的 lark_user_access_token
 ```
 
 ## 工作流

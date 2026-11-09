@@ -182,7 +182,6 @@ class SandboxSession:
                         "command": command,
                         "timeout_ms": timeout_ms,
                         "env": {
-                            "SHELL_USER_ID": str(get_user_id()),
                             "LARKSUITE_CLI_USER_ACCESS_TOKEN": get_lark_user_access_token(),
                         },
                     }

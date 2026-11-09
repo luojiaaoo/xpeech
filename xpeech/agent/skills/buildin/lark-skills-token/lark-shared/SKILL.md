@@ -1,7 +1,7 @@
 ---
 name: lark-shared
 version: 1.1.0
-description: "Use for lark-cli identity, permissions, missing scopes, JWT user access tokens, and handling _notice JSON."
+description: "Use for lark-cli identity, permissions, missing scopes, user access tokens, and handling _notice JSON."
 metadata:
   requires:
     bins: ["lark-cli"]
@@ -15,9 +15,9 @@ metadata:
 
 1. **调用前先确认用法**：执行前读对应 reference 或跑 `--help`，别猜 flag 盲调。
 
-2. **身份决定你代表谁操作**：`--as user` 代表用户本人（能看到、也能操作其日历、云空间/云盘/云存储等个人资源），`--as bot` 代表应用自己，应用级操作，只能访问bot自己的资源，bot 查用户资源会返回空成功而非报错。动手前先搞清楚身份`identity`。当前部署仅支持 `--as user`，令牌由请求 JWT 注入，不提供 bot token。身份模型和权限管理 → [`lark-shared-identity-and-permissions.md`](references/lark-shared-identity-and-permissions.md)。
+2. **身份决定你代表谁操作**：`--as user` 代表用户本人（能看到、也能操作其日历、云空间/云盘/云存储等个人资源），`--as bot` 代表应用自己，应用级操作，只能访问bot自己的资源，bot 查用户资源会返回空成功而非报错。动手前先搞清楚身份`identity`。当前部署仅支持 `--as user`，不提供 bot token。身份模型和权限管理 → [`lark-shared-identity-and-permissions.md`](references/lark-shared-identity-and-permissions.md)。
 
-3. **认证由调用方提供**：使用请求 JWT 注入的 `LARKSUITE_CLI_USER_ACCESS_TOKEN`，不要读取或打印令牌，不要主动登录、发起授权或获取新令牌。令牌缺失、失效或缺少 scope 时，报告缺失项，让调用方在新的 JWT 中提供具备所需权限的有效令牌。
+3. **认证由调用方提供**：使用调用方提供的用户访问令牌，不要读取或打印令牌，不要主动登录、发起授权或获取新令牌。令牌缺失、失效或缺少 scope 时，报告缺失项，让调用方提供具备所需权限的有效令牌。
 
 4. **`--format json`（默认）下，判断成功用 `ok == true`（或进程退出码 0），不要用 `code == 0`**：成功信封没有顶层 `code` / `msg` 字段，`code` 只出现在错误信封的 `error` 内。按 OpenAPI 老格式 `{"code": 0, "msg": "ok"}`判断会把所有成功调用误判为失败——封装写入类命令时尤其危险。JSON 输出契约 → [`lark-shared-output-contract.md`](references/lark-shared-output-contract.md)。
 

@@ -444,7 +444,7 @@ The three read methods are shortcut-only:
 - [`+feed-group-list`](lark-im-feed-group-list.md) — `im:feed_group_v1:read`
 - [`+feed-group-list-item`](lark-im-feed-group-list-item.md) / [`+feed-group-query-item`](lark-im-feed-group-query-item.md) — `im:feed_group_v1:read` **plus** `im:chat:read` (they always resolve `chat_name`)
 
-If a required scope is missing, report the scope (such as `im:feed_group_v1:write`) and have the caller provide an appropriately authorized lark_user_access_token in a new JWT.
+If a required scope is missing, report the scope (such as `im:feed_group_v1:write`) and have the caller provide an appropriately authorized lark_user_access_token.
 
 ## References
 

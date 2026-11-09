@@ -237,7 +237,7 @@ lark-cli mail +draft-edit --draft-id <draft_id> --patch-file ./patch.json
 
 ## 注意事项
 
-- 请求 JWT 中的 lark_user_access_token 需具备 `mail:user_mailbox.message:modify mail:user_mailbox.message:readonly mail:user_mailbox:readonly` 权限。
+- 调用方提供的 lark_user_access_token 需具备 `mail:user_mailbox.message:modify mail:user_mailbox.message:readonly mail:user_mailbox:readonly` 权限。
 - 邮件 ID 可从 `lark-cli mail user_mailbox.messages list` 获取
 - `--bcc` 仅在发送链路中生效，通常不会在收件方看到
 

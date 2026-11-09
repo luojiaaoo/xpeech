@@ -25,11 +25,9 @@ def current_context():
 @pytest.mark.parametrize("session_id", ["default", None, ""])
 async def test_request_context_is_available_and_restored(credential, raise_error, session_id):
     expected_user = None
-    expected_lark_token = None
     if credential == "user":
-        token = create_token(UserTokenParams("feishu", user_id="alice", lark_user_access_token="u-request-token"))
+        token = create_token(UserTokenParams("feishu", user_id="alice"))
         expected_user = "alice"
-        expected_lark_token = "u-request-token"
     elif credential == "channel":
         token = create_token(ChannelTokenParams("feishu"))
     elif credential == "internal":
@@ -45,7 +43,8 @@ async def test_request_context_is_available_and_restored(credential, raise_error
     async def downstream(scope, receive, send):
         observed.append(current_context())
         assert context.get_user_id() == expected_user
-        assert context.get_lark_user_access_token() == expected_lark_token
+        # 用户访问令牌改由表单参数依赖注入，中间件不再携带。
+        assert context.get_lark_user_access_token() is None
         assert context.get_session_id() == session_id
         assert UUID(context.get_request_id()).version == 4
         if raise_error:
