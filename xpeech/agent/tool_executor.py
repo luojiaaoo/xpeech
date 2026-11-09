@@ -1,6 +1,6 @@
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,6 +61,171 @@ class ToolExecutor:
             f"{max_chars:,} characters]\nFull result saved to: {saved_path}"
         )
 
+    @property
+    def max_tool_timeout(self) -> float:
+        """单个工具调用的超时时间（秒）。"""
+        return self._max_tool_timeout
+
+    async def execute_one(
+        self,
+        tool_call: ToolCallRequest,
+        *,
+        loop_count: int | None = None,
+        session_metadata: dict[str, str] | None = None,
+        user_id: str | None = None,
+        sender_name: str | None = None,
+        channel: str | None = None,
+        session_id: str | None = None,
+    ) -> ToolExecutionResult:
+        """执行单个工具调用，并将异常转换为模型可读的结果。"""
+        tool_call_func = self.mapping_tool_call_funcs.get(tool_call.name)
+
+        async def invoke() -> Any:
+            if tool_call_func is None:
+                raise ValueError(f"Tool is not registered for this request: {tool_call.name}")
+            return await self._call_tool_function(
+                tool_call_func,
+                tool_call.arguments,
+                session_metadata=session_metadata,
+                user_id=user_id,
+                sender_name=sender_name,
+                channel=channel,
+                session_id=session_id,
+            )
+
+        return await self._run_tool_call(tool_call, invoke, loop_count=loop_count)
+
+    async def execute_function(
+        self,
+        tool_call: ToolCallRequest,
+        execution_function: Callable[..., Awaitable[Any]],
+        arguments: dict[str, Any],
+        *,
+        loop_count: int | None = None,
+        session_metadata: dict[str, str] | None = None,
+        user_id: str | None = None,
+        sender_name: str | None = None,
+        channel: str | None = None,
+        session_id: str | None = None,
+    ) -> ToolExecutionResult:
+        """执行用户确认后的工具执行函数（EXECUTION_REQUEST 流程），与普通工具调用共用执行逻辑。"""
+
+        async def invoke() -> Any:
+            return await self._call_tool_function(
+                execution_function,
+                arguments,
+                session_metadata=session_metadata,
+                user_id=user_id,
+                sender_name=sender_name,
+                channel=channel,
+                session_id=session_id,
+            )
+
+        return await self._run_tool_call(tool_call, invoke, loop_count=loop_count)
+
+    async def _call_tool_function(
+        self,
+        tool_call_func: Callable[..., Awaitable[Any]],
+        arguments: dict[str, Any],
+        *,
+        session_metadata: dict[str, str] | None = None,
+        user_id: str | None = None,
+        sender_name: str | None = None,
+        channel: str | None = None,
+        session_id: str | None = None,
+    ) -> Any:
+        """按工具声明组装运行时上下文并调用工具函数。"""
+        model_info = get_tool_model_cls(tool_call_func)
+        kwargs = {}
+        if model_info.has_session_metadata:
+            kwargs["session_metadata"] = session_metadata
+        if model_info.has_user_id:
+            kwargs["user_id"] = user_id
+        if model_info.has_sender_name:
+            kwargs["sender_name"] = sender_name
+        if model_info.has_channel:
+            kwargs["channel"] = channel
+        if model_info.has_session_id:
+            kwargs["session_id"] = session_id
+        if model_info.has_tool_executor:
+            kwargs["tool_executor"] = self
+        if not model_info.has_pydantic_param:
+            return await tool_call_func(**kwargs)
+        return await tool_call_func(model_info.model_cls(**arguments), **kwargs)
+
+    async def _run_tool_call(
+        self,
+        tool_call: ToolCallRequest,
+        invoke: Callable[[], Awaitable[Any]],
+        *,
+        loop_count: int | None = None,
+    ) -> ToolExecutionResult:
+        """在超时保护内执行 invoke，并将异常转换为模型可读的结果。"""
+        start_time = time.perf_counter()
+        logger.info(
+            "Tool call started loop_count={} tool_name={} args={}",
+            loop_count,
+            tool_call.name,
+            tool_call.arguments,
+        )
+        timeout_scope = asyncio.timeout(self._max_tool_timeout)
+        try:
+            async with timeout_scope:
+                value = await invoke()
+                if isinstance(value, str) and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS:
+                    value = await self._limit_text(tool_call, value, self._max_result_chars)
+        except Exception as exc:  # noqa: BLE001 - tool failures are returned to the model
+            duration = time.perf_counter() - start_time
+            if isinstance(exc, TimeoutError) and timeout_scope.expired():
+                error = f"Tool call timed out after {self._max_tool_timeout:g}s"
+                logger.warning(
+                    "Tool call timed out loop_count={} tool_name={} args={} timeout={}s duration={:.2f}s",
+                    loop_count,
+                    tool_call.name,
+                    tool_call.arguments,
+                    self._max_tool_timeout,
+                    duration,
+                )
+            else:
+                error = format_exception2llm(exc)
+                if isinstance(exc, PathProtectionError):
+                    logger.warning(
+                        "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
+                        loop_count,
+                        tool_call.name,
+                        tool_call.arguments,
+                        error,
+                        duration,
+                    )
+                else:
+                    logger.exception(
+                        "Tool call failed loop_count={} tool_name={} args={} duration={:.2f}s",
+                        loop_count,
+                        tool_call.name,
+                        tool_call.arguments,
+                        duration,
+                    )
+            return ToolExecutionResult(
+                call=tool_call,
+                value=error,
+                succeeded=False,
+                duration_seconds=duration,
+            )
+        else:
+            duration = time.perf_counter() - start_time
+            logger.info(
+                "Tool call successfully loop_count={} tool_name={} duration={:.2f}s",
+                loop_count,
+                tool_call.name,
+                duration,
+            )
+            return ToolExecutionResult(
+                call=tool_call,
+                value=value,
+                succeeded=True,
+                duration_seconds=duration,
+            )
+
     async def execute(
         self,
         tool_calls: list[ToolCallRequest],
@@ -73,94 +238,20 @@ class ToolExecutor:
     ) -> AsyncIterator[ToolExecutionResult]:
         """并发执行工具调用，每完成一个就立即产出对应结果。"""
 
-        async def execute_one(tool_call: ToolCallRequest) -> ToolExecutionResult:
-            """执行单个工具调用，并将异常转换为模型可读的结果。"""
-            start_time = time.perf_counter()
-            tool_call_func = self.mapping_tool_call_funcs.get(tool_call.name)
-            logger.info(
-                "Tool call started loop_count={} tool_name={} args={}",
-                loop_count,
-                tool_call.name,
-                tool_call.arguments,
-            )
-            timeout_scope = asyncio.timeout(self._max_tool_timeout)
-            try:
-                if tool_call_func is None:
-                    raise ValueError(f"Tool is not registered for this request: {tool_call.name}")
-                model_info = get_tool_model_cls(tool_call_func)
-                kwargs = {}
-                if model_info.has_session_metadata:
-                    kwargs["session_metadata"] = session_metadata
-                if model_info.has_user_id:
-                    kwargs["user_id"] = user_id
-                if model_info.has_sender_name:
-                    kwargs["sender_name"] = sender_name
-                if model_info.has_channel:
-                    kwargs["channel"] = channel
-                if model_info.has_session_id:
-                    kwargs["session_id"] = session_id
-                if model_info.has_tool_executor:
-                    kwargs["tool_executor"] = self
-                async with timeout_scope:
-                    if not model_info.has_pydantic_param:
-                        value = await tool_call_func(**kwargs)
-                    else:
-                        value = await tool_call_func(model_info.model_cls(**tool_call.arguments), **kwargs)
-                    if isinstance(value, str) and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS:
-                        value = await self._limit_text(tool_call, value, self._max_result_chars)
-            except Exception as exc:  # noqa: BLE001 - tool failures are returned to the model
-                duration = time.perf_counter() - start_time
-                if isinstance(exc, TimeoutError) and timeout_scope.expired():
-                    error = f"Tool call timed out after {self._max_tool_timeout:g}s"
-                    logger.warning(
-                        "Tool call timed out loop_count={} tool_name={} args={} timeout={}s duration={:.2f}s",
-                        loop_count,
-                        tool_call.name,
-                        tool_call.arguments,
-                        self._max_tool_timeout,
-                        duration,
-                    )
-                else:
-                    error = format_exception2llm(exc)
-                    if isinstance(exc, PathProtectionError):
-                        logger.warning(
-                            "Tool call failed loop_count={} tool_name={} args={} exception={} duration={:.2f}s",
-                            loop_count,
-                            tool_call.name,
-                            tool_call.arguments,
-                            error,
-                            duration,
-                        )
-                    else:
-                        logger.exception(
-                            "Tool call failed loop_count={} tool_name={} args={} duration={:.2f}s",
-                            loop_count,
-                            tool_call.name,
-                            tool_call.arguments,
-                            duration,
-                        )
-                return ToolExecutionResult(
-                    call=tool_call,
-                    value=error,
-                    succeeded=False,
-                    duration_seconds=duration,
-                )
-            else:
-                duration = time.perf_counter() - start_time
-                logger.info(
-                    "Tool call successfully loop_count={} tool_name={} duration={:.2f}s",
-                    loop_count,
-                    tool_call.name,
-                    duration,
-                )
-                return ToolExecutionResult(
-                    call=tool_call,
-                    value=value,
-                    succeeded=True,
-                    duration_seconds=duration,
-                )
-
         async with asyncio.TaskGroup() as task_group:
-            tasks = [task_group.create_task(execute_one(tool_call)) for tool_call in tool_calls]
+            tasks = [
+                task_group.create_task(
+                    self.execute_one(
+                        tool_call,
+                        loop_count=loop_count,
+                        session_metadata=session_metadata,
+                        user_id=user_id,
+                        sender_name=sender_name,
+                        channel=channel,
+                        session_id=session_id,
+                    )
+                )
+                for tool_call in tool_calls
+            ]
             for completed in asyncio.as_completed(tasks):
                 yield await completed

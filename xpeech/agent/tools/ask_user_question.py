@@ -3,6 +3,7 @@ import json
 from pydantic import Field
 
 from ...utils.question import USER_TIMEOUT, InputField, StrictBaseModel, validate_question_form_json
+from .interactions import QuestionRequest
 
 
 class QuestionArgs(StrictBaseModel):
@@ -29,9 +30,9 @@ class QuestionArgs(StrictBaseModel):
         return json.dumps(validate_question_form_json(question), ensure_ascii=False, indent=4)
 
 
-def ask_user_question(args: QuestionArgs) -> str:
+def ask_user_question(args: QuestionArgs) -> QuestionRequest:
     """通过包含标题、副标题和问题列表的完整表单 JSON 向用户追问关键信息。
 
-    返回包含 type、title、subtitle、submit_label、fields 的完整表单 JSON 字符串。
+    主循环会向用户展示表单并等待回答，用户的回答内容即本工具的返回结果。
     """
-    return args.validate_and_format()
+    return QuestionRequest(question=args.validate_and_format())

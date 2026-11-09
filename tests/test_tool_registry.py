@@ -306,7 +306,6 @@ async def test_registers_supported_default_and_mcp_tools(
         "write_file",
         "edit_file",
         "shell",
-        "run_ptc",
         "web_fetch",
         "baidu_search",
         "bing_search",

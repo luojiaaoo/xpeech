@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from pydantic import BaseModel
 
 from ..agent.tools.helper import as_tool, get_custom_tool_func
+from ..agent.tools.interactions import InteractionRequest
 from ..utils.helper import ensure_async, token_counter
 from .helper import LiteLLMRetryClient
 from .schema import (
@@ -75,11 +76,14 @@ class LiteLLMProvider:
 
     def _build_function_tool(
         self,
-        func_: Callable[[type[BaseModel] | None], str | list],
+        func_: Callable[[type[BaseModel] | None], str | list | InteractionRequest],
         *,
         tool_json: dict[str, Any] | None = None,
     ) -> RegisteredTool:
-        def format_result(rt) -> str | list:
+        def format_result(rt) -> str | list | InteractionRequest:
+            if isinstance(rt, InteractionRequest):
+                # 交互请求交由 Agent 主循环识别处理，原样透传。
+                return rt
             if isinstance(rt, str) or (isinstance(rt, list) and all("type" in item for item in rt)):  # 必须是合法的消息
                 return rt
             else:
@@ -88,7 +92,7 @@ class LiteLLMProvider:
         async_func = ensure_async(func_)
 
         @functools.wraps(func_)
-        async def wrapper(*args, **kwargs) -> str | list:
+        async def wrapper(*args, **kwargs) -> str | list | InteractionRequest:
             rt = await async_func(*args, **kwargs)
             return format_result(rt)
 

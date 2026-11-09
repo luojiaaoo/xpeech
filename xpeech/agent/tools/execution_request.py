@@ -9,9 +9,11 @@ from pydantic import Field, create_model
 
 from ...utils.helper import ensure_async
 from .helper import get_tool_model_cls
+from .interactions import ExecutionRequest
 
 EXECUTION_DESCRIPTION = "execution_description"
-EXECUTION_REQUEST = "__xpeech_execution_request_7f3b9a62_d8e4_4c15_a0f7_6e92b1d83c54__"
+# 需要用户确认时返回的标记，Agent 主循环识别后询问用户再执行原函数。
+EXECUTION_REQUEST = ExecutionRequest()
 _DESCRIPTION = "说明本次执行具体要做什么以及目的。"
 
 
@@ -40,8 +42,7 @@ def build_execution_request_tool(
     """
     if not_interactive and requires_confirmation is None:
         raise ValueError(
-            "not_interactive=True 时必须提供 requires_confirmation；"
-            "请在注册的时候就屏蔽掉，而不是在运行时屏蔽"
+            "not_interactive=True 时必须提供 requires_confirmation；请在注册的时候就屏蔽掉，而不是在运行时屏蔽"
         )
     model_info = get_tool_model_cls(function)
     if EXECUTION_DESCRIPTION in model_info.model_cls.model_fields:
@@ -64,14 +65,14 @@ def build_execution_request_tool(
             raise TypeError("requires_confirmation must return an ExecutionDecision")
         if decision is ExecutionDecision.DENY:
             raise PermissionError("发现高危命令，直接拒绝执行。")
-        if decision is ExecutionDecision.CONFIRM:
+        elif decision is ExecutionDecision.CONFIRM:
             if not_interactive:
                 raise PermissionError("非交互模式下无法获取用户确认，拒绝执行该工具。")
             return EXECUTION_REQUEST
-
-        arguments = args.model_dump(exclude={EXECUTION_DESCRIPTION}, exclude_unset=True)
-        original_args = (model_info.model_cls(**arguments),) if model_info.has_pydantic_param else ()
-        return await execution_function(*original_args)
+        elif decision is ExecutionDecision.ALLOW:
+            arguments = args.model_dump(exclude={EXECUTION_DESCRIPTION}, exclude_unset=True)
+            original_args = (model_info.model_cls(**arguments),) if model_info.has_pydantic_param else ()
+            return await execution_function(*original_args)
 
     execution_request.__name__ = function.__name__
     execution_request.__annotations__ = {"args": model_cls, "return": Any}

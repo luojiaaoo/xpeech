@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from pydantic import BaseModel, Field
 from .helper import safe_resolve_workspace_path
+from .interactions import SendFileRequest
 
 # https://open.feishu.cn/document/server-docs/im-v1/message-content-description/create_json
 # https://open.feishu.cn/document/server-docs/im-v1/file/create
@@ -23,7 +24,7 @@ def build_file_message_tools(workspace: Path):
             protect_read_only_file=False,
         )
 
-    def send_file(args: FilePathArgs) -> str:
+    def send_file(args: FilePathArgs) -> SendFileRequest:
         """Send a file to the user."""
         path = args.source
         file_path = safe_resolve(path)
@@ -31,6 +32,6 @@ def build_file_message_tools(workspace: Path):
             raise FileNotFoundError(f"File not found: {path}")
         if not file_path.is_file():
             raise ValueError(f"Not a file: {path}")
-        return args.source
+        return SendFileRequest(source=args.source)
 
     return send_file

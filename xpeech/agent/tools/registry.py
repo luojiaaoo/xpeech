@@ -18,7 +18,6 @@ from .mcp_client import (
     get_session_mcp_registration_from_config,
     register_mcp_bindings,
 )
-from .ptc import build_ptc_tool
 from .research import build_research_tools
 from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .sessions import build_session_tools
@@ -59,7 +58,6 @@ async def register_tools(
             not_interactive=not_interactive,
         )
     )
-    provider.register_function_tool(build_ptc_tool(workspace=workspace))
     provider.register_function_tool(web_fetch)
     for tool in (baidu_search, bing_search):
         provider.register_function_tool(tool)

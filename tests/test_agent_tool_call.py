@@ -6,6 +6,7 @@ import pytest
 
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.tool_executor import ToolExecutor
+from xpeech.agent.tools.interactions import SendFileRequest
 from xpeech.provider.schema import ToolCallRequest
 
 
@@ -18,8 +19,8 @@ async def test_tool_results_are_sent_individually_as_tools_finish(tmp_path, fast
         await release_slow.wait()
         return "slow result"
 
-    async def fast_tool() -> str:
-        return "fast result"
+    async def fast_tool():
+        return SendFileRequest(source="fast result") if fast_name == "send_file" else "fast result"
 
     calls = [
         ToolCallRequest(id="slow", name="slow_tool", arguments={}),

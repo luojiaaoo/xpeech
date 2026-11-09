@@ -503,10 +503,30 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(
             if behavior == "error":
                 assert result == "RuntimeError: test failure"
             elif behavior == "timeout":
-                assert ("TimeoutError" if needs_confirmation else "timed out") in result
+                assert "timed out" in result
             else:
                 saved_path = result.split("Full result saved to: ")[1]
                 assert (tmp_path / saved_path).read_text() == "x" * 10_100
+
+
+@pytest.mark.asyncio
+async def test_confirmed_execution_injects_runtime_context(tmp_path):
+    async def shell(args: CommandArgs, session_metadata, user_id, sender_name, channel, session_id):
+        """Execute a command."""
+        return f"{args.command}:{user_id}:{sender_name}:{channel}:{session_id}:{session_metadata['source']}"
+
+    current_provider = provider()
+    current_provider.register_function_tool(build_execution_request_tool(shell))
+    call = ToolCallRequest(
+        id="1", name="shell", arguments={"command": "echo hello", "execution_description": "输出 hello"}
+    )
+    result = None
+    async for event in stream_for(tmp_path, current_provider, [call], []):
+        if event["event"] == "question":
+            await answer({"decision": "confirm"})
+        elif event["event"] == "tool_call_result":
+            result = json.loads(event["context"])["result"]
+    assert result == "echo hello:approval-user:Alice:web:approval-session:test"
 
 
 @pytest.mark.asyncio
@@ -614,7 +634,7 @@ async def test_existing_ask_user_question_still_returns_user_answer(tmp_path, ex
     current_provider.register_function_tool(ask_user_question)
     fields = [{"name": name, "label": "名称", "type": "input"} for name in existing_names]
     args = QuestionArgs(question=json.dumps({"fields": fields}))
-    expected_context = ask_user_question(args)
+    expected_context = ask_user_question(args).question
     call = ToolCallRequest(id="1", name="ask_user_question", arguments=args.model_dump())
     reply = {**dict.fromkeys(existing_names, "Alice"), custom_name: "补充内容"}
     async for event in stream_for(tmp_path, current_provider, [call], []):

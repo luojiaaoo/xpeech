@@ -14,7 +14,6 @@ from ..agent.server.schema import InputText
 from ..config.settings import settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import LLMResponse, ToolCallRequest
-from ..utils.helper import format_exception2llm
 from ..utils.question import USER_TIMEOUT, build_execution_question
 from .compression import ConversationCompressor
 from .helper import strip_internal_message_metadata
@@ -28,12 +27,14 @@ from .prompt.system import build_system_prompt
 from .record import ConversationRecord, SqliteConversationRecordRepository
 from .server.context import get_request_id
 from .server.schema import InboundMessage
-from .tool_executor import TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS, ToolExecutor
-from .tools.execution_request import (
-    EXECUTION_DESCRIPTION,
-    EXECUTION_REQUEST,
+from .tool_executor import ToolExecutor
+from .tools.execution_request import EXECUTION_DESCRIPTION
+from .tools.interactions import (
+    ExecutionRequest,
+    InteractionRequest,
+    QuestionRequest,
+    SendFileRequest,
 )
-from .tools.helper import get_tool_model_cls
 
 
 def _append_turn_message(
@@ -198,85 +199,89 @@ class AgentLoop:
                         }
                     )
 
-            if execution.value == EXECUTION_REQUEST and success:
-                execution_function = self.mapping_tool_call_funcs[tool_call.name].execution_function
-                arguments = {key: value for key, value in tool_call.arguments.items() if key != EXECUTION_DESCRIPTION}
-                question = build_execution_question(
-                    tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION]
-                )
-                # 等待用户确认本次执行。
-                logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
-                session_key = (user_id, session_id)
-                question_event = QuestionEvent(event=asyncio.Event())
-                self.SESSION_QUESTION_EVENT[session_key] = question_event
-                question_start_time = time.perf_counter()
-                timed_out = False
-                try:
-                    yield {"event": "question", "context": question}
-                    await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
-                    logger.info("User answered the question {}", question_event.answer)
-                except TimeoutError:
-                    timed_out = True
-                    logger.warning("User timeout answering the question")
-                finally:
-                    self.SESSION_QUESTION_EVENT.pop(session_key, None)
-                # 覆盖方法调用的时间，遵守实际用户回答耗时
-                duration_seconds = time.perf_counter() - question_start_time
-                decision = question_event.answer
-                if not timed_out and "confirm" in decision and "cancel" not in decision:
-                    execution_start_time = time.perf_counter()
+            if isinstance(execution.value, InteractionRequest) and success:
+                if isinstance(execution.value, ExecutionRequest):
+                    execution_function = self.mapping_tool_call_funcs[tool_call.name].execution_function
+                    arguments = {key: value for key, value in tool_call.arguments.items() if key != EXECUTION_DESCRIPTION}
+                    question = build_execution_question(
+                        tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION]
+                    )
+                    # 等待用户确认本次执行。
+                    logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
+                    session_key = (user_id, session_id)
+                    question_event = QuestionEvent(event=asyncio.Event())
+                    self.SESSION_QUESTION_EVENT[session_key] = question_event
+                    question_start_time = time.perf_counter()
+                    timed_out = False
                     try:
-                        model_info = get_tool_model_cls(execution_function)
-                        args = (model_info.model_cls(**arguments),) if model_info.has_pydantic_param else ()
-                        async with asyncio.timeout(self.tool_executor._max_tool_timeout):
-                            result = await execution_function(*args)
-                            if isinstance(result, str) and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS:
-                                result = await self.tool_executor._limit_text(
-                                    tool_call, result, self.tool_executor._max_result_chars
-                                )
-                    except Exception as exc:  # noqa: BLE001 - tool failures are returned to the model
+                        yield {"event": "question", "context": question}
+                        await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
+                        logger.info("User answered the question {}", question_event.answer)
+                    except TimeoutError:
+                        timed_out = True
+                        logger.warning("User timeout answering the question")
+                    finally:
+                        self.SESSION_QUESTION_EVENT.pop(session_key, None)
+                    # 覆盖方法调用的时间，遵守实际用户回答耗时
+                    duration_seconds = time.perf_counter() - question_start_time
+                    decision = question_event.answer
+                    if not timed_out and "confirm" in decision and "cancel" not in decision:
+                        execution_result = await self.tool_executor.execute_function(
+                            tool_call,
+                            execution_function,
+                            arguments,
+                            loop_count=loop_count,
+                            session_metadata=session_metadata,
+                            user_id=user_id,
+                            sender_name=sender_name,
+                            channel=channel,
+                            session_id=session_id,
+                        )
+                        result = execution_result.value
+                        duration_seconds += execution_result.duration_seconds
+                        success = execution_result.succeeded
+                    elif timed_out:
                         success = False
-                        result = format_exception2llm(exc)
-                    duration_seconds += time.perf_counter() - execution_start_time
-                elif timed_out:
-                    success = False
-                    result = "用户确认超时，工具未执行。"
-                elif "cancel" in decision:
-                    success = False
-                    result = "用户取消执行，工具未执行。"
+                        result = "用户确认超时，工具未执行。"
+                    elif "cancel" in decision:
+                        success = False
+                        result = "用户取消执行，工具未执行。"
+                    else:
+                        success = False
+                        result = "执行确认回复格式异常，工具未执行。"
+
+                    append_tool_result_messages_yaml(tool_call, result)
+                    tool_result_content = result
+                elif isinstance(execution.value, SendFileRequest):
+                    # 发送文件
+                    logger.info("Sending file {}", execution.value.source)
+                    yield {"event": "send_file", "context": execution.value.source}
+                    tool_result_content = f"文件已发送：{execution.value.source}"
+                    append_tool_result_messages_yaml(tool_call, tool_result_content)
+                elif isinstance(execution.value, QuestionRequest):
+                    # 等待用户输入
+                    logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
+                    session_key = (user_id, session_id)
+                    question_event = QuestionEvent(event=asyncio.Event())
+                    self.SESSION_QUESTION_EVENT[session_key] = question_event
+                    question_start_time = time.perf_counter()
+                    yield {"event": "question", "context": execution.value.question}
+                    try:
+                        await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
+                        logger.info("User answered the question {}", question_event.answer)
+                    except TimeoutError:
+                        logger.warning("User timeout answering the question")
+                    finally:
+                        self.SESSION_QUESTION_EVENT.pop(session_key, None)
+                    # 覆盖方法调用的时间，遵守实际用户回答耗时
+                    duration_seconds = time.perf_counter() - question_start_time
+                    answer = question_event.answer
+                    append_tool_result_messages_yaml(tool_call, answer)
+                    tool_result_content = answer
                 else:
-                    success = False
-                    result = "执行确认回复格式异常，工具未执行。"
-
-                append_tool_result_messages_yaml(tool_call, result)
-                tool_result_content = result
-
-            elif tool_call.name == "send_file" and success:
-                # 发送文件
-                logger.info("Sending file {}", result)
-                yield {"event": "send_file", "context": result}
-                tool_result_content = f"文件已发送：{result}"
-                append_tool_result_messages_yaml(tool_call, tool_result_content)
-            elif tool_call.name == "ask_user_question" and success:
-                # 等待用户输入
-                logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
-                session_key = (user_id, session_id)
-                question_event = QuestionEvent(event=asyncio.Event())
-                self.SESSION_QUESTION_EVENT[session_key] = question_event
-                question_start_time = time.perf_counter()
-                yield {"event": "question", "context": result}
-                try:
-                    await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
-                    logger.info("User answered the question {}", question_event.answer)
-                except TimeoutError:
-                    logger.warning("User timeout answering the question")
-                finally:
-                    self.SESSION_QUESTION_EVENT.pop(session_key, None)
-                # 覆盖方法调用的时间，遵守实际用户回答耗时
-                duration_seconds = time.perf_counter() - question_start_time
-                answer = question_event.answer
-                append_tool_result_messages_yaml(tool_call, answer)
-                tool_result_content = answer
+                    raise TypeError(
+                        f"未处理的交互请求类型: {type(execution.value).__name__} (tool={tool_call.name})"
+                    )
             else:
                 append_tool_result_messages_yaml(tool_call, result)
                 tool_result_content = result
