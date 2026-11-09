@@ -219,13 +219,14 @@ async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch,
     command = {"allow": "pwd", "ask": "rm -rf ./build", "deny": "init 6"}[decision]
     [result] = [
         result
-        async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+        async for result in ToolExecutor(
+            workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=provider.function_tools,
+        ).execute(
             [
                 ToolCallRequest(
                     id="1", name="shell", arguments={"command": command, "execution_description": "测试检查"}
                 )
             ],
-            provider.function_tools,
         )
     ]
     process.communicate.assert_awaited_once_with(command.encode())
@@ -305,6 +306,7 @@ async def test_registers_supported_default_and_mcp_tools(
         "write_file",
         "edit_file",
         "shell",
+        "run_ptc",
         "web_fetch",
         "baidu_search",
         "bing_search",
@@ -335,9 +337,10 @@ async def test_registers_supported_default_and_mcp_tools(
         assert "execution_description" not in get_tool_model_cls(provider.function_tools[name]).model_cls.model_fields
     [result] = [
         result
-        async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+        async for result in ToolExecutor(
+            workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=provider.function_tools,
+        ).execute(
             [ToolCallRequest(id="shell-1", name="shell", arguments={"execution_description": "测试"})],
-            provider.function_tools,
         )
     ]
     if not_interactive:
@@ -422,13 +425,16 @@ async def test_mcp_functions_call_the_bound_server_with_original_schema_and_argu
         assert mcp_tools["mcp_beta_echo"].tool_json["function"]["parameters"] == echo_schema
         results = [
             result
-            async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+            async for result in ToolExecutor(
+                workspace=tmp_path,
+                max_result_chars=10_000,
+                mapping_tool_call_funcs={name: tool.func for name, tool in mcp_tools.items()},
+            ).execute(
                 [
                     ToolCallRequest(id="1", name="mcp_alpha_echo", arguments={"text": "hello", "extra": 1}),
                     ToolCallRequest(id="2", name="mcp_alpha_ping", arguments={}),
                     ToolCallRequest(id="3", name="mcp_beta_echo", arguments={"text": "world", "style": None}),
                 ],
-                {name: tool.func for name, tool in mcp_tools.items()},
             )
         ]
 
@@ -544,9 +550,12 @@ async def test_mcp_confirmation_selection_at_registration(
             previous_calls = len(calls)
             [result] = [
                 result
-                async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
+                async for result in ToolExecutor(
+                    workspace=tmp_path,
+                    max_result_chars=10_000,
+                    mapping_tool_call_funcs={tool_name: tools[tool_name].func},
+                ).execute(
                     [ToolCallRequest(id="1", name=tool_name, arguments=arguments)],
-                    {tool_name: tools[tool_name].func},
                 )
             ]
             if needs_confirmation:
@@ -608,9 +617,9 @@ async def test_register_mcp_bindings_passes_confirmation_callback(
     )
     [(schema, tool)] = provider.mcp_tools
     arguments = {"text": "hello", "execution_description": "测试回调"}
-    [result] = [result async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
-        [ToolCallRequest(id="1", name="mcp_demo_echo", arguments=arguments)], {tool.__name__: tool},
-    )]
+    [result] = [result async for result in ToolExecutor(
+        workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={tool.__name__: tool},
+    ).execute([ToolCallRequest(id="1", name="mcp_demo_echo", arguments=arguments)])]
     check.assert_called_once()
     assert json.loads(check.call_args.args[0]) == arguments
     if async_check:
@@ -668,9 +677,9 @@ async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(
         fast = next(registration for registration in registrations if registration.config.server_name == "fast")
         await asyncio.wait_for(fast.start_tool_discovery(), timeout=1)
 
-        [result] = [result async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
-            [ToolCallRequest(id="status", name="query_mcp_status", arguments={})], providers[0].function_tools,
-        )]
+        [result] = [result async for result in ToolExecutor(
+            workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=providers[0].function_tools,
+        ).execute([ToolCallRequest(id="status", name="query_mcp_status", arguments={})])]
         assert result.succeeded
         status = json.loads(result.value)["servers"]
         assert set(status) == {"slow", "fast"}
@@ -817,7 +826,7 @@ async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeyp
     try:
         await registry.register_tools(user_id="next-model-call", provider=provider, workspace=tmp_path, config=config)
         first = await provider.chat(messages=[])
-        assert "query_mcp_status" in first.mapping_tool_call_funcs
+        assert "query_mcp_status" in provider.mapping_tool_call_funcs
         status_schema = next(
             tool for tool in completion.call_args.kwargs["tools"]
             if tool["function"]["name"] == "query_mcp_status"
@@ -825,7 +834,7 @@ async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeyp
         assert "demo" in status_schema["function"]["description"]
         assert "查询模型评测、对比模型能力和成本" in status_schema["function"]["description"]
         assert "是否需要等待" in status_schema["function"]["description"]
-        assert "mcp_demo_echo" not in first.mapping_tool_call_funcs
+        assert "mcp_demo_echo" not in provider.mapping_tool_call_funcs
         assert "mcp_demo_echo" not in {tool["function"]["name"] for tool in completion.call_args.kwargs["tools"]}
         assert [chunk async for chunk in first.iter_mix_chunks] == []
 
@@ -834,15 +843,14 @@ async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeyp
         await asyncio.wait_for(registration.start_tool_discovery(), timeout=1)
         assert len(chats_scheduled_mid_registration) == 1
         [concurrent] = await asyncio.gather(*chats_scheduled_mid_registration)
-        assert {"mcp_demo_echo", "mcp_demo_ping"} <= concurrent.mapping_tool_call_funcs.keys()
+        assert {"mcp_demo_echo", "mcp_demo_ping"} <= provider.mapping_tool_call_funcs.keys()
         assert {"mcp_demo_echo", "mcp_demo_ping"} <= {
             tool["function"]["name"] for tool in completion.call_args.kwargs["tools"]
         }
         assert [chunk async for chunk in concurrent.iter_mix_chunks] == []
         second = await provider.chat(messages=[])
-        assert "mcp_demo_echo" in second.mapping_tool_call_funcs
+        assert "mcp_demo_echo" in provider.mapping_tool_call_funcs
         assert "mcp_demo_echo" in {tool["function"]["name"] for tool in completion.call_args.kwargs["tools"]}
-        assert "mcp_demo_echo" not in first.mapping_tool_call_funcs
         assert [chunk async for chunk in second.iter_mix_chunks] == []
     finally:
         await mcp_client.close_all_mcp_connections()

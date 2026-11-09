@@ -46,10 +46,16 @@ def provider():
 
 def stream_for(tmp_path, current_provider, calls, history, *, tool_timeout=1):
     agent_loop = AgentLoop.__new__(AgentLoop)
-    agent_loop.tool_executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000, max_tool_timeout=tool_timeout)
+    mapping_tool_call_funcs = {name: tool.func for name, tool in current_provider.default_tools.items()}
+    agent_loop.mapping_tool_call_funcs = mapping_tool_call_funcs
+    agent_loop.tool_executor = ToolExecutor(
+        workspace=tmp_path,
+        max_result_chars=10_000,
+        mapping_tool_call_funcs=mapping_tool_call_funcs,
+        max_tool_timeout=tool_timeout,
+    )
     response = SimpleNamespace(
         tool_calls=calls,
-        mapping_tool_call_funcs={name: tool.func for name, tool in current_provider.default_tools.items()},
         content="",
     )
     return agent_loop.tool_call(
@@ -84,10 +90,11 @@ async def test_placeholder_returns_marker_without_running_original_function(tmp_
     )
     [result] = [
         result
-        async for result in ToolExecutor(workspace=tmp_path, max_result_chars=10_000).execute(
-            [call],
-            {"shell": current_provider.default_tools["shell"].func},
-        )
+        async for result in ToolExecutor(
+            workspace=tmp_path,
+            max_result_chars=10_000,
+            mapping_tool_call_funcs={"shell": current_provider.default_tools["shell"].func},
+        ).execute([call])
     ]
     assert result.succeeded
     assert result.value == EXECUTION_REQUEST

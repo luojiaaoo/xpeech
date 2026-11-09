@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import BaseModel
 
 from xpeech.agent.memory import ConsolidationResult, MemoryConsolidator, MemoryStore
 from xpeech.agent.prompt import system as system_prompt_module
@@ -15,7 +14,6 @@ from xpeech.provider.schema import LLMResponse, ToolCallChunk, ToolCallRequest
 def make_response(
     content: str | None = None,
     tool_calls: list[ToolCallRequest] | None = None,
-    mapping_tool_call_funcs=None,
 ) -> LLMResponse:
     async def chunks():
         if content is not None:
@@ -30,7 +28,6 @@ def make_response(
 
     response = LLMResponse(
         iter_mix_chunks=chunks(),
-        mapping_tool_call_funcs=mapping_tool_call_funcs,
     )
     return response
 
@@ -82,9 +79,6 @@ class TestMemoryConsolidator:
             arguments={"history_entry": "entry", "memory_update": "memory"},
         )
 
-        def save_memory(_args: type[BaseModel] | None) -> str:
-            return "saved"
-
         chat_kwargs = None
 
         async def chat(**kwargs):
@@ -92,12 +86,10 @@ class TestMemoryConsolidator:
             chat_kwargs = kwargs
             return make_response(
                 tool_calls=[tool_call],
-                mapping_tool_call_funcs={"save_memory": save_memory},
             )
 
-        async def execute_tools(tool_calls, mapping_tool_call_funcs, loop_count=None):
+        async def execute_tools(tool_calls, loop_count=None):
             assert tool_calls == [tool_call]
-            assert "save_memory" in mapping_tool_call_funcs
             assert loop_count is None
             yield ToolExecutionResult(
                 call=tool_call,
@@ -144,7 +136,10 @@ class TestMemoryConsolidator:
         first_started = asyncio.Event()
         release_first = asyncio.Event()
         calls = []
-        executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+        mapping_tool_call_funcs = {}
+        executor = ToolExecutor(
+            workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=mapping_tool_call_funcs,
+        )
 
         async def chat(**kwargs):
             context = kwargs["messages"][0]["content"]
@@ -156,14 +151,14 @@ class TestMemoryConsolidator:
             if fact == "second fact":
                 assert "first fact" in context
             save_memory = kwargs["tools"][0]
+            # 与真实提供方一致：模型可见的工具同时发布到可执行函数映射。
+            mapping_tool_call_funcs["save_memory"] = save_memory
             call = ToolCallRequest(
                 id=fact,
                 name="save_memory",
                 arguments={"history_entry": fact, "memory_update": context + "\n" + fact},
             )
-            return make_response(
-                tool_calls=[call], mapping_tool_call_funcs={"save_memory": save_memory},
-            )
+            return make_response(tool_calls=[call])
 
         def make_consolidator(workspace):
             return MemoryConsolidator(

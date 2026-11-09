@@ -13,6 +13,7 @@ from xpeech.config.settings import OrganizationConfig
 class FakeProvider:
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
+        self.mapping_tool_call_funcs: dict = {}
 
 
 class FakeAgentLoop:

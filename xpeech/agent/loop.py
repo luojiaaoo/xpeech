@@ -70,6 +70,7 @@ class AgentLoop:
         max_iterations: int,
         channel: str | None = None,
         user_organization: str | None = None,
+        mapping_tool_call_funcs: dict[str, Any] | None = None,
     ):
         """初始化模型提供方、会话组件和循环配置。"""
         self.provider = provider
@@ -79,6 +80,7 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.channel = channel
         self.user_organization = user_organization
+        self.mapping_tool_call_funcs = mapping_tool_call_funcs if mapping_tool_call_funcs is not None else {}
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
         self.history = YamlHistoryRepository(
             settings.path.session_history_path,
@@ -91,6 +93,7 @@ class AgentLoop:
         self.tool_executor = ToolExecutor(
             workspace=self.workspace,
             max_result_chars=settings.tool.max_result_chars,
+            mapping_tool_call_funcs=self.mapping_tool_call_funcs,
             max_tool_timeout=settings.tool.max_tool_timeout,
         )
         self.compressor = ConversationCompressor(
@@ -152,7 +155,6 @@ class AgentLoop:
         with_metas = []
         async for execution in self.tool_executor.execute(
             response.tool_calls,
-            response.mapping_tool_call_funcs,
             loop_count=loop_count,
             session_metadata=session_metadata,
             user_id=user_id,
@@ -197,7 +199,7 @@ class AgentLoop:
                     )
 
             if execution.value == EXECUTION_REQUEST and success:
-                execution_function = response.mapping_tool_call_funcs[tool_call.name].execution_function
+                execution_function = self.mapping_tool_call_funcs[tool_call.name].execution_function
                 arguments = {key: value for key, value in tool_call.arguments.items() if key != EXECUTION_DESCRIPTION}
                 question = build_execution_question(
                     tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION]
@@ -559,7 +561,7 @@ class AgentLoop:
 
     async def _count_context_tokens(self, messages: list[dict[str, Any]]) -> int:
         """按实际请求统计消息及工具定义的上下文占用。"""
-        return await self.provider.count_tokens(messages=strip_internal_message_metadata(messages), tools=self.tools)
+        return await self.provider.chat_count_tokens(messages=strip_internal_message_metadata(messages), tools=self.tools)
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs) -> LLMResponse:
         """移除内部元数据后调用模型提供方。"""

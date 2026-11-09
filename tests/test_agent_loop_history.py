@@ -318,10 +318,12 @@ async def test_request_yaml_retains_new_messages_across_multiple_compressions(tm
     async def search() -> str:
         return "uncompressed tool output"
 
-    response = LLMResponse(iter_mix_chunks=tool_chunks(), mapping_tool_call_funcs={"search": search})
+    response = LLMResponse(iter_mix_chunks=tool_chunks())
     agent_loop.chat = AsyncMock(side_effect=[response, make_response("final answer")])
 
-    agent_loop.tool_executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+    agent_loop.tool_executor = ToolExecutor(
+        workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={"search": search},
+    )
     agent_loop.records = SimpleNamespace(append=AsyncMock())
     agent_loop.tools = []
     agent_loop.max_iterations = 4

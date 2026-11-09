@@ -25,7 +25,6 @@ from xpeech.provider.schema import LLMResponse, ToolCallChunk, ToolCallRequest
 def make_response(
     content: str | None = None,
     tool_calls: list[ToolCallRequest] | None = None,
-    mapping_tool_call_funcs=None,
     usage=None,
 ) -> LLMResponse:
     async def chunks():
@@ -44,7 +43,6 @@ def make_response(
 
     response = LLMResponse(
         iter_mix_chunks=chunks(),
-        mapping_tool_call_funcs=mapping_tool_call_funcs,
     )
     response.usage.update(usage or {})
     return response
@@ -207,7 +205,6 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
             make_response(
                 content="working",
                 tool_calls=[tool_call],
-                mapping_tool_call_funcs={"fake_tool": fake_tool},
                 usage=usages[0],
             ),
             make_response(
@@ -244,6 +241,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         summary_tokens=100,
         max_iterations=3,
         channel="crm",
+        mapping_tool_call_funcs={"fake_tool": fake_tool},
     )
     agent_loop.history = YamlHistoryRepository(tmp_path / "history")
     database_path = tmp_path / "record.db"

@@ -275,7 +275,11 @@ async def test_executor_injects_current_session_id_and_ignores_spoofed_arguments
     repository = YamlHistoryRepository(tmp_path)
     await repository.save("alice", SESSION_IDS[0], [{"role": "user", "content": "private current"}], channel="web")
     list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
-    executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+    executor = ToolExecutor(
+        workspace=tmp_path,
+        max_result_chars=10_000,
+        mapping_tool_call_funcs={"list_sessions": list_sessions, "read_session": read_session},
+    )
 
     results = [
         result
@@ -284,7 +288,6 @@ async def test_executor_injects_current_session_id_and_ignores_spoofed_arguments
                 ToolCallRequest(id="list", name="list_sessions", arguments={"session_id": SESSION_IDS[1]}),
                 ToolCallRequest(id="read", name="read_session", arguments={"session_id": SESSION_IDS[0]}),
             ],
-            {"list_sessions": list_sessions, "read_session": read_session},
             session_id=SESSION_IDS[0],
         )
     ]

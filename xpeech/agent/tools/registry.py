@@ -6,6 +6,7 @@ from ...config.settings import ToolConfig, settings
 from ...utils.filter_expr import FilterContext, filter_allows_access
 from ...utils.security.dcg import shell_requires_confirmation
 from ..skills.skill import SkillsLoader
+from .ask_user_question import ask_user_question
 from .browser_preview import build_browser_preview_tool
 from .document import build_document_tool
 from .execution_request import build_execution_request_tool
@@ -17,7 +18,7 @@ from .mcp_client import (
     get_session_mcp_registration_from_config,
     register_mcp_bindings,
 )
-from .ask_user_question import ask_user_question
+from .ptc import build_ptc_tool
 from .research import build_research_tools
 from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .sessions import build_session_tools
@@ -58,6 +59,7 @@ async def register_tools(
             not_interactive=not_interactive,
         )
     )
+    provider.register_function_tool(build_ptc_tool(workspace=workspace))
     provider.register_function_tool(web_fetch)
     for tool in (baidu_search, bing_search):
         provider.register_function_tool(tool)

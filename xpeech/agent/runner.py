@@ -69,6 +69,7 @@ class AgentRunner:
             max_iterations=llm_config.max_iterations,
             channel=self.channel,
             user_organization=self.user_organization,
+            mapping_tool_call_funcs=provider.mapping_tool_call_funcs,
         )
         await register_tools(
             user_id=self.user_id,

@@ -41,6 +41,8 @@ class LiteLLMProvider:
         self.default_model = default_model
         self.parameters = parameters
         self.default_tools: ToolRegistry = {}
+        # 工具名到可执行函数的映射，供 ToolExecutor 初始化；与注册/解析的工具保持同步。
+        self.mapping_tool_call_funcs: dict[str, Any] = {}
         self._support_image = support_image
         self._support_video = support_video
         self._support_json_output = support_json_output
@@ -95,13 +97,19 @@ class LiteLLMProvider:
             tool_json=as_tool(func_) if tool_json is None else tool_json,
         )
 
+    def _publish_tool(self, name: str, tool: RegisteredTool) -> None:
+        """登记工具定义，并同步可执行函数映射。"""
+
+        self.default_tools[name] = tool
+        self.mapping_tool_call_funcs[name] = tool.func
+
     def register_function_tool(
         self,
         func_: Callable[[type[BaseModel] | None], str | list],
     ) -> None:
         """注册普通函数工具，从函数生成 schema。"""
 
-        self.default_tools[func_.__name__] = self._build_function_tool(func_)
+        self._publish_tool(func_.__name__, self._build_function_tool(func_))
 
     def register_mcp_tool(
         self,
@@ -111,7 +119,7 @@ class LiteLLMProvider:
     ) -> None:
         """注册已绑定的 MCP 函数，保留服务器提供的 schema。"""
 
-        self.default_tools[func_.__name__] = self._build_function_tool(func_, tool_json=tool_json)
+        self._publish_tool(func_.__name__, self._build_function_tool(func_, tool_json=tool_json))
 
     async def _parse_tools(self, funcs: list[Callable[[type[BaseModel] | None], str | list]]) -> ToolRegistry:
         """解析普通函数工具。"""
@@ -138,17 +146,14 @@ class LiteLLMProvider:
             return parsed_tools
         return self.default_tools | parsed_tools
 
-    async def count_tokens(
+    async def chat_count_tokens(
         self,
         messages: list[dict[str, Any]],
         tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
-        *,
-        remove_all_tools: bool = False,
-        remove_default_tools: bool = False,
     ) -> int:
-        """估算消息和实际启用的工具定义占用的上下文。"""
+        """估算消息和实际启用的工具定义占用的上下文，强制不排除默认工具。"""
         registered_tools = await self._resolve_tools(
-            tools, remove_all_tools=remove_all_tools, remove_default_tools=remove_default_tools
+            tools, remove_all_tools=False, remove_default_tools=False
         )
         return await token_counter(messages, tools=[tool.tool_json for tool in registered_tools.values()] or None)
 
@@ -173,7 +178,8 @@ class LiteLLMProvider:
             tools, remove_all_tools=remove_all_tools, remove_default_tools=remove_default_tools
         )
         tool_jsons = [tool.tool_json for tool in registered_tools.values()]
-        mapping_tool_call_funcs = {tool_name: tool.func for tool_name, tool in registered_tools.items()}
+        # 本次请求携带的工具（含按需解析的自定义工具）同样进入可执行函数映射。
+        self.mapping_tool_call_funcs.update({tool_name: tool.func for tool_name, tool in registered_tools.items()})
 
         # 参数构建
         extra_body = {
@@ -207,12 +213,11 @@ class LiteLLMProvider:
             completion_kwargs["tool_choice"] = "auto"
         response = self._retry_client.acompletion(**completion_kwargs)
 
-        return self._parse_response(response, mapping_tool_call_funcs)
+        return self._parse_response(response)
 
     def _parse_response(
         self,
         response: AsyncIterator[Any],
-        mapping_tool_call_funcs: dict[str, Callable[[type[BaseModel] | None], str | list]],
     ) -> LLMResponse:
         """将 LiteLLM 的流式响应解析为统一的混合内容流。"""
         response_holder: dict[str, LLMResponse] = {}
@@ -262,7 +267,6 @@ class LiteLLMProvider:
 
         parsed_response = LLMResponse(
             iter_mix_chunks=iter_mix_chunks(),
-            mapping_tool_call_funcs=mapping_tool_call_funcs,
         )
         response_holder["response"] = parsed_response
         return parsed_response

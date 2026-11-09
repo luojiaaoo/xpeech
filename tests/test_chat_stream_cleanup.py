@@ -94,6 +94,8 @@ def streaming_chat(monkeypatch, tmp_path):
         files=[],
     )
     monkeypatch.setattr(execute, "_prepare_chat", AsyncMock(return_value=(runner, message)))
+    # 测试直接调用路由函数/自建 ASGI 应用，不经过 ContextASGIMiddleware，这里补上请求上下文。
+    monkeypatch.setattr(loop_module, "get_request_id", lambda: "test-request-id")
     state.auth = SimpleNamespace(user_id=message.user_id, channel="test")
     state.stream = chat(
         auth=state.auth,

@@ -39,11 +39,12 @@ def test_chat_exposes_llm_parameter_overrides_as_one_object():
         ({"remove_default_tools": True, "remove_all_tools": True}, []),
     ],
 )
-async def test_count_tokens_uses_the_same_tools_as_chat(monkeypatch, options, expected_names):
+async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected_names):
     captured_kwargs = {}
 
     class RetryClient:
         def acompletion(self, **kwargs):
+            captured_kwargs.clear()
             captured_kwargs.update(kwargs)
 
             async def upstream():
@@ -83,12 +84,15 @@ async def test_count_tokens_uses_the_same_tools_as_chat(monkeypatch, options, ex
     messages = [{"role": "user", "content": "hello"}]
     request = {"messages": messages, "tools": ["search", extra_tool], **options}
 
-    count = await provider.count_tokens(**request)
+    # chat_count_tokens 不接受 remove_* 开关，强制按完整工具集统计。
+    count = await provider.chat_count_tokens(messages=messages, tools=["search", extra_tool])
+    await provider.chat(messages=messages, tools=["search", extra_tool])
+    full_tools = captured_kwargs["tools"]
     await provider.chat(**request)
 
     actual_tools = captured_kwargs.get("tools")
     assert [tool["function"]["name"] for tool in actual_tools or []] == expected_names
-    assert count == await token_counter(messages, tools=actual_tools)
+    assert count == await token_counter(messages, tools=full_tools)
     if expected_names:
         assert count > await token_counter(messages)
         assert actual_tools[0]["function"]["description"] == search.__doc__
@@ -184,21 +188,21 @@ async def test_chat_uses_all_registered_tools():
     provider.register_function_tool(interactive_tool)
     provider.register_function_tool(regular_tool)
 
-    response = await provider.chat(
+    await provider.chat(
         messages=[{"role": "user", "content": "hello"}],
     )
 
     assert captured_kwargs is not None
     assert [tool["function"]["name"] for tool in captured_kwargs["tools"]] == ["interactive_tool", "regular_tool"]
-    assert set(response.mapping_tool_call_funcs) == {"interactive_tool", "regular_tool"}
+    assert set(provider.mapping_tool_call_funcs) == {"interactive_tool", "regular_tool"}
     assert set(provider.default_tools) == {"interactive_tool", "regular_tool"}
 
-    interactive_response = await provider.chat(messages=[{"role": "user", "content": "hello"}])
+    await provider.chat(messages=[{"role": "user", "content": "hello"}])
 
     assert [tool["function"]["name"] for tool in captured_kwargs["tools"]] == [
         "interactive_tool", "regular_tool"
     ]
-    assert set(interactive_response.mapping_tool_call_funcs) == {"interactive_tool", "regular_tool"}
+    assert set(provider.mapping_tool_call_funcs) == {"interactive_tool", "regular_tool"}
 
 
 @pytest.mark.asyncio
@@ -243,7 +247,7 @@ async def test_parse_response_streams_text_and_assembles_tool_calls():
         default_model="test",
         parameters=LLMParameters(),
     )
-    response = provider._parse_response(upstream(), {})
+    response = provider._parse_response(upstream())
     assert response.finish_reason is None
 
     chunks = [chunk async for chunk in response.iter_mix_chunks]

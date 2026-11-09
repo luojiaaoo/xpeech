@@ -36,6 +36,7 @@ class ToolExecutor:
         self,
         workspace: Path,
         max_result_chars: int,
+        mapping_tool_call_funcs: dict[str, Any],
         max_tool_timeout: float = 300.0,
     ) -> None:
         if max_result_chars < 1:
@@ -45,6 +46,7 @@ class ToolExecutor:
         self._workspace = workspace.resolve()
         self._max_result_chars = max_result_chars
         self._max_tool_timeout = max_tool_timeout
+        self.mapping_tool_call_funcs = mapping_tool_call_funcs
 
     async def _limit_text(self, tool_call: ToolCallRequest, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
@@ -62,7 +64,6 @@ class ToolExecutor:
     async def execute(
         self,
         tool_calls: list[ToolCallRequest],
-        mapping_tool_call_funcs: dict[str, Any],
         loop_count: int | None = None,
         session_metadata: dict[str, str] | None = None,
         user_id: str | None = None,
@@ -75,7 +76,7 @@ class ToolExecutor:
         async def execute_one(tool_call: ToolCallRequest) -> ToolExecutionResult:
             """执行单个工具调用，并将异常转换为模型可读的结果。"""
             start_time = time.perf_counter()
-            tool_call_func = mapping_tool_call_funcs.get(tool_call.name)
+            tool_call_func = self.mapping_tool_call_funcs.get(tool_call.name)
             logger.info(
                 "Tool call started loop_count={} tool_name={} args={}",
                 loop_count,
@@ -98,6 +99,8 @@ class ToolExecutor:
                     kwargs["channel"] = channel
                 if model_info.has_session_id:
                     kwargs["session_id"] = session_id
+                if model_info.has_tool_executor:
+                    kwargs["tool_executor"] = self
                 async with timeout_scope:
                     if not model_info.has_pydantic_param:
                         value = await tool_call_func(**kwargs)

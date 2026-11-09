@@ -132,13 +132,15 @@ def test_skill_api_filters_using_channel(
         assert response.status_code == 200
         return {skill["metadata"]["name"] for skill in response.json()}
 
+    # 工作区技能由用户自己放置，不受过滤表达式限制；内置技能仍按渠道过滤。
+    all_user_skills = {"user-public", "user-crm", "user-erp"}
     assert visible_skills(
         "crm", CRM_KEY, channel="erp"
-    ) == {"user-public", "user-crm"} | {"public", "crm-skill", "shared"}
-    assert visible_skills("erp", ERP_KEY) == {"user-public", "user-erp"} | {"public", "erp-skill", "shared"}
+    ) == all_user_skills | {"public", "crm-skill", "shared"}
+    assert visible_skills("erp", ERP_KEY) == all_user_skills | {"public", "erp-skill", "shared"}
     assert visible_skills(
         "web_client", settings.jwt.channels["web_client"].secret_key, channel="crm"
-    ) == {"user-public"} | {"public", "web-skill"}
+    ) == all_user_skills | {"public", "web-skill"}
 
 
 @pytest.mark.asyncio
@@ -206,7 +208,7 @@ def test_chat_passes_verified_channel_to_registration(
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
 @pytest.mark.asyncio
-async def test_always_skill_filter_restricts_every_source(monkeypatch, tmp_path, source):
+async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tmp_path, source):
     skill_root = tmp_path / "builtin" if source == "builtin" else tmp_path / "skills"
     skill_file = skill_root / "dedicated" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
@@ -215,9 +217,12 @@ async def test_always_skill_filter_restricts_every_source(monkeypatch, tmp_path,
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: builtin_dirs)
     loader = SkillsLoader(tmp_path)
     prompt = await loader.build_skills_prompt()
-    assert prompt == ""
-    loader = SkillsLoader(tmp_path, channel="crm")
-    prompt = await loader.build_skills_prompt()
+    if source == "builtin":
+        # 内置技能受过滤表达式限制。
+        assert prompt == ""
+        loader = SkillsLoader(tmp_path, channel="crm")
+        prompt = await loader.build_skills_prompt()
+    # 工作区技能由用户自己放置，不受访问过滤表达式限制。
     assert "# CRM instructions" in prompt
     skill = (await loader.list_skill_info())[0]
     assert skill.metadata.filter == 'channel("crm")'

@@ -14,7 +14,7 @@ from .tool_executor import ToolExecutionResult
 
 ChatCallable = Callable[..., Awaitable[LLMResponse]]
 ToolExecutorCallable = Callable[
-    [list[ToolCallRequest], dict[str, Any]],
+    [list[ToolCallRequest]],
     AsyncIterator[ToolExecutionResult],
 ]
 
@@ -200,7 +200,7 @@ class MemoryConsolidator:
         execution_results = []
         # 同一模型响应中的多个保存调用也必须按顺序执行。
         for tool_call in response.tool_calls:
-            async for execution in self._execute_tools([tool_call], response.mapping_tool_call_funcs):
+            async for execution in self._execute_tools([tool_call]):
                 execution_results.append(execution)
         saved = any(execution.call.name == "save_memory" and execution.succeeded for execution in execution_results)
         if not saved:

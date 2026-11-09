@@ -80,12 +80,15 @@ async def test_search_runs_through_provider_and_executor(tmp_path, monkeypatch, 
     assert set(provider.default_tools) == {"arxiv_search", "arxiv_download"}
     search_schema = provider.default_tools["arxiv_search"].tool_json["function"]
     assert search_schema["parameters"]["properties"]["max_results"]["maximum"] == 20
-    executor = ToolExecutor(tmp_path, max_result_chars=10_000)
+    executor = ToolExecutor(
+        tmp_path,
+        max_result_chars=10_000,
+        mapping_tool_call_funcs={name: tool.func for name, tool in provider.default_tools.items()},
+    )
     results = [
         result
         async for result in executor.execute(
             [ToolCallRequest(id="search-1", name="arxiv_search", arguments={"query": " AI "})],
-            {name: tool.func for name, tool in provider.default_tools.items()},
         )
     ]
     assert results[0].succeeded

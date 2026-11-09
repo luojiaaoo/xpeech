@@ -124,7 +124,7 @@ async def test_whitespace_only_content_is_discarded_when_kind_changes():
         ("tool_calls", tool_call),
         ("tool_calls_end", None),
     ]
-    assert response.content == ""
+    assert response.content is None
 
 
 @pytest.mark.asyncio

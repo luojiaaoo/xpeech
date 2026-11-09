@@ -28,9 +28,11 @@ async def test_tool_results_are_sent_individually_as_tools_finish(tmp_path, fast
     mapping = {"slow_tool": slow_tool}
     if fast_name != "missing":
         mapping[fast_name] = fast_tool
-    response = SimpleNamespace(tool_calls=calls, mapping_tool_call_funcs=mapping, content="working")
+    response = SimpleNamespace(tool_calls=calls, content="working")
     agent_loop = AgentLoop.__new__(AgentLoop)
-    agent_loop.tool_executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+    agent_loop.tool_executor = ToolExecutor(
+        workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=mapping,
+    )
     history = []
 
     events = []
@@ -82,13 +84,15 @@ async def test_cancelling_tool_events_cancels_pending_tools(tmp_path):
         return "ready"
 
     agent_loop = AgentLoop.__new__(AgentLoop)
-    agent_loop.tool_executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000)
+    agent_loop.tool_executor = ToolExecutor(
+        workspace=tmp_path, max_result_chars=10_000,
+        mapping_tool_call_funcs={"slow_tool": slow_tool, "fast_tool": fast_tool},
+    )
     response = SimpleNamespace(
         tool_calls=[
             ToolCallRequest(id="slow", name="slow_tool", arguments={}),
             ToolCallRequest(id="fast", name="fast_tool", arguments={}),
         ],
-        mapping_tool_call_funcs={"slow_tool": slow_tool, "fast_tool": fast_tool},
         content="",
     )
 

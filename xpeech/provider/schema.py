@@ -87,13 +87,11 @@ class LLMResponse:
         self,
         *,
         iter_mix_chunks: AsyncIterator[StreamChunk],
-        mapping_tool_call_funcs: dict[str, Callable[[type[BaseModel] | None], str | list]] | None = None,
     ) -> None:
         self._stream_done = asyncio.Event()
         self._chunks: list[ChunkMix] = []
         self._completion_callbacks: list[Callable[["LLMResponse"], None]] = []
         self.iter_mix_chunks = self._record(iter_mix_chunks)
-        self.mapping_tool_call_funcs = mapping_tool_call_funcs if mapping_tool_call_funcs is not None else {}
         self.finish_reason: str | None = None
         self.usage: Usage = {}
 
@@ -153,11 +151,15 @@ class LLMResponse:
         self.usage = usage
 
     @property
-    def content(self) -> str:
+    def content(self) -> str | None:
         if not self._stream_done.is_set():
             raise ValueError("Content is not available until the stream is done.")
-        return "".join(
-            chunk for kind, chunk in self._chunks if kind == "content" and isinstance(chunk, str)
+        # 空白 content 已在 _record 中丢弃，没有可见内容时为 None。
+        return (
+            "".join(
+                chunk for kind, chunk in self._chunks if kind == "content" and isinstance(chunk, str)
+            )
+            or None
         )
 
     @property

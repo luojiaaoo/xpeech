@@ -122,17 +122,17 @@ async def test_symlink_memo_root_is_ignored(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("not_interactive", [False, True])
-async def test_self_improving_is_discoverable_on_demand_with_accessible_references(tmp_path, not_interactive):
+async def test_self_improving_is_always_loaded_with_accessible_references(tmp_path, not_interactive):
     loader = SkillsLoader(tmp_path, not_interactive=not_interactive)
     skills = await loader.list_builtin_skill_info()
     skill = next(item for item in skills if item.metadata.name == "self-improving")
 
-    assert skill.metadata.always is False
+    assert skill.metadata.always is True
     assert skill.metadata.internal is True
     prompt = await loader.build_skills_prompt()
     assert "<name>self-improving</name>" in prompt
-    assert "### Skill: self-improving" not in prompt
-    assert skill.body not in prompt
+    assert "### Skill: self-improving" in prompt
+    assert skill.body in prompt
     assert "### Skill: memory" in prompt
     for reference in ("learning.md", "storage.md", "operations.md"):
         assert (loader.builtin_skills / "self-improving/references" / reference).is_file()

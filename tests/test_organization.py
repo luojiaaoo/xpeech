@@ -75,17 +75,26 @@ async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_
             builtin_dirs.append(path.parent)
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: builtin_dirs)
 
+    # org("") 是非法过滤表达式，在元数据解析阶段即被跳过，与来源无关。
+    unfiltered = {"public", "engineering", "sales", "other-channel"}
+    expected_public = unfiltered if source == "workspace" else {"public"}
+    expected_engineering = unfiltered if source == "workspace" else {"public", "engineering"}
     public = await SkillsLoader(tmp_path).list_skill_info()
-    assert {skill.metadata.name for skill in public} == {"public"}
+    assert {skill.metadata.name for skill in public} == expected_public
     loader = SkillsLoader(tmp_path, user_organization="公司/研发/平台")
     skills = {skill.metadata.name: skill for skill in await loader.list_skill_info()}
-    assert set(skills) == {"public", "engineering"}
+    assert set(skills) == expected_engineering
     assert skills["engineering"].metadata.filter == 'org("公司/研发/", "公司/研发/")'
     assert "filter" not in skills["engineering"].metadata.kwargs
     system = await build_system_prompt(tmp_path, user_organization="公司/研发/平台")
     assert "# Instructions for engineering" in system["content"]
-    assert "# Instructions for sales" not in system["content"]
-    assert "<name>sales</name>" not in system["content"]
+    if source == "workspace":
+        # 工作区技能由用户自己放置，不受过滤表达式限制。
+        assert "# Instructions for sales" in system["content"]
+        assert "<name>sales</name>" in system["content"]
+    else:
+        assert "# Instructions for sales" not in system["content"]
+        assert "<name>sales</name>" not in system["content"]
 
 
 @pytest.mark.asyncio
