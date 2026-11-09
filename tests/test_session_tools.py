@@ -37,7 +37,7 @@ async def test_lists_only_current_user_sessions_with_date_filters_and_pagination
         os.utime(tmp_path / "alice" / filename, (modified, modified))
     list_sessions, _ = build_session_tools(user_id="alice", history_path=tmp_path)
 
-    all_sessions = json.loads(await list_sessions(ListSessionsArgs(), session_id="default"))
+    all_sessions = json.loads(await list_sessions(ListSessionsArgs(), session_id="00000000-0000-7000-8000-000000000000"))
     assert all_sessions["total"] == 3
     assert all_sessions["has_more"] is False
     assert {session["session_id"] for session in all_sessions["sessions"]} == set(SESSION_IDS[:3])
@@ -54,22 +54,22 @@ async def test_lists_only_current_user_sessions_with_date_filters_and_pagination
     updated = [datetime.fromisoformat(session["updated_at"]) for session in all_sessions["sessions"]]
     assert updated == sorted(updated, reverse=True)
 
-    first = json.loads(await list_sessions(ListSessionsArgs(limit=1), session_id="default"))
-    rest = json.loads(await list_sessions(ListSessionsArgs(offset=1), session_id="default"))
+    first = json.loads(await list_sessions(ListSessionsArgs(limit=1), session_id="00000000-0000-7000-8000-000000000000"))
+    rest = json.loads(await list_sessions(ListSessionsArgs(offset=1), session_id="00000000-0000-7000-8000-000000000000"))
     assert first["has_more"] is True
     assert first["sessions"] + rest["sessions"] == all_sessions["sessions"]
     filtered = json.loads(await list_sessions(
-        ListSessionsArgs(start_date="2026-10-28", end_date="2026-10-29"), session_id="default",
+        ListSessionsArgs(start_date="2026-10-28", end_date="2026-10-29"), session_id="00000000-0000-7000-8000-000000000000",
     ))
     assert [session["session_id"] for session in filtered["sessions"]] == [SESSION_IDS[2], SESSION_IDS[1]]
     assert filtered["total"] == 2
-    page = json.loads(await list_sessions(ListSessionsArgs(start_date="2026-10-28", limit=1), session_id="default"))
+    page = json.loads(await list_sessions(ListSessionsArgs(start_date="2026-10-28", limit=1), session_id="00000000-0000-7000-8000-000000000000"))
     assert page["total"] == 2
     assert page["has_more"] is True
     assert page["sessions"] == filtered["sessions"][:1]
-    older = json.loads(await list_sessions(ListSessionsArgs(end_date="2026-10-27"), session_id="default"))
+    older = json.loads(await list_sessions(ListSessionsArgs(end_date="2026-10-27"), session_id="00000000-0000-7000-8000-000000000000"))
     assert [session["session_id"] for session in older["sessions"]] == [SESSION_IDS[0]]
-    empty = json.loads(await list_sessions(ListSessionsArgs(start_date="2026-10-30"), session_id="default"))
+    empty = json.loads(await list_sessions(ListSessionsArgs(start_date="2026-10-30"), session_id="00000000-0000-7000-8000-000000000000"))
     assert empty["total"] == 0
     assert empty["sessions"] == []
 
@@ -98,7 +98,7 @@ async def test_reads_history_pages_without_system_prompts_or_changing_saved_hist
     await repository.save("alice", SESSION_IDS[1], not_interactive, channel="feishu", not_interactive=True)
 
     page = json.loads(await read_session(
-        ReadSessionArgs(session_id=SESSION_IDS[0], offset=1, limit=2), session_id="default",
+        ReadSessionArgs(session_id=SESSION_IDS[0], offset=1, limit=2), session_id="00000000-0000-7000-8000-000000000000",
     ))
     assert page == {
         "session_id": SESSION_IDS[0],
@@ -107,10 +107,10 @@ async def test_reads_history_pages_without_system_prompts_or_changing_saved_hist
         "messages": messages[2:4],
         "has_more": True,
     }
-    last = json.loads(await read_session(ReadSessionArgs(session_id=SESSION_IDS[0], offset=3), session_id="default"))
+    last = json.loads(await read_session(ReadSessionArgs(session_id=SESSION_IDS[0], offset=3), session_id="00000000-0000-7000-8000-000000000000"))
     assert last["messages"] == messages[4:]
     assert last["has_more"] is False
-    run = json.loads(await read_session(ReadSessionArgs(session_id=SESSION_IDS[1]), session_id="default"))
+    run = json.loads(await read_session(ReadSessionArgs(session_id=SESSION_IDS[1]), session_id="00000000-0000-7000-8000-000000000000"))
     assert run["messages"] == not_interactive
     assert "not_interactive" not in run
     assert await repository.load("alice", SESSION_IDS[0], channel="feishu") == messages[1:]
@@ -124,7 +124,7 @@ async def test_reads_uuid_session_by_session_id(tmp_path):
     await repository.save("alice", session_id, messages, channel="feishu", not_interactive=True)
     _, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
 
-    result = json.loads(await read_session(ReadSessionArgs(session_id=session_id), session_id="default"))
+    result = json.loads(await read_session(ReadSessionArgs(session_id=session_id), session_id="00000000-0000-7000-8000-000000000000"))
     assert result["messages"] == messages
 
 
@@ -154,7 +154,7 @@ async def test_list_cleans_only_current_user_files(tmp_path, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(Path, "stat", check_stat)
         patch.setattr(Path, "iterdir", check_iterdir)
-        result = json.loads(await list_sessions(ListSessionsArgs(), session_id="default"))
+        result = json.loads(await list_sessions(ListSessionsArgs(), session_id="00000000-0000-7000-8000-000000000000"))
     assert result["total"] == 1
     assert result["sessions"][0]["session_id"] == SESSION_IDS[0]
     assert result["sessions"][0]["channel"] == "feishu"
@@ -174,16 +174,16 @@ async def test_history_tools_cannot_read_another_user(tmp_path):
     await repository.save("alice~session~other", SESSION_IDS[1], messages, channel="feishu")
     list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
     list_bob_sessions, _ = build_session_tools(user_id="bob", history_path=tmp_path)
-    [bob_history] = json.loads(await list_bob_sessions(ListSessionsArgs(), session_id="default"))["sessions"]
+    [bob_history] = json.loads(await list_bob_sessions(ListSessionsArgs(), session_id="00000000-0000-7000-8000-000000000000"))["sessions"]
 
-    assert json.loads(await list_sessions(ListSessionsArgs(), session_id="default"))["total"] == 0
+    assert json.loads(await list_sessions(ListSessionsArgs(), session_id="00000000-0000-7000-8000-000000000000"))["total"] == 0
     with pytest.raises(FileNotFoundError):
         await read_session(
             ReadSessionArgs(
                 session_id=bob_history["session_id"],
                 user_id="bob",
             ),
-            session_id="default",
+            session_id="00000000-0000-7000-8000-000000000000",
         )
     with pytest.raises(ValidationError):
         ReadSessionArgs(session_id="../bob~session~secret")
@@ -203,7 +203,7 @@ async def test_history_tools_do_not_follow_symlinks(tmp_path):
             pytest.skip("Windows requires permission to create symbolic links")
         raise
     list_sessions, _ = build_session_tools(user_id="alice", history_path=tmp_path)
-    assert json.loads(await list_sessions(ListSessionsArgs(), session_id="default"))["total"] == 0
+    assert json.loads(await list_sessions(ListSessionsArgs(), session_id="00000000-0000-7000-8000-000000000000"))["total"] == 0
 
 
 @pytest.mark.asyncio
@@ -216,21 +216,21 @@ async def test_read_session_ignores_legacy_filenames(tmp_path):
     flat_path.write_text("- role: user\n  content: flat history\n", encoding="utf-8")
     list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
 
-    assert json.loads(await list_sessions(ListSessionsArgs(), session_id="default"))["sessions"] == []
+    assert json.loads(await list_sessions(ListSessionsArgs(), session_id="00000000-0000-7000-8000-000000000000"))["sessions"] == []
     with pytest.raises(FileNotFoundError):
-        await read_session(ReadSessionArgs(session_id="default"), session_id=SESSION_IDS[0])
+        await read_session(ReadSessionArgs(session_id="00000000-0000-7000-8000-000000000000"), session_id=SESSION_IDS[0])
     assert legacy_path.exists()
     assert pre_channel_path.exists()
     assert flat_path.exists()
 
     repository = YamlHistoryRepository(tmp_path)
     current_messages = [{"role": "user", "content": "current question"}]
-    await repository.save("alice", "default", current_messages, channel="feishu")
+    await repository.save("alice", "00000000-0000-7000-8000-000000000000", current_messages, channel="feishu")
     sessions = json.loads(await list_sessions(ListSessionsArgs(), session_id=SESSION_IDS[0]))
     assert sessions["total"] == 1
-    assert sessions["sessions"][0]["session_id"] == "default"
+    assert sessions["sessions"][0]["session_id"] == "00000000-0000-7000-8000-000000000000"
     assert sessions["sessions"][0]["channel"] == "feishu"
-    result = json.loads(await read_session(ReadSessionArgs(session_id="default"), session_id=SESSION_IDS[0]))
+    result = json.loads(await read_session(ReadSessionArgs(session_id="00000000-0000-7000-8000-000000000000"), session_id=SESSION_IDS[0]))
     assert result["messages"] == current_messages
 
 
@@ -252,7 +252,7 @@ def test_session_tool_schemas_do_not_allow_selecting_a_user(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("current_session_id", ["default", SESSION_IDS[0]])
+@pytest.mark.parametrize("current_session_id", ["00000000-0000-7000-8000-000000000000", SESSION_IDS[0]])
 async def test_history_tools_exclude_current_session_and_reject_direct_reads(tmp_path, current_session_id):
     repository = YamlHistoryRepository(tmp_path)
     for channel in ("web", "feishu"):

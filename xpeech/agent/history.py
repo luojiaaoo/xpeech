@@ -93,7 +93,7 @@ class YamlHistoryRepository:
         user_id: str,
         protected_session_id: str | None = None,
     ) -> list[_HistoryFile]:
-        """只清理当前用户的文件，优先保留 default 和当前会话。"""
+        """清理当前用户的非法或超额历史文件，优先保留主会话和当前会话。"""
         histories: list[_HistoryFile] = []
         for path in self._user_history_dir(user_id).iterdir():
             try:
@@ -112,8 +112,9 @@ class YamlHistoryRepository:
                 }:
                     raise ValueError("Invalid history metadata")
                 not_interactive = values["type"] == self._NOT_INTERACTIVE_TYPE
+                session_id = validate_session_id(values["session_id"])
                 if path.name != self._history_filename(
-                    values["session_id"],
+                    session_id,
                     channel=values["channel"], not_interactive=not_interactive,
                 ):
                     raise ValueError("Non-canonical history filename")
@@ -124,7 +125,7 @@ class YamlHistoryRepository:
             histories.append(_HistoryFile(
                 path=path,
                 channel=values["channel"],
-                session_id=values["session_id"],
+                session_id=session_id,
                 not_interactive=not_interactive,
                 modified_ns=stat.st_mtime_ns,
                 size_bytes=stat.st_size,

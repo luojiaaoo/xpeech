@@ -86,7 +86,7 @@ def streaming_chat(monkeypatch, tmp_path):
     runner._agent_loop = agent
     message = InboundMessage(
         user_id="cleanup-user",
-        session_id="default",
+        session_id="00000000-0000-7000-8000-000000000000",
         sender_name="test",
         channel="test",
         session_metadata={},
@@ -202,7 +202,7 @@ async def test_sse_disconnect_under_backpressure_returns_permit(streaming_chat):
         "root_path": "",
         "headers": [
             (b"content-type", b"application/x-www-form-urlencoded"),
-            (b"x-session-id", b"default"),
+            (b"x-session-id", b"00000000-0000-7000-8000-000000000000"),
             (b"x-sender-name", b"test"),
         ],
         "client": ("127.0.0.1", 12345),

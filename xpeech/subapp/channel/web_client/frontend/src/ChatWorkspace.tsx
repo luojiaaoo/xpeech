@@ -5,7 +5,7 @@ import { uuidv7 } from './uuidv7';
 import ChatLoading from './ChatLoading';
 
 const ChatPage = lazy(() => import('./ChatPage'));
-const MAIN_SESSION_ID = 'default';
+const MAIN_SESSION_ID = '00000000-0000-7000-8000-000000000000';
 
 export default function ChatWorkspace({ systemName, embedded = false }: {
   systemName: string;

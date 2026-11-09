@@ -26,7 +26,7 @@ class TestYamlHistoryRepository:
     async def test_not_interactive_runs_save_separate_files_without_overwriting(self, tmp_path: Path):
         repository = YamlHistoryRepository(tmp_path)
         normal_history = [{"role": "user", "content": "normal conversation"}]
-        await repository.save("alice", "default", normal_history, channel="feishu")
+        await repository.save("alice", "00000000-0000-7000-8000-000000000000", normal_history, channel="feishu")
         session_ids = SESSION_IDS[:2]
         histories = [
             [{"role": "user", "content": "not_interactive a"}],
@@ -55,7 +55,7 @@ class TestYamlHistoryRepository:
             "not_interactive a",
             "not_interactive b",
         }
-        assert await repository.load("alice", "default", channel="feishu") == normal_history
+        assert await repository.load("alice", "00000000-0000-7000-8000-000000000000", channel="feishu") == normal_history
 
     @pytest.mark.asyncio
     async def test_save_preserves_system_messages_and_load_excludes_them(self, tmp_path: Path):
@@ -107,14 +107,14 @@ class TestYamlHistoryRepository:
         repository = YamlHistoryRepository(tmp_path, max_files_per_user=1)
         messages = [{"role": "user", "content": "hello"}]
         for channel in ("web", "feishu"):
-            await repository.save("alice", "default", messages, channel=channel)
-            os.utime(history_path(tmp_path, "alice", channel, "session", "default"), (1, 1))
+            await repository.save("alice", "00000000-0000-7000-8000-000000000000", messages, channel=channel)
+            os.utime(history_path(tmp_path, "alice", channel, "session", "00000000-0000-7000-8000-000000000000"), (1, 1))
         for session_id in SESSION_IDS[:2]:
             await repository.save("alice", session_id, messages, channel="web")
 
         assert await repository.load("alice", SESSION_IDS[0], channel="web") == messages
         for channel in ("web", "feishu"):
-            assert history_path(tmp_path, "alice", channel, "session", "default").is_file()
+            assert history_path(tmp_path, "alice", channel, "session", "00000000-0000-7000-8000-000000000000").is_file()
         assert history_path(tmp_path, "alice", "web", "session", SESSION_IDS[0]).is_file()
         assert not history_path(tmp_path, "alice", "web", "session", SESSION_IDS[1]).exists()
 
@@ -239,6 +239,9 @@ class TestYamlHistoryRepository:
             tmp_path / "alice" / "notes.txt",
             tmp_path / "alice" / "channel=web&type=session.yaml",
             tmp_path / "alice" / "channel=web&type=session&session_id=chat-1.yaml",
+            tmp_path / "alice" / "channel=web&type=session&session_id=default.yaml",
+            tmp_path / "alice" / "channel=web&type=session&session_id=01234567-89ab-4def-8123-456789abcdef.yaml",
+            tmp_path / "alice" / f"channel=web&type=session&session_id={SESSION_IDS[8].upper()}.yaml",
         ]
         for invalid_path in invalid_paths:
             invalid_path.write_text("invalid", encoding="utf-8")
@@ -283,8 +286,8 @@ class TestYamlHistoryRepository:
         repository = YamlHistoryRepository(tmp_path)
         messages = [{"role": "user", "content": "main session"}]
 
-        await repository.save("alice", "default", messages, channel="web")
-        assert await repository.load("alice", "default", channel="web") == messages
+        await repository.save("alice", "00000000-0000-7000-8000-000000000000", messages, channel="web")
+        assert await repository.load("alice", "00000000-0000-7000-8000-000000000000", channel="web") == messages
 
         for invalid in ("chat-1", "01234567-89ab-4def-8123-456789abcdef"):
             with pytest.raises(PathProtectionError, match="UUIDv7"):

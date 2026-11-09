@@ -53,10 +53,10 @@ test('chat and question answers carry the same explicit conversation ID', async 
   assert.equal((calls.at(-1)!.init.headers as Headers).get('x-sender-name'), null);
   assert.equal((calls.at(-1)!.init.body as FormData).has('session_metadata'), false);
   assert.equal(calls.at(-1)!.init.credentials, 'same-origin');
-  await api.streamChat('standalone conversation', [], () => {}, { sessionId: 'default' });
-  await api.answerQuestion('standalone answer', 'default');
+  await api.streamChat('standalone conversation', [], () => {}, { sessionId: '00000000-0000-7000-8000-000000000000' });
+  await api.answerQuestion('standalone answer', '00000000-0000-7000-8000-000000000000');
   for (const call of calls.slice(-2)) {
-    assert.equal((call.init.headers as Headers).get('x-session-id'), 'default');
+    assert.equal((call.init.headers as Headers).get('x-session-id'), '00000000-0000-7000-8000-000000000000');
     assert.equal((call.init.headers as Headers).get('authorization'), null);
     assert.equal(call.init.credentials, 'same-origin');
   }
@@ -76,16 +76,16 @@ test('question answers require backend acknowledgement and report missing waiter
   await module.evaluate();
   const api = module.namespace as { setEmbeddedJWT: Function; answerQuestion: Function };
 
-  await assert.rejects(api.answerQuestion('yes', 'default'), /答案未被接收/);
+  await assert.rejects(api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000'), /答案未被接收/);
   response = Response.json({ message: 'unexpected' });
-  await assert.rejects(api.answerQuestion('yes', 'default'), /后端未确认收到答案/);
+  await assert.rejects(api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000'), /后端未确认收到答案/);
   response = Response.json({ message: 'Answer received' });
-  await api.answerQuestion('yes', 'default');
+  await api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000');
   response = new Response('upstream unavailable', { status: 502 });
-  await assert.rejects(api.answerQuestion('yes', 'default'), /upstream unavailable/);
+  await assert.rejects(api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000'), /upstream unavailable/);
   api.setEmbeddedJWT('expired.jwt.signature');
   response = new Response('JWT expired', { status: 401 });
-  await assert.rejects(api.answerQuestion('yes', 'default'), /JWT expired/);
+  await assert.rejects(api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000'), /JWT expired/);
   assert.equal(expired, 1);
 });
 

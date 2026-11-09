@@ -23,13 +23,13 @@ def test_browser_preflight_allows_any_origin_method_and_headers(origin, method, 
 
 def test_cors_exposes_context_headers_and_preserves_authentication():
     client = TestClient(app)
-    headers = {"Origin": "https://unconfigured.test", "x-session-id": "default"}
+    headers = {"Origin": "https://unconfigured.test", "x-session-id": "00000000-0000-7000-8000-000000000000"}
     health = client.get("/health", headers=headers)
     assert health.status_code == 200
     assert health.headers["access-control-allow-origin"] == "*"
     assert health.headers["access-control-expose-headers"] == "*"
     assert health.headers["x-request-id"]
-    assert health.headers["x-session-id"] == "default"
+    assert health.headers["x-session-id"] == "00000000-0000-7000-8000-000000000000"
 
     rejected = client.post("/chat", headers=headers, data={"content": "[]"})
     assert rejected.status_code == 401

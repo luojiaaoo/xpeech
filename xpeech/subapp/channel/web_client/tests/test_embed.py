@@ -301,7 +301,7 @@ def test_embedded_jwt_cannot_authenticate_through_cookies(client):
     assert client.get("/api/auth/embed", headers=headers).status_code == 200
 
 
-@pytest.mark.parametrize("session_id", [None, "default"])
+@pytest.mark.parametrize("session_id", [None, "00000000-0000-7000-8000-000000000000"])
 def test_local_cookie_login_still_signs_backend_jwt_for_main_session(client, monkeypatch, session_id):
     secret = "web-client-test-key-at-least-64-characters-for-sha512-signing-tests"
     monkeypatch.setitem(settings.jwt.channels, "web_client", JWTChannelConfig(secret_key=secret))
@@ -316,7 +316,7 @@ def test_local_cookie_login_still_signs_backend_jwt_for_main_session(client, mon
         if request.url.path == "/chat_sync":
             assert "x-session-id" not in request.headers  # 同步执行由后端生成独立会话
         else:
-            assert request.headers["x-session-id"] == "default"
+            assert request.headers["x-session-id"] == "00000000-0000-7000-8000-000000000000"
         return httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n')
 
     async_client = httpx.AsyncClient

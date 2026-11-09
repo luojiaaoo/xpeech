@@ -26,7 +26,7 @@ class ListSessionsArgs(BaseModel):
 class ReadSessionArgs(BaseModel):
     session_id: str = Field(
         min_length=1,
-        description="list_sessions 返回的会话 ID；default 为主会话，其他值为 UUIDv7",
+        description=f"list_sessions 返回的会话 ID；{DEFAULT_SESSION_ID} 为主会话，其他值为 UUIDv7",
     )
     offset: int = Field(default=0, ge=0, description="从第几条消息开始，0 起算，按对话顺序读取")
     limit: int = Field(default=20, ge=1, le=100, description="最多返回的消息数")
@@ -48,7 +48,7 @@ def build_session_tools(*, user_id: str, history_path: Path, max_files_per_user:
 
         日期按最后更新时间的 UTC 日期筛选，包含起止日期；不传范围时列出全部。
         返回会话 ID、channel 渠道名、not_interactive 类型、更新时间和文件大小，按更新时间倒序分页。
-        session_id 为 default 时表示主会话，其他值是全局唯一的 UUIDv7。
+        session_id 为 00000000-0000-7000-8000-000000000000 时表示主会话，其他值是全局唯一的 UUIDv7。
         channel 是会话保存时的来源渠道名。
         not_interactive 为 false 表示普通会话，为 true 表示非交互执行历史。
         非交互执行一般由系统按钮或定时任务触发。

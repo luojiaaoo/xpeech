@@ -152,7 +152,7 @@ async def test_chat_injects_isolated_shell_tokens_without_saving_them(tmp_path, 
             "/chat",
             headers={
                 "Authorization": f"Bearer {token}",
-                "x-session-id": "default",
+                "x-session-id": "00000000-0000-7000-8000-000000000000",
                 "x-sender-name": "test-user",
             },
             data=data,
@@ -295,7 +295,7 @@ def test_api_rejects_channel_token_without_kid(secret_key):
         ("web_client", settings.jwt.channels["web_client"].secret_key),
     ],
 )
-@pytest.mark.parametrize("session_id", ["default", "018f0000-0000-7000-8000-000000000001"])
+@pytest.mark.parametrize("session_id", ["00000000-0000-7000-8000-000000000000", "018f0000-0000-7000-8000-000000000001"])
 def test_api_accepts_each_configured_channel_jwt(channel, secret_key, session_id):
     token = create_token(UserTokenParams(channel, user_id="test"))
 
@@ -421,7 +421,7 @@ def test_token_endpoint_issues_channel_jwt_for_docs(channel):
         data={"answer": "ok"},
         headers={
             "Authorization": f"Bearer {token}",
-            "x-session-id": "default",
+            "x-session-id": "00000000-0000-7000-8000-000000000000",
         },
     )
     assert api_response.status_code == 200

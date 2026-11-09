@@ -22,7 +22,7 @@ def current_context():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("credential", ["user", "channel", "internal", "invalid"])
 @pytest.mark.parametrize("raise_error", [False, True])
-@pytest.mark.parametrize("session_id", ["default", None, ""])
+@pytest.mark.parametrize("session_id", ["00000000-0000-7000-8000-000000000000", None, ""])
 async def test_request_context_is_available_and_restored(credential, raise_error, session_id):
     expected_user = None
     if credential == "user":

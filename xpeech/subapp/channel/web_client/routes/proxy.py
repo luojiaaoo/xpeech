@@ -34,7 +34,7 @@ def create_proxy_router(
     ) -> str | None:
         if not isinstance(user, UserJWTAuth):
             if session_id not in (None, DEFAULT_SESSION_ID):
-                raise HTTPException(422, "非嵌入聊天只支持主会话（default）")
+                raise HTTPException(422, f"非嵌入聊天只支持主会话（{DEFAULT_SESSION_ID}）")
             return session_id
         if session_id is None:
             raise HTTPException(422, "嵌入聊天必须提供 UUIDv7 格式的 x-session-id")

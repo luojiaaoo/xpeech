@@ -454,10 +454,10 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 
 `user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、技能和 MCP 连接；`session_id`
 标识该用户的一次会话，用于隔离上下文、并发聊天和提问回答。同一个用户可以同时拥有多个会话。
-所有通道均必须传入非空请求头 `x-session-id`，只允许 `default`（主会话）或规范的小写连字符 UUIDv7；
-省略、空值或其他格式均返回 HTTP 422。
-仅 `session_id` 为 `default` 时，向模型提供后台任务工具
-`feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`。
+所有通道均必须传入非空请求头 `x-session-id`，只接受规范的小写连字符 UUIDv7；
+主会话使用保留 ID `00000000-0000-7000-8000-000000000000`，省略、空值或其他格式均返回 HTTP 422。
+流式交互会话（包括主会话和其他 UUIDv7 会话）均向模型提供后台任务工具
+`feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`；`/chat_sync` 等非交互执行不提供这些工具。
 对外用户身份只使用 JWT `sub`；仅内部请求通过 `x-user-id` 传递用户。代码字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
 OAuth2 用户标识配置使用 `user_id_claim`。
 

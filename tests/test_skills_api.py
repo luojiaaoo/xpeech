@@ -211,7 +211,7 @@ def test_other_session_routes_reject_unsafe_id(skill_api):
     ).status_code == 401
     assert client.post(
         "/answer_question", data={"answer": "yes"},
-        headers={**user_headers("../escape"), "x-session-id": "default"},
+        headers={**user_headers("../escape"), "x-session-id": "00000000-0000-7000-8000-000000000000"},
     ).status_code == 401
     assert client.post(
         "/answer_question", data={"answer": "yes"},

@@ -72,7 +72,7 @@ async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
         ConversationRecord(
             request_id=str(uuid4()),
             user_id="session-bob",
-            session_id="default",
+            session_id="00000000-0000-7000-8000-000000000000",
             channel="feishu",
             sender_name="alice",
             user_question="second question",
@@ -333,7 +333,7 @@ def test_channel_queries_and_export_include_all_matching_records(tmp_path: Path)
             await repository.append(ConversationRecord(
                 request_id=str(uuid4()),
                 user_id="session-alice", sender_name="alice", channel="feishu",
-                session_id="default",
+                session_id="00000000-0000-7000-8000-000000000000",
                 user_question=f'export question {index}, "quoted"\n第二行',
                 model_response="=1+1", input_tokens=2, output_tokens=1,
                 model_call_count=1, duration_s=1,
@@ -341,7 +341,7 @@ def test_channel_queries_and_export_include_all_matching_records(tmp_path: Path)
         await repository.append(ConversationRecord(
             request_id=str(uuid4()),
             user_id="session-alice", sender_name="alice", channel="web_client",
-            session_id="default",
+            session_id="00000000-0000-7000-8000-000000000000",
             user_question="export question from another channel", model_response="excluded",
             input_tokens=100, output_tokens=100, model_call_count=1, duration_s=1,
         ))

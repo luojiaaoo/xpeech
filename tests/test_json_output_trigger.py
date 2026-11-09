@@ -36,7 +36,7 @@ def chat_requests(monkeypatch, tmp_path):
     token = create_token(UserTokenParams("web_client", user_id="user"))
     headers = {
         "Authorization": f"Bearer {token}",
-        "x-session-id": "default",
+        "x-session-id": "00000000-0000-7000-8000-000000000000",
         "x-sender-name": "Alice",
     }
     return SimpleNamespace(client=TestClient(app), messages=messages, create=create, headers=headers)

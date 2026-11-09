@@ -59,7 +59,7 @@ def test_custom_channels_cannot_share_keys():
         JWTConfig.model_validate(config)
 
 
-@pytest.mark.parametrize("session_id", ["default", UUID7_SESSION_ID])
+@pytest.mark.parametrize("session_id", ["00000000-0000-7000-8000-000000000000", UUID7_SESSION_ID])
 def test_custom_channel_can_get_token_and_use_business_endpoints(channels, session_id):
     client = TestClient(app)
     response = client.post("/token", auth=("crm", CRM_KEY), data={"username": "tag-test"})
@@ -156,7 +156,7 @@ async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tm
 
 
 @pytest.mark.parametrize("path, not_interactive", [("/chat", False), ("/chat_sync", True)])
-@pytest.mark.parametrize("session_id", ["default", UUID7_SESSION_ID])
+@pytest.mark.parametrize("session_id", ["00000000-0000-7000-8000-000000000000", UUID7_SESSION_ID])
 def test_chat_passes_verified_channel_to_registration(
     channels,
     monkeypatch,

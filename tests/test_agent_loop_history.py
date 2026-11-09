@@ -330,7 +330,7 @@ async def test_request_yaml_retains_new_messages_across_multiple_compressions(tm
     agent_loop.max_accept_token = 100_000
     agent_loop._input_tokens = agent_loop._output_tokens = agent_loop._model_call_count = 0
     message = InboundMessage(
-        user_id="user", session_id="default", sender_name="Alice", channel="test",
+        user_id="user", session_id="00000000-0000-7000-8000-000000000000", sender_name="Alice", channel="test",
         session_metadata={}, content=[InputText(text="new question")], files=[],
     )
 
@@ -351,7 +351,7 @@ async def test_agent_run_requires_request_id(monkeypatch):
     monkeypatch.setattr(loop_module, "get_request_id", lambda: None)
     agent_loop = AgentLoop.__new__(AgentLoop)
     message = InboundMessage(
-        user_id="user", session_id="default", sender_name="Alice", channel="test",
+        user_id="user", session_id="00000000-0000-7000-8000-000000000000", sender_name="Alice", channel="test",
         session_metadata={}, content=[InputText(text="hello")], files=[],
     )
     with pytest.raises(RuntimeError, match="requires a request_id"):

@@ -18,6 +18,7 @@ from xpeech.agent.server.dependencies import (
 )
 from xpeech.agent.server.routes.chat import answer_question
 from xpeech.utils.channel_jwt import UserTokenParams, create_token
+from xpeech.utils.ids import DEFAULT_SESSION_ID
 
 UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 
@@ -51,14 +52,14 @@ def test_chat_sync_declares_no_session_id_header():
     assert all(parameter["name"] != "x-session-id" for parameter in parameters)
 
 
-def test_session_id_header_accepts_default_and_uuidv7():
-    assert session_id_header("default") == "default"
+def test_session_id_header_accepts_main_and_uuidv7():
+    assert session_id_header(DEFAULT_SESSION_ID) == DEFAULT_SESSION_ID
     assert session_id_header(UUID7_SESSION_ID) == UUID7_SESSION_ID
 
 
 @pytest.mark.parametrize(
     "session_id",
-    ["default", UUID7_SESSION_ID],
+    [DEFAULT_SESSION_ID, UUID7_SESSION_ID],
 )
 @pytest.mark.parametrize("channel", ["web_client", "feishu"])
 @pytest.mark.parametrize("json_requested", [False, True])
@@ -109,6 +110,7 @@ def test_chat_initializes_all_tools_for_every_session(
         "",
         " ",
         "chat-1",
+        "default",
         "01234567-89ab-4def-8123-456789abcdef",
         UUID7_SESSION_ID.upper(),
         UUID7_SESSION_ID.replace("-", ""),
@@ -149,7 +151,7 @@ def test_unsupported_json_output_returns_http_error_before_starting_stream(monke
         "/chat",
         headers={
             "Authorization": f"Bearer {token}",
-            "x-session-id": "default",
+            "x-session-id": DEFAULT_SESSION_ID,
             "x-sender-name": "Alice",
         },
         data={"content": '[{"text":"hello::请严格以JSON格式回复::"}]'},

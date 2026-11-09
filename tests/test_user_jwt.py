@@ -18,7 +18,7 @@ from xpeech.utils.internal_jwt import create_internal_access_token
 
 def user_headers(user_id="alice"):
     token = create_token(UserTokenParams("web_client", user_id=user_id))
-    return {"Authorization": f"Bearer {token}", "x-session-id": "default"}
+    return {"Authorization": f"Bearer {token}", "x-session-id": "00000000-0000-7000-8000-000000000000"}
 
 
 def test_user_identity_is_validated_once_and_read_only(monkeypatch):
@@ -48,7 +48,7 @@ def test_user_auth_rejects_missing_or_invalid_subject(subject):
         UserJWTAuth(token)
     response = TestClient(app).post(
         "/answer_question", data={"answer": "yes"},
-        headers={"Authorization": f"Bearer {token}", "x-user-id": "alice", "x-session-id": "default"},
+        headers={"Authorization": f"Bearer {token}", "x-user-id": "alice", "x-session-id": "00000000-0000-7000-8000-000000000000"},
     )
     assert response.status_code == 401
 
@@ -77,7 +77,7 @@ def test_user_endpoints_reject_channel_only_tokens(method, path, user_id):
 def test_answer_uses_and_returns_jwt_identity(monkeypatch):
     alice = QuestionEvent(event=asyncio.Event())
     bob = QuestionEvent(event=asyncio.Event())
-    monkeypatch.setattr(AgentLoop, "SESSION_QUESTION_EVENT", {("alice", "default"): alice, ("bob", "default"): bob})
+    monkeypatch.setattr(AgentLoop, "SESSION_QUESTION_EVENT", {("alice", "00000000-0000-7000-8000-000000000000"): alice, ("bob", "00000000-0000-7000-8000-000000000000"): bob})
     response = TestClient(app).post(
         "/answer_question?user_id=bob", data={"answer": "yes", "user_id": "bob"},
         headers={**user_headers(), "x-user-id": "bob"},

@@ -170,7 +170,7 @@ claims = {
 | --- | --- | --- |
 | `Authorization` | 是 | `Bearer <token>`，见第 2 节 |
 | JWT `sub` | 是 | 用户 ID，长度 1–128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_` |
-| `x-session-id` | `/chat`、`/answer_question` 必填；`/chat_sync` 不需要 | `default`（主会话），或规范的小写连字符 UUIDv7，例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
+| `x-session-id` | `/chat`、`/answer_question` 必填；`/chat_sync` 不需要 | 规范的小写连字符 UUIDv7；主会话使用保留 ID `00000000-0000-7000-8000-000000000000`，其他会话可使用例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
 | `x-sender-name` | 是 | 展示用用户名，不能为空或纯空白；非 ASCII 字符使用 UTF-8 URL 编码 |
 | `Accept` | 建议 | `text/event-stream` |
 
@@ -538,7 +538,7 @@ curl -N --fail-with-body -X POST "http://localhost:7878/chat" \
 | 同一通道的上一轮 `/chat` 结束后发下一条消息 | 正常，沿用该用户、会话的流式历史 |
 | 同一用户换新会话 ID 或换通道 | 隔离流式历史，文件工作区与记忆仍共享 |
 | 不同用户使用相同会话 ID | 按用户隔离 |
-| `x-session-id` 缺失、空值、非 `default` 且非规范 UUIDv7 | 返回 `422`（仅 `/chat`、`/answer_question`；`/chat_sync` 不需要该头） |
+| `x-session-id` 缺失、空值或非规范 UUIDv7 | 返回 `422`（仅 `/chat`、`/answer_question`；`/chat_sync` 不需要该头） |
 
 请以响应结束作为释放本地会话队列的时机；收到 `token_usage` 后继续读取至 EOF，再发送下一轮。
 

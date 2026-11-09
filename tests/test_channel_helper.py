@@ -34,7 +34,7 @@ async def test_backend_requests_bind_user_in_jwt_subject(monkeypatch):
     assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/files"]
     for request in requests:
         assert "x-user-id" not in request.headers
-        assert request.headers["x-session-id"] == "default"
+        assert request.headers["x-session-id"] == "00000000-0000-7000-8000-000000000000"
         token = request.headers["authorization"].removeprefix("Bearer ")
         auth = UserJWTAuth(token)
         assert auth.channel == TEST_CHANNEL

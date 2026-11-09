@@ -60,7 +60,7 @@ class TestSqliteConversationRecordRepository:
         record = ConversationRecord(
             user_id="user-1",
             channel="test",
-            session_id="default",
+            session_id="00000000-0000-7000-8000-000000000000",
             request_id="00000000-0000-4000-8000-000000000001",
             sender_name="张三",
             user_question="你好",
@@ -115,7 +115,7 @@ class TestSqliteConversationRecordRepository:
                 id=1,
                 user_id="user-1",
                 channel="test",
-                session_id="default",
+                session_id="00000000-0000-7000-8000-000000000000",
                 request_id="00000000-0000-4000-8000-000000000001",
                 sender_name="张三",
                 user_question="你好",
