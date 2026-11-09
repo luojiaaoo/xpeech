@@ -180,7 +180,8 @@ class SkillsLoader:
                 continue
             if self.not_interactive and metadata.name in INTERACTIVE_SKILL_NAMES:
                 continue
-            if not filter_allows_access(
+            # Workspace skills are placed by the user and are not subject to access filters.
+            if source == "builtin" and not filter_allows_access(
                 metadata.filter, FilterContext(channel=self.channel, org=self.user_organization)
             ):
                 continue

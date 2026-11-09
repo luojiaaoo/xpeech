@@ -333,6 +333,24 @@ async def test_filtered_builtin_directory_still_takes_precedence_over_workspace(
 
 
 @pytest.mark.asyncio
+async def test_workspace_skills_ignore_filter_while_builtins_enforce_it(tmp_path, monkeypatch):
+    builtin_dir = tmp_path / "builtin/gated-skill"
+    builtin_dir.mkdir(parents=True)
+    (builtin_dir / "SKILL.md").write_text('---\nname: gated-skill\nfilter: channel("crm")\n---\nBuilt-in')
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [builtin_dir])
+    workspace = tmp_path / "workspace"
+    skill_file = workspace / "skills" / "workspace-skill" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text('---\nname: workspace-skill\nfilter: channel("crm")\n---\nWorkspace')
+    loader = SkillsLoader(workspace, channel="other")
+
+    assert await loader.list_builtin_skill_info() == []
+    [skill] = await loader.list_skill_info()
+    assert skill.source == "workspace"
+    assert skill.metadata.name == "workspace-skill"
+
+
+@pytest.mark.asyncio
 async def test_skill_metadata_defaults_and_invalid_name_is_skipped(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
