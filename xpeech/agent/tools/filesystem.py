@@ -2,9 +2,9 @@ import base64
 import difflib
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ...utils.file_io import (
     LockedFile,
@@ -31,6 +31,12 @@ class ReadVideoArgs(BaseModel):
         default=None,
         ge=1,
     )
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> Self:
+        if self.end_time is not None and self.end_time <= self.start_time:
+            raise ValueError(f"end_time must be greater than start_time: {self.path}")
+        return self
 
 
 _READ_FILE_MAX_CHARS = 128_000
@@ -128,10 +134,8 @@ def build_file_tools(workspace: Path, max_result_chars: int = 10_000):
         if not file_path.is_file():
             raise ValueError(f"Not a file: {path}")
 
-        start_time = args.start_time if args.start_time is not None and args.start_time >= 0 else 0
+        start_time = args.start_time
         end_time = args.end_time
-        if end_time is not None and end_time <= start_time:
-            raise ValueError(f"end_time must be greater than start_time: {path}")
 
         try:
             video_info = await read_video_metadata(file_path)
@@ -205,7 +209,6 @@ def build_file_tools(workspace: Path, max_result_chars: int = 10_000):
         all_lines = text_content.splitlines()
         total = len(all_lines)
 
-        offset = max(offset, 1)
         if offset > total:
             raise ValueError(f"offset {offset} is beyond end of file ({total} lines)")
 

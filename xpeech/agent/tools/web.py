@@ -7,7 +7,7 @@ import httpx
 import trafilatura
 from baidusearch.baidusearch import search as _baidu_search
 from loguru import logger
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from ...utils.security.network import validate_url_target
 
@@ -26,6 +26,14 @@ class WebFetchArgs(BaseModel):
         default=False,
         description="是否在 Markdown 中保留图片链接和替代文字；需要图片信息时设为 true，不会下载图片或进行视觉识别",
     )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        is_valid, error_msg = validate_url_target(value)
+        if not is_valid:
+            raise ValueError(f"URL validation failed: {error_msg}")
+        return value
 
 
 class BaiduSearchArgs(BaseModel):
@@ -47,10 +55,6 @@ async def web_fetch(args: WebFetchArgs) -> str:
     Set include_images=true when image links and alt text are useful for the task.
     Does not launch a browser or execute JavaScript. Returns plain text, Markdown, XML (including RSS/Atom), and JSON directly.
     """
-
-    is_valid, error_msg = validate_url_target(args.url)
-    if not is_valid:
-        return f"URL validation failed: {error_msg}"
     return await _fetch_and_convert(args.url, include_images=args.include_images)
 
 
