@@ -32,9 +32,10 @@ max_history_days = 30
 ```
 
 文件按 URL 编码后的用户 ID 分目录，文件名为
-`channel=[channel]&session_id=[session_id].yaml`。通道和用户 ID 均从已验证的 Cookie 用户或 JWT
-取得；普通页面通道为 `web_client`，嵌入页面通道为 JWT `kid`。每次流式对话会记录一条用于界面
-还原的 `user` 事件（包含附件名称）以及后端 SSE 原始事件，同一会话续聊时追加保存；
+`channel=[channel]&session_id=[session_id].jsonl`，每行保存一个 JSON 事件，不重复保存文件名中的
+通道和会话 ID。通道和用户 ID 均从已验证的 Cookie 用户或 JWT 取得；普通页面通道为 `web_client`，
+嵌入页面通道为 JWT `kid`。每次流式对话会记录一条用于界面还原的 `user` 事件（包含附件名称）以及
+后端 SSE 原始事件，同一会话续聊时逐行追加保存；
 `/api/chat_sync` 的独立后台执行不写入该历史。查询或保存时按文件修改时间清理超过保留天数的文件，
 并清理由非法文件名标识的历史文件。
 

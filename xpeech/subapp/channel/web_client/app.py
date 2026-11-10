@@ -14,7 +14,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from ....utils.channel_jwt import UserJWTAuth
 from .dao import User, WebClientDAO
-from .history import YamlEventHistoryRepository
+from .history import JsonlEventHistoryRepository
 from .models import (
     InjectPromptWebConfig,
     OAuth2WebConfig,
@@ -57,7 +57,7 @@ def _password_matches(password: str, encoded: str) -> bool:
 
 def create_app(config: WebConfig) -> FastAPI:
     dao = WebClientDAO(config.database_path)
-    history = YamlEventHistoryRepository(
+    history = JsonlEventHistoryRepository(
         (config.session_history_path or config.database_path.parent / "session_history").resolve(),
         max_history_days=config.max_history_days,
     )

@@ -29,6 +29,7 @@ class YamlHistoryRepository:
     """以带有可解析元数据的 YAML 文件持久化会话历史。"""
 
     _FILE_KEYS = ("channel", "session_id")
+    _FILE_SUFFIX = ".yaml"
 
     def __init__(self, base_dir: Path, max_history_days: int = 30) -> None:
         """初始化历史目录和历史文件保留天数。"""
@@ -47,7 +48,7 @@ class YamlHistoryRepository:
             ("channel", channel),
             ("session_id", session_id),
         )
-        return f"{urlencode(fields, quote_via=quote, safe='')}.yaml"
+        return f"{urlencode(fields, quote_via=quote, safe='')}{cls._FILE_SUFFIX}"
 
     def _user_history_dir(self, user_id: str) -> Path:
         """将用户 ID 编码为单层目录名，隔离各用户的历史文件。"""
@@ -82,8 +83,8 @@ class YamlHistoryRepository:
             if S_ISDIR(stat.st_mode):
                 continue
             try:
-                if not S_ISREG(stat.st_mode) or path.suffix != ".yaml":
-                    raise ValueError("Not a regular YAML file")
+                if not S_ISREG(stat.st_mode) or path.suffix != self._FILE_SUFFIX:
+                    raise ValueError("Not a regular history file")
                 fields = parse_qsl(path.stem, keep_blank_values=True, strict_parsing=True)
                 values = dict(fields)
                 if tuple(key for key, _ in fields) != self._FILE_KEYS:

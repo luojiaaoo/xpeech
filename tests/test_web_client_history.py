@@ -10,14 +10,13 @@ from unittest.mock import AsyncMock
 import httpx
 import jwt
 import pytest
-import yaml
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from xpeech.config.settings import JWTChannelConfig, WebClientConfig, settings
 from xpeech.subapp.channel.helper import ChatStream
 from xpeech.subapp.channel.web_client.app import WebConfig, create_app
-from xpeech.subapp.channel.web_client.history import YamlEventHistoryRepository
+from xpeech.subapp.channel.web_client.history import JsonlEventHistoryRepository
 from xpeech.subapp.channel.web_client.routes import proxy
 
 SESSION_ID = "018f0000-0000-7000-8000-000000000001"
@@ -43,7 +42,7 @@ def test_sse_collector_handles_split_multibyte_data_and_multiline_events():
 
 @pytest.mark.asyncio
 async def test_event_repository_appends_filters_channels_and_cleans_expired_files(tmp_path: Path):
-    repository = YamlEventHistoryRepository(tmp_path, max_history_days=1)
+    repository = JsonlEventHistoryRepository(tmp_path, max_history_days=1)
     first = [{"event": "user", "context": "hello"}, {"event": "assistant", "context": "world"}]
     second = [{"event": "user", "context": "continue"}]
     await repository.append("alice", SESSION_ID, first, channel="web_client")
@@ -55,11 +54,11 @@ async def test_event_repository_appends_filters_channels_and_cleans_expired_file
     sessions = await repository.list_channel_sessions("alice", channel="web_client")
     assert [item["session_id"] for item in sessions] == [NEXT_SESSION_ID, SESSION_ID]
     assert sessions[1]["preview"] == "hello"
-    assert (tmp_path / "alice" / f"channel=web_client&session_id={SESSION_ID}.yaml").is_file()
-    assert (tmp_path / "alice" / f"channel=crm&session_id={SESSION_ID}.yaml").is_file()
+    assert (tmp_path / "alice" / f"channel=web_client&session_id={SESSION_ID}.jsonl").is_file()
+    assert (tmp_path / "alice" / f"channel=crm&session_id={SESSION_ID}.jsonl").is_file()
 
     expired = time.time() - 2 * 86400
-    path = tmp_path / "alice" / f"channel=web_client&session_id={SESSION_ID}.yaml"
+    path = tmp_path / "alice" / f"channel=web_client&session_id={SESSION_ID}.jsonl"
     os.utime(path, (expired, expired))
     remaining = await repository.list_channel_sessions("alice", channel="web_client")
     assert [item["session_id"] for item in remaining] == [NEXT_SESSION_ID]
@@ -139,9 +138,12 @@ def test_logged_in_user_can_load_and_continue_the_same_session(history_client):
         "user", "assistant", "assistant_end", "user", "assistant", "assistant_end",
     ]
     assert history.json()["events"][0]["context"] == "你好\n📎 报告.txt"
-    saved = yaml.safe_load(
-        (history_path / "admin" / f"channel=web_client&session_id={SESSION_ID}.yaml").read_text()
-    )
+    saved = [
+        json.loads(line)
+        for line in (history_path / "admin" / f"channel=web_client&session_id={SESSION_ID}.jsonl")
+        .read_text()
+        .splitlines()
+    ]
     assert saved == history.json()["events"]
 
 
@@ -175,7 +177,7 @@ def test_embedded_and_login_history_use_their_verified_channels(history_client):
     assert client.get(f"/api/history/sessions/{SESSION_ID}", headers=headers).json()["events"][0] == {
         "event": "user", "context": "嵌入消息",
     }
-    assert (history_path / "admin" / f"channel=crm&session_id={SESSION_ID}.yaml").is_file()
+    assert (history_path / "admin" / f"channel=crm&session_id={SESSION_ID}.jsonl").is_file()
     assert len(client.get("/api/history/sessions").json()) == 1
 
 
@@ -250,7 +252,7 @@ def test_each_reply_uses_a_session_websocket_and_saves_before_done(history_clien
     ]
     assert json.loads(opener.await_args_list[0].args[3]) == {"source": "websocket-test"}
     assert opener.await_args_list[0].kwargs["files"][0][1][0] == "报告.txt"
-    assert (history_path / "admin" / f"channel=web_client&session_id={SESSION_ID}.yaml").is_file()
+    assert (history_path / "admin" / f"channel=web_client&session_id={SESSION_ID}.jsonl").is_file()
 
 
 def test_websocket_embedded_auth_uses_json_token_and_rejects_invalid_credentials(history_client):
@@ -276,5 +278,5 @@ def test_websocket_embedded_auth_uses_json_token_and_rejects_invalid_credentials
         assert error["status"] == 401
 
     assert client.get(f"/api/history/sessions/{SESSION_ID}").status_code == 401
-    assert (history_path / "alice" / f"channel=crm&session_id={SESSION_ID}.yaml").is_file()
-    assert not (history_path / "alice" / f"channel=crm&session_id={NEXT_SESSION_ID}.yaml").exists()
+    assert (history_path / "alice" / f"channel=crm&session_id={SESSION_ID}.jsonl").is_file()
+    assert not (history_path / "alice" / f"channel=crm&session_id={NEXT_SESSION_ID}.jsonl").exists()

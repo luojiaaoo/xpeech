@@ -33,7 +33,7 @@ from .....utils.internal_jwt import create_internal_access_token
 from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file
 from ..backend import open_chat, open_chat_sync, submit_question
 from ..dao import User
-from ..history import YamlEventHistoryRepository
+from ..history import JsonlEventHistoryRepository
 
 UserDependency = Callable[..., Awaitable[User | UserJWTAuth] | User | UserJWTAuth]
 
@@ -144,7 +144,7 @@ def create_proxy_router(
     backend_url: str,
     current_user_dependency: UserDependency,
     admin_user_dependency: UserDependency,
-    history: YamlEventHistoryRepository,
+    history: JsonlEventHistoryRepository,
     cookie_name: str,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
