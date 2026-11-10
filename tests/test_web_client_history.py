@@ -191,10 +191,9 @@ def test_history_requires_authentication_and_a_canonical_session_id(history_clie
     }
 
 
-def websocket_message(request_id: str, session_id: str, text: str, **extra):
+def websocket_message(session_id: str, text: str, **extra):
     return {
         "type": "start",
-        "request_id": request_id,
         "session_id": session_id,
         "content": json.dumps([{"text": text}], ensure_ascii=False),
         "token": None,
@@ -205,50 +204,45 @@ def websocket_message(request_id: str, session_id: str, text: str, **extra):
     }
 
 
-def receive_websocket_turn(websocket, request_id: str):
+def receive_websocket_turn(websocket):
     messages = []
     while True:
         message = websocket.receive_json()
         messages.append(message)
-        if message["request_id"] == request_id and message["type"] in {"done", "error"}:
+        if message["type"] in {"done", "error"}:
             return messages
 
 
-def test_one_websocket_multiplexes_sessions_and_saves_before_done(history_client):
+def test_each_reply_uses_a_session_websocket_and_saves_before_done(history_client):
     client, history_path, opener = history_client
     login(client)
 
     with client.websocket_connect("/api/chat/ws") as websocket:
         websocket.send_json(websocket_message(
-            "request-a", SESSION_ID, "会话 A",
+            SESSION_ID, "会话 A",
             files=[{
                 "name": "报告.txt",
                 "type": "text/plain",
                 "data": base64.b64encode(b"attachment").decode(),
             }],
         ))
-        websocket.send_json(websocket_message("request-b", NEXT_SESSION_ID, "会话 B"))
-        received = []
-        completed = set()
-        while completed != {"request-a", "request-b"}:
-            message = websocket.receive_json()
-            received.append(message)
-            if message["type"] == "done":
-                completed.add(message["request_id"])
-        first = [message for message in received if message["request_id"] == "request-a"]
-        second = [message for message in received if message["request_id"] == "request-b"]
-
+        first = receive_websocket_turn(websocket)
         assert [message["type"] for message in first] == ["event", "event", "done"]
         assert all(message["session_id"] == SESSION_ID for message in first)
         assert first[0]["event"] == {"event": "assistant", "context": "回答"}
-        assert [message["type"] for message in second] == ["event", "event", "done"]
         assert client.get(f"/api/history/sessions/{SESSION_ID}").json()["events"][0] == {
             "event": "user", "context": "会话 A\n📎 报告.txt",
         }
+
+    with client.websocket_connect("/api/chat/ws") as websocket:
+        websocket.send_json(websocket_message(NEXT_SESSION_ID, "会话 B"))
+        second = receive_websocket_turn(websocket)
+        assert [message["type"] for message in second] == ["event", "event", "done"]
         assert client.get(f"/api/history/sessions/{NEXT_SESSION_ID}").json()["events"][0]["context"] == "会话 B"
 
-        websocket.send_json(websocket_message("request-a-2", SESSION_ID, "继续 A"))
-        continued = receive_websocket_turn(websocket, "request-a-2")
+    with client.websocket_connect("/api/chat/ws") as websocket:
+        websocket.send_json(websocket_message(SESSION_ID, "继续 A"))
+        continued = receive_websocket_turn(websocket)
         assert continued[-1]["type"] == "done"
 
     assert [call.kwargs["session_id"] for call in opener.await_args_list] == [
@@ -270,15 +264,14 @@ def test_websocket_embedded_auth_uses_json_token_and_rejects_invalid_credentials
 
     with client.websocket_connect("/api/chat/ws") as websocket:
         websocket.send_json(websocket_message(
-            "embedded-request", SESSION_ID, "嵌入消息",
-            token=token, sender_name="embedded-user",
+            SESSION_ID, "嵌入消息", token=token, sender_name="embedded-user",
         ))
-        messages = receive_websocket_turn(websocket, "embedded-request")
+        messages = receive_websocket_turn(websocket)
         assert messages[-1]["type"] == "done"
-        websocket.send_json(websocket_message(
-            "invalid-request", NEXT_SESSION_ID, "不能发送", token="invalid",
-        ))
-        error = receive_websocket_turn(websocket, "invalid-request")[-1]
+
+    with client.websocket_connect("/api/chat/ws") as websocket:
+        websocket.send_json(websocket_message(NEXT_SESSION_ID, "不能发送", token="invalid"))
+        error = receive_websocket_turn(websocket)[-1]
         assert error["type"] == "error"
         assert error["status"] == 401
 

@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import binascii
 import codecs
@@ -308,33 +307,25 @@ def create_proxy_router(
 
     @router.websocket("/chat/ws")
     async def proxy_chat_websocket(websocket: WebSocket):
-        """Multiplex independent session streams over one browser WebSocket."""
+        """Forward one session stream; the socket itself correlates all events."""
         await websocket.accept()
-        tasks: dict[str, asyncio.Task] = {}
-        send_lock = asyncio.Lock()
+        session_id = ""
 
-        async def send(message: dict[str, Any]) -> None:
-            async with send_lock:
-                await websocket.send_json(message)
-
-        async def send_error(
-            request_id: str,
-            session_id: str,
-            detail: str,
-            error_status: int = 500,
-        ) -> None:
-            await send({
+        async def send_error(detail: str, error_status: int = 500) -> None:
+            await websocket.send_json({
                 "type": "error",
-                "request_id": request_id,
                 "session_id": session_id,
                 "status": error_status,
                 "detail": detail,
             })
 
-        async def forward(request_id: str, payload: dict[str, Any]) -> None:
-            session_id = payload.get("session_id")
-            if not isinstance(session_id, str):
-                session_id = ""
+        try:
+            payload = await websocket.receive_json()
+            if not isinstance(payload, dict) or payload.get("type") != "start":
+                await send_error("无效的聊天请求", 422)
+                return
+            if isinstance(payload.get("session_id"), str):
+                session_id = payload["session_id"]
             try:
                 token = payload.get("token")
                 if token is not None and not isinstance(token, str):
@@ -382,7 +373,7 @@ def create_proxy_router(
                     files.append(SimpleNamespace(filename=filename))
                     upload_data.append(("files", (filename, data, media_type)))
             except HTTPException as error:
-                await send_error(request_id, session_id, str(error.detail), error.status_code)
+                await send_error(str(error.detail), error.status_code)
                 return
 
             try:
@@ -395,9 +386,9 @@ def create_proxy_router(
                     files=upload_data,
                     session_id=session_id,
                 )
-            except Exception:  # noqa: BLE001 - 连接失败要返回给对应请求，不能中断共享 WebSocket
+            except Exception:  # noqa: BLE001 - 后端连接失败通过当前 WebSocket 返回
                 logger.exception("WebSocket chat could not open the backend stream")
-                await send_error(request_id, session_id, "无法连接聊天后端")
+                await send_error("无法连接聊天后端")
                 return
 
             upstream = chat_stream.response
@@ -407,8 +398,6 @@ def create_proxy_router(
                 finally:
                     await chat_stream.aclose()
                 await send_error(
-                    request_id,
-                    session_id,
                     body.decode("utf-8", errors="replace") or f"聊天后端返回 {upstream.status_code}",
                     upstream.status_code,
                 )
@@ -422,9 +411,8 @@ def create_proxy_router(
             async def emit_events() -> None:
                 nonlocal sent_events
                 for event in collector.events[sent_events:]:
-                    await send({
+                    await websocket.send_json({
                         "type": "event",
-                        "request_id": request_id,
                         "session_id": session_id,
                         "event": event,
                     })
@@ -453,69 +441,22 @@ def create_proxy_router(
                             [user_event, *collector.events],
                             channel=history_channel,
                         )
-                    except Exception:  # noqa: BLE001 - 历史失败不能影响同连接上的其他会话
+                    except Exception:  # noqa: BLE001 - 历史失败不能改变聊天响应
                         logger.exception("Web event history could not be saved")
-            await send({
-                "type": "done",
-                "request_id": request_id,
-                "session_id": session_id,
-            })
-
-        async def run(request_id: str, payload: dict[str, Any]) -> None:
-            session_id = payload.get("session_id")
-            try:
-                await forward(request_id, payload)
-            except asyncio.CancelledError:
-                raise
-            except (WebSocketDisconnect, RuntimeError):
-                # The shared socket has closed; the connection loop cancels all remaining tasks.
-                pass
-            except Exception:  # noqa: BLE001 - 单个会话失败不能断开其他会话
-                logger.exception("WebSocket chat request failed")
-                try:
-                    await send_error(
-                        request_id,
-                        session_id if isinstance(session_id, str) else "",
-                        "聊天请求执行失败",
-                    )
-                except (WebSocketDisconnect, RuntimeError):
-                    pass
-
-        try:
-            while True:
-                payload = await websocket.receive_json()
-                if not isinstance(payload, dict):
-                    continue
-                request_id = payload.get("request_id")
-                session_id = payload.get("session_id")
-                if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
-                    continue
-                if not isinstance(session_id, str):
-                    continue
-                if payload.get("type") == "cancel":
-                    if task := tasks.get(request_id):
-                        task.cancel()
-                    continue
-                if payload.get("type") != "start" or request_id in tasks:
-                    await send_error(request_id, session_id, "无效的聊天请求", 422)
-                    continue
-                task = asyncio.create_task(run(request_id, payload))
-                tasks[request_id] = task
-
-                def cleanup(completed: asyncio.Task, *, request_id: str = request_id) -> None:
-                    if tasks.get(request_id) is completed:
-                        tasks.pop(request_id, None)
-                    if not completed.cancelled():
-                        completed.exception()
-
-                task.add_done_callback(cleanup)
-        except WebSocketDisconnect:
+            await websocket.send_json({"type": "done", "session_id": session_id})
+        except (WebSocketDisconnect, RuntimeError):
             pass
+        except Exception:  # noqa: BLE001 - 将异常转换为当前会话的错误消息
+            logger.exception("WebSocket chat request failed")
+            try:
+                await send_error("聊天请求执行失败")
+            except (WebSocketDisconnect, RuntimeError):
+                pass
         finally:
-            for task in tasks.values():
-                task.cancel()
-            if tasks:
-                await asyncio.gather(*tasks.values(), return_exceptions=True)
+            try:
+                await websocket.close()
+            except RuntimeError:
+                pass
 
     @router.post("/answer_question")
     async def proxy_answer(

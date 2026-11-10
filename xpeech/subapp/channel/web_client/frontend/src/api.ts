@@ -268,82 +268,8 @@ export async function chatSync(text: string, files: File[] = [], options: ChatOp
   return response.json();
 }
 
-type PendingChat = {
-  sessionId: string;
-  embedded: boolean;
-  onEvent: (event: ChatEvent) => void;
-  signal?: AbortSignal;
-  resolve: () => void;
-  reject: (error: Error) => void;
-  abort: () => void;
-};
-
-const pendingChats = new Map<string, PendingChat>();
-let chatSocket: WebSocket | null = null;
-let chatSocketOpening: Promise<WebSocket> | null = null;
-
 function abortError() {
   return new DOMException('The chat request was aborted', 'AbortError');
-}
-
-function finishChatRequest(requestId: string, error?: Error) {
-  const pending = pendingChats.get(requestId);
-  if (!pending) return;
-  pendingChats.delete(requestId);
-  pending.signal?.removeEventListener('abort', pending.abort);
-  if (error) pending.reject(error);
-  else pending.resolve();
-}
-
-function openChatSocket() {
-  if (chatSocket?.readyState === WebSocket.OPEN) return Promise.resolve(chatSocket);
-  if (chatSocketOpening) return chatSocketOpening;
-  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(`${scheme}//${window.location.host}/api/chat/ws`);
-  chatSocket = socket;
-  const opening = new Promise<WebSocket>((resolve, reject) => {
-    let opened = false;
-    socket.onopen = () => {
-      opened = true;
-      resolve(socket);
-    };
-    socket.onmessage = ({ data }) => {
-      let message: {
-        type?: string; request_id?: string; session_id?: string;
-        event?: ChatEvent; detail?: string; status?: number;
-      };
-      try {
-        message = JSON.parse(String(data));
-      } catch {
-        return;
-      }
-      if (!message.request_id) return;
-      const pending = pendingChats.get(message.request_id);
-      if (!pending || pending.sessionId !== message.session_id) return;
-      if (message.type === 'event' && message.event) {
-        pending.onEvent(message.event);
-      } else if (message.type === 'done') {
-        finishChatRequest(message.request_id);
-      } else if (message.type === 'error') {
-        if (message.status === 401) {
-          if (pending.embedded) jwtExpired();
-          else window.location.reload();
-        }
-        finishChatRequest(message.request_id, new Error(message.detail || '消息发送失败'));
-      }
-    };
-    socket.onclose = () => {
-      if (chatSocket === socket) {
-        chatSocket = null;
-        chatSocketOpening = null;
-      }
-      const error = new Error('聊天连接已中断，请重新发送');
-      if (!opened) reject(error);
-      for (const requestId of [...pendingChats.keys()]) finishChatRequest(requestId, error);
-    };
-  });
-  chatSocketOpening = opening;
-  return opening;
 }
 
 async function encodeChatFile(file: File) {
@@ -361,42 +287,65 @@ export async function streamChat(
 ) {
   const signal = options.signal;
   signal?.throwIfAborted();
-  const requestId = crypto.randomUUID();
   const sessionId = options.sessionId ?? '00000000-0000-7000-8000-000000000000';
+  const token = memoryJWT;
+  const senderName = memorySenderName;
+  const sessionMetadata = memorySessionMetadata;
   const encodedFiles = await Promise.all(files.map(encodeChatFile));
   signal?.throwIfAborted();
-  const result = new Promise<void>((resolve, reject) => {
-    const pending: PendingChat = {
-      sessionId, embedded: !!memoryJWT, onEvent, signal, resolve, reject,
-      abort: () => {},
+  await new Promise<void>((resolve, reject) => {
+    const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${scheme}//${window.location.host}/api/chat/ws`);
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      if (error) reject(error);
+      else resolve();
     };
-    pending.abort = () => {
-      if (chatSocket?.readyState === WebSocket.OPEN) {
-        chatSocket.send(JSON.stringify({ type: 'cancel', request_id: requestId, session_id: sessionId }));
-      }
-      finishChatRequest(requestId, abortError());
+    const abort = () => {
+      finish(abortError());
+      socket.close();
     };
-    pendingChats.set(requestId, pending);
-    signal?.addEventListener('abort', pending.abort, { once: true });
-  });
-  try {
-    const socket = await openChatSocket();
-    if (!signal?.aborted) {
+    signal?.addEventListener('abort', abort, { once: true });
+    socket.onopen = () => {
       socket.send(JSON.stringify({
         type: 'start',
-        request_id: requestId,
         session_id: sessionId,
         content: JSON.stringify(text.trim() ? [{ text: text.trim() }] : []),
-        token: memoryJWT,
-        sender_name: memorySenderName === null ? null : encodeURIComponent(memorySenderName),
-        session_metadata: memorySessionMetadata,
+        token,
+        sender_name: senderName === null ? null : encodeURIComponent(senderName),
+        session_metadata: sessionMetadata,
         files: encodedFiles,
       }));
-    }
-  } catch (error) {
-    finishChatRequest(requestId, error instanceof Error ? error : new Error(String(error)));
-  }
-  await result;
+    };
+    socket.onmessage = ({ data }) => {
+      let message: {
+        type?: string; session_id?: string; event?: ChatEvent; detail?: string; status?: number;
+      };
+      try {
+        message = JSON.parse(String(data));
+      } catch {
+        return;
+      }
+      if (message.session_id !== sessionId) return;
+      if (message.type === 'event' && message.event) {
+        onEvent(message.event);
+      } else if (message.type === 'done') {
+        finish();
+        socket.close();
+      } else if (message.type === 'error') {
+        if (message.status === 401) {
+          if (token) jwtExpired();
+          else window.location.reload();
+        }
+        finish(new Error(message.detail || '消息发送失败'));
+        socket.close();
+      }
+    };
+    socket.onclose = () => finish(new Error('聊天连接已中断，请重新发送'));
+  });
 }
 
 export async function answerQuestion(answer: unknown, sessionId?: string) {

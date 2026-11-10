@@ -960,7 +960,7 @@ npm run build
 
 普通登录页面与嵌入页面共用聊天工作区，均支持新建会话、查看历史消息及选中历史会话续聊；
 PC 显示历史侧栏，窄屏使用历史抽屉。已打开会话切换时仅隐藏，回复继续运行，历史菜单显示加载状态；
-所有会话通过一条 WebSocket 按 `request_id + session_id` 多路复用。独立页面继续使用账号登录，
+每次回复使用一条会话专属 WebSocket，完成后关闭，不为空闲会话保留连接。独立页面继续使用账号登录，
 嵌入页面继续使用 JS 注入 JWT。
 Web 原始事件历史由 `web_client.session_history_path` 配置，默认为
 `data/web_client/session_history`，按用户 ID 分目录、按 `channel + session_id` 命名 YAML 文件；
