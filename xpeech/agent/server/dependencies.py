@@ -36,7 +36,7 @@ def session_id_header(
     session_id: Annotated[
         str,
         Header(
-            description="必填会话 ID；所有通道均只接受规范的小写连字符 UUIDv7，主会话使用全零时间戳的保留 ID",
+            description="必填会话 ID；所有通道均只接受规范的小写连字符 UUIDv7",
             alias="x-session-id",
         ),
     ],

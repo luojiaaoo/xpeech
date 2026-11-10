@@ -85,7 +85,7 @@ class AgentLoop:
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
         self.history = YamlHistoryRepository(
             settings.path.session_history_path,
-            max_files_per_user=settings.llm.max_history_files_per_user,
+            max_history_days=settings.llm.max_history_days,
         )
         self.records = SqliteConversationRecordRepository()
         self._model_call_count = 0

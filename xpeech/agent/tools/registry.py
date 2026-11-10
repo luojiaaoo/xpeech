@@ -79,7 +79,7 @@ async def register_tools(
     for tool in build_session_tools(
         user_id=user_id,
         history_path=settings.path.session_history_path,
-        max_files_per_user=settings.llm.max_history_files_per_user,
+        max_history_days=settings.llm.max_history_days,
     ):
         provider.register_function_tool(tool)
     if not not_interactive:

@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import UploadFile
 
 from ..utils.file_io import save_to_workspace
-from ..utils.ids import DEFAULT_SESSION_ID, generate_session_id, validate_session_id
+from ..utils.ids import generate_session_id, validate_session_id
 from .runner import AgentRunner
 from .server.schema import InboundMessage, InputContent, InputText
 from .tools.schedule.schema import ScheduledExecution, ScheduledExecutionResult
@@ -30,7 +30,7 @@ async def _prepare_chat(
     content: InputContent,
     sender_name: str,
     channel: str,
-    session_id: str = DEFAULT_SESSION_ID,
+    session_id: str,
     session_metadata: dict[str, str] | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
@@ -61,7 +61,7 @@ async def execute_chat_stream(
     content: InputContent,
     sender_name: str,
     channel: str,
-    session_id: str = DEFAULT_SESSION_ID,
+    session_id: str,
     session_metadata: dict[str, str] | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,

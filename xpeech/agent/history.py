@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from stat import S_ISDIR, S_ISREG
 from typing import Any
@@ -12,7 +12,7 @@ from loguru import logger
 from ..exceptions import PathProtectionError
 from ..utils.file_io import LockedFile, ensure_path
 from ..utils.helper import LiteralDumper
-from ..utils.ids import DEFAULT_SESSION_ID, validate_session_id
+from ..utils.ids import validate_session_id
 from .prompt.helper import remove_system_messages
 
 
@@ -33,12 +33,12 @@ class YamlHistoryRepository:
     _SESSION_TYPE = "session"
     _NOT_INTERACTIVE_TYPE = "not_interactive"
 
-    def __init__(self, base_dir: Path, max_files_per_user: int = 100) -> None:
-        """初始化历史目录和每个用户的文件保留上限。"""
-        if max_files_per_user < 1:
-            raise ValueError("max_files_per_user must be at least 1")
+    def __init__(self, base_dir: Path, max_history_days: int = 30) -> None:
+        """初始化历史目录和历史文件保留天数。"""
+        if max_history_days < 1:
+            raise ValueError("max_history_days must be at least 1")
         self._base_dir = ensure_path(base_dir.resolve())
-        self._max_files_per_user = max_files_per_user
+        self._max_history_days = max_history_days
 
     @classmethod
     def _history_filename(
@@ -93,7 +93,8 @@ class YamlHistoryRepository:
         user_id: str,
         protected_session_id: str | None = None,
     ) -> list[_HistoryFile]:
-        """清理当前用户的非法或超额历史文件，优先保留主会话和当前会话。"""
+        """清理当前用户的非法或超过保留天数未更新的历史文件，仅保护本次操作的会话。"""
+        cutoff = (datetime.now(UTC) - timedelta(days=self._max_history_days)).timestamp()
         histories: list[_HistoryFile] = []
         for path in self._user_history_dir(user_id).iterdir():
             try:
@@ -122,35 +123,20 @@ class YamlHistoryRepository:
                 path.unlink(missing_ok=True)
                 logger.info("Invalid session history file deleted path={}", path.name)
                 continue
-            histories.append(_HistoryFile(
+            history = _HistoryFile(
                 path=path,
                 channel=values["channel"],
                 session_id=session_id,
                 not_interactive=not_interactive,
                 modified_ns=stat.st_mtime_ns,
                 size_bytes=stat.st_size,
-            ))
-
-        histories.sort(key=lambda history: (
-            history.session_id == DEFAULT_SESSION_ID
-            or history.session_id == protected_session_id,
-            history.modified_ns,
-            history.path.name,
-        ), reverse=True)
-        count = 0
-        retained: list[_HistoryFile] = []
-        for history in histories:
-            if (
-                count < self._max_files_per_user
-                or history.session_id == DEFAULT_SESSION_ID
-                or history.session_id == protected_session_id
-            ):
-                count += 1
-                retained.append(history)
-            else:
+            )
+            if stat.st_mtime < cutoff and session_id != protected_session_id:
                 history.path.unlink(missing_ok=True)
                 logger.info("Expired session history file deleted path={}", history.path.name)
-        return retained
+                continue
+            histories.append(history)
+        return histories
 
     async def list_sessions(
         self,

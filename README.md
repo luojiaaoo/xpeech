@@ -454,9 +454,9 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 
 `user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、技能和 MCP 连接；`session_id`
 标识该用户的一次会话，用于隔离上下文、并发聊天和提问回答。同一个用户可以同时拥有多个会话。
-所有通道均必须传入非空请求头 `x-session-id`，只接受规范的小写连字符 UUIDv7；
-主会话使用保留 ID `00000000-0000-7000-8000-000000000000`，省略、空值或其他格式均返回 HTTP 422。
-流式交互会话（包括主会话和其他 UUIDv7 会话）均向模型提供后台任务工具
+所有通道均必须传入非空请求头 `x-session-id`，只接受规范的小写连字符 UUIDv7，
+省略、空值或其他格式均返回 HTTP 422。
+流式交互会话均向模型提供后台任务工具
 `feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`；`/chat_sync` 等非交互执行不提供这些工具。
 对外用户身份只使用 JWT `sub`；仅内部请求通过 `x-user-id` 传递用户。代码字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
 OAuth2 用户标识配置使用 `user_id_claim`。
@@ -466,7 +466,7 @@ OAuth2 用户标识配置使用 `user_id_claim`。
 后台任务每次运行的上下文也保存在该目录，文件名为
 `user_id=[user_id]&channel=[channel]&type=not_interactive&session_id=[session_id].yaml`。后台任务每次执行时生成
 UUIDv7 格式的 `session_id`，保存历史时直接复用此 ID；执行时间以文件修改时间为准。
-`llm.max_history_files_per_user` 控制每个用户最多保留的历史文件数。加载历史时会按修改时间清理超额文件，
+`llm.max_history_days` 控制历史文件的保留天数。加载历史时会清理超过保留天数未更新的文件，
 并删除历史目录中不符合上述命名格式的文件。
 模型可感知当前 `session_id`，并通过 `list_sessions` 和 `read_session` 分页查看当前用户已保存的
 普通会话及后台执行历史。历史查询只读，不会切换当前会话或自动合并其他会话的上下文。

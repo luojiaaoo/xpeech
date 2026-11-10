@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -27,10 +27,11 @@ async def test_lists_only_current_user_sessions_with_date_filters_and_pagination
     await repository.save("alice", SESSION_IDS[2], history, channel="feishu", not_interactive=True)
     await repository.save("alice-other", SESSION_IDS[3], history, channel="feishu")
     await repository.save("alice~session~other", SESSION_IDS[4], history, channel="feishu")
+    day0, day1, day2 = (datetime.now(UTC).date() - timedelta(days=offset) for offset in (3, 2, 1))
     dates = {
-        f"channel=feishu&type=session&session_id={SESSION_IDS[0]}.yaml": "2026-10-27T23:59:59+00:00",
-        f"channel=web&type=session&session_id={SESSION_IDS[1]}.yaml": "2026-10-28T00:00:00+00:00",
-        f"channel=feishu&type=not_interactive&session_id={SESSION_IDS[2]}.yaml": "2026-10-29T23:59:59+00:00",
+        f"channel=feishu&type=session&session_id={SESSION_IDS[0]}.yaml": f"{day0}T23:59:59+00:00",
+        f"channel=web&type=session&session_id={SESSION_IDS[1]}.yaml": f"{day1}T00:00:00+00:00",
+        f"channel=feishu&type=not_interactive&session_id={SESSION_IDS[2]}.yaml": f"{day2}T23:59:59+00:00",
     }
     for filename, timestamp in dates.items():
         modified = datetime.fromisoformat(timestamp).timestamp()
@@ -59,17 +60,17 @@ async def test_lists_only_current_user_sessions_with_date_filters_and_pagination
     assert first["has_more"] is True
     assert first["sessions"] + rest["sessions"] == all_sessions["sessions"]
     filtered = json.loads(await list_sessions(
-        ListSessionsArgs(start_date="2026-10-28", end_date="2026-10-29"), session_id="00000000-0000-7000-8000-000000000000",
+        ListSessionsArgs(start_date=day1, end_date=day2), session_id="00000000-0000-7000-8000-000000000000",
     ))
     assert [session["session_id"] for session in filtered["sessions"]] == [SESSION_IDS[2], SESSION_IDS[1]]
     assert filtered["total"] == 2
-    page = json.loads(await list_sessions(ListSessionsArgs(start_date="2026-10-28", limit=1), session_id="00000000-0000-7000-8000-000000000000"))
+    page = json.loads(await list_sessions(ListSessionsArgs(start_date=day1, limit=1), session_id="00000000-0000-7000-8000-000000000000"))
     assert page["total"] == 2
     assert page["has_more"] is True
     assert page["sessions"] == filtered["sessions"][:1]
-    older = json.loads(await list_sessions(ListSessionsArgs(end_date="2026-10-27"), session_id="00000000-0000-7000-8000-000000000000"))
+    older = json.loads(await list_sessions(ListSessionsArgs(end_date=day0), session_id="00000000-0000-7000-8000-000000000000"))
     assert [session["session_id"] for session in older["sessions"]] == [SESSION_IDS[0]]
-    empty = json.loads(await list_sessions(ListSessionsArgs(start_date="2026-10-30"), session_id="00000000-0000-7000-8000-000000000000"))
+    empty = json.loads(await list_sessions(ListSessionsArgs(start_date=day2 + timedelta(days=1)), session_id="00000000-0000-7000-8000-000000000000"))
     assert empty["total"] == 0
     assert empty["sessions"] == []
 

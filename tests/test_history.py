@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -103,34 +104,44 @@ class TestYamlHistoryRepository:
         ]
 
     @pytest.mark.asyncio
-    async def test_retention_preserves_all_default_channels_and_active_session(self, tmp_path: Path):
-        repository = YamlHistoryRepository(tmp_path, max_files_per_user=1)
+    async def test_retention_deletes_expired_files_for_any_session_and_channel(self, tmp_path: Path):
+        repository = YamlHistoryRepository(tmp_path, max_history_days=30)
         messages = [{"role": "user", "content": "hello"}]
-        for channel in ("web", "feishu"):
-            await repository.save("alice", "00000000-0000-7000-8000-000000000000", messages, channel=channel)
-            os.utime(history_path(tmp_path, "alice", channel, "session", "00000000-0000-7000-8000-000000000000"), (1, 1))
-        for session_id in SESSION_IDS[:2]:
-            await repository.save("alice", session_id, messages, channel="web")
+        expired = time.time() - 31 * 86400
+        for session_id in ("00000000-0000-7000-8000-000000000000", SESSION_IDS[0]):
+            for channel in ("web", "feishu"):
+                await repository.save("alice", session_id, messages, channel=channel)
+                os.utime(history_path(tmp_path, "alice", channel, "session", session_id), (expired, expired))
+        await repository.save("alice", SESSION_IDS[1], messages, channel="web")
 
-        assert await repository.load("alice", SESSION_IDS[0], channel="web") == messages
-        for channel in ("web", "feishu"):
-            assert history_path(tmp_path, "alice", channel, "session", "00000000-0000-7000-8000-000000000000").is_file()
-        assert history_path(tmp_path, "alice", "web", "session", SESSION_IDS[0]).is_file()
-        assert not history_path(tmp_path, "alice", "web", "session", SESSION_IDS[1]).exists()
+        assert await repository.load("alice", SESSION_IDS[1], channel="web") == messages
+
+        for session_id in ("00000000-0000-7000-8000-000000000000", SESSION_IDS[0]):
+            for channel in ("web", "feishu"):
+                assert not history_path(tmp_path, "alice", channel, "session", session_id).exists()
+        assert history_path(tmp_path, "alice", "web", "session", SESSION_IDS[1]).is_file()
 
     @pytest.mark.asyncio
-    async def test_list_retention_preserves_current_session_in_all_channels(self, tmp_path: Path):
-        repository = YamlHistoryRepository(tmp_path, max_files_per_user=1)
+    @pytest.mark.parametrize("operation", ["load", "list_sessions", "load_session"])
+    async def test_retention_keeps_the_session_of_the_current_operation(self, tmp_path: Path, operation: str):
+        repository = YamlHistoryRepository(tmp_path, max_history_days=30)
+        messages = [{"role": "user", "content": "hello"}]
+        expired = time.time() - 31 * 86400
         for channel in ("web", "feishu"):
-            await repository.save("alice", SESSION_IDS[0], [], channel=channel)
-            os.utime(history_path(tmp_path, "alice", channel, "session", SESSION_IDS[0]), (1, 1))
-        await repository.save("alice", SESSION_IDS[1], [], channel="web")
+            await repository.save("alice", SESSION_IDS[0], messages, channel=channel)
+            os.utime(history_path(tmp_path, "alice", channel, "session", SESSION_IDS[0]), (expired, expired))
+        await repository.save("alice", SESSION_IDS[1], messages, channel="web")
+        os.utime(history_path(tmp_path, "alice", "web", "session", SESSION_IDS[1]), (expired, expired))
 
-        assert await repository.list_sessions("alice", current_session_id=SESSION_IDS[0]) == []
-        assert all(
-            history_path(tmp_path, "alice", channel, "session", SESSION_IDS[0]).is_file()
-            for channel in ("web", "feishu")
-        )
+        if operation == "load":
+            assert await repository.load("alice", SESSION_IDS[0], channel="web") == messages
+        elif operation == "load_session":
+            assert await repository.load_session("alice", SESSION_IDS[0]) == messages
+        else:
+            assert await repository.list_sessions("alice", current_session_id=SESSION_IDS[0]) == []
+
+        for channel in ("web", "feishu"):
+            assert history_path(tmp_path, "alice", channel, "session", SESSION_IDS[0]).is_file()
         assert not history_path(tmp_path, "alice", "web", "session", SESSION_IDS[1]).exists()
 
     @pytest.mark.asyncio
@@ -215,7 +226,7 @@ class TestYamlHistoryRepository:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("operation", ["load", "list_sessions", "load_session"])
     async def test_cleans_only_current_user_files(self, tmp_path: Path, operation: str):
-        repository = YamlHistoryRepository(tmp_path, max_files_per_user=2)
+        repository = YamlHistoryRepository(tmp_path, max_history_days=30)
         messages = [{"role": "user", "content": "hello"}]
         alice_ids = SESSION_IDS[:3]
         bob_ids = SESSION_IDS[3:6]
@@ -224,13 +235,15 @@ class TestYamlHistoryRepository:
         for session_id in bob_ids:
             await repository.save("bob", session_id, messages, channel="web")
 
+        expired = time.time() - 31 * 86400
+        recent = time.time() - 29 * 86400
         timestamps = {
-            ("alice", alice_ids[0]): 1,
-            ("alice", alice_ids[1]): 2,
-            ("alice", alice_ids[2]): 3,
-            ("bob", bob_ids[0]): 1,
-            ("bob", bob_ids[1]): 2,
-            ("bob", bob_ids[2]): 3,
+            ("alice", alice_ids[0]): recent,
+            ("alice", alice_ids[1]): expired,
+            ("alice", alice_ids[2]): recent,
+            ("bob", bob_ids[0]): expired,
+            ("bob", bob_ids[1]): expired,
+            ("bob", bob_ids[2]): expired,
         }
         for (user_id, session_id), modified in timestamps.items():
             os.utime(history_path(tmp_path, user_id, "web", "session", session_id), (modified, modified))
@@ -282,9 +295,9 @@ class TestYamlHistoryRepository:
         assert await repository.load_session("alice", SESSION_IDS[0]) == [{"role": "user", "content": "hello"}]
 
     @pytest.mark.asyncio
-    async def test_preserves_default_and_rejects_non_uuidv7_session_ids(self, tmp_path: Path):
+    async def test_accepts_any_uuidv7_and_rejects_non_uuidv7_session_ids(self, tmp_path: Path):
         repository = YamlHistoryRepository(tmp_path)
-        messages = [{"role": "user", "content": "main session"}]
+        messages = [{"role": "user", "content": "uuidv7 session"}]
 
         await repository.save("alice", "00000000-0000-7000-8000-000000000000", messages, channel="web")
         assert await repository.load("alice", "00000000-0000-7000-8000-000000000000", channel="web") == messages
@@ -293,6 +306,6 @@ class TestYamlHistoryRepository:
             with pytest.raises(PathProtectionError, match="UUIDv7"):
                 await repository.save("alice", invalid, messages, channel="web")
 
-    def test_rejects_invalid_retention_limit(self, tmp_path: Path):
+    def test_rejects_invalid_retention_days(self, tmp_path: Path):
         with pytest.raises(ValueError, match="at least 1"):
-            YamlHistoryRepository(tmp_path, max_files_per_user=0)
+            YamlHistoryRepository(tmp_path, max_history_days=0)

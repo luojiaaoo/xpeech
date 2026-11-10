@@ -170,7 +170,7 @@ claims = {
 | --- | --- | --- |
 | `Authorization` | 是 | `Bearer <token>`，见第 2 节 |
 | JWT `sub` | 是 | 用户 ID，长度 1–128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_` |
-| `x-session-id` | `/chat`、`/answer_question` 必填；`/chat_sync` 不需要 | 规范的小写连字符 UUIDv7；主会话使用保留 ID `00000000-0000-7000-8000-000000000000`，其他会话可使用例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
+| `x-session-id` | `/chat`、`/answer_question` 必填；`/chat_sync` 不需要 | 规范的小写连字符 UUIDv7，例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
 | `x-sender-name` | 是 | 展示用用户名，不能为空或纯空白；非 ASCII 字符使用 UTF-8 URL 编码 |
 | `Accept` | 建议 | `text/event-stream` |
 
@@ -182,7 +182,7 @@ x-sender-name: %E5%BC%A0%E4%B8%89
 
 用户身份只取已验签 JWT 的 `sub`，对外接口忽略 `x-user-id` 请求头。响应在有对应值时回传 `x-user-id` 和 `x-channel`。
 
-流式会话历史按 `channel + user_id + session_id` 隔离；并发限制按 `user_id + session_id` 判断。换一个会话 ID 可以开启独立历史，**不会隔离同一用户的文件工作区与记忆**。流式模式的主会话和独立会话都会注册后台任务工具；同步模式会禁用这些工具。
+流式会话历史按 `channel + user_id + session_id` 隔离；并发限制按 `user_id + session_id` 判断。换一个会话 ID 可以开启独立历史，**不会隔离同一用户的文件工作区与记忆**。流式模式的所有会话都会注册后台任务工具；同步模式会禁用这些工具。
 
 ### 3.2 请求体（form 表单）
 
