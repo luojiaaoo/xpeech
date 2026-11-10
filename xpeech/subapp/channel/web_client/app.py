@@ -175,6 +175,7 @@ def create_app(config: WebConfig) -> FastAPI:
             current_identity,
             admin_user,
             history,
+            config.cookie_name,
         )
     )
 

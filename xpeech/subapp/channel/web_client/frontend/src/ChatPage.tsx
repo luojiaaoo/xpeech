@@ -138,7 +138,7 @@ function renderStreamContent(type: StreamEventType, content: string, streaming: 
 }
 
 export default function ChatPage({
-  systemName, sessionId, active = true, embedded = false, onNewConversation, onHistoryUpdated,
+  systemName, sessionId, active = true, embedded = false, onNewConversation, onHistoryUpdated, onRunningChange,
 }: {
   systemName: string;
   sessionId: string;
@@ -146,6 +146,7 @@ export default function ChatPage({
   embedded?: boolean;
   onNewConversation?: () => string;
   onHistoryUpdated?: () => void;
+  onRunningChange?: (running: boolean) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -168,7 +169,7 @@ export default function ChatPage({
   newConversationRef.current = onNewConversation;
 
   useEffect(() => {
-    if (!embedded) return;
+    if (!embedded || !active) return;
     return connectEmbedBridge(sessionId, {
       setInput(text) {
         composerRef.current.value = text;
@@ -195,7 +196,7 @@ export default function ChatPage({
       downloadFile,
       getFile,
     });
-  }, [embedded, sessionId]);
+  }, [active, embedded, sessionId]);
 
   useEffect(() => () => {
     requestRef.current?.abort();
@@ -221,14 +222,6 @@ export default function ChatPage({
     });
     return () => controller.abort();
   }, [sessionId]);
-
-  useEffect(() => {
-    if (active) return;
-    requestRef.current?.abort();
-    requestRef.current = null;
-    setMessages(finishChatTurn);
-    setLoading(false);
-  }, [active]);
 
   useEffect(() => subscribePendingUserPrefix((userPrefix) => {
     setPendingUserPrefix(userPrefix);
@@ -266,6 +259,7 @@ export default function ChatPage({
       setFiles([]);
       setAttachmentsOpen(false);
       setLoading(true);
+      onRunningChange?.(true);
     }
     const replies = collectReplies((content) => {
       if (embedded) postToParent({
@@ -313,9 +307,10 @@ export default function ChatPage({
       } else {
         if (!controller.signal.aborted) {
           setMessages(finishChatTurn);
-          setLoading(false);
         }
         if (requestRef.current === controller) requestRef.current = null;
+        setLoading(false);
+        onRunningChange?.(false);
         onHistoryUpdated?.();
       }
     }

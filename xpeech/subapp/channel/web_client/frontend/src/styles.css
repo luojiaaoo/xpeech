@@ -68,12 +68,15 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 }
 .history-session-item.ant-btn.active { border-color: #cfddff; background: #eaf1ff; }
 .history-session-preview { display: -webkit-box; width: 100%; overflow: hidden; color: #394454; line-height: 20px; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.history-session-meta { display: flex; width: 100%; min-height: 16px; align-items: center; gap: 6px; }
+.history-session-running { flex: 0 0 auto; color: #3370ff; font-size: 12px; }
 .history-session-time { color: #8a94a3; font-size: 11px; }
 .history-list-loading { display: block; margin: 32px auto; text-align: center; }
 .history-empty { margin-top: 36px; }
 .history-drawer .ant-drawer-body { padding: 0; }
 .history-drawer .history-panel-heading { display: none; }
 .conversation-panel { position: relative; flex: 1; min-width: 0; min-height: 0; }
+.conversation-panel[hidden] { display: none; }
 .history-loading { display: flex; height: 100%; align-items: center; justify-content: center; gap: 8px; color: #8a94a3; }
 .conversation-loading { max-width: 720px; margin: 24px auto; padding: 0 20px; }
 .app-shell { height: 100vh; height: 100dvh; overflow: hidden; }

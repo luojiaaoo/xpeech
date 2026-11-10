@@ -4,17 +4,51 @@ import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
 
-test('chat and question answers carry the same explicit conversation ID', async () => {
+test('one WebSocket multiplexes session chats while HTTP APIs retain their authentication', async () => {
   const calls: { url: string; init: RequestInit }[] = [];
+  const sockets: FakeWebSocket[] = [];
+  const starts: any[] = [];
+  let requestSequence = 0;
+  class FakeWebSocket {
+    static readonly OPEN = 1;
+    readonly CONNECTING = 0;
+    readonly OPEN = 1;
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+    onclose: (() => void) | null = null;
+    readonly url: string;
+    constructor(url: string) {
+      this.url = url;
+      sockets.push(this);
+      queueMicrotask(() => { this.readyState = 1; this.onopen?.(); });
+    }
+    send(raw: string) {
+      const data = JSON.parse(raw);
+      if (data.type !== 'start') return;
+      starts.push(data);
+      queueMicrotask(() => {
+        this.onmessage?.({ data: JSON.stringify({
+          type: 'event', request_id: data.request_id, session_id: data.session_id,
+          event: { event: 'assistant', context: 'hello' },
+        }) });
+        this.onmessage?.({ data: JSON.stringify({
+          type: 'done', request_id: data.request_id, session_id: data.session_id,
+        }) });
+      });
+    }
+  }
   const context = vm.createContext({
-    Headers, FormData, TextDecoder, URL, URLSearchParams, File,
-    window: { dispatchEvent() {}, setTimeout() {} },
+    Headers, FormData, TextDecoder, URL, URLSearchParams, File, WebSocket: FakeWebSocket,
+    DOMException, btoa, crypto: { randomUUID: () => `request-${++requestSequence}` },
+    window: {
+      dispatchEvent() {}, setTimeout() {},
+      location: { protocol: 'https:', host: 'assistant.test', reload() {} },
+    },
     document: { createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} } },
     fetch: async (url: string, init: RequestInit) => {
       calls.push({ url, init });
-      return url === '/api/chat'
-        ? new Response('data: {"event":"assistant","context":"hello"}\n\n')
-        : url === '/api/answer_question'
+      return url === '/api/answer_question'
         ? Response.json({ message: 'Answer received' })
         : new Response(null, { status: 204 });
     },
@@ -35,18 +69,23 @@ test('chat and question answers carry the same explicit conversation ID', async 
   await api.streamChat('hello', [], () => {}, { sessionId: first, signal: controller.signal });
   await api.answerQuestion('yes', first);
   await api.streamChat('new conversation', [], () => {}, { sessionId: next });
-  assert.deepEqual(calls.map((call) => (call.init.headers as Headers).get('x-session-id')), [first, first, next]);
+  assert.equal(sockets.length, 1);
+  assert.equal(sockets[0].url, 'wss://assistant.test/api/chat/ws');
+  assert.deepEqual(starts.map((start) => start.session_id), [first, next]);
+  assert.deepEqual(starts.map((start) => start.request_id), ['request-1', 'request-2']);
+  for (const start of starts) {
+    assert.equal(start.token, 'business.jwt.signature');
+    assert.equal(start.sender_name, encodeURIComponent('张三'));
+    assert.deepEqual(start.session_metadata, metadata);
+    assert.equal(start.content, JSON.stringify([{ text: start === starts[0] ? 'hello' : 'new conversation' }]));
+  }
+  assert.equal(calls[0].url, '/api/answer_question');
+  assert.equal((calls[0].init.headers as Headers).get('x-session-id'), first);
   await api.historyApi.list();
   await api.historyApi.get(first);
   assert.deepEqual(calls.slice(-2).map((call) => call.url), [
     '/api/history/sessions', `/api/history/sessions/${first}`,
   ]);
-  assert.equal(calls[0].init.signal, controller.signal);
-  for (const call of calls.filter((call) => call.url === '/api/chat')) {
-    assert.equal((call.init.headers as Headers).get('x-sender-name'), encodeURIComponent('张三'));
-    assert.deepEqual(JSON.parse((call.init.body as FormData).get('session_metadata') as string), metadata);
-    assert.equal((call.init.headers as Headers).get('x-session-metadata'), null);
-  }
   await api.downloadFile('report.txt');
   await api.authApi.me();
   for (const call of calls) {
@@ -56,18 +95,85 @@ test('chat and question answers carry the same explicit conversation ID', async 
   }
   api.setEmbeddedJWT(null);
   await api.streamChat('standalone chat', [], () => {});
-  assert.equal((calls.at(-1)!.init.headers as Headers).get('x-session-id'), null);
-  assert.equal((calls.at(-1)!.init.headers as Headers).get('x-channel-name'), null);
-  assert.equal((calls.at(-1)!.init.headers as Headers).get('x-sender-name'), null);
-  assert.equal((calls.at(-1)!.init.body as FormData).has('session_metadata'), false);
-  assert.equal(calls.at(-1)!.init.credentials, 'same-origin');
+  assert.equal(starts.at(-1).session_id, '00000000-0000-7000-8000-000000000000');
+  assert.equal(starts.at(-1).token, null);
+  assert.equal(starts.at(-1).sender_name, null);
+  assert.deepEqual(starts.at(-1).session_metadata, {});
   await api.streamChat('standalone conversation', [], () => {}, { sessionId: '00000000-0000-7000-8000-000000000000' });
   await api.answerQuestion('standalone answer', '00000000-0000-7000-8000-000000000000');
-  for (const call of calls.slice(-2)) {
-    assert.equal((call.init.headers as Headers).get('x-session-id'), '00000000-0000-7000-8000-000000000000');
-    assert.equal((call.init.headers as Headers).get('authorization'), null);
-    assert.equal(call.init.credentials, 'same-origin');
+  assert.equal(sockets.length, 1);
+  assert.equal(starts.at(-1).session_id, '00000000-0000-7000-8000-000000000000');
+  assert.equal((calls.at(-1)!.init.headers as Headers).get('x-session-id'), '00000000-0000-7000-8000-000000000000');
+  assert.equal((calls.at(-1)!.init.headers as Headers).get('authorization'), null);
+  assert.equal(calls.at(-1)!.init.credentials, 'same-origin');
+});
+
+test('concurrent session streams share one socket and cancellation only cancels its own request', async () => {
+  const sent: any[] = [];
+  const sockets: any[] = [];
+  let sequence = 0;
+  class FakeWebSocket {
+    static readonly OPEN = 1;
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+    onclose: (() => void) | null = null;
+    constructor(_url: string) {
+      sockets.push(this);
+      queueMicrotask(() => { this.readyState = 1; this.onopen?.(); });
+    }
+    send(raw: string) { sent.push(JSON.parse(raw)); }
+    emit(data: any) { this.onmessage?.({ data: JSON.stringify(data) }); }
   }
+  const context = vm.createContext({
+    Headers, FormData, URL, URLSearchParams, File, WebSocket: FakeWebSocket,
+    DOMException, btoa, crypto: { randomUUID: () => `request-${++sequence}` },
+    window: { dispatchEvent() {}, location: { protocol: 'http:', host: 'assistant.test', reload() {} } },
+    fetch: async () => { throw new Error('Streaming chat must not use HTTP'); },
+  });
+  const source = stripTypeScriptTypes(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(() => { throw new Error('Only type imports are expected'); });
+  await module.evaluate();
+  const api = module.namespace as { streamChat: Function };
+  const first = '018f0000-0000-7000-8000-000000000001';
+  const second = '018f0000-0000-7000-8000-000000000002';
+  const received: string[] = [];
+  const firstChat = api.streamChat('first', [new File(['附件'], '报告.txt', { type: 'text/plain' })], (event: any) => {
+    received.push(`first:${event.context}`);
+  }, { sessionId: first });
+  const secondChat = api.streamChat('second', [], (event: any) => {
+    received.push(`second:${event.context}`);
+  }, { sessionId: second });
+  while (sent.filter((data) => data.type === 'start').length < 2) {
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  assert.equal(sockets.length, 1);
+  const starts = sent.filter((data) => data.type === 'start');
+  const firstStart = starts.find((data) => data.session_id === first);
+  const secondStart = starts.find((data) => data.session_id === second);
+  assert.equal(firstStart.files[0].name, '报告.txt');
+  assert.equal(firstStart.files[0].type, 'text/plain');
+  assert.equal(Buffer.from(firstStart.files[0].data, 'base64').toString(), '附件');
+  sockets[0].emit({ type: 'event', request_id: secondStart.request_id, session_id: second, event: { event: 'assistant', context: 'B' } });
+  sockets[0].emit({ type: 'event', request_id: firstStart.request_id, session_id: first, event: { event: 'assistant', context: 'A' } });
+  sockets[0].emit({ type: 'done', request_id: firstStart.request_id, session_id: first });
+  sockets[0].emit({ type: 'done', request_id: secondStart.request_id, session_id: second });
+  await Promise.all([firstChat, secondChat]);
+  assert.deepEqual(received, ['second:B', 'first:A']);
+
+  const controller = new AbortController();
+  const cancelled = api.streamChat('cancel', [], () => {}, { sessionId: first, signal: controller.signal });
+  while (sent.filter((data) => data.type === 'start').length < 3) {
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  controller.abort();
+  await assert.rejects(cancelled, { name: 'AbortError' });
+  const cancel = sent.at(-1);
+  assert.equal(cancel.type, 'cancel');
+  assert.equal(cancel.request_id, sent.filter((data) => data.type === 'start').at(-1).request_id);
+  assert.equal(cancel.session_id, first);
+  assert.equal(sockets.length, 1);
 });
 
 test('question answers require backend acknowledgement and report missing waiters', async () => {

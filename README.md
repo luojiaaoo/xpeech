@@ -959,7 +959,9 @@ npm run build
 实例时，应为每个实例配置不同的名称（如 `xpeech_session_7939`），避免不同端口之间覆盖 Cookie。
 
 普通登录页面与嵌入页面共用聊天工作区，均支持新建会话、查看历史消息及选中历史会话续聊；
-PC 显示历史侧栏，窄屏使用历史抽屉。独立页面继续使用账号登录，嵌入页面继续使用 JS 注入 JWT。
+PC 显示历史侧栏，窄屏使用历史抽屉。已打开会话切换时仅隐藏，回复继续运行，历史菜单显示加载状态；
+所有会话通过一条 WebSocket 按 `request_id + session_id` 多路复用。独立页面继续使用账号登录，
+嵌入页面继续使用 JS 注入 JWT。
 Web 原始事件历史由 `web_client.session_history_path` 配置，默认为
 `data/web_client/session_history`，按用户 ID 分目录、按 `channel + session_id` 命名 YAML 文件；
 `web_client.max_history_days` 默认为 30，控制这类文件的保留天数。该目录与 Agent 的

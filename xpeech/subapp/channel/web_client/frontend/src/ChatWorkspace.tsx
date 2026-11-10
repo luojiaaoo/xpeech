@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Drawer, Empty, Spin, Typography, message } from 'antd';
-import { CloseOutlined, HistoryOutlined, PlusOutlined } from '@ant-design/icons';
+import { CloseOutlined, HistoryOutlined, LoadingOutlined, PlusOutlined } from '@ant-design/icons';
 import { historyApi } from './api';
 import { uuidv7 } from './uuidv7';
 import ChatLoading from './ChatLoading';
@@ -21,6 +21,8 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
   embedded?: boolean;
 }) {
   const [sessionId, setSessionId] = useState(uuidv7);
+  const [openSessionIds, setOpenSessionIds] = useState(() => [sessionId]);
+  const [runningSessions, setRunningSessions] = useState<Record<string, boolean>>({});
   const [sessions, setSessions] = useState<ChatHistorySession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -44,20 +46,34 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
     return () => { listRequest.current++; };
   }, [refreshSessions]);
 
-  function newConversation() {
-    const nextSessionId = uuidv7();
+  const setSessionRunning = useCallback((id: string, running: boolean) => {
+    setRunningSessions((current) => ({ ...current, [id]: running }));
+  }, []);
+
+  function openSession(nextSessionId: string) {
+    setOpenSessionIds((current) => (
+      current.includes(nextSessionId) ? current : [...current, nextSessionId]
+    ));
     setSessionId(nextSessionId);
     setMobileHistoryOpen(false);
+  }
+
+  function newConversation() {
+    const nextSessionId = uuidv7();
+    openSession(nextSessionId);
     return nextSessionId;
   }
 
-  function selectSession(nextSessionId: string) {
-    setSessionId(nextSessionId);
-    setMobileHistoryOpen(false);
+  function sessionTitle(id: string) {
+    return sessions.find((item) => item.session_id === id)?.preview.split('\n')[0] || '新会话';
   }
 
-  const currentSession = sessions.find((item) => item.session_id === sessionId);
-  const title = currentSession?.preview.split('\n')[0] || '新会话';
+  const title = sessionTitle(sessionId);
+  const localSessions = openSessionIds
+    .filter((id) => !sessions.some((item) => item.session_id === id))
+    .reverse()
+    .map((id) => ({ session_id: id, preview: '新会话', updated_at: '' }));
+  const visibleSessions = [...localSessions, ...sessions];
 
   const historyList = (onClose?: () => void) => (
     <div className="history-panel">
@@ -66,18 +82,23 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
         {onClose ? <Button type="text" size="small" aria-label="收起历史会话" icon={<CloseOutlined />} onClick={onClose} /> : null}
       </div>
       <div className="history-session-list">
-        {sessionsLoading ? <Spin className="history-list-loading" /> : sessions.length === 0 ? (
+        {sessionsLoading ? <Spin className="history-list-loading" /> : visibleSessions.length === 0 ? (
           <Empty className="history-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史会话" />
-        ) : sessions.map((item) => (
+        ) : visibleSessions.map((item) => (
           <Button
             key={item.session_id}
             type="text"
             className={`history-session-item${item.session_id === sessionId ? ' active' : ''}`}
-            onClick={() => selectSession(item.session_id)}
+            onClick={() => openSession(item.session_id)}
             aria-current={item.session_id === sessionId ? 'page' : undefined}
           >
             <span className="history-session-preview">{item.preview.split('\n')[0] || '空会话'}</span>
-            <time className="history-session-time" dateTime={item.updated_at}>{formatUpdatedAt(item.updated_at)}</time>
+            <span className="history-session-meta">
+              {runningSessions[item.session_id] ? (
+                <LoadingOutlined className="history-session-running" spin aria-label="回复中" title="回复中" />
+              ) : null}
+              <time className="history-session-time" dateTime={item.updated_at}>{formatUpdatedAt(item.updated_at)}</time>
+            </span>
           </Button>
         ))}
       </div>
@@ -112,18 +133,26 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
         <aside className={`conversation-sidebar${sidebarCollapsed ? ' collapsed' : ''}`} aria-label="历史会话">
           {sidebarCollapsed ? null : historyList(() => setSidebarCollapsed(true))}
         </aside>
-        <section className="conversation-panel" aria-label={title}>
-          <Suspense fallback={<ChatLoading />}>
-            <ChatPage
-              key={sessionId}
-              systemName={systemName}
-              sessionId={sessionId}
-              embedded={embedded}
-              onNewConversation={newConversation}
-              onHistoryUpdated={refreshSessions}
-            />
-          </Suspense>
-        </section>
+        <Suspense fallback={<section className="conversation-panel"><ChatLoading /></section>}>
+          {openSessionIds.map((id) => (
+            <section
+              className="conversation-panel"
+              aria-label={sessionTitle(id)}
+              hidden={id !== sessionId}
+              key={id}
+            >
+              <ChatPage
+                systemName={systemName}
+                sessionId={id}
+                active={id === sessionId}
+                embedded={embedded}
+                onNewConversation={newConversation}
+                onHistoryUpdated={refreshSessions}
+                onRunningChange={(running) => setSessionRunning(id, running)}
+              />
+            </section>
+          ))}
+        </Suspense>
       </div>
       <Drawer
         className="history-drawer"

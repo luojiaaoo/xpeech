@@ -1,12 +1,28 @@
+import asyncio
+import base64
+import binascii
 import codecs
 import json
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Annotated
-from urllib.parse import unquote
+from types import SimpleNamespace
+from typing import Annotated, Any
+from urllib.parse import unquote, urlsplit
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from loguru import logger
 from yarl import URL
@@ -66,7 +82,49 @@ def _history_identity(user: User | UserJWTAuth) -> tuple[str, str]:
     return user.user_id, "web_client"
 
 
-def _user_history_event(content: str, files: list[UploadFile] | None) -> dict:
+def _validated_chat_session_id(user: User | UserJWTAuth, session_id: str | None) -> str | None:
+    if session_id is None:
+        if isinstance(user, UserJWTAuth):
+            raise HTTPException(422, "嵌入聊天必须提供 UUIDv7 格式的 x-session-id")
+        return None
+    try:
+        if isinstance(user, UserJWTAuth) and session_id == DEFAULT_SESSION_ID:
+            raise PathProtectionError("Explicit default session is not allowed")
+        return validate_session_id(session_id)
+    except PathProtectionError:
+        raise HTTPException(422, "x-session-id 必须是规范的小写 UUIDv7") from None
+
+
+def _validated_sender_name(user: User | UserJWTAuth, sender_name: str | None) -> str:
+    if sender_name is None and isinstance(user, UserJWTAuth):
+        raise HTTPException(422, "嵌入聊天必须提供 x-sender-name")
+    try:
+        resolved = user.username if sender_name is None else unquote(sender_name, errors="strict").strip()
+    except UnicodeDecodeError:
+        raise HTTPException(422, "Invalid UTF-8 encoding in x-sender-name header") from None
+    if not resolved:
+        raise HTTPException(422, "x-sender-name header must not be blank")
+    return resolved
+
+
+def _backend_auth(user: User | UserJWTAuth) -> BackendAuthParams:
+    if isinstance(user, UserJWTAuth):
+        return BackendJWTParams(jwt_token=user.token)
+    return BackendUserParams(user_id=user.user_id, channel="web_client")
+
+
+def _cookie_websocket_origin_allowed(websocket: WebSocket) -> bool:
+    """Cookie-authenticated WebSockets must originate from this web client's own origin."""
+    origin = websocket.headers.get("origin")
+    if origin is None:
+        return True  # Non-browser clients do not send Origin and still require a valid cookie.
+    try:
+        return urlsplit(origin).netloc == websocket.headers.get("host", "")
+    except ValueError:
+        return False
+
+
+def _user_history_event(content: str, files: list[Any] | None) -> dict:
     try:
         inputs = json.loads(content)
     except json.JSONDecodeError:
@@ -88,6 +146,7 @@ def create_proxy_router(
     current_user_dependency: UserDependency,
     admin_user_dependency: UserDependency,
     history: YamlEventHistoryRepository,
+    cookie_name: str,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
     CurrentUser = Annotated[User | UserJWTAuth, Depends(current_user_dependency)]
@@ -97,23 +156,12 @@ def create_proxy_router(
         user: CurrentUser,
         session_id: Annotated[str | None, Header(alias="x-session-id")] = None,
     ) -> str | None:
-        if session_id is None:
-            if isinstance(user, UserJWTAuth):
-                raise HTTPException(422, "嵌入聊天必须提供 UUIDv7 格式的 x-session-id")
-            return None
-        try:
-            if isinstance(user, UserJWTAuth) and session_id == DEFAULT_SESSION_ID:
-                raise PathProtectionError("Explicit default session is not allowed")
-            return validate_session_id(session_id)
-        except PathProtectionError:
-            raise HTTPException(422, "x-session-id 必须是规范的小写 UUIDv7") from None
+        return _validated_chat_session_id(user, session_id)
 
     ChatSessionId = Annotated[str | None, Depends(chat_session_id)]
 
     def request_backend_auth(user: CurrentUser) -> BackendAuthParams:
-        if isinstance(user, UserJWTAuth):
-            return BackendJWTParams(jwt_token=user.token)
-        return BackendUserParams(user_id=user.user_id, channel="web_client")
+        return _backend_auth(user)
 
     RequestBackendAuth = Annotated[BackendAuthParams, Depends(request_backend_auth)]
 
@@ -155,14 +203,7 @@ def create_proxy_router(
         session_metadata: Annotated[str, Form()] = "{}",
         files: Annotated[list[UploadFile] | None, File()] = None,
     ):
-        if sender_name is None and isinstance(user, UserJWTAuth):
-            raise HTTPException(422, "嵌入聊天必须提供 x-sender-name")
-        try:
-            sender_name = user.username if sender_name is None else unquote(sender_name, errors="strict").strip()
-        except UnicodeDecodeError:
-            raise HTTPException(422, "Invalid UTF-8 encoding in x-sender-name header") from None
-        if not sender_name:
-            raise HTTPException(422, "x-sender-name header must not be blank")
+        sender_name = _validated_sender_name(user, sender_name)
         try:
             metadata = json.loads(session_metadata)
         except json.JSONDecodeError:
@@ -264,6 +305,217 @@ def create_proxy_router(
             media_type=upstream.headers.get("content-type", "text/event-stream"),
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @router.websocket("/chat/ws")
+    async def proxy_chat_websocket(websocket: WebSocket):
+        """Multiplex independent session streams over one browser WebSocket."""
+        await websocket.accept()
+        tasks: dict[str, asyncio.Task] = {}
+        send_lock = asyncio.Lock()
+
+        async def send(message: dict[str, Any]) -> None:
+            async with send_lock:
+                await websocket.send_json(message)
+
+        async def send_error(
+            request_id: str,
+            session_id: str,
+            detail: str,
+            error_status: int = 500,
+        ) -> None:
+            await send({
+                "type": "error",
+                "request_id": request_id,
+                "session_id": session_id,
+                "status": error_status,
+                "detail": detail,
+            })
+
+        async def forward(request_id: str, payload: dict[str, Any]) -> None:
+            session_id = payload.get("session_id")
+            if not isinstance(session_id, str):
+                session_id = ""
+            try:
+                token = payload.get("token")
+                if token is not None and not isinstance(token, str):
+                    raise HTTPException(401, "嵌入 JWT 无效或已过期")
+                if token is None:
+                    if not _cookie_websocket_origin_allowed(websocket):
+                        raise HTTPException(403, "不允许跨站使用登录 Cookie 建立聊天连接")
+                    cookie = websocket.cookies.get(cookie_name)
+                    authorization = None
+                else:
+                    cookie = None
+                    authorization = f"Bearer {token}"
+                user = await current_user_dependency(token=cookie, authorization=authorization)
+                session_id = _validated_chat_session_id(user, session_id)
+                if session_id is None:
+                    raise HTTPException(422, "WebSocket 聊天必须提供 session_id")
+                sender_name = payload.get("sender_name")
+                if sender_name is not None and not isinstance(sender_name, str):
+                    raise HTTPException(422, "sender_name 必须是字符串")
+                sender_name = _validated_sender_name(user, sender_name)
+                content = payload.get("content")
+                if not isinstance(content, str):
+                    raise HTTPException(422, "content 必须是 JSON 字符串")
+                metadata = payload.get("session_metadata", {})
+                if not isinstance(metadata, dict):
+                    raise HTTPException(422, "session_metadata 必须是 JSON 对象")
+                file_payloads = payload.get("files", [])
+                if not isinstance(file_payloads, list):
+                    raise HTTPException(422, "files 必须是数组")
+                files = []
+                upload_data = []
+                for file_payload in file_payloads:
+                    if not isinstance(file_payload, dict):
+                        raise HTTPException(422, "文件参数必须是对象")
+                    filename = file_payload.get("name")
+                    media_type = file_payload.get("type", "")
+                    encoded = file_payload.get("data")
+                    if not isinstance(filename, str) or not isinstance(media_type, str) or not isinstance(encoded, str):
+                        raise HTTPException(422, "文件名、类型和内容必须是字符串")
+                    try:
+                        data = base64.b64decode(encoded, validate=True)
+                    except (binascii.Error, ValueError):
+                        raise HTTPException(422, "文件内容必须是有效的 base64") from None
+                    filename = filename or "attachment"
+                    files.append(SimpleNamespace(filename=filename))
+                    upload_data.append(("files", (filename, data, media_type)))
+            except HTTPException as error:
+                await send_error(request_id, session_id, str(error.detail), error.status_code)
+                return
+
+            try:
+                chat_stream = await open_chat(
+                    _backend_auth(user),
+                    sender_name,
+                    content,
+                    json.dumps(metadata, ensure_ascii=False),
+                    str(URL(backend_url) / "chat"),
+                    files=upload_data,
+                    session_id=session_id,
+                )
+            except Exception:  # noqa: BLE001 - 连接失败要返回给对应请求，不能中断共享 WebSocket
+                logger.exception("WebSocket chat could not open the backend stream")
+                await send_error(request_id, session_id, "无法连接聊天后端")
+                return
+
+            upstream = chat_stream.response
+            if upstream.status_code >= 400:
+                try:
+                    body = await upstream.aread()
+                finally:
+                    await chat_stream.aclose()
+                await send_error(
+                    request_id,
+                    session_id,
+                    body.decode("utf-8", errors="replace") or f"聊天后端返回 {upstream.status_code}",
+                    upstream.status_code,
+                )
+                return
+
+            history_user_id, history_channel = _history_identity(user)
+            user_event = _user_history_event(content, files)
+            collector = _SSEEventCollector()
+            sent_events = 0
+
+            async def emit_events() -> None:
+                nonlocal sent_events
+                for event in collector.events[sent_events:]:
+                    await send({
+                        "type": "event",
+                        "request_id": request_id,
+                        "session_id": session_id,
+                        "event": event,
+                    })
+                sent_events = len(collector.events)
+
+            try:
+                async for chunk in upstream.aiter_bytes():
+                    try:
+                        collector.feed(chunk)
+                    except (UnicodeDecodeError, ValueError):
+                        logger.exception("Web event history could not parse an SSE chunk")
+                    await emit_events()
+                try:
+                    collector.finish()
+                except (UnicodeDecodeError, ValueError):
+                    logger.exception("Web event history could not finish SSE parsing")
+                await emit_events()
+            finally:
+                try:
+                    await chat_stream.aclose()
+                finally:
+                    try:
+                        await history.append(
+                            history_user_id,
+                            session_id,
+                            [user_event, *collector.events],
+                            channel=history_channel,
+                        )
+                    except Exception:  # noqa: BLE001 - 历史失败不能影响同连接上的其他会话
+                        logger.exception("Web event history could not be saved")
+            await send({
+                "type": "done",
+                "request_id": request_id,
+                "session_id": session_id,
+            })
+
+        async def run(request_id: str, payload: dict[str, Any]) -> None:
+            session_id = payload.get("session_id")
+            try:
+                await forward(request_id, payload)
+            except asyncio.CancelledError:
+                raise
+            except (WebSocketDisconnect, RuntimeError):
+                # The shared socket has closed; the connection loop cancels all remaining tasks.
+                pass
+            except Exception:  # noqa: BLE001 - 单个会话失败不能断开其他会话
+                logger.exception("WebSocket chat request failed")
+                try:
+                    await send_error(
+                        request_id,
+                        session_id if isinstance(session_id, str) else "",
+                        "聊天请求执行失败",
+                    )
+                except (WebSocketDisconnect, RuntimeError):
+                    pass
+
+        try:
+            while True:
+                payload = await websocket.receive_json()
+                if not isinstance(payload, dict):
+                    continue
+                request_id = payload.get("request_id")
+                session_id = payload.get("session_id")
+                if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
+                    continue
+                if not isinstance(session_id, str):
+                    continue
+                if payload.get("type") == "cancel":
+                    if task := tasks.get(request_id):
+                        task.cancel()
+                    continue
+                if payload.get("type") != "start" or request_id in tasks:
+                    await send_error(request_id, session_id, "无效的聊天请求", 422)
+                    continue
+                task = asyncio.create_task(run(request_id, payload))
+                tasks[request_id] = task
+
+                def cleanup(completed: asyncio.Task, *, request_id: str = request_id) -> None:
+                    if tasks.get(request_id) is completed:
+                        tasks.pop(request_id, None)
+                    if not completed.cancelled():
+                        completed.exception()
+
+                task.add_done_callback(cleanup)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            for task in tasks.values():
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks.values(), return_exceptions=True)
 
     @router.post("/answer_question")
     async def proxy_answer(

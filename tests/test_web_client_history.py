@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import time
@@ -188,3 +189,99 @@ def test_history_requires_authentication_and_a_canonical_session_id(history_clie
         "channel": "web_client",
         "events": [],
     }
+
+
+def websocket_message(request_id: str, session_id: str, text: str, **extra):
+    return {
+        "type": "start",
+        "request_id": request_id,
+        "session_id": session_id,
+        "content": json.dumps([{"text": text}], ensure_ascii=False),
+        "token": None,
+        "sender_name": None,
+        "session_metadata": {"source": "websocket-test"},
+        "files": [],
+        **extra,
+    }
+
+
+def receive_websocket_turn(websocket, request_id: str):
+    messages = []
+    while True:
+        message = websocket.receive_json()
+        messages.append(message)
+        if message["request_id"] == request_id and message["type"] in {"done", "error"}:
+            return messages
+
+
+def test_one_websocket_multiplexes_sessions_and_saves_before_done(history_client):
+    client, history_path, opener = history_client
+    login(client)
+
+    with client.websocket_connect("/api/chat/ws") as websocket:
+        websocket.send_json(websocket_message(
+            "request-a", SESSION_ID, "会话 A",
+            files=[{
+                "name": "报告.txt",
+                "type": "text/plain",
+                "data": base64.b64encode(b"attachment").decode(),
+            }],
+        ))
+        websocket.send_json(websocket_message("request-b", NEXT_SESSION_ID, "会话 B"))
+        received = []
+        completed = set()
+        while completed != {"request-a", "request-b"}:
+            message = websocket.receive_json()
+            received.append(message)
+            if message["type"] == "done":
+                completed.add(message["request_id"])
+        first = [message for message in received if message["request_id"] == "request-a"]
+        second = [message for message in received if message["request_id"] == "request-b"]
+
+        assert [message["type"] for message in first] == ["event", "event", "done"]
+        assert all(message["session_id"] == SESSION_ID for message in first)
+        assert first[0]["event"] == {"event": "assistant", "context": "回答"}
+        assert [message["type"] for message in second] == ["event", "event", "done"]
+        assert client.get(f"/api/history/sessions/{SESSION_ID}").json()["events"][0] == {
+            "event": "user", "context": "会话 A\n📎 报告.txt",
+        }
+        assert client.get(f"/api/history/sessions/{NEXT_SESSION_ID}").json()["events"][0]["context"] == "会话 B"
+
+        websocket.send_json(websocket_message("request-a-2", SESSION_ID, "继续 A"))
+        continued = receive_websocket_turn(websocket, "request-a-2")
+        assert continued[-1]["type"] == "done"
+
+    assert [call.kwargs["session_id"] for call in opener.await_args_list] == [
+        SESSION_ID, NEXT_SESSION_ID, SESSION_ID,
+    ]
+    assert json.loads(opener.await_args_list[0].args[3]) == {"source": "websocket-test"}
+    assert opener.await_args_list[0].kwargs["files"][0][1][0] == "报告.txt"
+    assert (history_path / "admin" / f"channel=web_client&session_id={SESSION_ID}.yaml").is_file()
+
+
+def test_websocket_embedded_auth_uses_json_token_and_rejects_invalid_credentials(history_client):
+    client, history_path, _ = history_client
+    token = jwt.encode(
+        {"sub": "alice", "exp": datetime.now(UTC) + timedelta(minutes=1)},
+        SECRET,
+        algorithm=settings.jwt.algorithm,
+        headers={"kid": "crm"},
+    )
+
+    with client.websocket_connect("/api/chat/ws") as websocket:
+        websocket.send_json(websocket_message(
+            "embedded-request", SESSION_ID, "嵌入消息",
+            token=token, sender_name="embedded-user",
+        ))
+        messages = receive_websocket_turn(websocket, "embedded-request")
+        assert messages[-1]["type"] == "done"
+        websocket.send_json(websocket_message(
+            "invalid-request", NEXT_SESSION_ID, "不能发送", token="invalid",
+        ))
+        error = receive_websocket_turn(websocket, "invalid-request")[-1]
+        assert error["type"] == "error"
+        assert error["status"] == 401
+
+    assert client.get(f"/api/history/sessions/{SESSION_ID}").status_code == 401
+    assert (history_path / "alice" / f"channel=crm&session_id={SESSION_ID}.yaml").is_file()
+    assert not (history_path / "alice" / f"channel=crm&session_id={NEXT_SESSION_ID}.yaml").exists()
