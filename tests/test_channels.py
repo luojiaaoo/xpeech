@@ -9,7 +9,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from xpeech.agent.prompt.system import build_system_prompt
+from xpeech.agent.prompt.system import _get_identity, build_system_prompt
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app
 from xpeech.agent.skills import skill as skill_module
@@ -31,6 +31,24 @@ def channels(monkeypatch):
     }
     monkeypatch.setattr(settings.jwt, "channels", channels)
     return channels
+
+
+def test_channel_prompt_replaces_identity_and_appends_custom_prompt(channels, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings.llm, "system_identity_prompt", "Global identity")
+    monkeypatch.setattr(settings.llm, "custom_system_prompt", "Global custom prompt")
+    channels["crm"].system_identity_prompt = "CRM identity"
+    channels["crm"].custom_system_prompt = "CRM custom prompt"
+
+    identity = _get_identity(tmp_path, channel="crm")
+
+    assert "CRM identity" in identity
+    assert "Global identity" not in identity
+    assert identity.index("Global custom prompt") < identity.index("CRM custom prompt")
+
+    fallback_identity = _get_identity(tmp_path, channel="erp")
+    assert "Global identity" in fallback_identity
+    assert "Global custom prompt" in fallback_identity
+    assert "CRM custom prompt" not in fallback_identity
 
 
 @pytest.mark.parametrize("name", ["internal", "", "bad name"])

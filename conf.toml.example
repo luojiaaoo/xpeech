@@ -21,15 +21,22 @@ algorithm = "HS256"
 access_token_expire_seconds = 60
 
 # Every channel uses its name as the JWT header kid and an independent key.
+# system_identity_prompt 非空时替换 [llm] 的同名配置；custom_system_prompt 追加到 [llm] 的同名配置之后。
 [jwt.channels.web_client]
 secret_key = "replace-with-a-different-web-channel-secret-key"
+system_identity_prompt = ""
+custom_system_prompt = ""
 
 [jwt.channels.feishu]
 secret_key = "replace-with-a-different-feishu-channel-secret"
+system_identity_prompt = ""
+custom_system_prompt = ""
 
 # Custom channels use their name as the JWT header kid and an independent key.
 # [jwt.channels.crm]
 # secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
+# system_identity_prompt = ""
+# custom_system_prompt = ""
 
 # 加载技能和 MCP 前按用户查询所属组织，此配置不绑定渠道。
 # 命令的 stdout 为 UTF-8 组织字符串，例如 company/engineering/platform。

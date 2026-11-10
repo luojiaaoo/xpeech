@@ -22,11 +22,23 @@ def _load_bootstrap_files(workspace) -> str:
     return "\n\n".join(parts) if parts else ""
 
 
-def _get_identity(workspace: Path) -> str:
-    """生成可配置的核心身份提示词。"""
+def _get_identity(workspace: Path, channel: str | None = None) -> str:
+    """生成可配置的核心身份提示词，并应用渠道级覆盖与追加。"""
 
-    custom_system_prompt = settings.llm.custom_system_prompt.strip()
-    system_identity_prompt = settings.llm.system_identity_prompt.strip()
+    channel_config = settings.jwt.channels.get(channel) if channel else None
+    custom_system_prompt = "\n".join(
+        prompt
+        for prompt in (
+            settings.llm.custom_system_prompt.strip(),
+            channel_config.custom_system_prompt.strip() if channel_config else "",
+        )
+        if prompt
+    )
+    system_identity_prompt = (
+        channel_config.system_identity_prompt.strip()
+        if channel_config and channel_config.system_identity_prompt.strip()
+        else settings.llm.system_identity_prompt.strip()
+    )
     if system_identity_prompt:
         system_identity_prompt = (
             dedent(
@@ -140,7 +152,7 @@ async def build_system_prompt(
     parts = []
 
     # Identity
-    parts.append(_get_identity(workspace))
+    parts.append(_get_identity(workspace, channel))
 
     # Ethical guidelines
     parts.append(_get_ethical_guidelines())

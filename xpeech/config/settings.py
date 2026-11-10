@@ -202,6 +202,8 @@ class JWTChannelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     secret_key: str = Field(min_length=32, repr=False)
+    system_identity_prompt: str = ""
+    custom_system_prompt: str = ""
 
 
 class JWTConfig(BaseModel):
