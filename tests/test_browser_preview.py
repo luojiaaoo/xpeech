@@ -87,6 +87,7 @@ def test_preview_directory_is_public_and_recursively_navigable(
     (directory / "z.txt").write_text("root file", encoding="utf-8")
     special_file_name = "页面 & one.html"
     (directory / special_file_name).write_text("<h1>preview</h1>", encoding="utf-8")
+    (directory / "another.html").write_text("<h1>another</h1>", encoding="utf-8")
     (nested / "child.txt").write_text("nested file", encoding="utf-8")
 
     client = TestClient(app)
@@ -119,6 +120,25 @@ def test_preview_directory_is_public_and_recursively_navigable(
     assert empty_response.status_code == 200
     assert "This directory is empty." in empty_response.text
     assert f'href="{root_url}"' in unescape(empty_response.text)
+
+
+def test_preview_directory_redirects_to_single_html(file_roots: tuple[Path, Path]):
+    _, preview_root = file_roots
+    preview_id = uuid4()
+    directory = preview_root / str(preview_id)
+    directory.mkdir(parents=True)
+    html_name = "页面 & one.html"
+    (directory / html_name).write_text("<h1>preview</h1>", encoding="utf-8")
+    (directory / "style.css").write_text("h1 { color: red; }", encoding="utf-8")
+
+    client = TestClient(app)
+    root_url = f"{settings.tool.browser_preview.route_path}/{preview_id}/"
+    response = client.get(root_url, follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == root_url + quote(html_name, safe="")
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get(root_url).content == b"<h1>preview</h1>"
 
 
 @pytest.mark.asyncio
