@@ -29,7 +29,11 @@ interface ConfirmQuestion extends QuestionBase {
 
 type Question = FormQuestion | ConfirmQuestion;
 
-export default function QuestionForm({ context, sessionId }: { context: string; sessionId?: string }) {
+export default function QuestionForm({ context, sessionId, readOnly = false }: {
+  context: string;
+  sessionId?: string;
+  readOnly?: boolean;
+}) {
   const [answered, setAnswered] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   let question: Question | null = null;
@@ -66,7 +70,7 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
   }
 
   return (
-    <Form layout="vertical" disabled={answered} onFinish={submit} className="question-form">
+    <Form layout="vertical" disabled={answered || readOnly} onFinish={submit} className="question-form">
       <Typography.Title level={5}>{question?.title || (confirmation ? '请确认' : '需要补充信息')}</Typography.Title>
       {description ? (
         <Typography.Paragraph type="secondary" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
@@ -95,7 +99,7 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
           ) : null}
         </Form.Item>
       )))}
-      {confirmation ? (
+      {readOnly ? <Typography.Text type="secondary">历史提问仅供查看</Typography.Text> : confirmation ? (
         <Space>
           <Button type="primary" onClick={() => submit({ decision: 'confirm' })} disabled={answered || submitting}>
             确认
@@ -106,7 +110,7 @@ export default function QuestionForm({ context, sessionId }: { context: string; 
           {answered ? <Typography.Text type="secondary">已提交</Typography.Text> : null}
         </Space>
       ) : (
-        <Button type="primary" htmlType="submit" loading={submitting} disabled={answered}>
+        <Button type="primary" htmlType="submit" loading={submitting} disabled={answered || readOnly}>
           {answered ? '已提交' : submitLabel}
         </Button>
       )}

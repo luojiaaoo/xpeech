@@ -7,17 +7,36 @@
 并显示浮动按钮；点击按钮展开聊天窗口。
 退出登录时调用 `destroy()`，移除按钮和窗口，并清除内存中的 JWT。
 
-普通页面只提供主会话（`00000000-0000-7000-8000-000000000000`），不提供会话切换和新建临时会话入口。
-页面不显示「主会话 / 延续主会话上下文」标题栏。
-普通页面的聊天请求和表单回答仅允许省略 `x-session-id` 或使用主会话 ID `00000000-0000-7000-8000-000000000000`，不接受临时会话 ID。
+普通页面与 iframe 页面共用同一套会话工作区，都提供 **历史会话** 和 **＋ 新建会话**。
+PC 宽度下历史会话显示在左侧，窄屏下通过抽屉打开；点击历史会话会加载其中保存的消息，
+并沿用该会话的 UUIDv7 `session_id` 继续对话。新建会话会清空当前界面、取消当前回复并生成新的
+UUIDv7。普通页面的认证仍使用本地账号登录 Cookie，嵌入页面仍只使用 JS 注入的业务 JWT，
+两者不会互换认证方式或开放本地账号、管理员接口。
 
-iframe 页面只提供临时会话，不显示会话标题栏。顶部 **＋ 新建会话** 按钮用于创建独立的临时会话，
-操作栏悬浮于消息区上方，背景从上方不透明白色向下渐变为透明；初始消息为按钮预留一行，
-滚动时消息可进入渐变层下方并逐渐透出。除按钮本身外，渐变层不阻挡消息区的鼠标和触屏操作；
-新建时清空当前界面、取消当前回复并生成新的 UUIDv7
-会话 ID。每条嵌入聊天请求和表单回答都必须携带该 ID（`x-session-id` 请求头），同一对话内
-保持不变，后端按用户 ID 与会话 ID 隔离上下文。旧会话的后端记录不会被删除；关闭再打开窗口
-会保留当前对话，销毁组件后重新初始化会创建新的对话。
+普通页面和嵌入页面的聊天请求及表单回答都接受规范的小写 UUIDv7 `x-session-id`。普通页面为兼容
+旧调用仍允许省略该请求头，此时使用主会话 `00000000-0000-7000-8000-000000000000`；嵌入请求必须
+显式提供非主会话 ID。同一对话内 ID 保持不变，后端按用户 ID、通道与会话 ID 隔离上下文。
+关闭再打开嵌入窗口会保留当前对话，销毁组件后重新初始化会创建新的对话。
+
+Web 对话的原始事件独立保存，不与 Agent 的模型消息历史混用：
+
+```toml
+[web_client]
+session_history_path = "data/web_client/session_history"
+max_history_days = 30
+```
+
+文件按 URL 编码后的用户 ID 分目录，文件名为
+`channel=[channel]&session_id=[session_id].yaml`。通道和用户 ID 均从已验证的 Cookie 用户或 JWT
+取得；普通页面通道为 `web_client`，嵌入页面通道为 JWT `kid`。每次流式对话会记录一条用于界面
+还原的 `user` 事件（包含附件名称）以及后端 SSE 原始事件，同一会话续聊时追加保存；
+`/api/chat_sync` 的独立后台执行不写入该历史。查询或保存时按文件修改时间清理超过保留天数的文件，
+并清理由非法文件名标识的历史文件。
+
+登录或嵌入认证完成后，前端通过 `GET /api/history/sessions` 列出当前用户、当前通道的会话，
+通过 `GET /api/history/sessions/{session_id}` 读取事件。两个接口都返回 `Cache-Control: no-store`；
+读取尚未创建或已清理的会话返回空 `events`。历史中的提问表单仅供查看，新的消息仍使用选中的
+`session_id` 发送。
 
 嵌入功能默认可用，允许任意业务网站接入，无需启用开关或配置来源白名单。
 Web 客户端和 backend 均允许任意来源的 CORS 请求、请求方法及请求头；
@@ -73,7 +92,7 @@ function onLogout() {
 | `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
 | `assistant.setInput(text, { timeoutMs? } = {})` | 替换当前对话输入框内容（允许空字符串清空），不自动发送；返回 `Promise<{ session_id }>` |
 | `assistant.addFiles(files, { timeoutMs? } = {})` | 将 `File[]` 追加到当前对话框的待发送附件，显示附件列表，不自动上传或发送；返回 `Promise<{ session_id }>` |
-| `assistant.newConversation({ timeoutMs? } = {})` | 新建临时会话，清空对话框及草稿，等待新输入框就绪后返回 `Promise<{ session_id }>` |
+| `assistant.newConversation({ timeoutMs? } = {})` | 新建会话，清空对话框及草稿，等待新输入框就绪后返回 `Promise<{ session_id }>` |
 | `assistant.send({ timeoutMs? } = {})` | 发送当前输入框的文字及待发送附件，消息与流式回复显示在对话框，提交后返回 `Promise<{ session_id }>` |
 | `assistant.chatSync(text, { files?, timeoutMs? } = {})` | 在当前会话后台调用 `/api/chat_sync`，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id, events, files }>`，其中返回的 `files` 为 `{ path, url }[]` |
 | `assistant.downloadFile(path, { timeoutMs? } = {})` | 下载 `send_file` 事件 `context` 指定的文件，自动携带当前 JWT 并触发浏览器保存，返回 `Promise<{ session_id }>` |
@@ -109,7 +128,7 @@ await assistant.send();
 只发送附件时可不调用 `setInput()`。文字和附件均为空，或对话框正在回复时，`send()` 会拒绝 Promise。
 `send()` 返回表示已开始发送，不等待模型回复；使用 `onReply()` 接收完整回复（`request_id` 为 `null`）。
 后续网络错误显示在对话框中，与点击发送按钮一致。
-`newConversation()` 与点击「新建会话」使用相同流程：生成新的 UUIDv7 会话 ID，停止旧对话，
+`newConversation()` 与点击「新建会话」使用相同流程：生成新的 UUIDv7 会话 ID，停止当前对话，
 清空消息、文字草稿和待发送附件，保留登录凭证；切换期间的新命令排队投递到新会话。
 
 ```javascript
@@ -314,7 +333,7 @@ HTTPS 加载组件。`/embed.js` 作为公开模块提供跨域加载响应头�
 任意来源访问，但仍校验 JWT。业务网站配置 CSP 时，需要允许从组件服务地址加载脚本、发起
 连接并嵌入 iframe。
 
-嵌入临时会话独立于本地账号：不创建用户、不查找同名用户，也不读取本地账号的名称、
+嵌入会话独立于本地账号：不创建用户、不查找同名用户，也不读取本地账号的名称、
 角色或启用状态。聊天、表单回答和文件下载直接使用已验签 JWT 的 `sub` 作为用户 ID；
 聊天发送者名称直接取每次请求的 `x-sender-name`，嵌入聊天缺少此请求头会返回 422。
 用户 ID 沿用后端 `UserJWTAuth` 的校验规则：1–128 个 ASCII 字母、数字、下划线、连字符

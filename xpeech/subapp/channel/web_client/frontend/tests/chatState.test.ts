@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendChatEvent, finishChatTurn, startChatTurn } from '../src/chatState.ts';
+import { appendChatEvent, chatMessagesFromEvents, finishChatTurn, startChatTurn } from '../src/chatState.ts';
 import type { ChatEvent, ToolCallResult } from '../src/types.ts';
 
 function apply(events: ChatEvent[], initial = startChatTurn([], '帮我做个海报')) {
@@ -117,4 +117,37 @@ test('does not merge text across a tool boundary when stream-end events are miss
     toolResult({ id: 'a', name: 'read_file', result: 'ok', duration_seconds: 1 }), event('assistant', '读取完成'),
   ]);
   assert.deepEqual(messages.filter((item) => item.role === 'assistant').map((item) => item.content), ['准备读取', '读取完成']);
+});
+
+test('restores multiple turns from persisted user and assistant events as read-only history', () => {
+  const messages = chatMessagesFromEvents([
+    event('user', '第一个问题\n📎 report.pdf'),
+    event('assistant', '第一'), event('assistant', '个回答'), event('assistant_end'),
+    event('question', '{"type":"confirm","title":"继续吗"}'),
+    event('user', '第二个问题'),
+    event('thinking', '分析'), event('thinking_end'),
+    event('assistant', '第二个回答'), event('token_usage', '{"会话时长":"1秒"}'),
+  ]);
+
+  assert.deepEqual(messages.map((item) => item.role), [
+    'user', 'assistant', 'question', 'summary', 'user', 'thinking', 'assistant', 'summary',
+  ]);
+  assert.equal(messages[0].content, '第一个问题\n📎 report.pdf');
+  assert.equal(messages[1].content, '第一个回答');
+  assert.equal(messages[4].content, '第二个问题');
+  assert.equal(messages.at(-1)?.content, '第二个回答');
+  assert.ok(messages.every((item) => item.historical && !item.streaming && !item.transient));
+});
+
+test('continues a restored conversation without merging its final turn into the new turn', () => {
+  const history = chatMessagesFromEvents([
+    event('user', '旧问题'), event('assistant', '旧回答'), event('assistant_end'),
+  ]);
+  const next = finishChatTurn(apply([
+    event('assistant', '新回答'), event('assistant_end'),
+  ], startChatTurn(history, '新问题')));
+
+  assert.deepEqual(next.filter((item) => item.role === 'summary').map((item) => item.content), ['旧回答', '新回答']);
+  assert.ok(next.slice(0, 3).every((item) => item.historical));
+  assert.equal(next.at(-1)?.historical, undefined);
 });

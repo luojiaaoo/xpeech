@@ -99,6 +99,17 @@ function applyToolEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[
   }];
 }
 
+export function chatMessagesFromEvents(events: ChatEvent[]): ChatMessage[] {
+  let messages: ChatMessage[] = [];
+  for (const event of events) {
+    if (!event || typeof event.context !== 'string') continue;
+    messages = event.event === 'user'
+      ? startChatTurn(finishChatTurn(messages), event.context)
+      : appendChatEvent(messages, event);
+  }
+  return finishChatTurn(messages).map((item) => ({ ...item, historical: true }));
+}
+
 export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[] {
   const next = messages.filter((item) => !item.transient);
   if (event.event === 'assistant' || event.event === 'thinking') {

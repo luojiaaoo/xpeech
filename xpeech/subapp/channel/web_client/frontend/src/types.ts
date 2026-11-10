@@ -136,7 +136,22 @@ export interface StatisticsRecords extends StatisticsLatestRecords {
   offset: number;
 }
 
+export interface ChatHistorySession {
+  session_id: string;
+  channel: string;
+  updated_at: string;
+  size_bytes: number;
+  preview: string;
+}
+
+export interface ChatHistory {
+  session_id: string;
+  channel: string;
+  events: ChatEvent[];
+}
+
 export type ChatEventType =
+  | 'user'
   | 'assistant'
   | 'assistant_end'
   | 'thinking'
@@ -178,4 +193,5 @@ export interface ChatMessage {
   transient?: boolean;
   tokenUsage?: string;
   toolCall?: ToolCallInfo;
+  historical?: boolean;
 }

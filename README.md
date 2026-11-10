@@ -466,7 +466,8 @@ OAuth2 用户标识配置使用 `user_id_claim`。
 不保存执行类型。后台任务每次执行时生成 UUIDv7 格式的 `session_id`，保存历史时直接复用此 ID；
 执行时间以文件修改时间为准。旧版包含 `type` 字段的历史文件不做兼容。
 `llm.max_history_days` 控制历史文件的保留天数。加载历史时会清理超过保留天数未更新的文件，
-并删除历史目录中不符合上述命名格式的文件。
+并删除历史目录中不符合上述命名格式的文件。Web 客户端用于还原界面的原始事件历史另存于
+`web_client.session_history_path`，由 `web_client.max_history_days` 独立控制，详见“Web 客户端”。
 模型可感知当前 `session_id`，并通过 `list_sessions` 和 `read_session` 分页查看当前用户已保存的
 普通会话及后台执行历史。历史查询只读，不会切换当前会话或自动合并其他会话的上下文。
 
@@ -956,6 +957,13 @@ npm run build
 `web_client.database_path` 配置，默认为 `data/web_client/users.db`。登录 Cookie 名称由
 `web_client.cookie_name` 配置，默认为 `xpeech_session`；同一 IP 上运行多个独立 Web
 实例时，应为每个实例配置不同的名称（如 `xpeech_session_7939`），避免不同端口之间覆盖 Cookie。
+
+普通登录页面与嵌入页面共用聊天工作区，均支持新建会话、查看历史消息及选中历史会话续聊；
+PC 显示历史侧栏，窄屏使用历史抽屉。独立页面继续使用账号登录，嵌入页面继续使用 JS 注入 JWT。
+Web 原始事件历史由 `web_client.session_history_path` 配置，默认为
+`data/web_client/session_history`，按用户 ID 分目录、按 `channel + session_id` 命名 YAML 文件；
+`web_client.max_history_days` 默认为 30，控制这类文件的保留天数。该目录与 Agent 的
+`path.session_history_path` 模型消息历史相互独立。
 
 ### OAuth2 登录
 

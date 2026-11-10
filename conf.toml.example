@@ -39,6 +39,9 @@ secret_key = "replace-with-a-different-feishu-channel-secret"
 
 [web_client]
 database_path = "data/web_client/users.db"
+# Web 对话原始事件历史，按用户 ID 和 channel + session_id 分文件保存。
+session_history_path = "data/web_client/session_history"
+max_history_days = 30
 cookie_name = "xpeech_session"
 
 [web_client.inject_prompt]

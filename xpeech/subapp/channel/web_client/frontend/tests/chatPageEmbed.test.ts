@@ -43,6 +43,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
     ].map(name => [name, name])),
     './api': {
       getFile() {}, downloadFile() {},
+      historyApi: { async get() { return { events: [] }; } },
       async streamChat(text: string, files: File[], receive: (event: any) => void, options: any) {
         streamCalls.push({ text, files, options });
         receiveStream = receive;
@@ -53,7 +54,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
         return [{ event: 'assistant', context: '完成' }, { event: 'send_file', context: 'reports/sync.pdf' }];
       },
     },
-    './chatState': { appendChatEvent() {}, finishChatTurn() {}, startChatTurn() {} },
+    './chatState': { appendChatEvent() {}, chatMessagesFromEvents: () => [], finishChatTurn() {}, startChatTurn() {} },
     './ToolCallCard': { default: 'ToolCallCard' },
     './pendingUserPrefix': { readPendingUserPrefix: () => null, subscribePendingUserPrefix() {}, takePendingUserPrefix: () => null },
   };

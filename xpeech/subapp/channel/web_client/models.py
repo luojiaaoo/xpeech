@@ -43,6 +43,8 @@ class WebConfig:
     database_path: Path
     static_dir: Path
     system_name: str
+    session_history_path: Path | None = None
+    max_history_days: int = 30
     cookie_name: str = "xpeech_session"
     oauth2: tuple[OAuth2WebConfig, ...] = field(default_factory=tuple)
     inject_prompt: InjectPromptWebConfig = field(default_factory=InjectPromptWebConfig)

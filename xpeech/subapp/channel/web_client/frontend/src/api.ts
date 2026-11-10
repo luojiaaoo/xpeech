@@ -1,6 +1,8 @@
 import type {
   AppConfig,
   ChatEvent,
+  ChatHistory,
+  ChatHistorySession,
   StatisticsLatestRecords,
   StatisticsOverview,
   StatisticsRecords,
@@ -110,6 +112,14 @@ export const authApi = {
 
 export const appApi = {
   config: () => request<AppConfig>('/api/config'),
+};
+
+export const historyApi = {
+  list: (signal?: AbortSignal) => request<ChatHistorySession[]>('/api/history/sessions', { signal }),
+  get: (sessionId: string, signal?: AbortSignal) => request<ChatHistory>(
+    `/api/history/sessions/${encodeURIComponent(sessionId)}`,
+    { signal },
+  ),
 };
 
 export async function getFile(path: string, signal?: AbortSignal): Promise<File> {

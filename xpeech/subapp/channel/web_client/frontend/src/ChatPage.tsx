@@ -14,10 +14,10 @@ import {
   DownOutlined,
   RobotOutlined,
 } from '@ant-design/icons';
-import { chatSync, downloadFile, getFile, streamChat } from './api';
+import { chatSync, downloadFile, getFile, historyApi, streamChat } from './api';
 import { collectReplies, connectEmbedBridge, postToParent } from './embedBridge';
 import type { SyncOptions } from './embedBridge';
-import { appendChatEvent, finishChatTurn, startChatTurn } from './chatState';
+import { appendChatEvent, chatMessagesFromEvents, finishChatTurn, startChatTurn } from './chatState';
 import ToolCallCard from './ToolCallCard';
 import {
   readPendingUserPrefix,
@@ -137,14 +137,18 @@ function renderStreamContent(type: StreamEventType, content: string, streaming: 
   return markdown;
 }
 
-export default function ChatPage({ systemName, sessionId, active = true, embedded = false, onNewConversation }: {
+export default function ChatPage({
+  systemName, sessionId, active = true, embedded = false, onNewConversation, onHistoryUpdated,
+}: {
   systemName: string;
   sessionId: string;
   active?: boolean;
   embedded?: boolean;
   onNewConversation?: () => string;
+  onHistoryUpdated?: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [value, setValue] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
@@ -198,6 +202,25 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
     syncRequests.current.forEach((controller) => controller.abort());
     syncRequests.current.clear();
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setMessages([]);
+    setHistoryLoading(true);
+    historyApi.get(sessionId, controller.signal).then((history) => {
+      if (!controller.signal.aborted && !requestRef.current) {
+        setMessages(chatMessagesFromEvents(history.events));
+      }
+    }).catch((error) => {
+      if (!controller.signal.aborted) {
+        if (!requestRef.current) setMessages([]);
+        message.error(`历史消息加载失败：${String(error)}`);
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setHistoryLoading(false);
+    });
+    return () => controller.abort();
+  }, [sessionId]);
 
   useEffect(() => {
     if (active) return;
@@ -293,6 +316,7 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
           setLoading(false);
         }
         if (requestRef.current === controller) requestRef.current = null;
+        onHistoryUpdated?.();
       }
     }
   }
@@ -304,7 +328,7 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
     } else if (item.role === 'tool' && item.toolCall) {
       content = <ToolCallCard tool={item.toolCall} />;
     } else if (item.role === 'question') {
-      content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} /></Suspense>;
+      content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} readOnly={item.historical} /></Suspense>;
     } else if (item.role === 'file') {
       const name = item.content.split(/[\\/]/).pop() || '文件';
       content = <Button className="chat-file-button" icon={<DownloadOutlined />} onClick={() => {
@@ -364,7 +388,9 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
   return (
     <div className="chat-page">
       <div className="chat-content">
-        {messages.length === 0 ? (
+        {historyLoading ? (
+          <div className="history-loading"><LoadingOutlined spin /> 正在加载历史消息…</div>
+        ) : messages.length === 0 ? (
           <Flex vertical align="center" justify="center" className="welcome-area" gap={18}>
             <Welcome icon={<div className="welcome-icon"><RobotOutlined /></div>} title={`你好，我是 ${systemName}`} description="可以和我聊天，也可以上传图片和文件让我分析。" />
             <Prompts
@@ -410,7 +436,7 @@ export default function ChatPage({ systemName, sessionId, active = true, embedde
           value={value}
           onChange={setValue}
           onSubmit={(text) => { void send(text); }}
-          loading={loading}
+          loading={loading || historyLoading}
           header={header}
           placeholder={embedded ? '输入消息…' : '输入消息，Enter 发送，Shift + Enter 换行'}
           autoSize={{ minRows: 1, maxRows: 6 }}

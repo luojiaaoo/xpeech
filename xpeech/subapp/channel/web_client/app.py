@@ -14,6 +14,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from ....utils.channel_jwt import UserJWTAuth
 from .dao import User, WebClientDAO
+from .history import YamlEventHistoryRepository
 from .models import (
     InjectPromptWebConfig,
     OAuth2WebConfig,
@@ -56,6 +57,10 @@ def _password_matches(password: str, encoded: str) -> bool:
 
 def create_app(config: WebConfig) -> FastAPI:
     dao = WebClientDAO(config.database_path)
+    history = YamlEventHistoryRepository(
+        (config.session_history_path or config.database_path.parent / "session_history").resolve(),
+        max_history_days=config.max_history_days,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -169,6 +174,7 @@ def create_app(config: WebConfig) -> FastAPI:
             config.backend_url,
             current_identity,
             admin_user,
+            history,
         )
     )
 
@@ -242,6 +248,8 @@ def run(
     config = WebConfig(
         backend_url=backend_url.rstrip("/"),
         database_path=settings.web_client.database_path.resolve(),
+        session_history_path=settings.web_client.session_history_path.resolve(),
+        max_history_days=settings.web_client.max_history_days,
         static_dir=static_dir.resolve(),
         system_name=_configured_system_name(),
         cookie_name=settings.web_client.cookie_name,

@@ -24,7 +24,10 @@ proxy = import_module("xpeech.subapp.channel.web_client.routes.proxy")
 ORIGIN = "https://portal.example.test"
 SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 NEXT_SESSION_ID = "018f0000-0000-7000-8000-000000000002"
-EMBED_PATHS = ["/api/auth/embed", "/api/chat", "/api/chat_sync", "/api/answer_question", "/api/files"]
+EMBED_PATHS = [
+    "/api/auth/embed", "/api/chat", "/api/chat_sync", "/api/answer_question", "/api/files",
+    "/api/history/sessions", f"/api/history/sessions/{SESSION_ID}",
+]
 
 
 @pytest.fixture
@@ -333,9 +336,17 @@ def test_local_cookie_login_still_signs_backend_jwt_for_main_session(client, mon
 
 @pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync", "/api/answer_question"])
 @pytest.mark.parametrize("session_id", [SESSION_ID, "not-a-uuid"])
-def test_local_cookie_requests_only_allow_main_session(client, path, session_id):
+def test_local_cookie_requests_accept_uuidv7_sessions(client, monkeypatch, path, session_id):
+    monkeypatch.setitem(
+        settings.jwt.channels,
+        "web_client",
+        JWTChannelConfig(secret_key="web-client-test-key-at-least-64-characters-for-sha512-signing-tests"),
+    )
+    stream_mock(monkeypatch)
+    monkeypatch.setattr(proxy, "submit_question", AsyncMock(return_value=httpx.Response(200, content=b"ok")))
     assert client.post("/api/auth/login", json={"user_id": "admin", "password": "admin123456"}).status_code == 200
-    assert send(client, path, {"x-session-id": session_id}).status_code == 422
+    expected_status = 200 if session_id == SESSION_ID else 422
+    assert send(client, path, {"x-session-id": session_id}).status_code == expected_status
 
 
 @pytest.mark.asyncio

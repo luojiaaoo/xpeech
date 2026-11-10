@@ -16,13 +16,18 @@ def test_config_paths_expand_using_backend_home(tmp_path, monkeypatch):
     (BrowserPreviewConfig, "browser_preview_path"),
     (LarkCLIConfig, "database_path"),
     (WebClientConfig, "database_path"),
+    (WebClientConfig, "session_history_path"),
 ])
 def test_other_config_paths_are_absolute_at_load(tmp_path, monkeypatch, model, field):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path / "backend-home"))
 
-    assert getattr(model.model_validate({field: "~/store"}), field) == tmp_path / "backend-home/store"
-    assert getattr(model.model_validate({field: "relative/store"}), field) == tmp_path / "relative/store"
+    values = {field: "~/store"}
+    if model is WebClientConfig and field != "database_path":
+        values["database_path"] = "users.db"
+    assert getattr(model.model_validate(values), field) == tmp_path / "backend-home/store"
+    values[field] = "relative/store"
+    assert getattr(model.model_validate(values), field) == tmp_path / "relative/store"
 
 
 def test_default_config_paths_are_also_resolved(tmp_path, monkeypatch):

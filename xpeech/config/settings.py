@@ -351,6 +351,11 @@ class WebClientConfig(BaseModel):
     """Web client storage settings."""
 
     database_path: ConfigPath
+    session_history_path: ConfigPath = Field(
+        default=Path("data/web_client/session_history"),
+        validate_default=True,
+    )
+    max_history_days: int = Field(default=30, ge=1)
     cookie_name: str = Field(
         default="xpeech_session",
         min_length=1,

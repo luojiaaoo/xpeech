@@ -23,7 +23,10 @@ test('chat and question answers carry the same explicit conversation ID', async 
   const module = new vm.SourceTextModule(source, { context });
   await module.link(() => { throw new Error('Only type imports are expected'); });
   await module.evaluate();
-  const api = module.namespace as { setEmbeddedJWT: Function; streamChat: Function; answerQuestion: Function; downloadFile: Function; authApi: { me: Function } };
+  const api = module.namespace as {
+    setEmbeddedJWT: Function; streamChat: Function; answerQuestion: Function; downloadFile: Function;
+    authApi: { me: Function }; historyApi: { list: Function; get: Function };
+  };
   const first = '018f0000-0000-7000-8000-000000000001';
   const next = '018f0000-0000-7000-8000-000000000002';
   const controller = new AbortController();
@@ -33,6 +36,11 @@ test('chat and question answers carry the same explicit conversation ID', async 
   await api.answerQuestion('yes', first);
   await api.streamChat('new conversation', [], () => {}, { sessionId: next });
   assert.deepEqual(calls.map((call) => (call.init.headers as Headers).get('x-session-id')), [first, first, next]);
+  await api.historyApi.list();
+  await api.historyApi.get(first);
+  assert.deepEqual(calls.slice(-2).map((call) => call.url), [
+    '/api/history/sessions', `/api/history/sessions/${first}`,
+  ]);
   assert.equal(calls[0].init.signal, controller.signal);
   for (const call of calls.filter((call) => call.url === '/api/chat')) {
     assert.equal((call.init.headers as Headers).get('x-sender-name'), encodeURIComponent('张三'));

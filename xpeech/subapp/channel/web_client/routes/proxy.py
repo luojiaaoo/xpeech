@@ -1,11 +1,14 @@
+import codecs
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 from urllib.parse import unquote
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile, status
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from loguru import logger
 from yarl import URL
 
 from .....exceptions import PathProtectionError
@@ -15,14 +18,76 @@ from .....utils.internal_jwt import create_internal_access_token
 from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file
 from ..backend import open_chat, open_chat_sync, submit_question
 from ..dao import User
+from ..history import YamlEventHistoryRepository
 
 UserDependency = Callable[..., Awaitable[User | UserJWTAuth] | User | UserJWTAuth]
+
+
+class _SSEEventCollector:
+    """在透传字节的同时增量解析 SSE，不让历史记录改变响应内容。"""
+
+    def __init__(self) -> None:
+        self._decoder = codecs.getincrementaldecoder("utf-8")()
+        self._buffer = ""
+        self.events: list[dict] = []
+
+    def _collect(self, block: str) -> None:
+        data = "\n".join(
+            line[5:].lstrip(" ")
+            for line in block.splitlines()
+            if line.startswith("data:")
+        )
+        if not data:
+            return
+        try:
+            event = json.loads(data)
+        except json.JSONDecodeError:
+            return
+        if isinstance(event, dict):
+            self.events.append(event)
+
+    def feed(self, chunk: bytes) -> None:
+        self._buffer += self._decoder.decode(chunk)
+        blocks = re.split(r"\r?\n\r?\n", self._buffer)
+        self._buffer = blocks.pop()
+        for block in blocks:
+            self._collect(block)
+
+    def finish(self) -> None:
+        self._buffer += self._decoder.decode(b"", final=True)
+        if self._buffer.strip():
+            self._collect(self._buffer)
+        self._buffer = ""
+
+
+def _history_identity(user: User | UserJWTAuth) -> tuple[str, str]:
+    if isinstance(user, UserJWTAuth):
+        return user.user_id, user.channel
+    return user.user_id, "web_client"
+
+
+def _user_history_event(content: str, files: list[UploadFile] | None) -> dict:
+    try:
+        inputs = json.loads(content)
+    except json.JSONDecodeError:
+        inputs = []
+    text = "\n".join(
+        item["text"].strip()
+        for item in inputs
+        if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"].strip()
+    ) if isinstance(inputs, list) else ""
+    attachments = [f"📎 {file.filename or 'attachment'}" for file in files or ()]
+    return {
+        "event": "user",
+        "context": "\n".join(part for part in (text, *attachments) if part),
+    }
 
 
 def create_proxy_router(
     backend_url: str,
     current_user_dependency: UserDependency,
     admin_user_dependency: UserDependency,
+    history: YamlEventHistoryRepository,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
     CurrentUser = Annotated[User | UserJWTAuth, Depends(current_user_dependency)]
@@ -32,14 +97,12 @@ def create_proxy_router(
         user: CurrentUser,
         session_id: Annotated[str | None, Header(alias="x-session-id")] = None,
     ) -> str | None:
-        if not isinstance(user, UserJWTAuth):
-            if session_id not in (None, DEFAULT_SESSION_ID):
-                raise HTTPException(422, f"非嵌入聊天只支持主会话（{DEFAULT_SESSION_ID}）")
-            return session_id
         if session_id is None:
-            raise HTTPException(422, "嵌入聊天必须提供 UUIDv7 格式的 x-session-id")
+            if isinstance(user, UserJWTAuth):
+                raise HTTPException(422, "嵌入聊天必须提供 UUIDv7 格式的 x-session-id")
+            return None
         try:
-            if session_id == DEFAULT_SESSION_ID:
+            if isinstance(user, UserJWTAuth) and session_id == DEFAULT_SESSION_ID:
                 raise PathProtectionError("Explicit default session is not allowed")
             return validate_session_id(session_id)
         except PathProtectionError:
@@ -53,6 +116,25 @@ def create_proxy_router(
         return BackendUserParams(user_id=user.user_id, channel="web_client")
 
     RequestBackendAuth = Annotated[BackendAuthParams, Depends(request_backend_auth)]
+
+    @router.get("/history/sessions")
+    async def list_history_sessions(user: CurrentUser):
+        user_id, channel = _history_identity(user)
+        sessions = await history.list_channel_sessions(user_id, channel=channel)
+        return JSONResponse(sessions, headers={"Cache-Control": "no-store"})
+
+    @router.get("/history/sessions/{session_id}")
+    async def load_history_session(session_id: str, user: CurrentUser):
+        try:
+            session_id = validate_session_id(session_id)
+        except PathProtectionError:
+            raise HTTPException(422, "session_id 必须是规范的小写 UUIDv7") from None
+        user_id, channel = _history_identity(user)
+        events = await history.load(user_id, session_id, channel=channel)
+        return JSONResponse(
+            {"session_id": session_id, "channel": channel, "events": events},
+            headers={"Cache-Control": "no-store"},
+        )
 
     @router.post("/chat")
     @router.post("/chat_sync")
@@ -144,14 +226,38 @@ def create_proxy_router(
                 media_type=upstream.headers.get("content-type"),
             )
 
+        history_user_id, history_channel = _history_identity(user)
+        history_session_id = session_id or DEFAULT_SESSION_ID
+        user_event = _user_history_event(content, files)
+        collector = _SSEEventCollector()
+
         async def stream() -> AsyncIterator[bytes]:
             try:
                 async for chunk in upstream.aiter_bytes():
+                    try:
+                        collector.feed(chunk)
+                    except (UnicodeDecodeError, ValueError):
+                        logger.exception("Web event history could not parse an SSE chunk")
                     if await request.is_disconnected():
                         break
                     yield chunk
             finally:
-                await chat_stream.aclose()
+                try:
+                    collector.finish()
+                except (UnicodeDecodeError, ValueError):
+                    logger.exception("Web event history could not finish SSE parsing")
+                try:
+                    await chat_stream.aclose()
+                finally:
+                    try:
+                        await history.append(
+                            history_user_id,
+                            history_session_id,
+                            [user_event, *collector.events],
+                            channel=history_channel,
+                        )
+                    except Exception:  # noqa: BLE001 - 历史写入失败不能中断已成功的聊天响应
+                        logger.exception("Web event history could not be saved")
 
         return StreamingResponse(
             stream(),
