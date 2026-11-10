@@ -21,7 +21,6 @@ class _HistoryFile:
     path: Path
     channel: str
     session_id: str
-    not_interactive: bool
     modified_ns: int
     size_bytes: int
 
@@ -29,9 +28,7 @@ class _HistoryFile:
 class YamlHistoryRepository:
     """以带有可解析元数据的 YAML 文件持久化会话历史。"""
 
-    _FILE_KEYS = ("channel", "type", "session_id")
-    _SESSION_TYPE = "session"
-    _NOT_INTERACTIVE_TYPE = "not_interactive"
+    _FILE_KEYS = ("channel", "session_id")
 
     def __init__(self, base_dir: Path, max_history_days: int = 30) -> None:
         """初始化历史目录和历史文件保留天数。"""
@@ -41,21 +38,13 @@ class YamlHistoryRepository:
         self._max_history_days = max_history_days
 
     @classmethod
-    def _history_filename(
-        cls,
-        session_id: str,
-        *,
-        channel: str,
-        not_interactive: bool = False,
-    ) -> str:
+    def _history_filename(cls, session_id: str, *, channel: str) -> str:
         """根据会话元数据生成规范的历史文件名。"""
         if not session_id or not channel:
             raise PathProtectionError("History session_id and channel must be non-empty")
         session_id = validate_session_id(session_id)
-        history_type = cls._NOT_INTERACTIVE_TYPE if not_interactive else cls._SESSION_TYPE
         fields = (
             ("channel", channel),
-            ("type", history_type),
             ("session_id", session_id),
         )
         return f"{urlencode(fields, quote_via=quote, safe='')}.yaml"
@@ -69,20 +58,9 @@ class YamlHistoryRepository:
             raise PathProtectionError("History user directory must not be a link")
         return ensure_path(directory)
 
-    def _history_path(
-        self,
-        user_id: str,
-        session_id: str,
-        *,
-        channel: str,
-        not_interactive: bool = False,
-    ) -> Path:
-        """生成普通会话或非交互任务的历史文件路径。"""
-        filename = self._history_filename(
-            session_id,
-            channel=channel,
-            not_interactive=not_interactive,
-        )
+    def _history_path(self, user_id: str, session_id: str, *, channel: str) -> Path:
+        """生成会话的历史文件路径。"""
+        filename = self._history_filename(session_id, channel=channel)
         if len(filename.encode()) > 255:
             raise PathProtectionError("Session history filename is too long")
         return self._user_history_dir(user_id) / filename
@@ -108,16 +86,10 @@ class YamlHistoryRepository:
                     raise ValueError("Not a regular YAML file")
                 fields = parse_qsl(path.stem, keep_blank_values=True, strict_parsing=True)
                 values = dict(fields)
-                if tuple(key for key, _ in fields) != self._FILE_KEYS or values["type"] not in {
-                    self._SESSION_TYPE, self._NOT_INTERACTIVE_TYPE,
-                }:
+                if tuple(key for key, _ in fields) != self._FILE_KEYS:
                     raise ValueError("Invalid history metadata")
-                not_interactive = values["type"] == self._NOT_INTERACTIVE_TYPE
                 session_id = validate_session_id(values["session_id"])
-                if path.name != self._history_filename(
-                    session_id,
-                    channel=values["channel"], not_interactive=not_interactive,
-                ):
+                if path.name != self._history_filename(session_id, channel=values["channel"]):
                     raise ValueError("Non-canonical history filename")
             except (ValueError, PathProtectionError):
                 path.unlink(missing_ok=True)
@@ -127,7 +99,6 @@ class YamlHistoryRepository:
                 path=path,
                 channel=values["channel"],
                 session_id=session_id,
-                not_interactive=not_interactive,
                 modified_ns=stat.st_mtime_ns,
                 size_bytes=stat.st_size,
             )
@@ -165,7 +136,6 @@ class YamlHistoryRepository:
                     {
                         "session_id": history.session_id,
                         "channel": history.channel,
-                        "not_interactive": history.not_interactive,
                         "updated_at": updated_at.isoformat(),
                         "size_bytes": history.size_bytes,
                     }
@@ -176,7 +146,6 @@ class YamlHistoryRepository:
                     item["updated_at"],
                     item["session_id"],
                     item["channel"],
-                    item["not_interactive"],
                 ),
                 reverse=True,
             )
@@ -211,15 +180,9 @@ class YamlHistoryRepository:
         session_id: str,
         *,
         channel: str,
-        not_interactive: bool = False,
     ) -> list[dict[str, Any]]:
         """加载历史、移除失效的系统提示词，并触发文件清理。"""
-        path = self._history_path(
-            user_id,
-            session_id,
-            channel=channel,
-            not_interactive=not_interactive,
-        )
+        path = self._history_path(user_id, session_id, channel=channel)
         await asyncio.to_thread(self._maintain_history_files, user_id=user_id, protected_session_id=session_id)
         if not path.is_file():
             return []
@@ -242,15 +205,9 @@ class YamlHistoryRepository:
         history: list[dict[str, Any]],
         *,
         channel: str,
-        not_interactive: bool = False,
     ) -> None:
-        """原子保存普通会话或非交互任务的完整历史。"""
-        path = self._history_path(
-            user_id,
-            session_id,
-            channel=channel,
-            not_interactive=not_interactive,
-        )
+        """原子保存会话的完整历史。"""
+        path = self._history_path(user_id, session_id, channel=channel)
         serialized = yaml.dump(
             history,
             Dumper=LiteralDumper,
@@ -264,7 +221,7 @@ class YamlHistoryRepository:
         logger.info("Session history saved")
 
     async def delete(self, user_id: str, session_id: str, *, channel: str) -> None:
-        """删除普通会话历史，文件不存在时忽略。"""
+        """删除会话历史，文件不存在时忽略。"""
         path = self._history_path(user_id, session_id, channel=channel)
         await asyncio.to_thread(path.unlink, missing_ok=True)
         logger.info("Session history deleted")

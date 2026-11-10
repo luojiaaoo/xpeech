@@ -439,7 +439,6 @@ class AgentLoop:
                     message.session_id,
                     messages_yaml,
                     channel=message.channel,
-                    not_interactive=not_interactive,
                 )
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -505,7 +504,6 @@ class AgentLoop:
             message.session_id,
             messages_yaml,
             channel=message.channel,
-            not_interactive=not_interactive,
         )
 
         # 追加本轮对话记录

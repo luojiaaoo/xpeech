@@ -47,11 +47,9 @@ def build_session_tools(*, user_id: str, history_path: Path, max_history_days: i
         """按日期范围查看当前用户已保存的历史会话，包含聊天和任务执行记录。
 
         日期按最后更新时间的 UTC 日期筛选，包含起止日期；不传范围时列出全部。
-        返回会话 ID、channel 渠道名、not_interactive 类型、更新时间和文件大小，按更新时间倒序分页。
+        返回会话 ID、channel 渠道名、更新时间和文件大小，按更新时间倒序分页。
         session_id 是全局唯一的 UUIDv7。
         channel 是会话保存时的来源渠道名。
-        not_interactive 为 false 表示普通会话，为 true 表示非交互执行历史。
-        非交互执行一般由系统按钮或定时任务触发。
         用户提及其他会话或以前的对话时，先用此工具查找，再用 read_session 读取。
         当前会话不在列表中。
         """
@@ -65,7 +63,6 @@ def build_session_tools(*, user_id: str, history_path: Path, max_history_days: i
             {
                 "session_id": session["session_id"],
                 "channel": session["channel"],
-                "not_interactive": session["not_interactive"],
                 "updated_at": session["updated_at"],
                 "size_bytes": session["size_bytes"],
             }

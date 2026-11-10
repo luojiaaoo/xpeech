@@ -461,11 +461,10 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 对外用户身份只使用 JWT `sub`；仅内部请求通过 `x-user-id` 传递用户。代码字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
 OAuth2 用户标识配置使用 `user_id_claim`。
 
-会话历史保存在 `session_history_path` 目录中，文件名固定为
-`user_id=[user_id]&channel=[channel]&type=session&session_id=[session_id].yaml`（各值使用 URL 编码）。
-后台任务每次运行的上下文也保存在该目录，文件名为
-`user_id=[user_id]&channel=[channel]&type=not_interactive&session_id=[session_id].yaml`。后台任务每次执行时生成
-UUIDv7 格式的 `session_id`，保存历史时直接复用此 ID；执行时间以文件修改时间为准。
+会话历史按用户 ID 编码后的子目录隔离，保存在 `session_history_path` 目录中，文件名固定为
+`channel=[channel]&session_id=[session_id].yaml`（各值使用 URL 编码）。普通会话和后台任务执行历史使用相同格式，
+不保存执行类型。后台任务每次执行时生成 UUIDv7 格式的 `session_id`，保存历史时直接复用此 ID；
+执行时间以文件修改时间为准。旧版包含 `type` 字段的历史文件不做兼容。
 `llm.max_history_days` 控制历史文件的保留天数。加载历史时会清理超过保留天数未更新的文件，
 并删除历史目录中不符合上述命名格式的文件。
 模型可感知当前 `session_id`，并通过 `list_sessions` 和 `read_session` 分页查看当前用户已保存的

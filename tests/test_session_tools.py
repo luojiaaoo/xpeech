@@ -24,14 +24,14 @@ async def test_lists_only_current_user_sessions_with_date_filters_and_pagination
     history = [{"role": "user", "content": "hello"}]
     await repository.save("alice", SESSION_IDS[0], history, channel="feishu")
     await repository.save("alice", SESSION_IDS[1], history, channel="web")
-    await repository.save("alice", SESSION_IDS[2], history, channel="feishu", not_interactive=True)
+    await repository.save("alice", SESSION_IDS[2], history, channel="feishu")
     await repository.save("alice-other", SESSION_IDS[3], history, channel="feishu")
     await repository.save("alice~session~other", SESSION_IDS[4], history, channel="feishu")
     day0, day1, day2 = (datetime.now(UTC).date() - timedelta(days=offset) for offset in (3, 2, 1))
     dates = {
-        f"channel=feishu&type=session&session_id={SESSION_IDS[0]}.yaml": f"{day0}T23:59:59+00:00",
-        f"channel=web&type=session&session_id={SESSION_IDS[1]}.yaml": f"{day1}T00:00:00+00:00",
-        f"channel=feishu&type=not_interactive&session_id={SESSION_IDS[2]}.yaml": f"{day2}T23:59:59+00:00",
+        f"channel=feishu&session_id={SESSION_IDS[0]}.yaml": f"{day0}T23:59:59+00:00",
+        f"channel=web&session_id={SESSION_IDS[1]}.yaml": f"{day1}T00:00:00+00:00",
+        f"channel=feishu&session_id={SESSION_IDS[2]}.yaml": f"{day2}T23:59:59+00:00",
     }
     for filename, timestamp in dates.items():
         modified = datetime.fromisoformat(timestamp).timestamp()
@@ -42,11 +42,7 @@ async def test_lists_only_current_user_sessions_with_date_filters_and_pagination
     assert all_sessions["total"] == 3
     assert all_sessions["has_more"] is False
     assert {session["session_id"] for session in all_sessions["sessions"]} == set(SESSION_IDS[:3])
-    assert {session["session_id"]: session["not_interactive"] for session in all_sessions["sessions"]} == {
-        SESSION_IDS[0]: False,
-        SESSION_IDS[1]: False,
-        SESSION_IDS[2]: True,
-    }
+    assert all("not_interactive" not in session for session in all_sessions["sessions"])
     assert {session["session_id"]: session["channel"] for session in all_sessions["sessions"]} == {
         SESSION_IDS[0]: "feishu",
         SESSION_IDS[1]: "web",
@@ -95,8 +91,8 @@ async def test_reads_history_pages_without_system_prompts_or_changing_saved_hist
     ]
     await repository.save("alice", SESSION_IDS[0], messages, channel="feishu")
     _list_sessions, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
-    not_interactive = [{"role": "assistant", "content": "scheduled result"}]
-    await repository.save("alice", SESSION_IDS[1], not_interactive, channel="feishu", not_interactive=True)
+    scheduled_history = [{"role": "assistant", "content": "scheduled result"}]
+    await repository.save("alice", SESSION_IDS[1], scheduled_history, channel="feishu")
 
     page = json.loads(await read_session(
         ReadSessionArgs(session_id=SESSION_IDS[0], offset=1, limit=2), session_id="00000000-0000-7000-8000-000000000000",
@@ -112,7 +108,7 @@ async def test_reads_history_pages_without_system_prompts_or_changing_saved_hist
     assert last["messages"] == messages[4:]
     assert last["has_more"] is False
     run = json.loads(await read_session(ReadSessionArgs(session_id=SESSION_IDS[1]), session_id="00000000-0000-7000-8000-000000000000"))
-    assert run["messages"] == not_interactive
+    assert run["messages"] == scheduled_history
     assert "not_interactive" not in run
     assert await repository.load("alice", SESSION_IDS[0], channel="feishu") == messages[1:]
 
@@ -122,7 +118,7 @@ async def test_reads_uuid_session_by_session_id(tmp_path):
     repository = YamlHistoryRepository(tmp_path)
     session_id = SESSION_IDS[0]
     messages = [{"role": "assistant", "content": "result"}]
-    await repository.save("alice", session_id, messages, channel="feishu", not_interactive=True)
+    await repository.save("alice", session_id, messages, channel="feishu")
     _, read_session = build_session_tools(user_id="alice", history_path=tmp_path)
 
     result = json.loads(await read_session(ReadSessionArgs(session_id=session_id), session_id="00000000-0000-7000-8000-000000000000"))
@@ -196,8 +192,8 @@ async def test_history_tools_do_not_follow_symlinks(tmp_path):
     await repository.save("bob", SESSION_IDS[0], [{"role": "user", "content": "private"}], channel="feishu")
     (tmp_path / "alice").mkdir()
     try:
-        (tmp_path / "alice" / f"channel=feishu&type=session&session_id={SESSION_IDS[1]}.yaml").symlink_to(
-            tmp_path / "bob" / f"channel=feishu&type=session&session_id={SESSION_IDS[0]}.yaml"
+        (tmp_path / "alice" / f"channel=feishu&session_id={SESSION_IDS[1]}.yaml").symlink_to(
+            tmp_path / "bob" / f"channel=feishu&session_id={SESSION_IDS[0]}.yaml"
         )
     except OSError as error:
         if getattr(error, "winerror", None) == 1314:

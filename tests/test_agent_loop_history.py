@@ -147,7 +147,7 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("json_output", [False, True])
-async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
+async def test_not_interactive_run_saves_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
     async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive):
         assert workspace == tmp_path
         assert user_organization == "公司/研发/平台"
@@ -194,8 +194,7 @@ async def test_not_interactive_run_saves_separate_yaml_history(tmp_path: Path, m
 
     agent_loop.history.load.assert_not_awaited()
     agent_loop.history.save.assert_awaited_once()
-    assert agent_loop.history.save.await_args.kwargs["not_interactive"] is True
-    assert agent_loop.history.save.await_args.kwargs["channel"] == message.channel
+    assert agent_loop.history.save.await_args.kwargs == {"channel": message.channel}
     saved_user_id, saved_session_id, saved_messages = agent_loop.history.save.await_args.args
     assert saved_user_id == message.user_id
     assert saved_session_id == message.session_id
@@ -272,8 +271,7 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     assert exc_info.value.detail == "provider unavailable"
     save = agent_loop.history.save
     save.assert_awaited_once()
-    assert save.await_args.kwargs["not_interactive"] is not_interactive
-    assert save.await_args.kwargs["channel"] == message.channel
+    assert save.await_args.kwargs == {"channel": message.channel}
     saved_user_id, saved_identifier, saved_messages = save.await_args.args
     assert saved_user_id == "session-1"
     assert saved_identifier == message.session_id

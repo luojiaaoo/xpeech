@@ -16,45 +16,38 @@ def history_path(
     directory: Path,
     user_id: str,
     channel: str,
-    history_type: str,
     session_id: str,
 ) -> Path:
-    return directory / user_id / (f"channel={channel}&type={history_type}&session_id={session_id}.yaml")
+    return directory / user_id / f"channel={channel}&session_id={session_id}.yaml"
 
 
 class TestYamlHistoryRepository:
     @pytest.mark.asyncio
-    async def test_not_interactive_runs_save_separate_files_without_overwriting(self, tmp_path: Path):
+    async def test_concurrent_saves_use_only_channel_and_session_id(self, tmp_path: Path):
         repository = YamlHistoryRepository(tmp_path)
         normal_history = [{"role": "user", "content": "normal conversation"}]
         await repository.save("alice", "00000000-0000-7000-8000-000000000000", normal_history, channel="feishu")
         session_ids = SESSION_IDS[:2]
         histories = [
-            [{"role": "user", "content": "not_interactive a"}],
-            [{"role": "user", "content": "not_interactive b"}],
+            [{"role": "user", "content": "run a"}],
+            [{"role": "user", "content": "run b"}],
         ]
 
         await asyncio.gather(
             *(
-                repository.save(
-                    "alice",
-                    session_id,
-                    history,
-                    channel="feishu",
-                    not_interactive=True,
-                )
+                repository.save("alice", session_id, history, channel="feishu")
                 for session_id, history in zip(session_ids, histories)
             )
         )
 
-        paths = sorted((tmp_path / "alice").glob("channel=feishu&type=not_interactive&*.yaml"))
+        paths = sorted((tmp_path / "alice").glob("channel=feishu&session_id=018f*.yaml"))
         assert [path.name for path in paths] == [
-            f"channel=feishu&type=not_interactive&session_id={session_id}.yaml"
+            f"channel=feishu&session_id={session_id}.yaml"
             for session_id in session_ids
         ]
         assert {yaml.safe_load(path.read_text(encoding="utf-8"))[0]["content"] for path in paths} == {
-            "not_interactive a",
-            "not_interactive b",
+            "run a",
+            "run b",
         }
         assert await repository.load("alice", "00000000-0000-7000-8000-000000000000", channel="feishu") == normal_history
 
@@ -75,16 +68,16 @@ class TestYamlHistoryRepository:
         messages = await repository.load("session", SESSION_IDS[0], channel="web")
 
         assert messages == [{"role": "user", "content": "hello"}]
-        assert history_path(tmp_path, "session", "web", "session", SESSION_IDS[0]).is_file()
+        assert history_path(tmp_path, "session", "web", SESSION_IDS[0]).is_file()
         saved = yaml.safe_load(
-            history_path(tmp_path, "session", "web", "session", SESSION_IDS[0]).read_text(encoding="utf-8")
+            history_path(tmp_path, "session", "web", SESSION_IDS[0]).read_text(encoding="utf-8")
         )
         assert saved == history
 
     @pytest.mark.asyncio
     async def test_load_filters_system_prompts_from_existing_files(self, tmp_path: Path):
         repository = YamlHistoryRepository(tmp_path)
-        path = history_path(tmp_path, "alice", "web", "session", SESSION_IDS[0])
+        path = history_path(tmp_path, "alice", "web", SESSION_IDS[0])
         path.parent.mkdir()
         path.write_text(
             yaml.safe_dump(
@@ -111,15 +104,15 @@ class TestYamlHistoryRepository:
         for session_id in ("00000000-0000-7000-8000-000000000000", SESSION_IDS[0]):
             for channel in ("web", "feishu"):
                 await repository.save("alice", session_id, messages, channel=channel)
-                os.utime(history_path(tmp_path, "alice", channel, "session", session_id), (expired, expired))
+                os.utime(history_path(tmp_path, "alice", channel, session_id), (expired, expired))
         await repository.save("alice", SESSION_IDS[1], messages, channel="web")
 
         assert await repository.load("alice", SESSION_IDS[1], channel="web") == messages
 
         for session_id in ("00000000-0000-7000-8000-000000000000", SESSION_IDS[0]):
             for channel in ("web", "feishu"):
-                assert not history_path(tmp_path, "alice", channel, "session", session_id).exists()
-        assert history_path(tmp_path, "alice", "web", "session", SESSION_IDS[1]).is_file()
+                assert not history_path(tmp_path, "alice", channel, session_id).exists()
+        assert history_path(tmp_path, "alice", "web", SESSION_IDS[1]).is_file()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("operation", ["load", "list_sessions", "load_session"])
@@ -129,9 +122,9 @@ class TestYamlHistoryRepository:
         expired = time.time() - 31 * 86400
         for channel in ("web", "feishu"):
             await repository.save("alice", SESSION_IDS[0], messages, channel=channel)
-            os.utime(history_path(tmp_path, "alice", channel, "session", SESSION_IDS[0]), (expired, expired))
+            os.utime(history_path(tmp_path, "alice", channel, SESSION_IDS[0]), (expired, expired))
         await repository.save("alice", SESSION_IDS[1], messages, channel="web")
-        os.utime(history_path(tmp_path, "alice", "web", "session", SESSION_IDS[1]), (expired, expired))
+        os.utime(history_path(tmp_path, "alice", "web", SESSION_IDS[1]), (expired, expired))
 
         if operation == "load":
             assert await repository.load("alice", SESSION_IDS[0], channel="web") == messages
@@ -141,8 +134,8 @@ class TestYamlHistoryRepository:
             assert await repository.list_sessions("alice", current_session_id=SESSION_IDS[0]) == []
 
         for channel in ("web", "feishu"):
-            assert history_path(tmp_path, "alice", channel, "session", SESSION_IDS[0]).is_file()
-        assert not history_path(tmp_path, "alice", "web", "session", SESSION_IDS[1]).exists()
+            assert history_path(tmp_path, "alice", channel, SESSION_IDS[0]).is_file()
+        assert not history_path(tmp_path, "alice", "web", SESSION_IDS[1]).exists()
 
     @pytest.mark.asyncio
     async def test_channel_is_stored_in_filename_metadata(self, tmp_path: Path):
@@ -160,8 +153,8 @@ class TestYamlHistoryRepository:
             channel="web",
         )
 
-        assert history_path(tmp_path, "alice", "feishu", "session", SESSION_IDS[0]).is_file()
-        assert history_path(tmp_path, "alice", "web", "session", SESSION_IDS[1]).is_file()
+        assert history_path(tmp_path, "alice", "feishu", SESSION_IDS[0]).is_file()
+        assert history_path(tmp_path, "alice", "web", SESSION_IDS[1]).is_file()
         assert await repository.load("alice", SESSION_IDS[0], channel="feishu") == [
             {"role": "user", "content": "feishu chat"}
         ]
@@ -194,7 +187,6 @@ class TestYamlHistoryRepository:
             tmp_path,
             "a%26b",
             "custom%2Fchannel",
-            "session",
             SESSION_IDS[0],
         ).is_file()
         assert await repository.load("a&b", SESSION_IDS[0], channel="custom/channel") == messages
@@ -218,7 +210,7 @@ class TestYamlHistoryRepository:
         [user_dir] = tmp_path.iterdir()
         assert user_dir.name == directory
         [path] = user_dir.iterdir()
-        assert path.name == f"channel=web&type=session&session_id={SESSION_IDS[0]}.yaml"
+        assert path.name == f"channel=web&session_id={SESSION_IDS[0]}.yaml"
         assert await repository.load(user_id, SESSION_IDS[0], channel="web") == messages
         await repository.delete(user_id, SESSION_IDS[0], channel="web")
         assert not path.exists()
@@ -246,15 +238,17 @@ class TestYamlHistoryRepository:
             ("bob", bob_ids[2]): expired,
         }
         for (user_id, session_id), modified in timestamps.items():
-            os.utime(history_path(tmp_path, user_id, "web", "session", session_id), (modified, modified))
+            os.utime(history_path(tmp_path, user_id, "web", session_id), (modified, modified))
 
         invalid_paths = [
             tmp_path / "alice" / "notes.txt",
-            tmp_path / "alice" / "channel=web&type=session.yaml",
-            tmp_path / "alice" / "channel=web&type=session&session_id=chat-1.yaml",
-            tmp_path / "alice" / "channel=web&type=session&session_id=default.yaml",
-            tmp_path / "alice" / "channel=web&type=session&session_id=01234567-89ab-4def-8123-456789abcdef.yaml",
-            tmp_path / "alice" / f"channel=web&type=session&session_id={SESSION_IDS[8].upper()}.yaml",
+            tmp_path / "alice" / "channel=web.yaml",
+            tmp_path / "alice" / "channel=web&session_id=chat-1.yaml",
+            tmp_path / "alice" / "channel=web&session_id=default.yaml",
+            tmp_path / "alice" / "channel=web&session_id=01234567-89ab-4def-8123-456789abcdef.yaml",
+            tmp_path / "alice" / f"channel=web&session_id={SESSION_IDS[8].upper()}.yaml",
+            tmp_path / "alice" / f"channel=web&type=session&session_id={SESSION_IDS[6]}.yaml",
+            tmp_path / "alice" / f"channel=web&type=not_interactive&session_id={SESSION_IDS[7]}.yaml",
         ]
         for invalid_path in invalid_paths:
             invalid_path.write_text("invalid", encoding="utf-8")
@@ -272,12 +266,12 @@ class TestYamlHistoryRepository:
             sessions = await repository.list_sessions("alice", current_session_id=alice_ids[0])
             assert [session["session_id"] for session in sessions] == [alice_ids[2]]
 
-        assert history_path(tmp_path, "alice", "web", "session", alice_ids[0]).is_file()
-        assert not history_path(tmp_path, "alice", "web", "session", alice_ids[1]).exists()
-        assert history_path(tmp_path, "alice", "web", "session", alice_ids[2]).is_file()
-        assert history_path(tmp_path, "bob", "web", "session", bob_ids[0]).is_file()
-        assert history_path(tmp_path, "bob", "web", "session", bob_ids[1]).is_file()
-        assert history_path(tmp_path, "bob", "web", "session", bob_ids[2]).is_file()
+        assert history_path(tmp_path, "alice", "web", alice_ids[0]).is_file()
+        assert not history_path(tmp_path, "alice", "web", alice_ids[1]).exists()
+        assert history_path(tmp_path, "alice", "web", alice_ids[2]).is_file()
+        assert history_path(tmp_path, "bob", "web", bob_ids[0]).is_file()
+        assert history_path(tmp_path, "bob", "web", bob_ids[1]).is_file()
+        assert history_path(tmp_path, "bob", "web", bob_ids[2]).is_file()
         assert all(not path.exists() for path in invalid_paths)
         assert all(path.read_text(encoding="utf-8") == "unrelated" for path in unrelated_paths)
         assert nested.is_dir()
