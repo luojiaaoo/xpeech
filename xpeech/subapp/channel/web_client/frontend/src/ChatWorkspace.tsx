@@ -22,6 +22,7 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
 }) {
   const [sessionId, setSessionId] = useState(uuidv7);
   const [openSessionIds, setOpenSessionIds] = useState(() => [sessionId]);
+  const [startedSessionIds, setStartedSessionIds] = useState<string[]>([]);
   const [runningSessions, setRunningSessions] = useState<Record<string, boolean>>({});
   const [sessions, setSessions] = useState<ChatHistorySession[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -43,6 +44,9 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
   }, [refreshSessions]);
 
   const setSessionRunning = useCallback((id: string, running: boolean) => {
+    if (running) {
+      setStartedSessionIds((current) => current.includes(id) ? current : [...current, id]);
+    }
     setRunningSessions((current) => ({ ...current, [id]: running }));
   }, []);
 
@@ -55,6 +59,13 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
   }
 
   function newConversation() {
+    const emptySessionId = openSessionIds.find((id) => (
+      !startedSessionIds.includes(id) && !sessions.some((item) => item.session_id === id)
+    ));
+    if (emptySessionId) {
+      openSession(emptySessionId);
+      return emptySessionId;
+    }
     const nextSessionId = uuidv7();
     openSession(nextSessionId);
     return nextSessionId;

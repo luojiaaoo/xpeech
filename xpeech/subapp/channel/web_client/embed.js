@@ -331,10 +331,12 @@ function onMessage(event) {
     if (!pending || !pending.sent || data.session_id !== pending.sessionId) return;
     if (pending.data.method === 'newConversation' && typeof data.error !== 'string') {
       if (!data.result || typeof data.result.session_id !== 'string' || !data.result.session_id) return;
-      pending.nextSessionId = data.result.session_id;
-      interactionSession = null;
-      rejectRequests('会话已切换', true, data.request_id);
-      return;
+      if (data.result.session_id !== pending.sessionId) {
+        pending.nextSessionId = data.result.session_id;
+        interactionSession = null;
+        rejectRequests('会话已切换', true, data.request_id);
+        return;
+      }
     }
     clearTimeout(pending.timer);
     pendingRequests.delete(data.request_id);

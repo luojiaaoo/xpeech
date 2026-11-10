@@ -529,6 +529,31 @@ test('newConversation waits for the new composer and queues subsequent commands 
   app.api.destroy();
 });
 
+test('newConversation reuses an empty session without waiting for another composer', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const created = app.api.newConversation();
+  const request = app.sent.at(-1)!.data;
+  const queued = app.api.setInput('keep the same draft');
+  app.message({
+    type: 'xpeech:response', session_id: 'first', request_id: request.request_id,
+    result: { session_id: 'first' },
+  });
+  assert.equal((await created).session_id, 'first');
+  const draft = app.sent.at(-1)!.data;
+  assert.equal(draft.method, 'setInput');
+  assert.equal(draft.session_id, 'first');
+  app.message({
+    type: 'xpeech:response', session_id: 'first', request_id: draft.request_id,
+    result: { session_id: 'first' },
+  });
+  await queued;
+  app.api.destroy();
+});
+
 test('failed newConversation releases queued commands, and destroy rejects an unfinished switch', async () => {
   const app = await runtime();
   app.api.init(jwtFor(), 'Alice');
