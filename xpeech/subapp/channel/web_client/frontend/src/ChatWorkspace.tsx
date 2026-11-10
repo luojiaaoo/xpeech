@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Drawer, Empty, Spin, Typography, message } from 'antd';
+import { Button, Drawer, Empty, Typography, message } from 'antd';
 import { CloseOutlined, HistoryOutlined, LoadingOutlined, PlusOutlined } from '@ant-design/icons';
 import { historyApi } from './api';
 import { uuidv7 } from './uuidv7';
@@ -24,20 +24,16 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
   const [openSessionIds, setOpenSessionIds] = useState(() => [sessionId]);
   const [runningSessions, setRunningSessions] = useState<Record<string, boolean>>({});
   const [sessions, setSessions] = useState<ChatHistorySession[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const listRequest = useRef(0);
 
   const refreshSessions = useCallback(() => {
     const requestId = ++listRequest.current;
-    setSessionsLoading(true);
     historyApi.list().then((items) => {
       if (listRequest.current === requestId) setSessions(items);
     }).catch((error) => {
       if (listRequest.current === requestId) message.error(`历史会话加载失败：${String(error)}`);
-    }).finally(() => {
-      if (listRequest.current === requestId) setSessionsLoading(false);
     });
   }, []);
 
@@ -82,7 +78,7 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
         {onClose ? <Button type="text" size="small" aria-label="收起历史会话" icon={<CloseOutlined />} onClick={onClose} /> : null}
       </div>
       <div className="history-session-list">
-        {sessionsLoading ? <Spin className="history-list-loading" /> : visibleSessions.length === 0 ? (
+        {visibleSessions.length === 0 ? (
           <Empty className="history-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史会话" />
         ) : visibleSessions.map((item) => (
           <Button
