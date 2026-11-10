@@ -119,7 +119,12 @@ function LatestRecordRow({ record, onSelect }: {
         {record.sender_name.slice(0, 1).toUpperCase()}
       </span>
       <span className="statistics-qa-copy">
-        <small className="statistics-qa-channel">渠道：{channelLabel(record.channel)}</small>
+        <small
+          className="statistics-qa-channel"
+          title={`渠道：${channelLabel(record.channel)} · session_id：${record.session_id}`}
+        >
+          渠道：{channelLabel(record.channel)} · session_id：{record.session_id}
+        </small>
         <strong>{record.user_question || '（无文本问题）'}</strong>
         <small>{record.model_response || '（无回答）'}</small>
       </span>
@@ -725,6 +730,7 @@ export default function StatisticsDashboard({ systemName, onBack }: {
             <div className="statistics-record-meta">
               <span>{selectedRecord.sender_name} / {selectedRecord.user_id}</span>
               <span>渠道：{channelLabel(selectedRecord.channel)}</span>
+              <span>session_id：{selectedRecord.session_id}</span>
               <span>{formatTime(selectedRecord.created_at, true)}</span>
               <span>{formatDuration(selectedRecord.duration_s)}</span>
               <span>{formatNumber(selectedRecord.total_tokens)} Token</span>

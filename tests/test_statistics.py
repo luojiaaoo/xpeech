@@ -221,7 +221,10 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
     assert latest_body["data"][0]["duration_s"] == 3.75
     assert latest_body["data"][0]["total_tokens"] == 36
     assert latest_body["data"][0]["channel"] == "feishu"
-    assert all("session_id" not in record for record in latest_body["data"])
+    assert [record["session_id"] for record in latest_body["data"]] == [
+        "018f0000-0000-7000-8000-000000000002",
+        "00000000-0000-7000-8000-000000000000",
+    ]
 
     assert no_updates.json() == {
         "has_updates": False,

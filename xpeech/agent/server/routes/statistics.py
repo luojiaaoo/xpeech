@@ -426,6 +426,7 @@ class SessionStatisticsResponse(BaseModel):
 class ConversationRecordResponse(BaseModel):
     id: int
     request_id: str
+    session_id: str
     created_at: datetime
     duration_s: float
     channel: str
@@ -519,6 +520,7 @@ def _record_response(record: ConversationRecord) -> ConversationRecordResponse:
     return ConversationRecordResponse(
         id=record.id,
         request_id=record.request_id,
+        session_id=record.session_id,
         created_at=_as_utc(record.created_at),
         duration_s=_rounded_duration(record.duration_s),
         channel=record.channel,

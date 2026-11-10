@@ -103,6 +103,7 @@ export interface StatisticsSessions {
 
 export interface StatisticsRecord {
   request_id: string;
+  session_id: string;
   channel: string;
   id: number;
   created_at: string;
