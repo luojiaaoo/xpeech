@@ -4,7 +4,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from ....config.settings import settings
 
@@ -79,6 +79,18 @@ async def preview_file(preview_id: UUID, file_path: str):
     if not preview_file_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preview file not found")
     if preview_file_path.is_dir():
+        html_files = [
+            entry
+            for entry in preview_file_path.iterdir()
+            if entry.is_file() and entry.suffix.lower() == ".html"
+        ]
+        if len(html_files) == 1:
+            html_url = _preview_url_path(
+                preview_id,
+                relative_path / html_files[0].name,
+                is_directory=False,
+            )
+            return RedirectResponse(html_url, headers=_NO_STORE_HEADERS)
         return HTMLResponse(
             _render_directory_navigation(preview_id, preview_file_path, relative_path),
             headers=_NO_STORE_HEADERS,
