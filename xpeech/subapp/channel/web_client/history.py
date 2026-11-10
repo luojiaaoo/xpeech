@@ -1,4 +1,3 @@
-import asyncio
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,9 +46,8 @@ class JsonlEventHistoryRepository(YamlHistoryRepository):
         """逐行追加事件，避免续聊时读取并重写已有内容。"""
         if not events:
             return
-        path = self._history_path(user_id, session_id, channel=channel)
-        await asyncio.to_thread(
-            self._maintain_history_files,
+        path = await self._history_path(user_id, session_id, channel=channel)
+        await self._maintain_history_files(
             user_id=user_id,
             protected_session_id=session_id,
         )
@@ -58,7 +56,7 @@ class JsonlEventHistoryRepository(YamlHistoryRepository):
 
     async def list_channel_sessions(self, user_id: str, *, channel: str) -> list[dict[str, Any]]:
         """按更新时间列出指定通道的会话，并附带首条用户消息作为摘要。"""
-        histories = await asyncio.to_thread(self._maintain_history_files, user_id=user_id)
+        histories = await self._maintain_history_files(user_id=user_id)
         sessions = []
         for history in histories:
             if history.channel != channel:

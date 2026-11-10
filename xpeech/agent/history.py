@@ -1,16 +1,16 @@
-import asyncio
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from stat import S_ISDIR, S_ISREG
+from stat import FILE_ATTRIBUTE_REPARSE_POINT, S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode
 
+import aiofiles.os
 import yaml
 from loguru import logger
 
 from ..exceptions import PathProtectionError
-from ..utils.file_io import LockedFile, ensure_path
+from ..utils.file_io import LockedFile, ensure_path_async
 from ..utils.helper import LiteralDumper
 from ..utils.ids import validate_session_id
 from .prompt.helper import remove_system_messages
@@ -35,7 +35,7 @@ class YamlHistoryRepository:
         """初始化历史目录和历史文件保留天数。"""
         if max_history_days < 1:
             raise ValueError("max_history_days must be at least 1")
-        self._base_dir = ensure_path(base_dir.resolve())
+        self._base_dir = base_dir.resolve()
         self._max_history_days = max_history_days
 
     @classmethod
@@ -50,23 +50,31 @@ class YamlHistoryRepository:
         )
         return f"{urlencode(fields, quote_via=quote, safe='')}{cls._FILE_SUFFIX}"
 
-    def _user_history_dir(self, user_id: str) -> Path:
+    async def _user_history_dir(self, user_id: str) -> Path:
         """将用户 ID 编码为单层目录名，隔离各用户的历史文件。"""
         if not user_id:
             raise PathProtectionError("History user_id must be non-empty")
         directory = self._base_dir / quote(user_id, safe="").replace(".", "%2E")
-        if directory.is_symlink() or directory.is_junction():
-            raise PathProtectionError("History user directory must not be a link")
-        return ensure_path(directory)
+        try:
+            stat_result = await aiofiles.os.stat(directory, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            is_link = S_ISLNK(stat_result.st_mode) or bool(
+                getattr(stat_result, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT
+            )
+            if is_link:
+                raise PathProtectionError("History user directory must not be a link")
+        return await ensure_path_async(directory)
 
-    def _history_path(self, user_id: str, session_id: str, *, channel: str) -> Path:
+    async def _history_path(self, user_id: str, session_id: str, *, channel: str) -> Path:
         """生成会话的历史文件路径。"""
         filename = self._history_filename(session_id, channel=channel)
         if len(filename.encode()) > 255:
             raise PathProtectionError("Session history filename is too long")
-        return self._user_history_dir(user_id) / filename
+        return (await self._user_history_dir(user_id)) / filename
 
-    def _maintain_history_files(
+    async def _maintain_history_files(
         self,
         *,
         user_id: str,
@@ -75,15 +83,17 @@ class YamlHistoryRepository:
         """清理当前用户的非法或超过保留天数未更新的历史文件，仅保护本次操作的会话。"""
         cutoff = (datetime.now(UTC) - timedelta(days=self._max_history_days)).timestamp()
         histories: list[_HistoryFile] = []
-        for path in self._user_history_dir(user_id).iterdir():
+        directory = await self._user_history_dir(user_id)
+        for entry in await aiofiles.os.scandir(directory):
+            path = directory / entry.name
             try:
-                stat = path.lstat()
+                stat_result = await aiofiles.os.stat(path, follow_symlinks=False)
             except FileNotFoundError:
                 continue
-            if S_ISDIR(stat.st_mode):
+            if S_ISDIR(stat_result.st_mode):
                 continue
             try:
-                if not S_ISREG(stat.st_mode) or path.suffix != self._FILE_SUFFIX:
+                if not S_ISREG(stat_result.st_mode) or path.suffix != self._FILE_SUFFIX:
                     raise ValueError("Not a regular history file")
                 fields = parse_qsl(path.stem, keep_blank_values=True, strict_parsing=True)
                 values = dict(fields)
@@ -93,18 +103,24 @@ class YamlHistoryRepository:
                 if path.name != self._history_filename(session_id, channel=values["channel"]):
                     raise ValueError("Non-canonical history filename")
             except (ValueError, PathProtectionError):
-                path.unlink(missing_ok=True)
+                try:
+                    await aiofiles.os.unlink(path)
+                except FileNotFoundError:
+                    pass
                 logger.info("Invalid session history file deleted path={}", path.name)
                 continue
             history = _HistoryFile(
                 path=path,
                 channel=values["channel"],
                 session_id=session_id,
-                modified_ns=stat.st_mtime_ns,
-                size_bytes=stat.st_size,
+                modified_ns=stat_result.st_mtime_ns,
+                size_bytes=stat_result.st_size,
             )
-            if stat.st_mtime < cutoff and session_id != protected_session_id:
-                history.path.unlink(missing_ok=True)
+            if stat_result.st_mtime < cutoff and session_id != protected_session_id:
+                try:
+                    await aiofiles.os.unlink(path)
+                except FileNotFoundError:
+                    pass
                 logger.info("Expired session history file deleted path={}", history.path.name)
                 continue
             histories.append(history)
@@ -120,38 +136,36 @@ class YamlHistoryRepository:
     ) -> list[dict[str, Any]]:
         """按更新时间列出用户的历史，提供当前会话 ID 时将其排除。"""
 
-        def build_session_list() -> list[dict[str, Any]]:
-            sessions = []
-            for history in self._maintain_history_files(
-                user_id=user_id,
-                protected_session_id=current_session_id,
-            ):
-                if history.session_id == current_session_id:
-                    continue
-                updated_at = datetime.fromtimestamp(history.modified_ns / 1_000_000_000, UTC)
-                if start_date is not None and updated_at.date() < start_date:
-                    continue
-                if end_date is not None and updated_at.date() > end_date:
-                    continue
-                sessions.append(
-                    {
-                        "session_id": history.session_id,
-                        "channel": history.channel,
-                        "updated_at": updated_at.isoformat(),
-                        "size_bytes": history.size_bytes,
-                    }
-                )
-            return sorted(
-                sessions,
-                key=lambda item: (
-                    item["updated_at"],
-                    item["session_id"],
-                    item["channel"],
-                ),
-                reverse=True,
+        sessions = []
+        histories = await self._maintain_history_files(
+            user_id=user_id,
+            protected_session_id=current_session_id,
+        )
+        for history in histories:
+            if history.session_id == current_session_id:
+                continue
+            updated_at = datetime.fromtimestamp(history.modified_ns / 1_000_000_000, UTC)
+            if start_date is not None and updated_at.date() < start_date:
+                continue
+            if end_date is not None and updated_at.date() > end_date:
+                continue
+            sessions.append(
+                {
+                    "session_id": history.session_id,
+                    "channel": history.channel,
+                    "updated_at": updated_at.isoformat(),
+                    "size_bytes": history.size_bytes,
+                }
             )
-
-        return await asyncio.to_thread(build_session_list)
+        return sorted(
+            sessions,
+            key=lambda item: (
+                item["updated_at"],
+                item["session_id"],
+                item["channel"],
+            ),
+            reverse=True,
+        )
 
     async def load_session(
         self,
@@ -164,8 +178,7 @@ class YamlHistoryRepository:
         session_id = validate_session_id(session_id)
         if session_id == current_session_id:
             raise PathProtectionError("Cannot read the current session history")
-        histories = await asyncio.to_thread(
-            self._maintain_history_files,
+        histories = await self._maintain_history_files(
             user_id=user_id,
             protected_session_id=session_id,
         )
@@ -183,9 +196,9 @@ class YamlHistoryRepository:
         channel: str,
     ) -> list[dict[str, Any]]:
         """加载历史、移除失效的系统提示词，并触发文件清理。"""
-        path = self._history_path(user_id, session_id, channel=channel)
-        await asyncio.to_thread(self._maintain_history_files, user_id=user_id, protected_session_id=session_id)
-        if not path.is_file():
+        path = await self._history_path(user_id, session_id, channel=channel)
+        await self._maintain_history_files(user_id=user_id, protected_session_id=session_id)
+        if not await aiofiles.os.path.isfile(path):
             return []
         return await self._load_path(path)
 
@@ -208,7 +221,7 @@ class YamlHistoryRepository:
         channel: str,
     ) -> None:
         """原子保存会话的完整历史。"""
-        path = self._history_path(user_id, session_id, channel=channel)
+        path = await self._history_path(user_id, session_id, channel=channel)
         serialized = yaml.dump(
             history,
             Dumper=LiteralDumper,
@@ -223,6 +236,9 @@ class YamlHistoryRepository:
 
     async def delete(self, user_id: str, session_id: str, *, channel: str) -> None:
         """删除会话历史，文件不存在时忽略。"""
-        path = self._history_path(user_id, session_id, channel=channel)
-        await asyncio.to_thread(path.unlink, missing_ok=True)
+        path = await self._history_path(user_id, session_id, channel=channel)
+        try:
+            await aiofiles.os.unlink(path)
+        except FileNotFoundError:
+            pass
         logger.info("Session history deleted")
