@@ -170,7 +170,7 @@ claims = {
 | --- | --- | --- |
 | `Authorization` | 是 | `Bearer <token>`，见第 2 节 |
 | JWT `sub` | 是 | 用户 ID，长度 1–128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_` |
-| `x-session-id` | `/chat`、`/answer_question` 必填；`/chat_sync` 不需要 | 规范的小写连字符 UUIDv7，例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
+| `x-session-id` | `/chat`、`/chat/stop`、`/answer_question` 必填；`/chat_sync` 不需要 | 规范的小写连字符 UUIDv7，例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
 | `x-sender-name` | 是 | 展示用用户名，不能为空或纯空白；非 ASCII 字符使用 UTF-8 URL 编码 |
 | `Accept` | 建议 | `text/event-stream` |
 
@@ -268,6 +268,31 @@ support_json_output = true
 触发后为模型请求添加 `response_format={"type":"json_object"}`，不会额外修改提示词。
 
 未启用能力时返回 `400`，`detail` 为 `The configured model does not support JSON output`，发生在 SSE 建立前。启用后响应格式保持不变：流式接口仍返回 SSE，同步接口仍返回事件列表。模型输出位于 `assistant.context` 中；流式分片需先拼接，再解析完整的 JSON 文本。
+
+### 3.6 停止生成 `POST /chat/stop`
+
+通过独立请求停止当前用户指定会话的 SSE 生成任务：
+
+```bash
+curl --fail-with-body -X POST "http://localhost:7878/chat/stop" \
+  -H "Authorization: Bearer <JWT>" \
+  -H "x-session-id: 018f0000-0000-7000-8000-000000000001"
+```
+
+无需请求体或 `x-sender-name`。用户取已验签 JWT 的 `sub`，会话取 `x-session-id`；不会停止其他用户
+或其他会话的任务。返回 HTTP `200`，响应为 `{"stopped": true}` 或 `{"stopped": false}`：
+
+- `true`：生成任务已退出，占用的大模型信号量名额已归还。排队等待名额、模型响应及用户回答时均可停止。
+- `false`：当前用户的该会话没有活跃生成任务；重复调用安全。
+
+原 SSE 流随后正常结束，已进入网络缓冲区的事件仍可能到达，不保证发送 `assistant_end`、
+`thinking_end` 或 `token_usage`；客户端应在 EOF 时结束展示。会话并发锁在原响应结束后释放。
+Agent 通过 `finally` 保存已经加入上下文的消息，停止请求会等待这次保存收尾。
+本接口仅停止 `/chat`，不作用于 `/chat_sync` 或已提交的后台定时任务。
+停止请求需要有效 JWT；原聊天的 JWT 已过期时应重新签发。
+多实例部署须让 `/chat/stop` 和 `/chat` 按 JWT `sub` 落到同一 backend 进程。
+
+Web 客户端提供 `POST /api/chat/stop` 代理，复用现有登录 Cookie 或嵌入 JWT 认证及会话校验。
 
 ---
 
@@ -538,7 +563,7 @@ curl -N --fail-with-body -X POST "http://localhost:7878/chat" \
 | 同一通道的上一轮 `/chat` 结束后发下一条消息 | 正常，沿用该用户、会话的流式历史 |
 | 同一用户换新会话 ID 或换通道 | 隔离流式历史，文件工作区与记忆仍共享 |
 | 不同用户使用相同会话 ID | 按用户隔离 |
-| `x-session-id` 缺失、空值或非规范 UUIDv7 | 返回 `422`（仅 `/chat`、`/answer_question`；`/chat_sync` 不需要该头） |
+| `x-session-id` 缺失、空值或非规范 UUIDv7 | 返回 `422`（仅 `/chat`、`/chat/stop`、`/answer_question`；`/chat_sync` 不需要该头） |
 
 请以响应结束作为释放本地会话队列的时机；收到 `token_usage` 后继续读取至 EOF，再发送下一轮。
 
@@ -870,6 +895,7 @@ Authorization: Bearer <feishu-channel-token>
 | POST | `/chat` | 通道 JWT，含用户 `sub` | 发送消息并返回 SSE 事件流 |
 | POST | `/chat_sync` | 通道 JWT，含用户 `sub` | 非交互执行，一次性返回合并后的事件列表；服务端生成独立会话，不需要 `x-session-id`，不占会话并发锁 |
 | POST | `/answer_question` | 通道 JWT，含同一用户 `sub` | 提交当前会话的追问答案 |
+| POST | `/chat/stop` | 通道 JWT，含同一用户 `sub` | 停止指定会话的 SSE 生成，回收大模型并发名额 |
 | GET | `/files?path=...` | 通道 JWT，含同一用户 `sub` | 下载用户工作区文件 |
 | GET | `/background_message` | Feishu 通道 JWT，无需 `sub` | 领取后台任务消息，长轮询 |
 

@@ -60,7 +60,7 @@ def test_signer_rejects_invalid_user_id(user_id):
 
 
 @pytest.mark.parametrize("method, path", [
-    ("POST", "/chat"), ("POST", "/chat_sync"), ("POST", "/answer_question"),
+    ("POST", "/chat"), ("POST", "/chat/stop"), ("POST", "/chat_sync"), ("POST", "/answer_question"),
     ("GET", "/files?path=report.txt"), ("GET", "/skills"), ("POST", "/skills/import"),
 ])
 @pytest.mark.parametrize("user_id", [None, "alice"])

@@ -28,10 +28,10 @@ from yarl import URL
 
 from .....exceptions import PathProtectionError
 from .....utils.channel_jwt import UserJWTAuth
-from .....utils.ids import DEFAULT_SESSION_ID, validate_session_id
+from .....utils.ids import validate_session_id
 from .....utils.internal_jwt import create_internal_access_token
 from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file
-from ..backend import open_chat, open_chat_sync, submit_question
+from ..backend import open_chat, open_chat_sync, stop_chat, submit_question
 from ..dao import User
 from ..history import JsonlEventHistoryRepository
 
@@ -81,14 +81,8 @@ def _history_identity(user: User | UserJWTAuth) -> tuple[str, str]:
     return user.user_id, user.channel
 
 
-def _validated_chat_session_id(user: User | UserJWTAuth, session_id: str | None) -> str | None:
-    if session_id is None:
-        if isinstance(user, UserJWTAuth):
-            raise HTTPException(422, "嵌入聊天必须提供 UUIDv7 格式的 x-session-id")
-        return None
+def _validated_chat_session_id(session_id: str) -> str:
     try:
-        if isinstance(user, UserJWTAuth) and session_id == DEFAULT_SESSION_ID:
-            raise PathProtectionError("Explicit default session is not allowed")
         return validate_session_id(session_id)
     except PathProtectionError:
         raise HTTPException(422, "x-session-id 必须是规范的小写 UUIDv7") from None
@@ -152,12 +146,11 @@ def create_proxy_router(
     AdminUser = Annotated[User, Depends(admin_user_dependency)]
 
     def chat_session_id(
-        user: CurrentUser,
-        session_id: Annotated[str | None, Header(alias="x-session-id")] = None,
-    ) -> str | None:
-        return _validated_chat_session_id(user, session_id)
+        session_id: Annotated[str, Header(alias="x-session-id")],
+    ) -> str:
+        return _validated_chat_session_id(session_id)
 
-    ChatSessionId = Annotated[str | None, Depends(chat_session_id)]
+    ChatSessionId = Annotated[str, Depends(chat_session_id)]
 
     def request_backend_auth(user: CurrentUser) -> BackendAuthParams:
         return _backend_auth(user)
@@ -181,6 +174,15 @@ def create_proxy_router(
         return JSONResponse(
             {"session_id": session_id, "channel": channel, "events": events},
             headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post("/chat/stop")
+    async def proxy_stop_chat(session_id: ChatSessionId, backend_auth: RequestBackendAuth):
+        upstream = await stop_chat(backend_auth, backend_url, session_id=session_id)
+        return Response(
+            upstream.content,
+            status_code=upstream.status_code,
+            media_type=upstream.headers.get("content-type"),
         )
 
     @router.post("/chat")
@@ -267,7 +269,6 @@ def create_proxy_router(
             )
 
         history_user_id, history_channel = _history_identity(user)
-        history_session_id = session_id or DEFAULT_SESSION_ID
         user_event = _user_history_event(content, files)
         collector = _SSEEventCollector()
 
@@ -292,7 +293,7 @@ def create_proxy_router(
                     try:
                         await history.append(
                             history_user_id,
-                            history_session_id,
+                            session_id,
                             [user_event, *collector.events],
                             channel=history_channel,
                         )
@@ -339,9 +340,7 @@ def create_proxy_router(
                     cookie = None
                     authorization = f"Bearer {token}"
                 user = await current_user_dependency(token=cookie, authorization=authorization)
-                session_id = _validated_chat_session_id(user, session_id)
-                if session_id is None:
-                    raise HTTPException(422, "WebSocket 聊天必须提供 session_id")
+                session_id = _validated_chat_session_id(session_id)
                 sender_name = payload.get("sender_name")
                 if sender_name is not None and not isinstance(sender_name, str):
                     raise HTTPException(422, "sender_name 必须是字符串")

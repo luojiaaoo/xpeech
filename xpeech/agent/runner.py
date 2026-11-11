@@ -1,4 +1,5 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any, Self
 
 from ..config.settings import Settings, settings
@@ -85,7 +86,7 @@ class AgentRunner:
     async def run(
         self,
         message: InboundMessage,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Run one inbound message and yield the agent's events."""
         if message.user_id != self.user_id:
             raise ValueError("Inbound message user_id does not match the runner user")
@@ -93,11 +94,12 @@ class AgentRunner:
         if self._agent_loop is None:
             raise RuntimeError("AgentRunner must be created with AgentRunner.create()")
 
-        async for event in self._agent_loop.run(
+        async with aclosing(self._agent_loop.run(
             message=message,
             not_interactive=self.not_interactive,
-        ):
-            yield event
+        )) as events:
+            async for event in events:
+                yield event
 
     async def run_not_interactive(
         self,

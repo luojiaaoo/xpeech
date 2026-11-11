@@ -31,7 +31,7 @@ type Question = FormQuestion | ConfirmQuestion;
 
 export default function QuestionForm({ context, sessionId, readOnly = false }: {
   context: string;
-  sessionId?: string;
+  sessionId: string;
   readOnly?: boolean;
 }) {
   const [answered, setAnswered] = useState(false);

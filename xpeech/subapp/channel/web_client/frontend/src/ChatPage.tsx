@@ -14,7 +14,7 @@ import {
   DownOutlined,
   RobotOutlined,
 } from '@ant-design/icons';
-import { chatSync, downloadFile, getFile, historyApi, streamChat } from './api';
+import { chatSync, downloadFile, getFile, historyApi, stopChat, streamChat } from './api';
 import { collectReplies, connectEmbedBridge, postToParent } from './embedBridge';
 import type { SyncOptions } from './embedBridge';
 import { appendChatEvent, chatMessagesFromEvents, finishChatTurn, startChatTurn } from './chatState';
@@ -155,11 +155,13 @@ export default function ChatPage({
   const [files, setFiles] = useState<File[]>([]);
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [pendingUserPrefix, setPendingUserPrefix] = useState(readPendingUserPrefix);
   const [userPrefixExpanded, setUserPrefixExpanded] = useState(false);
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
   const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const stoppingRef = useRef(false);
   const syncRequests = useRef(new Set<AbortController>());
   const sendRef = useRef(send);
   sendRef.current = send;
@@ -188,7 +190,7 @@ export default function ChatPage({
         return newConversationRef.current();
       },
       send() {
-        if (requestRef.current) throw new Error('正在回复，请稍后再发送');
+        if (requestRef.current || stoppingRef.current) throw new Error('正在回复，请稍后再发送');
         const { value: text, files } = composerRef.current;
         if (!text.trim() && !files.length) throw new Error('消息不能为空');
         void sendRef.current(text);
@@ -241,9 +243,25 @@ export default function ChatPage({
     setMessages((current) => appendChatEvent(current, event));
   }
 
+  async function stop() {
+    const controller = requestRef.current;
+    if (!controller || stoppingRef.current) return;
+    stoppingRef.current = true;
+    setStopping(true);
+    try {
+      await stopChat(sessionId);
+      controller.abort();
+    } catch (error) {
+      message.error(`停止失败：${String(error)}`);
+    } finally {
+      stoppingRef.current = false;
+      setStopping(false);
+    }
+  }
+
   async function send(text: string, sync?: SyncOptions): Promise<ChatEvent[]> {
     // 同步调用可与对话框手动聊天、其他同步调用并发；后端每次同步执行使用独立生成的会话。
-    if (!sync && (!active || requestRef.current)) return [];
+    if (!sync && (!active || requestRef.current || stoppingRef.current)) return [];
     const sentFiles = sync ? sync.files ?? [] : composerRef.current.files;
     if (!text.trim() && sentFiles.length === 0) return [];
     const controller = new AbortController();
@@ -306,9 +324,7 @@ export default function ChatPage({
       if (sync) {
         syncRequests.current.delete(controller);
       } else {
-        if (!controller.signal.aborted) {
-          setMessages(finishChatTurn);
-        }
+        setMessages(finishChatTurn);
         if (requestRef.current === controller) requestRef.current = null;
         setLoading(false);
         onRunningChange?.(false);
@@ -430,7 +446,8 @@ export default function ChatPage({
           value={value}
           onChange={setValue}
           onSubmit={(text) => { void send(text); }}
-          loading={loading || historyLoading}
+          onCancel={() => { void stop(); }}
+          loading={loading || historyLoading || stopping}
           header={header}
           placeholder={embedded ? '输入消息…' : '输入消息，Enter 发送，Shift + Enter 换行'}
           autoSize={{ minRows: 1, maxRows: 6 }}

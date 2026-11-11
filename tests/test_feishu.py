@@ -33,6 +33,7 @@ from xpeech.subapp.channel.feishu.cards import (
     build_feishu_background_task_card,
 )
 from xpeech.subapp.channel.feishu.channel import XpeechFeishuChannel
+from xpeech.subapp.channel.feishu.config import DEFAULT_SESSION_ID
 from xpeech.subapp.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
@@ -161,6 +162,7 @@ async def test_sdk_batches_busy_messages_and_card_answer_unblocks_agent(tmp_path
         {"answer": "yes"},
         bridge.chat_url,
         "feishu",
+        session_id=DEFAULT_SESSION_ID,
     )
     channel.update_card.assert_awaited_once_with("om_question", FINISH_CARD_CONTENT)
 
@@ -626,6 +628,7 @@ async def test_card_action_uses_typed_form_value(monkeypatch: pytest.MonkeyPatch
         {"answer": "typed"},
         "http://backend.test",
         "feishu",
+        session_id=DEFAULT_SESSION_ID,
     )
     bridge.get_user_identity.assert_awaited_once_with("ou_sender")
     update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
@@ -645,7 +648,9 @@ async def test_confirmation_button_callback_submits_decision(monkeypatch, decisi
         action=CardActionPayload(tag="button", value={"decision": decision}),
     )
     await bridge._on_card_action(event)
-    notify_question.assert_awaited_once_with("E1001", {"decision": decision}, "http://backend.test", "feishu")
+    notify_question.assert_awaited_once_with(
+        "E1001", {"decision": decision}, "http://backend.test", "feishu", session_id=DEFAULT_SESSION_ID,
+    )
     update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
 
 
@@ -818,8 +823,8 @@ async def test_consume_sends_one_sdk_batch_as_one_prompt(monkeypatch):
     ]
     requests = []
 
-    async def chat_events(request_messages, chat_url, channel_name):
-        requests.append((request_messages, chat_url, channel_name))
+    async def chat_events(request_messages, chat_url, channel_name, *, session_id):
+        requests.append((request_messages, chat_url, channel_name, session_id))
         if False:
             yield
 
@@ -830,7 +835,7 @@ async def test_consume_sends_one_sdk_batch_as_one_prompt(monkeypatch):
     await bridge.consume(messages)
 
     assert requests == [
-        (messages, "http://backend.test/chat", "feishu")
+        (messages, "http://backend.test/chat", "feishu", DEFAULT_SESSION_ID)
     ]
     assert [call.args[0] for call in channel.add_reaction.await_args_list] == [
         "om_message_1",

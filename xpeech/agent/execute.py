@@ -1,6 +1,7 @@
 """Streaming and non-interactive Agent execution inside the backend."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any
 
 from fastapi import UploadFile
@@ -65,7 +66,7 @@ async def execute_chat_stream(
     session_metadata: dict[str, str] | None = None,
     files: list[UploadFile] | None = None,
     json_output: bool = False,
-) -> AsyncIterator[dict[str, Any]]:
+) -> AsyncGenerator[dict[str, Any], None]:
     """Run an interactive Agent call and yield its events."""
     runner, message = await _prepare_chat(
         user_id,
@@ -77,8 +78,9 @@ async def execute_chat_stream(
         files=files,
         json_output=json_output,
     )
-    async for event in runner.run(message=message):
-        yield event
+    async with aclosing(runner.run(message=message)) as events:
+        async for event in events:
+            yield event
 
 
 async def execute_chat(

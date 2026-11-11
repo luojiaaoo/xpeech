@@ -60,6 +60,7 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
         ).status_code == 200
         proxied = client.post(
             f"/api/{endpoint}",
+            headers={"x-session-id": "018f0000-0000-7000-8000-000000000001"},
             data={
                 "content": json.dumps([{"text": text}], ensure_ascii=False),
                 "session_metadata": json.dumps(

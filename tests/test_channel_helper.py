@@ -12,6 +12,7 @@ from xpeech.utils.channel_jwt import UserJWTAuth
 
 TEST_CHANNEL = "test"
 TEST_SECRET_KEY = "test-channel-key-that-is-at-least-32-bytes"
+SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 
 
 @pytest.mark.asyncio
@@ -27,14 +28,19 @@ async def test_backend_requests_bind_user_in_jwt_subject(monkeypatch):
     monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client_class(
         transport=httpx.MockTransport(respond), **kwargs,
     ))
-    stream = await helper.open_chat_stream("alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL)
+    stream = await helper.open_chat_stream(
+        "alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL, session_id=SESSION_ID,
+    )
     await stream.aclose()
-    await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL)
+    await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL, session_id=SESSION_ID)
     await helper.fetch_file(helper.BackendUserParams("alice", TEST_CHANNEL), "report.txt", "http://backend.test")
     assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/files"]
     for request in requests:
         assert "x-user-id" not in request.headers
-        assert request.headers["x-session-id"] == "00000000-0000-7000-8000-000000000000"
+        if request.url.path == "/files":
+            assert "x-session-id" not in request.headers
+        else:
+            assert request.headers["x-session-id"] == SESSION_ID
         token = request.headers["authorization"].removeprefix("Bearer ")
         auth = UserJWTAuth(token)
         assert auth.channel == TEST_CHANNEL
@@ -71,6 +77,7 @@ async def test_iter_chat_events_reads_streaming_error_response(monkeypatch: pyte
                 [message],
                 "http://backend.test/chat",
                 TEST_CHANNEL,
+                session_id=SESSION_ID,
             )
         ]
 
@@ -115,6 +122,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
         [message],
         "http://backend.test/chat",
         TEST_CHANNEL,
+        session_id=SESSION_ID,
     )
     thinking = await anext(events)
     assert thinking.event == ChatEventType.THINKING

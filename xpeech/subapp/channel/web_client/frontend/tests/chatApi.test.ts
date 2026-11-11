@@ -95,16 +95,16 @@ test('each session chat uses its own WebSocket while HTTP APIs retain their auth
     assert.equal(call.init.credentials, 'omit');
   }
   api.setEmbeddedJWT(null);
-  await api.streamChat('standalone chat', [], () => {});
-  assert.equal(starts.at(-1).session_id, '00000000-0000-7000-8000-000000000000');
+  await api.streamChat('standalone chat', [], () => {}, { sessionId: first });
+  assert.equal(starts.at(-1).session_id, first);
   assert.equal(starts.at(-1).token, null);
   assert.equal(starts.at(-1).sender_name, null);
   assert.deepEqual(starts.at(-1).session_metadata, {});
-  await api.streamChat('standalone conversation', [], () => {}, { sessionId: '00000000-0000-7000-8000-000000000000' });
-  await api.answerQuestion('standalone answer', '00000000-0000-7000-8000-000000000000');
+  await api.streamChat('standalone conversation', [], () => {}, { sessionId: next });
+  await api.answerQuestion('standalone answer', next);
   assert.equal(sockets.length, 4);
-  assert.equal(starts.at(-1).session_id, '00000000-0000-7000-8000-000000000000');
-  assert.equal((calls.at(-1)!.init.headers as Headers).get('x-session-id'), '00000000-0000-7000-8000-000000000000');
+  assert.equal(starts.at(-1).session_id, next);
+  assert.equal((calls.at(-1)!.init.headers as Headers).get('x-session-id'), next);
   assert.equal((calls.at(-1)!.init.headers as Headers).get('authorization'), null);
   assert.equal(calls.at(-1)!.init.credentials, 'same-origin');
 });
@@ -185,6 +185,61 @@ test('concurrent sessions use independent sockets and cancellation closes only t
   assert.equal(sent.some((data) => data.type === 'cancel'), false);
 });
 
+test('stopping a chat uses an independent request with the matching session and cookie or embedded JWT', async () => {
+  const calls: { url: string; init: RequestInit }[] = [];
+  let response = Response.json({ stopped: true });
+  let expired = 0;
+  const context = vm.createContext({
+    Headers, FormData, Event,
+    window: { dispatchEvent() { expired++; } },
+    fetch: async (url: string, init: RequestInit) => { calls.push({ url, init }); return response; },
+  });
+  const source = stripTypeScriptTypes(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(() => { throw new Error('Only type imports are expected'); });
+  await module.evaluate();
+  const api = module.namespace as { setEmbeddedJWT: Function; stopChat: Function };
+  const first = '018f0000-0000-7000-8000-000000000001';
+  const second = '018f0000-0000-7000-8000-000000000002';
+  assert.equal((await api.stopChat(first)).stopped, true);
+  assert.equal(calls[0].url, '/api/chat/stop');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.credentials, 'same-origin');
+  assert.equal((calls[0].init.headers as Headers).get('authorization'), null);
+  assert.equal((calls[0].init.headers as Headers).get('x-session-id'), first);
+  assert.equal(calls[0].init.signal, undefined);
+  api.setEmbeddedJWT('business.jwt.signature');
+  response = Response.json({ stopped: false });
+  assert.equal((await api.stopChat(second)).stopped, false);
+  assert.equal(calls[1].init.credentials, 'omit');
+  assert.equal((calls[1].init.headers as Headers).get('authorization'), 'Bearer business.jwt.signature');
+  assert.equal((calls[1].init.headers as Headers).get('x-session-id'), second);
+  response = Response.json({ detail: 'JWT expired' }, { status: 401 });
+  await assert.rejects(api.stopChat(first), /JWT expired/);
+  assert.equal(expired, 1);
+});
+
+test('chat, synchronous chat, stop and answers reject missing or empty session IDs before making requests', async () => {
+  const context = vm.createContext({
+    Headers, FormData,
+    fetch: async () => { throw new Error('Must not contact backend'); },
+    WebSocket: class { constructor() { throw new Error('Must not create a socket'); } },
+  });
+  const source = stripTypeScriptTypes(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(() => { throw new Error('Only type imports are expected'); });
+  await module.evaluate();
+  const api = module.namespace as { streamChat: Function; chatSync: Function; stopChat: Function; answerQuestion: Function };
+  for (const sessionId of [undefined, '']) {
+    await assert.rejects(api.streamChat('hello', [], () => {}, { sessionId }), /sessionId/);
+    await assert.rejects(api.chatSync('hello', [], { sessionId }), /sessionId/);
+    await assert.rejects(api.stopChat(sessionId), /sessionId/);
+    await assert.rejects(api.answerQuestion('yes', sessionId), /sessionId/);
+  }
+  await assert.rejects(api.streamChat('hello', [], () => {}), /sessionId/);
+  await assert.rejects(api.chatSync('hello'), /sessionId/);
+});
+
 test('question answers require backend acknowledgement and report missing waiters', async () => {
   let response = Response.json({ message: 'Question event not found' });
   let expired = 0;
@@ -199,16 +254,17 @@ test('question answers require backend acknowledgement and report missing waiter
   await module.evaluate();
   const api = module.namespace as { setEmbeddedJWT: Function; answerQuestion: Function };
 
-  await assert.rejects(api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000'), /答案未被接收/);
+  const sessionId = '018f0000-0000-7000-8000-000000000001';
+  await assert.rejects(api.answerQuestion('yes', sessionId), /答案未被接收/);
   response = Response.json({ message: 'unexpected' });
-  await assert.rejects(api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000'), /后端未确认收到答案/);
+  await assert.rejects(api.answerQuestion('yes', sessionId), /后端未确认收到答案/);
   response = Response.json({ message: 'Answer received' });
-  await api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000');
+  await api.answerQuestion('yes', sessionId);
   response = new Response('upstream unavailable', { status: 502 });
-  await assert.rejects(api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000'), /upstream unavailable/);
+  await assert.rejects(api.answerQuestion('yes', sessionId), /upstream unavailable/);
   api.setEmbeddedJWT('expired.jwt.signature');
   response = new Response('JWT expired', { status: 401 });
-  await assert.rejects(api.answerQuestion('yes', '00000000-0000-7000-8000-000000000000'), /JWT expired/);
+  await assert.rejects(api.answerQuestion('yes', sessionId), /JWT expired/);
   assert.equal(expired, 1);
 });
 
@@ -217,7 +273,7 @@ test('synchronous chat forwards authentication, session, metadata and JSON mode 
   let expired = 0;
   const calls: { url: string; init: RequestInit }[] = [];
   const context = vm.createContext({
-    Headers, FormData, Event,
+    Headers, FormData, Event, Response,
     window: { dispatchEvent() { expired++; } },
     fetch: async (url: string, init: RequestInit) => { calls.push({ url, init }); return response; },
   });
@@ -241,20 +297,87 @@ test('synchronous chat forwards authentication, session, metadata and JSON mode 
   assert.equal((init.headers as Headers).get('authorization'), 'Bearer business.jwt.signature');
   assert.equal((init.headers as Headers).get('x-session-id'), 'session');
   assert.equal((init.headers as Headers).get('x-sender-name'), encodeURIComponent('张三'));
-  assert.equal((init.body as FormData).has('json_output'), false);
-  assert.deepEqual(JSON.parse((init.body as FormData).get('content') as string), [{ text: 'hello::请严格以JSON格式回复::' }]);
-  assert.deepEqual(JSON.parse((init.body as FormData).get('session_metadata') as string), { source: 'portal' });
-  assert.equal((init.headers as Headers).has('content-type'), false);
-  const uploaded = (init.body as FormData).getAll('files') as File[];
+  assert.ok(init.body instanceof Blob);
+  assert.ok(init.body.size > bytes.length);
+  assert.match(init.body.type, /^multipart\/form-data;\s*boundary=/);
+  const contentType = (init.headers as Headers).get('content-type')!;
+  assert.match(contentType, /^multipart\/form-data;\s*boundary=/);
+  const decoded = await new Response(init.body, { headers: { 'Content-Type': contentType } }).formData();
+  assert.equal(decoded.has('json_output'), false);
+  assert.deepEqual(JSON.parse(decoded.get('content') as string), [{ text: 'hello::请严格以JSON格式回复::' }]);
+  assert.deepEqual(JSON.parse(decoded.get('session_metadata') as string), { source: 'portal' });
+  const uploaded = decoded.getAll('files') as File[];
   assert.deepEqual(uploaded.map(file => file.name), ['报告.bin', 'other.txt']);
   assert.equal(uploaded[0].type, 'application/octet-stream');
   assert.deepEqual(new Uint8Array(await uploaded[0].arrayBuffer()), bytes);
   assert.equal(await uploaded[1].text(), 'second');
   response = new Response('busy', { status: 409 });
-  await assert.rejects(api.chatSync('hello'), /busy/);
+  await assert.rejects(api.chatSync('hello', [], { sessionId: 'session' }), /busy/);
+  assert.ok(calls[1].init.body instanceof FormData);
   response = new Response('expired', { status: 401 });
-  await assert.rejects(api.chatSync('hello'), /expired/);
+  await assert.rejects(api.chatSync('hello', [], { sessionId: 'session' }), /expired/);
   assert.equal(expired, 1);
+});
+
+test('synchronous uploads preserve case-sensitive multipart boundaries', async () => {
+  const contentType = 'multipart/form-data; boundary=MixedCaseBoundary';
+  class MultipartResponse extends Response {
+    constructor(form: FormData) {
+      super('--MixedCaseBoundary\r\nContent-Disposition: form-data; name="content"\r\n\r\n[]\r\n--MixedCaseBoundary--\r\n', {
+        headers: { 'Content-Type': contentType },
+      });
+    }
+    override async blob() {
+      return new Blob([await this.arrayBuffer()], { type: contentType });
+    }
+  }
+  let received: FormData | undefined;
+  const context = vm.createContext({
+    Headers, FormData, Response: MultipartResponse,
+    fetch: async (_url: string, init: RequestInit) => {
+      assert.equal((init.headers as Headers).get('content-type'), contentType);
+      assert.equal((init.body as Blob).type, contentType.toLowerCase());
+      received = await new Response(init.body, { headers: init.headers }).formData();
+      return Response.json([]);
+    },
+  });
+  const source = stripTypeScriptTypes(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(() => { throw new Error('Only type imports are expected'); });
+  await module.evaluate();
+  const api = module.namespace as { chatSync: Function };
+  await api.chatSync('hello', [new File(['data'], 'test.txt')], { sessionId: 'session' });
+  assert.equal(received!.get('content'), '[]');
+});
+
+test('synchronous uploads cancelled while encoding never send a request', async () => {
+  const controller = new AbortController();
+  let sent = 0;
+  class EncodingResponse extends Response {
+    override async blob() {
+      const body = await super.blob();
+      controller.abort();
+      return body;
+    }
+  }
+  const context = vm.createContext({
+    Headers, FormData, Response: EncodingResponse,
+    fetch: async () => { sent++; return Response.json([]); },
+  });
+  const source = stripTypeScriptTypes(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(() => { throw new Error('Only type imports are expected'); });
+  await module.evaluate();
+  const api = module.namespace as { chatSync: Function };
+  const files = [new File(['attachment'], 'test.txt')];
+  await assert.rejects(api.chatSync('hello', files, {
+    sessionId: 'session', signal: controller.signal,
+  }), { name: 'AbortError' });
+  assert.equal(sent, 0);
+  await assert.rejects(api.chatSync('hello', files, {
+    sessionId: 'session', signal: controller.signal,
+  }), { name: 'AbortError' });
+  assert.equal(sent, 0);
 });
 
 test('file downloads authenticate, encode event paths, save binary content and reject HTTP failures', async () => {

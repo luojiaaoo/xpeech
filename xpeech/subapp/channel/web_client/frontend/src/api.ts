@@ -241,20 +241,34 @@ export const statisticsApi = {
   },
 };
 
-type ChatOptions = { sessionId?: string; signal?: AbortSignal };
+type ChatOptions = { sessionId: string; signal?: AbortSignal };
+
+function chatHeaders(sessionId: string): Headers {
+  if (!sessionId) throw new Error('必须提供 sessionId');
+  return authHeaders({ 'x-session-id': sessionId });
+}
 
 async function sendChat(path: string, text: string, files: File[], options: ChatOptions) {
+  const headers = chatHeaders(options?.sessionId);
   const form = new FormData();
   form.set('content', JSON.stringify(text.trim() ? [{ text: text.trim() }] : []));
   if (memoryJWT) form.set('session_metadata', JSON.stringify(memorySessionMetadata));
   files.forEach((file) => form.append('files', file, file.name));
-  const headers = authHeaders();
   if (memorySenderName !== null) {
     headers.set('x-sender-name', encodeURIComponent(memorySenderName));
   }
-  if (options.sessionId) headers.set('x-session-id', options.sessionId);
+  options.signal?.throwIfAborted();
+  // Materialize multipart uploads so the body has a known size on HTTP/1.1.
+  // Preserve the original boundary: Blob MIME types can lowercase it.
+  let body: FormData | Blob = form;
+  if (files.length) {
+    const multipart = new Response(form);
+    headers.set('Content-Type', multipart.headers.get('Content-Type')!);
+    body = await multipart.blob();
+  }
+  options.signal?.throwIfAborted();
   const response = await fetch(path, {
-    method: 'POST', body: form,
+    method: 'POST', body,
     credentials: memoryJWT ? 'omit' : 'same-origin', headers, signal: options.signal,
   });
   if (!response.ok || !response.body) {
@@ -266,9 +280,16 @@ async function sendChat(path: string, text: string, files: File[], options: Chat
   return response;
 }
 
-export async function chatSync(text: string, files: File[] = [], options: ChatOptions = {}): Promise<ChatEvent[]> {
+export async function chatSync(text: string, files: File[], options: ChatOptions): Promise<ChatEvent[]> {
   const response = await sendChat('/api/chat_sync', text, files, options);
   return response.json();
+}
+
+export async function stopChat(sessionId: string): Promise<{ stopped: boolean }> {
+  return request('/api/chat/stop', {
+    method: 'POST',
+    headers: chatHeaders(sessionId),
+  });
 }
 
 function abortError() {
@@ -286,11 +307,12 @@ async function encodeChatFile(file: File) {
 
 export async function streamChat(
   text: string, files: File[], onEvent: (event: ChatEvent) => void,
-  options: ChatOptions = {},
+  options: ChatOptions,
 ) {
+  const sessionId = options?.sessionId;
+  if (!sessionId) throw new Error('必须提供 sessionId');
   const signal = options.signal;
   signal?.throwIfAborted();
-  const sessionId = options.sessionId ?? '00000000-0000-7000-8000-000000000000';
   const token = memoryJWT;
   const senderName = memorySenderName;
   const sessionMetadata = memorySessionMetadata;
@@ -351,11 +373,10 @@ export async function streamChat(
   });
 }
 
-export async function answerQuestion(answer: unknown, sessionId?: string) {
+export async function answerQuestion(answer: unknown, sessionId: string) {
   const form = new FormData();
   form.set('answer', typeof answer === 'string' ? answer : JSON.stringify(answer));
-  const headers = authHeaders();
-  if (sessionId) headers.set('x-session-id', sessionId);
+  const headers = chatHeaders(sessionId);
   const response = await fetch('/api/answer_question', {
     method: 'POST', body: form,
     credentials: memoryJWT ? 'omit' : 'same-origin', headers,

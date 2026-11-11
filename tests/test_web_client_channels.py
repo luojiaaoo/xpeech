@@ -147,7 +147,7 @@ def test_custom_channel_is_used_for_http_websocket_jwt_and_isolated_history(chan
     client = channel_client
     login(client)
     assert client.get("/api/files", params={"path": "report.txt"}).content == b"report"
-    assert client.post("/api/answer_question", data={"answer": "yes"}).status_code == 200
+    assert client.post("/api/answer_question", data={"answer": "yes"}, headers={"x-session-id": SESSION_ID}).status_code == 200
     assert client.post("/api/chat", data={"content": "[]"}, headers={"x-session-id": SESSION_ID}).status_code == 200
     assert client.get("/api/history/sessions").json()[0]["channel"] == "crm"
     with client.websocket_connect("/api/chat/ws") as socket:

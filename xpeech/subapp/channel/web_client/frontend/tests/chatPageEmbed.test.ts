@@ -42,7 +42,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
       'LoadingOutlined', 'PaperClipOutlined', 'DownOutlined', 'RobotOutlined',
     ].map(name => [name, name])),
     './api': {
-      getFile() {}, downloadFile() {},
+      getFile() {}, downloadFile() {}, stopChat() {},
       historyApi: { async get() { return { events: [] }; } },
       async streamChat(text: string, files: File[], receive: (event: any) => void, options: any) {
         streamCalls.push({ text, files, options });

@@ -7,6 +7,7 @@ from itertools import count
 from pathlib import Path
 from typing import Any, ClassVar
 
+import anyio
 from fastapi import HTTPException, status
 from loguru import logger
 
@@ -131,12 +132,6 @@ class AgentLoop:
             len(response.tool_calls),
         )
 
-        # 输出工具调用消息
-        yield {
-            "event": "tool_call",
-            "context": json.dumps([(i.id, i.name, i.arguments) for i in response.tool_calls]),
-        }
-
         # 还原工具调用格式
         tool_call_dicts = [
             {
@@ -152,6 +147,12 @@ class AgentLoop:
         if tool_call_dicts:
             msg["tool_calls"] = tool_call_dicts
         _append_turn_message(messages_yaml, turn_messages, msg)
+
+        # 先记录，再输出；暂停在 yield 时，finally 仍能保存这条消息。
+        yield {
+            "event": "tool_call",
+            "context": json.dumps([(i.id, i.name, i.arguments) for i in response.tool_calls]),
+        }
 
         # 执行工具调用
         with_metas = []
@@ -256,9 +257,9 @@ class AgentLoop:
                 elif isinstance(execution.value, SendFileRequest):
                     # 发送文件
                     logger.info("Sending file {}", execution.value.source)
-                    yield {"event": "send_file", "context": execution.value.source}
                     tool_result_content = f"文件已发送：{execution.value.source}"
                     append_tool_result_messages_yaml(tool_call, tool_result_content)
+                    yield {"event": "send_file", "context": execution.value.source}
                 elif isinstance(execution.value, QuestionRequest):
                     # 等待用户输入
                     logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
@@ -376,136 +377,132 @@ class AgentLoop:
             ),
         )
 
-        final_content = None
-        final_content_error = False
-        for loop_count in count():
-            # 达到最大迭代次数，强制停止循环
-            if self.max_iterations is not None and loop_count >= self.max_iterations:
-                final_content = (
-                    f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
+        try:
+            final_content = None
+            final_content_error = False
+            for loop_count in count():
+                # 达到最大迭代次数，强制停止循环
+                if self.max_iterations is not None and loop_count >= self.max_iterations:
+                    final_content = (
+                        f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
+                    )
+                    final_content_error = True
+                    logger.warning(
+                        "Agent loop reached max iterations loop_count={} max_iterations={}",
+                        loop_count,
+                        self.max_iterations,
+                    )
+                    break
+
+                # 判断是否需要压缩
+                if await self.compressor.should_compress(messages_yaml):
+                    yield {"event": "command", "context": "♻️ 压缩上下文中，请稍等..."}
+                    await self.memory_consolidator.consolidate(messages_yaml)
+                    messages_yaml = await self.compressor.compress(messages_yaml)
+
+                logger.info("Calling provider chat loop_count={}", loop_count)
+
+                try:
+                    response = await self.chat(
+                        messages=messages_yaml,
+                        tools=self.tools,
+                        json_output=message.json_output,
+                    )
+
+                    async for kind, chunk in response.iter_mix_chunks:
+                        if kind == "reasoning_content" and isinstance(chunk, str):
+                            yield {"event": "thinking", "context": chunk}
+                        elif kind == "reasoning_content_end":
+                            yield {"event": "thinking_end", "context": ""}
+                        elif kind == "content" and isinstance(chunk, str):
+                            yield {"event": "assistant", "context": chunk}
+                        elif kind == "content_end":
+                            yield {"event": "assistant_end", "context": ""}
+                        elif (kind == "tool_calls" and isinstance(chunk, ToolCallRequest)) or (kind == "tool_calls_end"):
+                            pass  # 工具调用事件在后续处理
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    logger.exception(
+                        "Provider chat failed loop_count={}",
+                        loop_count,
+                    )
+                    _append_turn_message(
+                        messages_yaml, turn_messages,
+                        {
+                            "role": "user",
+                            "content": (
+                                f"The previous model call failed with this error: {exc}. "
+                                "Please retry the request and adjust your approach if needed."
+                            ),
+                        }
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=str(exc),
+                    ) from exc
+
+                logger.info(
+                    "Provider chat completed loop_count={} has_tool_calls={}",
+                    loop_count,
+                    response.has_tool_calls,
                 )
+
+                # 如果有工具调用
+                if response.has_tool_calls:
+                    async for i in self.tool_call(
+                        response,
+                        messages_yaml,
+                        loop_count,
+                        message.user_id,
+                        message.session_id,
+                        message.sender_name,
+                        session_metadata=message.session_metadata,
+                        channel=message.channel,
+                        turn_messages=turn_messages,
+                    ):
+                        yield i
+                else:
+                    # 没有工具，结束循环
+                    final_content = response.content
+                    break
+
+                # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
+                if self.max_iterations is not None and loop_count == self.max_iterations - 2:
+                    logger.warning(
+                        "Approaching max iterations loop_count={} max_iterations={}",
+                        loop_count,
+                        self.max_iterations,
+                    )
+                    _append_turn_message(
+                        messages_yaml, turn_messages,
+                        {
+                            "role": "user",
+                            "content": self.ITERATION_STOP_PROMPT,
+                        }
+                    )
+
+            if final_content is None:
+                final_content = "I've completed processing but have no response to give."
                 final_content_error = True
-                logger.warning(
-                    "Agent loop reached max iterations loop_count={} max_iterations={}",
-                    loop_count,
-                    self.max_iterations,
-                )
-                break
+                logger.warning("Agent loop finished without final content")
 
-            # 判断是否需要压缩
-            if await self.compressor.should_compress(messages_yaml):
-                yield {"event": "command", "context": "♻️ 压缩上下文中，请稍等..."}
-                await self.memory_consolidator.consolidate(messages_yaml)
-                messages_yaml = await self.compressor.compress(messages_yaml)
+            # 先记录助手消息，再发送异常兜底内容。
+            _append_turn_message(messages_yaml, turn_messages, {"role": "assistant", "content": final_content})
 
-            logger.info("Calling provider chat loop_count={}", loop_count)
+            if final_content_error:
+                yield {"event": "assistant", "context": final_content}
+                yield {"event": "assistant_end", "context": ""}
 
-            try:
-                response = await self.chat(
-                    messages=messages_yaml,
-                    tools=self.tools,
-                    json_output=message.json_output,
-                )
-
-                async for kind, chunk in response.iter_mix_chunks:
-                    if kind == "reasoning_content" and isinstance(chunk, str):
-                        yield {"event": "thinking", "context": chunk}
-                    elif kind == "reasoning_content_end":
-                        yield {"event": "thinking_end", "context": ""}
-                    elif kind == "content" and isinstance(chunk, str):
-                        yield {"event": "assistant", "context": chunk}
-                    elif kind == "content_end":
-                        yield {"event": "assistant_end", "context": ""}
-                    elif (kind == "tool_calls" and isinstance(chunk, ToolCallRequest)) or (kind == "tool_calls_end"):
-                        pass  # 工具调用事件在后续处理
-            except HTTPException:
-                raise
-            except Exception as exc:
-                logger.exception(
-                    "Provider chat failed loop_count={}",
-                    loop_count,
-                )
-                _append_turn_message(
-                    messages_yaml, turn_messages,
-                    {
-                        "role": "user",
-                        "content": (
-                            f"The previous model call failed with this error: {exc}. "
-                            "Please retry the request and adjust your approach if needed."
-                        ),
-                    }
-                )
+        finally:
+            # 取消请求时也保存已经加入上下文的消息。
+            with anyio.CancelScope(shield=True):
                 await self.history.save(
                     message.user_id,
                     message.session_id,
                     messages_yaml,
                     channel=message.channel,
                 )
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=str(exc),
-                ) from exc
-
-            logger.info(
-                "Provider chat completed loop_count={} has_tool_calls={}",
-                loop_count,
-                response.has_tool_calls,
-            )
-
-            # 如果有工具调用
-            if response.has_tool_calls:
-                async for i in self.tool_call(
-                    response,
-                    messages_yaml,
-                    loop_count,
-                    message.user_id,
-                    message.session_id,
-                    message.sender_name,
-                    session_metadata=message.session_metadata,
-                    channel=message.channel,
-                    turn_messages=turn_messages,
-                ):
-                    yield i
-            else:
-                # 没有工具，结束循环
-                final_content = response.content
-                break
-
-            # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
-            if self.max_iterations is not None and loop_count == self.max_iterations - 2:
-                logger.warning(
-                    "Approaching max iterations loop_count={} max_iterations={}",
-                    loop_count,
-                    self.max_iterations,
-                )
-                _append_turn_message(
-                    messages_yaml, turn_messages,
-                    {
-                        "role": "user",
-                        "content": self.ITERATION_STOP_PROMPT,
-                    }
-                )
-
-        if final_content is None:
-            final_content = "I've completed processing but have no response to give."
-            final_content_error = True
-            logger.warning("Agent loop finished without final content")
-
-        # 发送异常兜底内容
-        if final_content_error:
-            yield {"event": "assistant", "context": final_content}
-            yield {"event": "assistant_end", "context": ""}
-
-        # 拼接助手消息
-        _append_turn_message(messages_yaml, turn_messages, {"role": "assistant", "content": final_content})
-
-        # 保存历史记录
-        await self.history.save(
-            message.user_id,
-            message.session_id,
-            messages_yaml,
-            channel=message.channel,
-        )
 
         # 追加本轮对话记录
         user_question = "\n".join(

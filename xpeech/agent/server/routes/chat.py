@@ -5,10 +5,11 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.sse import EventSourceResponse
 
+from ....utils.channel_jwt import UserJWTAuth
 from ...execute import execute_chat, execute_chat_stream
 from ...loop import AgentLoop, QuestionEvent
-from ....utils.channel_jwt import UserJWTAuth
 from ..auth import require_user_jwt
+from ..chat_streams import CHAT_STREAMS
 from ..dependencies import (
     acquire_chat_session,
     authenticated_user_id,
@@ -24,6 +25,15 @@ from ..schema import (
 )
 
 router = APIRouter()
+
+
+@router.post("/chat/stop")
+async def stop_chat(
+    user_id: Annotated[str, Depends(authenticated_user_id)],
+    session_id: Annotated[str, Depends(session_id_header)],
+) -> dict[str, bool]:
+    """停止当前用户指定会话的 SSE 生成任务，等待模型并发名额归还。"""
+    return {"stopped": await CHAT_STREAMS.stop(user_id, session_id)}
 
 
 @router.post("/answer_question")
@@ -63,7 +73,7 @@ async def chat(
     json_output: Annotated[bool, Depends(json_output_enabled)],
 ):
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
-    async for event in execute_chat_stream(
+    events = execute_chat_stream(
         user_id,
         content=content,
         sender_name=sender_name,
@@ -72,7 +82,8 @@ async def chat(
         session_metadata=session_metadata,
         files=files,
         json_output=json_output,
-    ):
+    )
+    async for event in CHAT_STREAMS.stream(user_id, session_id, events):
         yield event
 
 

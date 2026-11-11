@@ -3,15 +3,12 @@ from uuid import UUID
 import pytest
 
 from xpeech.exceptions import PathProtectionError
-from xpeech.utils.ids import DEFAULT_SESSION_ID, generate_session_id, validate_session_id
+from xpeech.utils.ids import generate_session_id, validate_session_id
 
 
-def test_session_id_accepts_default_and_canonical_uuidv7():
+def test_session_id_accepts_canonical_uuidv7():
     uuid7 = "018f0000-0000-7000-8000-000000000001"
 
-    assert DEFAULT_SESSION_ID == "00000000-0000-7000-8000-000000000000"
-    assert UUID(DEFAULT_SESSION_ID).version == 7
-    assert validate_session_id(DEFAULT_SESSION_ID) == DEFAULT_SESSION_ID
     assert validate_session_id(uuid7) == uuid7
 
 

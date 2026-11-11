@@ -306,8 +306,8 @@ def test_embedded_jwt_cannot_authenticate_through_cookies(client):
     assert client.get("/api/auth/embed", headers=headers).status_code == 200
 
 
-@pytest.mark.parametrize("session_id", [None, "00000000-0000-7000-8000-000000000000"])
-def test_local_cookie_login_still_signs_backend_jwt_for_main_session(client, monkeypatch, session_id):
+@pytest.mark.parametrize("session_id", [SESSION_ID, NEXT_SESSION_ID])
+def test_local_cookie_login_signs_backend_jwt_with_explicit_session(client, monkeypatch, session_id):
     secret = "web-client-test-key-at-least-64-characters-for-sha512-signing-tests"
     monkeypatch.setitem(settings.jwt.channels, "web_client", JWTChannelConfig(secret_key=secret))
     assert client.post("/api/auth/login", json={"user_id": "admin", "password": "admin123456"}).status_code == 200
@@ -321,14 +321,12 @@ def test_local_cookie_login_still_signs_backend_jwt_for_main_session(client, mon
         if request.url.path == "/chat_sync":
             assert "x-session-id" not in request.headers  # 同步执行由后端生成独立会话
         else:
-            assert request.headers["x-session-id"] == "00000000-0000-7000-8000-000000000000"
+            assert request.headers["x-session-id"] == session_id
         return httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n')
 
     async_client = httpx.AsyncClient
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: async_client(**kwargs, transport=httpx.MockTransport(backend)))
-    headers = {"x-channel-name": "crm"}
-    if session_id is not None:
-        headers["x-session-id"] = session_id
+    headers = {"x-channel-name": "crm", "x-session-id": session_id}
     for path in ("/api/chat", "/api/chat_sync", "/api/answer_question"):
         assert send(client, path, headers).status_code == 200
     assert len(calls) == 3
@@ -337,7 +335,7 @@ def test_local_cookie_login_still_signs_backend_jwt_for_main_session(client, mon
 
 
 @pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync", "/api/answer_question"])
-@pytest.mark.parametrize("session_id", [SESSION_ID, "not-a-uuid"])
+@pytest.mark.parametrize("session_id", [SESSION_ID, None, "", "not-a-uuid"])
 def test_local_cookie_requests_accept_uuidv7_sessions(client, monkeypatch, path, session_id):
     monkeypatch.setitem(
         settings.jwt.channels,
@@ -348,7 +346,8 @@ def test_local_cookie_requests_accept_uuidv7_sessions(client, monkeypatch, path,
     monkeypatch.setattr(proxy, "submit_question", AsyncMock(return_value=httpx.Response(200, content=b"ok")))
     assert client.post("/api/auth/login", json={"user_id": "admin", "password": "admin123456"}).status_code == 200
     expected_status = 200 if session_id == SESSION_ID else 422
-    assert send(client, path, {"x-session-id": session_id}).status_code == expected_status
+    headers = {"x-session-id": session_id} if session_id is not None else {}
+    assert send(client, path, headers).status_code == expected_status
 
 
 @pytest.mark.asyncio

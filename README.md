@@ -458,6 +458,8 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 标识该用户的一次会话，用于隔离上下文、并发聊天和提问回答。同一个用户可以同时拥有多个会话。
 所有通道均必须传入非空请求头 `x-session-id`，只接受规范的小写连字符 UUIDv7，
 省略、空值或其他格式均返回 HTTP 422。
+Web 客户端为新会话生成 UUIDv7，不提供默认会话；只有飞书桥接使用其 channel 内定义的固定
+`DEFAULT_SESSION_ID`，并在聊天和答题请求中显式传入。
 流式交互会话均向模型提供后台任务工具
 `feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`；`/chat_sync` 等非交互执行不提供这些工具。
 对外用户身份只使用 JWT `sub`；仅内部请求通过 `x-user-id` 传递用户。代码字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
@@ -512,6 +514,20 @@ curl -N -X POST "http://localhost:7878/chat" \
 ```
 
 响应是 SSE 流，可以边生成边读取。
+
+需要停止生成时，使用相同用户的 JWT 和会话 ID 调用 `POST /chat/stop`，无需请求体或
+`x-sender-name`。返回 `{"stopped": true}` 表示已取消该会话的生成任务，并回收它占用的
+大模型信号量名额；没有活跃任务时返回 `{"stopped": false}`。停止也适用于等待模型名额或
+等待用户回答的任务；原 SSE 流随后结束，不保证发送 `token_usage`。
+停止或异常退出时，Agent 会在 `finally` 保存已经加入上下文的消息。停止 API 等待历史保存收尾后返回。
+Web 客户端提供对应的 `POST /api/chat/stop` 代理入口，使用现有登录 Cookie 或嵌入 JWT。
+停止状态保存在当前 backend 进程内，部署时需与 `/chat` 一样按 JWT `sub` 路由到同一实例。
+
+```bash
+curl -X POST "http://localhost:7878/chat/stop" \
+  -H "Authorization: Bearer <JWT>" \
+  -H "x-session-id: 018f0000-0000-7000-8000-000000000001"
+```
 
 需要模型输出 JSON 对象时，在本次用户消息中加入完整标记 `::请严格以JSON格式回复::`，例如：
 

@@ -12,7 +12,6 @@ from httpx_sse import EventSource
 from yarl import URL
 
 from ...utils.channel_jwt import UserTokenParams, create_token
-from ...utils.ids import DEFAULT_SESSION_ID
 from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
@@ -63,7 +62,6 @@ def _passthrough_headers(jwt_token: str, sender_name: str | None = None) -> dict
     """Build headers using the original JWT without issuing a new token."""
     headers = {
         "authorization": f"Bearer {jwt_token}",
-        "x-session-id": DEFAULT_SESSION_ID,
     }
     if sender_name is not None:
         headers["x-sender-name"] = quote(sender_name, safe="")
@@ -78,6 +76,7 @@ async def open_chat_stream(
     chat_url: str,
     channel: str,
     *,
+    session_id: str,
     files: Any = None,
 ) -> ChatStream:
     """Open a streaming request to the backend chat endpoint."""
@@ -89,7 +88,7 @@ async def open_chat_stream(
     client = httpx.AsyncClient(timeout=None)
     try:
         headers = _backend_headers(BackendUserParams(user_id, channel), sender_name)
-        headers.update({"Accept": "text/event-stream", "Cache-Control": "no-store"})
+        headers.update({"x-session-id": session_id, "Accept": "text/event-stream", "Cache-Control": "no-store"})
         response = await client.send(
             client.build_request(
                 "POST",
@@ -110,6 +109,8 @@ async def iter_chat_events(
     messages: list[Message],
     chat_url: str,
     channel: str,
+    *,
+    session_id: str,
 ) -> AsyncIterator[ChatEvent]:
     """Send channel messages to the chat endpoint and yield parsed SSE event dicts."""
 
@@ -152,6 +153,7 @@ async def iter_chat_events(
             ),
             chat_url,
             channel,
+            session_id=session_id,
             files=upload_files,
         )
         try:
@@ -196,6 +198,8 @@ async def submit_question(
     result: Any,
     chat_url: str,
     channel: str,
+    *,
+    session_id: str,
 ) -> httpx.Response:
     """Submit a question answer and return the backend response without changing its status."""
 
@@ -204,7 +208,7 @@ async def submit_question(
     async with httpx.AsyncClient(timeout=30) as client:
         return await client.post(
             answer_url,
-            headers=_backend_headers(BackendUserParams(user_id, channel)),
+            headers={**_backend_headers(BackendUserParams(user_id, channel)), "x-session-id": session_id},
             data={"answer": answer},
         )
 
@@ -214,8 +218,10 @@ async def notify_question(
     result: Any,
     chat_url: str,
     channel: str,
+    *,
+    session_id: str,
 ) -> None:
-    response = await submit_question(user_id, result, chat_url, channel)
+    response = await submit_question(user_id, result, chat_url, channel, session_id=session_id)
     response.raise_for_status()
 
 

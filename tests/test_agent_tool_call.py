@@ -41,6 +41,10 @@ async def test_tool_results_are_sent_individually_as_tools_finish(tmp_path, fast
     async with asyncio.timeout(1):
         async for event in agent_loop.tool_call(response, history, 0, "user", "session", "Alice"):
             events.append(event)
+            if event["event"] == "tool_call":
+                assert [call["id"] for call in history[0]["tool_calls"]] == ["slow", "fast"]
+            if event["event"] == "send_file":
+                assert history[-1] == {"role": "tool", "tool_call_id": "fast", "content": "文件已发送：fast result"}
             if event["event"] == "tool_call_result":
                 result = json.loads(event["context"])
                 assert set(result) == {"id", "name", "result", "duration_seconds"}

@@ -18,7 +18,6 @@ from xpeech.agent.server.dependencies import (
 )
 from xpeech.agent.server.routes.chat import answer_question
 from xpeech.utils.channel_jwt import UserTokenParams, create_token
-from xpeech.utils.ids import DEFAULT_SESSION_ID
 
 UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 
@@ -38,7 +37,7 @@ def test_sender_name_header_is_required():
 
 
 def test_session_id_header_is_required_without_a_default_value():
-    for path in ("/chat", "/answer_question"):
+    for path in ("/chat", "/chat/stop", "/answer_question"):
         parameters = app.openapi()["paths"][path]["post"]["parameters"]
         session_id = next(parameter for parameter in parameters if parameter["name"] == "x-session-id")
         assert session_id["in"] == "header"
@@ -52,14 +51,13 @@ def test_chat_sync_declares_no_session_id_header():
     assert all(parameter["name"] != "x-session-id" for parameter in parameters)
 
 
-def test_session_id_header_accepts_main_and_uuidv7():
-    assert session_id_header(DEFAULT_SESSION_ID) == DEFAULT_SESSION_ID
+def test_session_id_header_accepts_uuidv7():
     assert session_id_header(UUID7_SESSION_ID) == UUID7_SESSION_ID
 
 
 @pytest.mark.parametrize(
     "session_id",
-    [DEFAULT_SESSION_ID, UUID7_SESSION_ID],
+    ["018f0000-0000-7000-8000-000000000002", UUID7_SESSION_ID],
 )
 @pytest.mark.parametrize("channel", ["web_client", "feishu"])
 @pytest.mark.parametrize("json_requested", [False, True])
@@ -116,7 +114,7 @@ def test_chat_initializes_all_tools_for_every_session(
         UUID7_SESSION_ID.replace("-", ""),
     ],
 )
-@pytest.mark.parametrize("path", ["/chat", "/answer_question"])
+@pytest.mark.parametrize("path", ["/chat", "/chat/stop", "/answer_question"])
 @pytest.mark.parametrize("channel", ["web_client", "feishu"])
 def test_chat_rejects_missing_empty_or_invalid_session_ids(session_id, path, channel):
     token = create_token(UserTokenParams(channel, user_id="user"))
@@ -151,7 +149,7 @@ def test_unsupported_json_output_returns_http_error_before_starting_stream(monke
         "/chat",
         headers={
             "Authorization": f"Bearer {token}",
-            "x-session-id": DEFAULT_SESSION_ID,
+            "x-session-id": UUID7_SESSION_ID,
             "x-sender-name": "Alice",
         },
         data={"content": '[{"text":"hello::请严格以JSON格式回复::"}]'},

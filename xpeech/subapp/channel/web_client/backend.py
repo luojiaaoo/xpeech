@@ -6,7 +6,6 @@ from typing import Any
 import httpx
 from yarl import URL
 
-from ....utils.ids import DEFAULT_SESSION_ID
 from ..helper import BackendAuthParams, ChatStream, _backend_headers
 
 
@@ -22,12 +21,12 @@ async def open_chat(
     chat_url: str,
     *,
     files: Any = None,
-    session_id: str | None = None,
+    session_id: str,
 ) -> ChatStream:
     """Open the interactive /chat request as a text/event-stream."""
     headers = _backend_headers(auth, sender_name)
     headers.update({
-        "x-session-id": session_id or DEFAULT_SESSION_ID,
+        "x-session-id": session_id,
         "Accept": "text/event-stream",
         "Cache-Control": "no-store",
     })
@@ -60,7 +59,6 @@ async def open_chat_sync(
     No ``x-session-id`` is sent: the backend generates a fresh session per run.
     """
     headers = _backend_headers(auth, sender_name)
-    headers.pop("x-session-id", None)  # 同步执行由后端生成独立会话
     headers.update({
         "Accept": "application/json",
         "Cache-Control": "no-store",
@@ -74,15 +72,27 @@ async def open_chat_sync(
         )
 
 
+async def stop_chat(
+    auth: BackendAuthParams,
+    chat_url: str,
+    *,
+    session_id: str,
+) -> httpx.Response:
+    headers = _backend_headers(auth)
+    headers["x-session-id"] = session_id
+    async with httpx.AsyncClient(timeout=30) as client:
+        return await client.post(str(URL(chat_url) / "chat" / "stop"), headers=headers)
+
+
 async def submit_question(
     auth: BackendAuthParams,
     result: Any,
     chat_url: str,
     *,
-    session_id: str | None = None,
+    session_id: str,
 ) -> httpx.Response:
     headers = _backend_headers(auth)
-    headers["x-session-id"] = session_id or DEFAULT_SESSION_ID
+    headers["x-session-id"] = session_id
     answer = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
     async with httpx.AsyncClient(timeout=30) as client:
         return await client.post(

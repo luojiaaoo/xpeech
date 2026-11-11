@@ -1,6 +1,7 @@
 from ....config.settings import settings
 from ....utils.file_io import ensure_path
 
+DEFAULT_SESSION_ID = "00000000-0000-7000-8000-000000000000"
 FEISHU_CACHE_DIR = ensure_path(settings.path.cache_path.resolve())
 FEISHU_USER_CACHE_TTL_SECONDS = 3600
 FEISHU_STREAM_UPDATE_INTERVAL_SECONDS = 0.5

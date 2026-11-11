@@ -19,8 +19,10 @@ async function renderQuestion(question: Record<string, unknown>) {
     });
   });
   await component.evaluate();
-  const QuestionForm = component.namespace.default as ComponentType<{ context: string }>;
-  return renderToStaticMarkup(createElement(QuestionForm, { context: JSON.stringify(question) }));
+  const QuestionForm = component.namespace.default as ComponentType<{ context: string; sessionId: string }>;
+  return renderToStaticMarkup(createElement(QuestionForm, {
+    context: JSON.stringify(question), sessionId: '018f0000-0000-7000-8000-000000000001',
+  }));
 }
 
 test('confirmation questions render only confirm and cancel buttons', async () => {

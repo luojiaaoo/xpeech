@@ -5,7 +5,6 @@ from uuid6 import uuid7
 
 from ..exceptions import PathProtectionError
 
-DEFAULT_SESSION_ID = "00000000-0000-7000-8000-000000000000"
 MAX_ID_LENGTH = 128
 _ID_PATTERN = re.compile(rf"[A-Za-z0-9 _-]{{1,{MAX_ID_LENGTH}}}")
 

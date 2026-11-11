@@ -61,7 +61,7 @@ async def test_each_tool_batch_has_its_own_collapsed_streaming_card(monkeypatch,
     async def assistant_text():
         yield "continuing"
 
-    async def events(*_args):
+    async def events(*_args, **_kwargs):
         yield tool_event(
             ChatEventType.TOOL_CALL,
             [
@@ -190,7 +190,7 @@ async def test_rss_batch_results_are_escaped_before_card_updates(monkeypatch):
     async def assistant_text():
         yield "All RSS results received"
 
-    async def events(*_args):
+    async def events(*_args, **_kwargs):
         yield tool_event(
             ChatEventType.TOOL_CALL,
             [[str(i), "web_fetch", {"url": "https://example.test/rss"}] for i in range(10)],
@@ -219,7 +219,7 @@ async def test_tool_card_stream_is_finished_when_consumption_fails_or_is_cancell
     bridge = bridge_with_channel()
     waiting = asyncio.Event()
 
-    async def events(*_args):
+    async def events(*_args, **_kwargs):
         yield tool_event(ChatEventType.TOOL_CALL, [["call", "shell", {}]])
         waiting.set()
         if cancel:

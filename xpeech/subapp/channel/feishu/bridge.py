@@ -30,7 +30,7 @@ from .cards import (
     build_feishu_question_card,
 )
 from .channel import XpeechFeishuChannel
-from .config import EMOJI_TYPES
+from .config import DEFAULT_SESSION_ID, EMOJI_TYPES
 from .delivery import FeishuDeliveryMixin, ToolProgress
 from .formatting import FeishuEventFormatter
 from .inbound import FeishuInboundMixin, UnsupportedFeishuMessageError
@@ -101,6 +101,7 @@ class FeishuBridge(
             form_data,
             self.chat_url,
             "feishu",
+            session_id=DEFAULT_SESSION_ID,
         )
         result = await self.channel.update_card(
             card_action_event.message_id,
@@ -132,6 +133,7 @@ class FeishuBridge(
                 messages,
                 str(URL(self.chat_url) / "chat"),
                 "feishu",
+                session_id=DEFAULT_SESSION_ID,
             ):
                 if event.event in {ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT}:
                     if event.event == ChatEventType.TOOL_CALL:
