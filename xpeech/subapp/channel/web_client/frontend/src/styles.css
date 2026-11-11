@@ -38,7 +38,16 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .conversation-toolbar .new-conversation-button { border: 1px solid #d5dce5; padding-inline: 10px; }
 .conversation-toolbar .new-conversation-button:not(:disabled):hover { border-color: #9bb8ef; }
 .mobile-history-toggle { display: none; }
-.conversation-toolbar .conversation-title { min-width: 0; margin-inline-start: 12px; color: #1f2329; font-size: 16px; font-weight: 600; }
+.conversation-toolbar .conversation-title {
+  min-width: 0;
+  margin-inline-start: 8px;
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid #e5e9ef;
+  color: #68788f;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+}
 .conversation-body { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .conversation-sidebar {
   width: 264px;
@@ -1204,7 +1213,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .conversation-sidebar, .desktop-history-toggle { display: none; }
   .conversation-toolbar { padding-inline: 8px; }
   .mobile-history-toggle { display: inline-flex; }
-  .conversation-toolbar .conversation-title { margin-inline-start: 2px; }
+  .conversation-toolbar .conversation-title { margin-inline-start: 4px; padding-inline-start: 8px; }
   .bubble-list { padding: 14px 14px 12px; }
   .bubble-list .ant-bubble.ant-bubble-start:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-end: 0; }
   .bubble-list .ant-bubble.ant-bubble-end:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-start: 0; }

@@ -76,7 +76,7 @@ export default function ChatWorkspace({ systemName, recommendedQuestions, embedd
     return sessions.find((item) => item.session_id === id)?.preview.split('\n')[0] || '新会话';
   }
 
-  const title = sessionTitle(sessionId);
+  const title = sessions.find((item) => item.session_id === sessionId)?.preview.split('\n')[0].trim();
   const localSessions = openSessionIds
     .filter((id) => !sessions.some((item) => item.session_id === id))
     .reverse()
@@ -135,7 +135,7 @@ export default function ChatWorkspace({ systemName, recommendedQuestions, embedd
         <Button className="new-conversation-button" type="default" icon={<PlusOutlined aria-hidden />} onClick={newConversation}>
           新建会话
         </Button>
-        <Typography.Text className="conversation-title" ellipsis>{title}</Typography.Text>
+        {title ? <Typography.Text className="conversation-title" ellipsis title={title}>{title}</Typography.Text> : null}
       </div>
       <div className="conversation-body">
         <aside className={`conversation-sidebar${sidebarCollapsed ? ' collapsed' : ''}`} aria-label="历史会话">

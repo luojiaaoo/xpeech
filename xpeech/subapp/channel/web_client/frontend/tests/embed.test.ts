@@ -24,9 +24,13 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
     textContent = '';
     src = '';
     title = '';
+    className = '';
+    children: Element[] = [];
+    capturedPointers = new Set<number>();
+    geometry?: { left: number; top: number; width: number; height: number };
     style: Record<string, string> = {};
-    offsetWidth = 440;
-    offsetHeight = 700;
+    get offsetWidth() { return Number.parseFloat(this.style.width) || this.geometry?.width || 440; }
+    get offsetHeight() { return Number.parseFloat(this.style.height) || this.geometry?.height || 700; }
     attrs: Record<string, string> = {};
     events: Record<string, Function> = {};
     ids = new Map<string, Element>();
@@ -35,17 +39,24 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
     contentWindow = { postMessage: (data: any, origin: string) => sent.push({ data, origin }) };
     set innerHTML(_value: string) {
       for (const id of ['panel', 'title', 'launcher', 'close', 'body', 'status']) this.ids.set(id, new Element());
+      this.ids.get('panel')!.geometry = { left: 564, top: 12, width: 440, height: 700 };
     }
     attachShadow() { return this; }
     getElementById(id: string) { return this.ids.get(id)!; }
-    appendChild(_child: Element) {}
+    appendChild(child: Element) { this.children.push(child); }
     remove() { this.removed = true; }
     setAttribute(key: string, value: string) { this.attrs[key] = value; }
     addEventListener(type: string, handler: Function) { this.events[type] = handler; }
     focus() {}
-    getBoundingClientRect() { return { left: 958, top: 702, right: 1004, bottom: 748, width: 46, height: 46 }; }
-    setPointerCapture(_id: number) {}
-    hasPointerCapture(_id: number) { return false; }
+    getBoundingClientRect() {
+      if (!this.geometry) return { left: 958, top: 702, right: 1004, bottom: 748, width: 46, height: 46 };
+      const left = Number.parseFloat(this.style.left) || this.geometry.left;
+      const top = Number.parseFloat(this.style.top) || this.geometry.top;
+      return { left, top, right: left + this.offsetWidth, bottom: top + this.offsetHeight, width: this.offsetWidth, height: this.offsetHeight };
+    }
+    setPointerCapture(id: number) { this.capturedPointers.add(id); }
+    hasPointerCapture(id: number) { return this.capturedPointers.has(id); }
+    releasePointerCapture(id: number) { this.capturedPointers.delete(id); }
   }
   const hosts: Element[] = [];
   const window: any = {
@@ -191,6 +202,119 @@ test('cancelled drags and secondary pointers do not leave the launcher stuck', a
   assert.equal(launcher.classes.has('dragging'), false);
   launcher.events.click();
   assert.equal(host.ids.get('panel')!.classes.has('open'), true);
+});
+
+test('all eight panel handles resize their edges while keeping the opposite edges fixed', async () => {
+  for (const edge of ['n', 'e', 's', 'w', 'ne', 'nw', 'se', 'sw']) {
+    const app = await runtime();
+    app.api.init(jwtFor(), 'Alice');
+    await tick();
+    app.api.open();
+    const panel = app.hosts[0].ids.get('panel')!;
+    Object.assign(panel.style, { left: '300px', top: '150px', width: '440px', height: '500px' });
+    const handle = panel.children.find(child => child.className === `resize-handle resize-${edge}`)!;
+    const pointer = { isPrimary: true, button: 0, pointerId: 1, clientX: 500, clientY: 300,
+      currentTarget: handle, preventDefault() {} };
+    handle.events.pointerdown(pointer);
+    assert.equal(handle.hasPointerCapture(1), true);
+    assert.equal(panel.classes.has('resizing'), true);
+    handle.events.pointermove({ ...pointer, clientX: 540, clientY: 330 });
+    assert.equal(panel.style.left, edge.includes('w') ? '340px' : '300px', edge);
+    assert.equal(panel.style.top, edge.includes('n') ? '180px' : '150px', edge);
+    assert.equal(panel.style.width, edge.includes('w') ? '400px' : edge.includes('e') ? '480px' : '440px', edge);
+    assert.equal(panel.style.height, edge.includes('n') ? '470px' : edge.includes('s') ? '530px' : '500px', edge);
+    handle.events.pointerup(pointer);
+    assert.equal(handle.hasPointerCapture(1), false);
+    assert.equal(panel.classes.has('resizing'), false);
+    assert.equal(panel.style.cursor, '');
+    assert.equal(app.frames.length, 1);
+    assert.equal(app.frames[0].removed, false);
+    app.api.destroy();
+  }
+});
+
+test('panel resizing respects minimum dimensions and viewport bounds, and preserves size on reopening', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.api.open();
+  const panel = app.hosts[0].ids.get('panel')!;
+  Object.assign(panel.style, { left: '300px', top: '150px', width: '440px', height: '500px' });
+  function drag(edge: string, dx: number, dy: number) {
+    const handle = panel.children.find(child => child.className === `resize-handle resize-${edge}`)!;
+    const pointer = { isPrimary: true, button: 0, pointerId: 1, clientX: 0, clientY: 0,
+      currentTarget: handle, preventDefault() {} };
+    handle.events.pointerdown(pointer);
+    handle.events.pointermove({ ...pointer, clientX: dx, clientY: dy });
+    handle.events.pointerup(pointer);
+  }
+  drag('se', 10000, 10000);
+  assert.equal(panel.style.width, '712px');
+  assert.equal(panel.style.height, '606px');
+  drag('nw', -10000, -10000);
+  assert.equal(panel.style.left, '12px');
+  assert.equal(panel.style.top, '12px');
+  assert.equal(panel.style.width, '1000px');
+  assert.equal(panel.style.height, '744px');
+  app.api.close(); app.api.open();
+  assert.equal(panel.style.width, '1000px');
+  assert.equal(panel.style.height, '744px');
+  app.window.innerWidth = 300;
+  app.window.innerHeight = 320;
+  app.listeners.get('resize')!.forEach(handler => handler());
+  assert.equal(panel.style.width, '276px');
+  assert.equal(panel.style.height, '296px');
+  app.window.innerWidth = 1024;
+  app.window.innerHeight = 768;
+  app.listeners.get('resize')!.forEach(handler => handler());
+  assert.equal(panel.style.width, '1000px');
+  assert.equal(panel.style.height, '744px');
+  drag('se', -10000, -10000);
+  assert.equal(panel.style.width, '320px');
+  assert.equal(panel.style.height, '360px');
+  drag('nw', 10000, 10000);
+  assert.equal(panel.style.width, '320px');
+  assert.equal(panel.style.height, '360px');
+  app.api.destroy();
+  app.api.init(jwtFor(), 'Alice');
+  const freshPanel = app.hosts[1].ids.get('panel')!;
+  app.api.open();
+  assert.equal(freshPanel.style.width, undefined);
+  assert.equal(freshPanel.style.height, undefined);
+});
+
+test('panel resize ignores secondary pointers and releases capture when interrupted', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.api.open();
+  const panel = app.hosts[0].ids.get('panel')!;
+  const handle = panel.children[0];
+  const pointer = { isPrimary: true, button: 0, pointerId: 1, clientX: 500, clientY: 300,
+    currentTarget: handle, preventDefault() {} };
+  for (const invalid of [{ ...pointer, isPrimary: false }, { ...pointer, button: 2 }]) {
+    handle.events.pointerdown(invalid);
+    assert.equal(panel.classes.has('resizing'), false);
+  }
+  for (const interrupt of [
+    () => handle.events.pointercancel(pointer),
+    () => handle.events.lostpointercapture(pointer),
+    () => app.api.close(),
+    () => app.listeners.get('resize')!.forEach(handler => handler()),
+    () => app.api.destroy(),
+  ]) {
+    app.api.open();
+    handle.events.pointerdown(pointer);
+    handle.events.pointermove({ ...pointer, pointerId: 2, clientY: 100 });
+    handle.events.pointerup({ ...pointer, pointerId: 2 });
+    assert.equal(panel.classes.has('resizing'), true);
+    interrupt();
+    assert.equal(panel.classes.has('resizing'), false);
+    assert.equal(handle.hasPointerCapture(1), false);
+    const height = panel.style.height;
+    handle.events.pointermove({ ...pointer, clientY: 100 });
+    assert.equal(panel.style.height, height);
+  }
 });
 
 test('custom title and metadata survive JWT refresh and reset after destroy', async () => {

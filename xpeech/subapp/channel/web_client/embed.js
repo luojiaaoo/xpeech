@@ -26,6 +26,8 @@ var refreshTimer = null;
 var frameTimer = null;
 var needsRetry = false;
 var drag = null;
+var resize = null;
+var panelSize = null;
 var suppressLauncherClick = false;
 var interactionSession = null;
 var requestSequence = 0;
@@ -154,6 +156,12 @@ function initialize() {
   '@media(prefers-reduced-motion:reduce){#launcher{animation:none;transition:none}#launcher:hover{transform:none}}' +
   '#panel{display:none;position:fixed;width:min(440px,calc(100vw - 24px));height:min(700px,calc(100dvh - 100px));background:white;border:1px solid #dfe5ef;border-radius:16px;box-shadow:0 12px 48px #152c6733;overflow:hidden;flex-direction:column;pointer-events:auto}' +
   '#panel.open{display:flex}header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #edf0f5;flex-shrink:0}' +
+  '#panel.resizing{user-select:none}#panel.resizing iframe{pointer-events:none}' +
+  '.resize-handle{position:absolute;z-index:3;touch-action:none;user-select:none}' +
+  '.resize-n,.resize-s{left:14px;right:14px;height:6px;cursor:ns-resize}.resize-n{top:0}.resize-s{bottom:0}' +
+  '.resize-e,.resize-w{top:14px;bottom:14px;width:6px;cursor:ew-resize}.resize-e{right:0}.resize-w{left:0}' +
+  '.resize-ne,.resize-nw,.resize-se,.resize-sw{width:14px;height:14px}.resize-ne,.resize-sw{cursor:nesw-resize}.resize-nw,.resize-se{cursor:nwse-resize}' +
+  '.resize-ne,.resize-nw{top:0}.resize-se,.resize-sw{bottom:0}.resize-ne,.resize-se{right:0}.resize-nw,.resize-sw{left:0}' +
   '#close{background:none;border:0;font-size:24px;color:#5b6578}#body{flex:1;min-height:0;position:relative}' +
   '#status{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px;background:#fff;color:#68788f;line-height:1.6;font-size:14px;text-align:center;overflow:auto}iframe{display:block;width:100%;height:100%;border:0}' +
   'button:focus-visible{outline:3px solid #8ab4ff;outline-offset:3px}[hidden]{display:none!important}' +
@@ -164,6 +172,17 @@ function initialize() {
   closeButton = root.getElementById("close");
   body = root.getElementById("body");
   status = root.getElementById("status");
+  ["n", "e", "s", "w", "ne", "nw", "se", "sw"].forEach(function (edge) {
+    var handle = document.createElement("div");
+    handle.className = "resize-handle resize-" + edge;
+    handle.setAttribute("aria-hidden", "true");
+    handle.addEventListener("pointerdown", function (event) { startResize(event, edge); });
+    handle.addEventListener("pointermove", moveResize);
+    handle.addEventListener("pointerup", endResize);
+    handle.addEventListener("pointercancel", endResize);
+    handle.addEventListener("lostpointercapture", endResize);
+    panel.appendChild(handle);
+  });
   root.getElementById("title").textContent = currentTitle;
   panel.setAttribute("aria-label", currentTitle);
   launcher.setAttribute("aria-label", "打开 " + currentTitle);
@@ -192,6 +211,10 @@ function clamp(value, min, max) {
 }
 function positionPanel() {
   if (!host || !panel.classList.contains("open")) return;
+  if (panelSize) {
+    panel.style.width = Math.min(Math.max(panelSize.width, 320), Math.max(0, window.innerWidth - 24)) + "px";
+    panel.style.height = Math.min(Math.max(panelSize.height, 360), Math.max(0, window.innerHeight - 24)) + "px";
+  }
   var rect = host.getBoundingClientRect();
   var width = panel.offsetWidth;
   var height = panel.offsetHeight;
@@ -206,11 +229,12 @@ function moveLauncher(left, top) {
 }
 function keepInViewport() {
   if (!host) return;
+  if (resize) endResize({ pointerId: resize.id });
   var rect = host.getBoundingClientRect();
   moveLauncher(rect.left, rect.top);
 }
 function startDrag(event) {
-  if (!event.isPrimary || event.button !== 0 || drag) return;
+  if (!event.isPrimary || event.button !== 0 || drag || resize) return;
   var rect = host.getBoundingClientRect();
   suppressLauncherClick = false;
   drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
@@ -233,6 +257,49 @@ function endDrag(event) {
   launcher.classList.remove("dragging");
   if (launcher.hasPointerCapture(event.pointerId)) launcher.releasePointerCapture(event.pointerId);
 }
+function startResize(event, edge) {
+  if (!event.isPrimary || event.button !== 0 || drag || resize || !panel.classList.contains("open")) return;
+  var rect = panel.getBoundingClientRect();
+  resize = {
+    id: event.pointerId, edge: edge, handle: event.currentTarget,
+    x: event.clientX, y: event.clientY,
+    left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom
+  };
+  event.preventDefault();
+  panel.classList.add("resizing");
+  panel.style.cursor = edge === "n" || edge === "s" ? "ns-resize"
+    : edge === "e" || edge === "w" ? "ew-resize"
+    : edge === "ne" || edge === "sw" ? "nesw-resize" : "nwse-resize";
+  resize.handle.setPointerCapture(event.pointerId);
+}
+function moveResize(event) {
+  if (!resize || event.pointerId !== resize.id) return;
+  var dx = event.clientX - resize.x;
+  var dy = event.clientY - resize.y;
+  var left = resize.left;
+  var top = resize.top;
+  var right = resize.right;
+  var bottom = resize.bottom;
+  var minWidth = Math.min(320, window.innerWidth - 24);
+  var minHeight = Math.min(360, window.innerHeight - 24);
+  if (resize.edge.includes("w")) left = clamp(left + dx, 12, right - minWidth);
+  if (resize.edge.includes("e")) right = clamp(right + dx, left + minWidth, window.innerWidth - 12);
+  if (resize.edge.includes("n")) top = clamp(top + dy, 12, bottom - minHeight);
+  if (resize.edge.includes("s")) bottom = clamp(bottom + dy, top + minHeight, window.innerHeight - 12);
+  panelSize = { width: right - left, height: bottom - top };
+  panel.style.left = left + "px";
+  panel.style.top = top + "px";
+  panel.style.width = panelSize.width + "px";
+  panel.style.height = panelSize.height + "px";
+}
+function endResize(event) {
+  if (!resize || event.pointerId !== resize.id) return;
+  var handle = resize.handle;
+  resize = null;
+  panel.classList.remove("resizing");
+  panel.style.cursor = "";
+  if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+}
 function open() {
   if (!host) return;
   panel.classList.add("open");
@@ -243,6 +310,7 @@ function open() {
 }
 function close() {
   if (!host) return;
+  if (resize) endResize({ pointerId: resize.id });
   panel.classList.remove("open");
   launcher.setAttribute("aria-expanded", "false");
   if (!launcher.hidden) launcher.focus();
@@ -514,6 +582,8 @@ function destroy() {
   window.removeEventListener("message", onMessage);
   window.removeEventListener("resize", keepInViewport);
   if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
+  if (resize) endResize({ pointerId: resize.id });
+  panelSize = null;
   suppressLauncherClick = false;
   if (host) host.remove();
   host = root = panel = launcher = closeButton = body = status = null;
