@@ -4,9 +4,12 @@ from typing import ClassVar
 
 import httpx
 import jwt
+import pytest
 from fastapi.testclient import TestClient
 
 from xpeech.utils.internal_jwt import decode_internal_access_token
+
+pytestmark = pytest.mark.usefixtures("postgres_database")
 
 web_client_app = import_module("xpeech.subapp.channel.web_client.app")
 proxy_routes = import_module("xpeech.subapp.channel.web_client.routes.proxy")
@@ -63,7 +66,6 @@ def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, mo
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
-            database_path=tmp_path / "users.db",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
             cookie_name="xpeech_session_statistics",

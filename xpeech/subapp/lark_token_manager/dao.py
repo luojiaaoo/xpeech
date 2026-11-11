@@ -2,16 +2,14 @@
 
 import asyncio
 import time
-from functools import partial
-from pathlib import Path
 from typing import Any
 
-from sqlalchemy import MetaData, Table, event, inspect
+from sqlalchemy import BigInteger, Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import registry
-from sqlmodel import Field, Session, SQLModel, create_engine, delete, false, select
+from sqlmodel import Field, Session, SQLModel, delete, select
 
-from ...utils.sqlite import configure_sqlite_connection
+from ...utils.database import create_tables
 
 _token_registry = registry()
 
@@ -21,7 +19,7 @@ class _TokenSQLModel(SQLModel, registry=_token_registry):
 
 
 class TokenSession(_TokenSQLModel, table=True):
-    __tablename__ = "sessions"
+    __tablename__ = "lark_token_sessions"
 
     user_id: str = Field(primary_key=True)
     open_id: str | None = None
@@ -29,14 +27,14 @@ class TokenSession(_TokenSQLModel, table=True):
     access_token: str | None = None
     refresh_token: str | None = None
     scope: str = ""
-    access_expires_at: int = 0
-    refresh_expires_at: int = 0
+    access_expires_at: int = Field(default=0, sa_type=BigInteger)
+    refresh_expires_at: int = Field(default=0, sa_type=BigInteger)
     status: str = "unauthorized"
-    updated_at: int = 0
+    updated_at: int = Field(default=0, sa_type=BigInteger)
 
 
 class DeviceAuthorization(_TokenSQLModel, table=True):
-    __tablename__ = "device_authorizations"
+    __tablename__ = "lark_device_authorizations"
 
     user_id: str = Field(primary_key=True)
     device_code: str
@@ -45,61 +43,23 @@ class DeviceAuthorization(_TokenSQLModel, table=True):
     verification_uri_complete: str = ""
     scope: str
     interval_seconds: int = 5
-    expires_at: int
+    expires_at: int = Field(sa_type=BigInteger)
     status: str = "pending"
     last_error: str = ""
-    updated_at: int
+    updated_at: int = Field(sa_type=BigInteger)
 
 
 class TokenStore:
-    def __init__(self, path: Path) -> None:
-        self.path = path.resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.parent.chmod(0o700)
-        self.engine = create_engine(f"sqlite:///{self.path.as_posix()}")
-        event.listen(
-            self.engine,
-            "connect",
-            partial(configure_sqlite_connection, secure_delete=True),
-        )
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+        self.locks: dict[str, asyncio.Lock] = {}
+
+    def initialize(self) -> None:
         try:
-            self._migrate_legacy_identities()
-            _TokenSQLModel.metadata.create_all(self.engine)
-            self.path.chmod(0o600)
+            create_tables(self.engine, _TokenSQLModel.metadata)
         except Exception:
             self.engine.dispose()
             raise
-        self.locks: dict[str, asyncio.Lock] = {}
-
-    def _migrate_legacy_identities(self) -> None:
-        """Rebuild legacy tables with model metadata while retaining all credentials."""
-        with Session(self.engine) as session:
-            connection = session.connection()
-            inspector = inspect(connection)
-            for model in (TokenSession, DeviceAuthorization):
-                name = model.__tablename__
-                if not inspector.has_table(name):
-                    continue
-                columns = {column["name"] for column in inspector.get_columns(name)}
-                if "session_id" not in columns:
-                    continue
-                legacy = Table(name, MetaData(), autoload_with=connection)
-                # Start SQLite's write transaction before transactional DDL so
-                # a failed copy rolls back the original table and its contents.
-                session.exec(delete(legacy).where(false()))
-                rows = session.exec(select(*legacy.c)).mappings().all()
-                migrated = []
-                for row in rows:
-                    values = dict(row)
-                    if model is TokenSession and "user_id" in columns:
-                        values["open_id"] = values.pop("user_id")
-                    values["user_id"] = values.pop("session_id")
-                    migrated.append(model.model_validate(values))
-                legacy.drop(connection)
-                model.__table__.create(connection)
-                session.add_all(migrated)
-                session.flush()
-            session.commit()
 
     def close(self) -> None:
         self.engine.dispose()

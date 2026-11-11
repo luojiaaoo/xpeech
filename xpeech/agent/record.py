@@ -5,26 +5,19 @@ from uuid import UUID
 
 import aiofiles
 import yaml
-from sqlalchemy import Index, event
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy import DateTime, Index
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config.settings import settings
-from ..utils.file_io import ensure_path, ensure_path_async
+from ..utils.database import create_tables_async
+from ..utils.file_io import ensure_path_async
 from ..utils.helper import LiteralDumper
-from ..utils.sqlite import configure_sqlite_connection
 
 TABLE_NAME = "conversation_records"
 _record_registry = registry()
-_record_database_path = settings.path.session_record_path.resolve()
-ensure_path(_record_database_path.parent)
-record_engine = create_async_engine(
-    f"sqlite+aiosqlite:///{_record_database_path.as_posix()}",
-    echo=False,
-)
-event.listen(record_engine.sync_engine, "connect", configure_sqlite_connection)
 
 
 class _RecordSQLModel(SQLModel, registry=_record_registry):
@@ -61,35 +54,36 @@ class ConversationRecord(_RecordSQLModel, table=True):
     output_tokens: int
     model_call_count: int
     duration_s: float = Field(ge=0)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), index=True, sa_type=DateTime(timezone=True),
+    )
     channel: str = Field(index=True)
 
 
-async def create_db_and_tables(engine: AsyncEngine = record_engine) -> None:
+async def create_db_and_tables(engine: AsyncEngine) -> None:
     """创建对话记录表。"""
-    async with engine.begin() as connection:
-        await connection.run_sync(_RecordSQLModel.metadata.create_all)
+    await create_tables_async(engine, _RecordSQLModel.metadata)
 
 
-def record_yaml_path(request_id: str, engine: AsyncEngine = record_engine) -> Path:
-    """将服务端生成的请求 UUID 映射到记录数据库旁的独立 YAML 目录。"""
+def record_yaml_path(request_id: str) -> Path:
+    """将服务端生成的请求 UUID 映射到配置的独立 YAML 目录。"""
     if str(UUID(request_id)) != request_id:
         raise ValueError("Invalid request ID")
-    return Path(engine.url.database).resolve().with_suffix("") / f"{request_id}.yaml"
+    return settings.path.session_record_yaml_path / f"{request_id}.yaml"
 
 
-class SqliteConversationRecordRepository:
-    """向统一的 SQLite 文件追加各会话的对话记录。"""
+class ConversationRecordRepository:
+    """向共享 PostgreSQL 数据库追加各会话的对话记录。"""
 
-    def __init__(self, engine: AsyncEngine = record_engine) -> None:
+    def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
     async def append(
         self, record: ConversationRecord, *, messages: list[dict[str, Any]] | None = None,
     ) -> None:
-        """保存本轮新增消息的 YAML，并向统一的 SQLite 文件追加记录。"""
+        """保存本轮新增消息的 YAML，并向共享数据库追加记录。"""
         if messages is not None:
-            path = record_yaml_path(record.request_id, self._engine)
+            path = record_yaml_path(record.request_id)
             await ensure_path_async(path.parent)
             serialized = yaml.dump(
                 messages, Dumper=LiteralDumper, default_flow_style=False,

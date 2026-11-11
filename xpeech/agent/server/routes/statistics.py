@@ -1,7 +1,7 @@
 import csv
 import io
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -9,24 +9,25 @@ from async_lru import alru_cache
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import asc, desc, distinct, func
+from sqlalchemy import Integer, String, asc, cast, desc, distinct, extract, func
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import aliased
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ....config.settings import settings
-from ...record import ConversationRecord, record_engine, record_yaml_path
+from ....utils.database import get_async_database_engine
+from ...record import ConversationRecord, record_yaml_path
 
 STATISTICS_CACHE_TTL_S = 5
 
 Granularity = Literal["hour", "day", "week", "month"]
 
 
-class SqliteConversationStatisticsRepository:
+class ConversationStatisticsRepository:
     """直接在对话记录数据库中完成看板所需的只读聚合查询。"""
 
-    def __init__(self, engine: AsyncEngine = record_engine) -> None:
+    def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
     @staticmethod
@@ -97,17 +98,18 @@ class SqliteConversationStatisticsRepository:
         sender_name: str | None = None,
     ) -> list[dict[str, Any]]:
         formats: dict[Granularity, str] = {
-            "hour": "%Y-%m-%dT%H:00:00",
-            "day": "%Y-%m-%d",
-            "week": "%Y-W%W",
-            "month": "%Y-%m",
+            "hour": 'YYYY-MM-DD"T"HH24:00:00',
+            "day": "YYYY-MM-DD",
+            "month": "YYYY-MM",
         }
-        modifier = f"{timezone_offset_minutes:+d} minutes"
-        bucket = func.strftime(
-            formats[granularity],
-            ConversationRecord.created_at,
-            modifier,
-        ).label("bucket")
+        local_time = func.timezone("UTC", ConversationRecord.created_at) + timedelta(minutes=timezone_offset_minutes)
+        if granularity == "week":
+            # Match Monday-based %W: days before the first Monday belong to week 00.
+            week = cast(func.floor((extract("doy", local_time) + 7 - extract("isodow", local_time)) / 7), Integer)
+            bucket = func.concat(func.to_char(local_time, "YYYY"), "-W", func.lpad(cast(week, String), 2, "0"))
+        else:
+            bucket = func.to_char(local_time, formats[granularity])
+        bucket = bucket.label("bucket")
         per_user_statement = (
             select(
                 bucket,
@@ -175,8 +177,7 @@ class SqliteConversationStatisticsRepository:
     ) -> tuple[list[dict[str, Any]], int]:
         question_count = func.count(ConversationRecord.id).label("question_count")
         local_day = func.date(
-            ConversationRecord.created_at,
-            f"{timezone_offset_minutes:+d} minutes",
+            func.timezone("UTC", ConversationRecord.created_at) + timedelta(minutes=timezone_offset_minutes)
         )
         statement = (
             select(
@@ -268,7 +269,7 @@ class SqliteConversationStatisticsRepository:
             record = await session.get(ConversationRecord, record_id)
         if record is None:
             return None
-        return record_yaml_path(record.request_id, self._engine)
+        return record_yaml_path(record.request_id)
 
     async def export_records(
         self, *, channel: str, user_ids: tuple[str, ...], question_keyword: str | None,
@@ -351,7 +352,7 @@ class SqliteConversationStatisticsRepository:
 
 
 router = APIRouter(prefix="/statistics", tags=["statistics"])
-_statistics_repository = SqliteConversationStatisticsRepository()
+_statistics_repository = ConversationStatisticsRepository(get_async_database_engine())
 
 
 class OverviewResponse(BaseModel):
@@ -459,23 +460,23 @@ class RecordsResponse(LatestRecordsResponse):
     offset: int
 
 
-def get_statistics_repository() -> SqliteConversationStatisticsRepository:
+def get_statistics_repository() -> ConversationStatisticsRepository:
     return _statistics_repository
 
 
 StatisticsRepository = Annotated[
-    SqliteConversationStatisticsRepository,
+    ConversationStatisticsRepository,
     Depends(get_statistics_repository),
 ]
 
 
 def _as_database_datetime(value: datetime | None) -> datetime | None:
-    """SQLite stores these UTC values without preserving timezone metadata."""
+    """Normalize filters for PostgreSQL timestamp with time zone columns."""
     if value is None:
         return None
     if value.tzinfo is None:
-        return value
-    return value.astimezone(UTC).replace(tzinfo=None)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _as_utc(value: datetime | None) -> datetime | None:

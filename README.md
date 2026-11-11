@@ -75,7 +75,8 @@ npm config set registry https://registry.npmmirror.com/
 cp conf.toml.example conf.toml
 ```
 
-进程环境变量写在 `.env`。模板中包含 Compose 项目名和可选的服务端口配置。
+应用配置统一从 `conf.toml` 读取，不读取环境变量或 `.env`。`.env` 仅用于解析
+Compose 参数，模板中包含项目名、数据库初始化参数和可选的服务端口配置。
 
 内部服务互信与各通道认证使用彼此隔离的短期 JWT。先分别生成三个不同的密钥：
 
@@ -387,8 +388,9 @@ docker compose logs -f lark-token-manager backend scheduler nginx feishu web_cli
 
 持久化数据统一映射到宿主机
 的 `./data/` 目录，其中包含 `session`、`workspace_base` 和
-`browser_preview`，Web 用户数据库保存在 `web_client/users.db`；缓存目录不做宿主机磁盘
-映射。`conf.toml` 以只读方式挂载，`.env` 通过 `env_file` 注入进程。普通运行时配置修改后重建容器
+`browser_preview`；共享 PostgreSQL 数据保存在 `postgres`，Web 对话事件历史保存在
+`web_client/session_history`，缓存目录不做宿主机磁盘映射。`conf.toml` 以只读方式挂载，
+应用直接读取其中的连接配置；`.env` 用于 Compose 的变量插值。普通运行时配置修改后重建容器
 即可生效；`feishu.app_id` 或 `feishu.app_secret` 修改后需要增加 `--build` 重新编译 lark-cli 和
 lark-cli-auth：
 
@@ -544,20 +546,60 @@ API 不再通过 `json_output` 表单参数控制输出格式，仅按本次消�
 
 未知命令会返回错误并提示使用 `/help`。后台定时任务不会触发这些命令。
 
-每次成功完成的普通对话都会通过 SQLModel 追加到统一的
-`session_record_path` 数据库文件。SQLite 表名为 `conversation_records`，
+每次成功完成的普通对话都会通过 SQLModel 追加到共享 PostgreSQL 数据库的
+`conversation_records` 表，
 包含 `user_id`、`session_id`、`request_id`、`channel`、`sender_name`、`user_question`、`model_response`、
 `input_tokens`、`output_tokens`、`model_call_count`、`created_at` 和 `duration_s`，以及自增 `id`。`created_at` 是应用写入记录时的 UTC 时间，`duration_s` 是本轮 Agent 处理耗时（秒）。
-`session_record_path` 默认是
-`data/session/record.db`，可在 `conf.toml` 的 `[path]` 中覆盖。每次问答新增的消息另存为
-`data/session/record/<request_id>.yaml`；目录取数据库路径去掉扩展名，文件名使用当前请求的 `request_id`。
+每次问答新增的消息另存为 `data/session/record/<request_id>.yaml`；目录由
+`[path].session_record_yaml_path` 配置，文件名使用当前请求的 `request_id`。
 YAML 包含本轮用户消息、工具调用、工具结果和最终回答，不包含旧会话历史；上下文压缩前的本轮原始消息也会保留。
 大屏的会话查询结果支持逐条下载 YAML。
 
 对话记录、Web 用户与会话、飞书令牌的建表和业务读写统一使用 SQLModel；
-定时任务保留 APScheduler 自带的 SQLAlchemyJobStore，并接入公共 SQLite 连接配置。
-SQLite 连接统一启用 WAL 模式，
-支持读写并发；写入之间仍然串行，遇到锁竞争时最多等待 30 秒。已有数据库会在服务重启后首次连接时自动切换。
+定时任务保留 APScheduler 自带的 SQLAlchemyJobStore，所有服务统一读取 `conf.toml` 的
+`[database]` 配置，使用同一个 PostgreSQL 数据库。同步服务使用 `sqlmodel.create_engine` 和
+`Session`，异步服务使用异步 engine 和 SQLModel `AsyncSession`，驱动为 psycopg 3。
+同步与异步连接统一显式使用 `READ COMMITTED`（读已提交）隔离级别。
+Web 用户及登录会话表为 `users`、`sessions`，飞书令牌表为 `lark_token_sessions`、
+`lark_device_authorizations`，定时任务表为 `apscheduler_jobs`。
+
+```toml
+[database]
+host = "postgres"
+port = 5432
+name = "xpeech"
+username = "xpeech"
+password = "replace-with-a-database-password"
+sslmode = "prefer"
+connect_timeout = 10
+pool_size = 5
+max_overflow = 10
+```
+
+默认主机名 `postgres` 对应 Compose 中的数据库服务。本地直接运行时，将 `host` 改为
+`127.0.0.1` 或实际数据库地址，并预先创建数据库及账号。服务启动时会自动创建所需表。
+所有服务必须使用同一组数据库配置。
+连接参数仅从 `conf.toml` 的 `[database]` 读取。
+`database.py` 在每个进程中各创建一个同步、异步 engine，通过获取函数复用；
+仓库和建表函数显式接收 engine。连接池上限按每个进程、每个 engine 计算，
+多副本部署时需要相应设置 PostgreSQL 的连接数。
+Compose 自带 PostgreSQL 服务，数据持久化到项目的 `data/postgres` 目录，使用 `.env` 中的
+`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD` 初始化数据库。
+PostgreSQL 默认通过宿主机的 `7890` 端口对外提供连接，可在 `.env` 中设置
+`POSTGRES_PORT` 调整对外端口；Compose 内部仍使用 `postgres:5432`。
+应用统一读取 `conf.toml` 的 `[database]` 连接配置，数据库名、账号和密码应与初始化配置一致。
+
+旧 SQLite 文件不会自动导入 PostgreSQL；升级已有部署时，需要先导入旧数据再切换服务。
+旧的 `path.session_record_path`、`path.session_schedule_path`、`web_client.database_path`、
+`feishu.lark_cli.database_path` 配置不再使用。原有 YAML 文件可继续放在 `session_record_yaml_path` 目录中。
+数据库集成测试使用 `XPEECH_TEST_DATABASE_URL` 指定的 PostgreSQL，每个测试创建并删除独立 schema；
+未设置该变量时跳过数据库集成测试。
+
+```bash
+XPEECH_TEST_DATABASE_URL='postgresql://test_user:test_password@127.0.0.1:5432/xpeech_test' uv run pytest
+```
+
+测试账号需要具有测试库的 `CREATE` 权限，以创建临时 schema；测试结束后自动删除。
 
 ## 飞书定时任务
 
@@ -574,14 +616,9 @@ SQLite 连接统一启用 WAL 模式，
   包含 `*`，因此 `* * * * *`、`*/5 * * * *` 等表达式会被拒绝。
 - 空字符串和纯空白字段按未提供处理；如果两个字段都有有效值，或两个字段都没有有效值，任务创建失败。
 
-独立的 scheduler 服务启动时会读取 `[path].session_schedule_path` 指定的 SQLite 数据库。
+独立的 scheduler 服务启动时会读取 `[database]` 指定的 PostgreSQL 数据库中的 `apscheduler_jobs` 表。
 backend 通过 `api --scheduler-url` 管理任务，scheduler 通过 `scheduler --backend-url` 触发执行；
-Compose 将后者设置为 Nginx 地址。配置模板使用：
-
-```toml
-[path]
-session_schedule_path = "data/session/schedule.db"
-```
+Compose 将后者设置为 Nginx 地址。
 
 任务会跨服务重启持久化，但不会补跑停机期间错过的任务：过期的单次任务会被删除，周期任务会推进到
 下一次未来执行时间。任务触发后会随机等待 0～3 分钟以分散并发，然后在独立的后台 Agent 运行中执行；
@@ -936,7 +973,7 @@ uv run python -c "from xpeech.config.settings import settings; print(settings.mo
 ## Web 客户端
 
 Web 客户端基于 React 和 Ant Design X，使用 FastAPI 认证代理访问 Agent API，
-并通过 SQLite 保存用户与登录会话。
+并通过 SQLModel 将用户与登录会话保存到共享 PostgreSQL 数据库。
 
 ![Xpeech Web 客户端](screenshot/PixPin_2026-08-25_10-44-39.jpg)
 
@@ -953,8 +990,7 @@ npm install
 npm run build
 ```
 
-用户与登录会话数据库路径由 `conf.toml` 的
-`web_client.database_path` 配置，默认为 `data/web_client/users.db`。登录 Cookie 名称由
+用户与登录会话数据库由 `conf.toml` 的 `[database]` 配置。登录 Cookie 名称由
 `web_client.cookie_name` 配置，默认为 `xpeech_session`；同一 IP 上运行多个独立 Web
 实例时，应为每个实例配置不同的名称（如 `xpeech_session_7939`），避免不同端口之间覆盖 Cookie。
 

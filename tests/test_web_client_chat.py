@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 from xpeech.subapp.channel.helper import ChatStream
 
+pytestmark = pytest.mark.usefixtures("postgres_database")
+
 web_client_app = import_module("xpeech.subapp.channel.web_client.app")
 proxy_routes = import_module("xpeech.subapp.channel.web_client.routes.proxy")
 WebConfig = web_client_app.WebConfig
@@ -42,7 +44,6 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
-            database_path=tmp_path / "chat-users.db",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
         )

@@ -10,8 +10,6 @@ x-xpeech-service: &xpeech-service
   build:
     context: .
     dockerfile: Dockerfile
-  env_file:
-    - ./.env
   environment: *common-environment
   dns:
     - 10.123.14.6
@@ -26,11 +24,30 @@ x-xpeech-service: &xpeech-service
   restart: unless-stopped
 
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      TZ: Asia/Shanghai
+      POSTGRES_DB: ${POSTGRES_DB:-xpeech}
+      POSTGRES_USER: ${POSTGRES_USER:-xpeech}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-xpeech}
+    ports:
+      - "${POSTGRES_PORT:-7890}:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
   lark-token-manager:
     <<: *xpeech-service
     command: ["token_manager", "--host", "0.0.0.0", "--port", "7883"]
-    volumes:
-      - ./data/lark-token-manager:/app/data/lark-token-manager
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:7883/health"]
       interval: 20s
@@ -89,10 +106,12 @@ services:
     command: ["scheduler", "--host", "0.0.0.0", "--port", "8090", "--backend-url", "http://nginx:${BACKEND_PORT:-7878}"]
     deploy:
       replicas: 1
+    depends_on:
+      postgres:
+        condition: service_healthy
     expose:
       - "8090"
     volumes:
-      - ./data/session:/app/data/session
       - ./data/logs/scheduler:/app/data/logs
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/health"]

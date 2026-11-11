@@ -40,7 +40,6 @@ class InjectPromptWebConfig:
 @dataclass(frozen=True)
 class WebConfig:
     backend_url: str
-    database_path: Path
     static_dir: Path
     system_name: str
     session_history_path: Path | None = None

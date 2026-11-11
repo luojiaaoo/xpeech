@@ -1,6 +1,6 @@
 import pytest
 
-from xpeech.config.settings import BrowserPreviewConfig, LarkCLIConfig, PathConfig, WebClientConfig
+from xpeech.config.settings import BrowserPreviewConfig, PathConfig, WebClientConfig
 
 
 def test_config_paths_expand_using_backend_home(tmp_path, monkeypatch):
@@ -14,8 +14,6 @@ def test_config_paths_expand_using_backend_home(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(("model", "field"), [
     (BrowserPreviewConfig, "browser_preview_path"),
-    (LarkCLIConfig, "database_path"),
-    (WebClientConfig, "database_path"),
     (WebClientConfig, "session_history_path"),
 ])
 def test_other_config_paths_are_absolute_at_load(tmp_path, monkeypatch, model, field):
@@ -23,8 +21,6 @@ def test_other_config_paths_are_absolute_at_load(tmp_path, monkeypatch, model, f
     monkeypatch.setenv("HOME", str(tmp_path / "backend-home"))
 
     values = {field: "~/store"}
-    if model is WebClientConfig and field != "database_path":
-        values["database_path"] = "users.db"
     assert getattr(model.model_validate(values), field) == tmp_path / "backend-home/store"
     values[field] = "relative/store"
     assert getattr(model.model_validate(values), field) == tmp_path / "relative/store"
@@ -33,4 +29,4 @@ def test_other_config_paths_are_absolute_at_load(tmp_path, monkeypatch, model, f
 def test_default_config_paths_are_also_resolved(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert BrowserPreviewConfig().browser_preview_path == tmp_path / "data/browser_preview"
-    assert LarkCLIConfig().database_path == tmp_path / "data/lark-token-manager/tokens.db"
+    assert WebClientConfig().session_history_path == tmp_path / "data/web_client/session_history"

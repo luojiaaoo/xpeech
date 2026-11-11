@@ -1,16 +1,14 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
-from functools import partial
-from pathlib import Path
 
-from sqlalchemy import Column, ForeignKey, Index, Integer, String, event
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ....utils.sqlite import configure_sqlite_connection
+from ....utils.database import create_tables_async
 
 _web_client_registry = registry()
 
@@ -30,11 +28,11 @@ class User(_WebClientSQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: str = Field(sa_column=Column(String, nullable=False, unique=True))
-    username: str = Field(sa_column=Column(String(collation="NOCASE"), nullable=False))
+    username: str = Field(sa_column=Column(String, nullable=False))
     password_hash: str
     is_admin: bool = Field(default=False)
     is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=_now)
+    created_at: datetime = Field(default_factory=_now, sa_type=DateTime(timezone=True))
 
 
 class AuthenticationSession(_WebClientSQLModel, table=True):
@@ -51,8 +49,8 @@ class AuthenticationSession(_WebClientSQLModel, table=True):
             nullable=False,
         )
     )
-    expires_at: datetime
-    created_at: datetime = Field(default_factory=_now)
+    expires_at: datetime = Field(sa_type=DateTime(timezone=True))
+    created_at: datetime = Field(default_factory=_now, sa_type=DateTime(timezone=True))
 
 
 class DuplicateUserIdError(Exception):
@@ -67,27 +65,9 @@ class ProtectedAdminDeletionError(Exception):
     """默认管理员不允许删除。"""
 
 
-def create_web_client_engine(database_path: Path) -> AsyncEngine:
-    """为指定 Web 客户端数据库创建异步 SQLite engine。"""
-    resolved_path = database_path.resolve()
-    resolved_path.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{resolved_path.as_posix()}",
-        echo=False,
-    )
-    event.listen(
-        engine.sync_engine,
-        "connect",
-        partial(configure_sqlite_connection, foreign_keys=True),
-    )
-
-    return engine
-
-
 async def create_db_and_tables(engine: AsyncEngine) -> None:
     """创建 Web 客户端认证表。"""
-    async with engine.begin() as connection:
-        await connection.run_sync(_WebClientSQLModel.metadata.create_all)
+    await create_tables_async(engine, _WebClientSQLModel.metadata)
 
 
 class WebClientDAO:
@@ -95,17 +75,9 @@ class WebClientDAO:
 
     def __init__(
         self,
-        database_path: Path | None = None,
-        *,
-        engine: AsyncEngine | None = None,
+        engine: AsyncEngine,
     ) -> None:
-        if engine is None and database_path is None:
-            raise ValueError("database_path 和 engine 必须提供一个")
-        if engine is not None:
-            self._engine = engine
-        else:
-            assert database_path is not None
-            self._engine = create_web_client_engine(database_path)
+        self._engine = engine
 
     @property
     def engine(self) -> AsyncEngine:

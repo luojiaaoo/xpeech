@@ -5,9 +5,10 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 
+from ...utils.database import get_async_database_engine
 from ...utils.logging import configure_logging
 from ...utils.security.sandbox import close_all_sandboxes
-from ..record import create_db_and_tables, record_engine
+from ..record import create_db_and_tables
 from ..tools.mcp_client import close_all_mcp_connections
 from .middleware import ContextASGIMiddleware
 
@@ -16,7 +17,8 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    await create_db_and_tables()
+    engine = get_async_database_engine()
+    await create_db_and_tables(engine)
     try:
         yield
     finally:
@@ -24,7 +26,7 @@ async def lifespan(_app: FastAPI):
             await close_all_mcp_connections()
         finally:
             await close_all_sandboxes()
-            await record_engine.dispose()
+            await engine.dispose()
 
 
 app = FastAPI(

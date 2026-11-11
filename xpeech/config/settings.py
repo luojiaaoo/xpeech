@@ -5,14 +5,14 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import jq
-from dotenv import load_dotenv
 from loguru import logger
 from pydantic import (
-    BaseModel,
     AfterValidator,
+    BaseModel,
     ConfigDict,
     Field,
     PrivateAttr,
+    SecretStr,
     field_validator,
     model_validator,
 )
@@ -27,9 +27,6 @@ from ..provider.schema import LLMParameters
 from ..utils.command_template import CommandTemplateError, execute_command_template
 from ..utils.file_io import ensure_path
 from ..utils.filter_expr import validate_filter_source
-
-if Path(".env").exists():
-    load_dotenv(".env")
 
 conf_toml_path = "conf.toml"  # Configuration TOML file path
 
@@ -67,8 +64,23 @@ class PathConfig(BaseModel):
     sandbox_home_path: ConfigPath
     cache_path: ConfigPath
     log_path: ConfigPath
-    session_record_path: ConfigPath
-    session_schedule_path: ConfigPath
+    session_record_yaml_path: ConfigPath = Field(
+        default=Path("data/session/record"), validate_default=True,
+    )
+
+
+class DatabaseConfig(BaseModel):
+    """PostgreSQL connection shared by all application services."""
+
+    host: str = Field(default="postgres", min_length=1)
+    port: int = Field(default=5432, ge=1, le=65535)
+    name: str = Field(default="xpeech", min_length=1)
+    username: str = Field(default="xpeech", min_length=1)
+    password: SecretStr = SecretStr("")
+    sslmode: Literal["disable", "allow", "prefer", "require", "verify-ca", "verify-full"] = "prefer"
+    connect_timeout: int = Field(default=10, ge=1)
+    pool_size: int = Field(default=5, ge=1)
+    max_overflow: int = Field(default=10, ge=0)
 
 
 class BrowserPreviewConfig(BaseModel):
@@ -190,12 +202,6 @@ class LLMConfig(BaseModel):
 
         return self._api_key_selector.next(self._api_keys)
 
-class LarkCLIConfig(BaseModel):
-    """Configuration shared by the token manager and lark-cli clients."""
-
-    database_path: ConfigPath = Field(default=Path("data/lark-token-manager/tokens.db"), validate_default=True)
-
-
 class JWTChannelConfig(BaseModel):
     """A JWT channel identified by its name (the JWT header kid)."""
 
@@ -242,7 +248,6 @@ class FeishuConfig(BaseModel):
 
     app_id: str
     app_secret: str
-    lark_cli: LarkCLIConfig = Field(default_factory=LarkCLIConfig)
 
 
 class LoggingConfig(BaseModel):
@@ -352,7 +357,6 @@ class InjectPromptConfig(BaseModel):
 class WebClientConfig(BaseModel):
     """Web client storage settings."""
 
-    database_path: ConfigPath
     session_history_path: ConfigPath = Field(
         default=Path("data/web_client/session_history"),
         validate_default=True,
@@ -415,7 +419,10 @@ class OrganizationConfig(BaseModel):
 
 
 class Settings(BaseSettings):
+    """Application configuration loaded only from conf.toml."""
+
     path: PathConfig
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     tool: ToolConfig = ToolConfig()
     llm: LLMConfig
     feishu: FeishuConfig
@@ -434,8 +441,6 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
-            init_settings,
-            env_settings,
             TomlConfigSettingsSource(
                 settings_cls,
                 toml_file=conf_toml_path,
@@ -443,8 +448,6 @@ class Settings(BaseSettings):
         )
 
     model_config = SettingsConfigDict(
-        env_prefix="XPEECH_",
-        env_nested_delimiter="__",
         extra="ignore",
     )
 
@@ -452,8 +455,7 @@ class Settings(BaseSettings):
 settings = Settings()
 ensure_path(settings.path.session_path)
 ensure_path(settings.path.session_history_path)
-ensure_path(settings.path.session_record_path.parent)
-ensure_path(settings.path.session_schedule_path.parent)
+ensure_path(settings.path.session_record_yaml_path)
 ensure_path(settings.path.workspace_base_path)
 ensure_path(settings.path.cache_path)
 ensure_path(settings.path.log_path)

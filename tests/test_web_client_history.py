@@ -19,6 +19,8 @@ from xpeech.subapp.channel.web_client.app import WebConfig, create_app
 from xpeech.subapp.channel.web_client.history import JsonlEventHistoryRepository
 from xpeech.subapp.channel.web_client.routes import proxy
 
+pytestmark = pytest.mark.usefixtures("postgres_database")
+
 SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 NEXT_SESSION_ID = "018f0000-0000-7000-8000-000000000002"
 SECRET = "test-channel-key-at-least-64-characters-for-sha512-signing-tests"
@@ -67,7 +69,7 @@ async def test_event_repository_appends_filters_channels_and_cleans_expired_file
 
 def test_web_history_retention_must_be_positive():
     with pytest.raises(ValidationError, match="max_history_days"):
-        WebClientConfig(database_path="users.db", max_history_days=0)
+        WebClientConfig(max_history_days=0)
 
 
 @pytest.fixture
@@ -92,7 +94,7 @@ def history_client(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(proxy, "open_chat", opener)
     app = create_app(WebConfig(
         backend_url="http://backend.test",
-        database_path=tmp_path / "users.db",
+
         session_history_path=history_path,
         static_dir=tmp_path / "missing",
         system_name="Assistant",

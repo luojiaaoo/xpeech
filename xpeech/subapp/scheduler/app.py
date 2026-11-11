@@ -1,4 +1,4 @@
-"""Single-process scheduler API. Only this service opens schedule.db."""
+"""Single-process scheduler API backed by the shared PostgreSQL database."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -13,6 +13,7 @@ from ...agent.server.dependencies import internal_user_id
 from ...agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
 from ...agent.tools.schedule import FeishuScheduleArgs
 from ...agent.tools.schedule.schema import ScheduledTask
+from ...utils.database import get_database_engine
 from ...utils.helper import ensure_async
 from ...utils.logging import configure_logging
 from .background import (
@@ -53,7 +54,7 @@ class FeishuScheduleCreateRequest(ScheduleCreateRequest, FeishuScheduleArgs):
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    start_background_scheduler()
+    start_background_scheduler(get_database_engine())
     try:
         yield
     finally:

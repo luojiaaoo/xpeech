@@ -5,28 +5,29 @@ import os
 import subprocess
 import sys
 from datetime import UTC, datetime
-from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 import yaml
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from xpeech.agent.record import (
     ConversationRecord,
-    SqliteConversationRecordRepository,
+    ConversationRecordRepository,
     create_db_and_tables,
 )
-from xpeech.agent.server import server as server_module
 from xpeech.agent.server.api import app
 from xpeech.agent.server.routes.statistics import (
     STATISTICS_CACHE_TTL_S,
-    SqliteConversationStatisticsRepository,
+    ConversationStatisticsRepository,
     get_statistics_repository,
 )
+from xpeech.utils.database import get_async_database_engine
 from xpeech.utils.internal_jwt import create_internal_access_token
+
+pytestmark = pytest.mark.usefixtures("postgres_database")
 
 
 def test_statistics_timezone_does_not_depend_on_system_tzdata():
@@ -50,10 +51,10 @@ def test_statistics_timezone_does_not_depend_on_system_tzdata():
     assert result.stdout.strip() == "8:00:00"
 
 
-async def _seed_statistics_database(database_path: Path) -> AsyncEngine:
-    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path.as_posix()}")
+async def _seed_statistics_database() -> AsyncEngine:
+    engine = get_async_database_engine()
     await create_db_and_tables(engine)
-    repository = SqliteConversationRecordRepository(engine)
+    repository = ConversationRecordRepository(engine)
     records = [
         ConversationRecord(
             request_id=str(uuid4()),
@@ -118,16 +119,15 @@ def _clear_statistics_caches() -> None:
         "records",
         "channels",
     ):
-        getattr(SqliteConversationStatisticsRepository, method_name).cache_clear()
+        getattr(ConversationStatisticsRepository, method_name).cache_clear()
 
 
 def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    engine = asyncio.run(_seed_statistics_database(tmp_path / "statistics.db"))
-    monkeypatch.setattr(server_module, "create_db_and_tables", partial(create_db_and_tables, engine))
-    repository = SqliteConversationStatisticsRepository(engine)
+    engine = asyncio.run(_seed_statistics_database())
+    repository = ConversationStatisticsRepository(engine)
     _clear_statistics_caches()
     app.dependency_overrides[get_statistics_repository] = lambda: repository
     token = create_internal_access_token()
@@ -175,7 +175,7 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
                 ],
                 headers=headers,
             )
-        cache_info = SqliteConversationStatisticsRepository.overview.cache_info()
+        cache_info = ConversationStatisticsRepository.overview.cache_info()
     finally:
         app.dependency_overrides.pop(get_statistics_repository, None)
         _clear_statistics_caches()
@@ -253,8 +253,8 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
 
 
 def test_statistics_api_rejects_invalid_filters(tmp_path: Path):
-    engine = asyncio.run(_seed_statistics_database(tmp_path / "invalid-filters.db"))
-    repository = SqliteConversationStatisticsRepository(engine)
+    engine = asyncio.run(_seed_statistics_database())
+    repository = ConversationStatisticsRepository(engine)
     app.dependency_overrides[get_statistics_repository] = lambda: repository
     token = create_internal_access_token()
     headers = {"Authorization": f"Bearer {token}"}
@@ -283,10 +283,10 @@ def test_statistics_api_rejects_invalid_filters(tmp_path: Path):
 
 
 def test_statistics_deduplicates_users_across_names_and_channels(tmp_path: Path):
-    engine = asyncio.run(_seed_statistics_database(tmp_path / "users.db"))
+    engine = asyncio.run(_seed_statistics_database())
 
     async def append_renamed_user():
-        await SqliteConversationRecordRepository(engine).append(ConversationRecord(
+        await ConversationRecordRepository(engine).append(ConversationRecord(
             request_id=str(uuid4()),
             user_id="session-alice", sender_name="renamed-alice", channel="web_client",
             session_id="018f0000-0000-7000-8000-000000000003",
@@ -296,7 +296,7 @@ def test_statistics_deduplicates_users_across_names_and_channels(tmp_path: Path)
         ))
 
     asyncio.run(append_renamed_user())
-    repository = SqliteConversationStatisticsRepository(engine)
+    repository = ConversationStatisticsRepository(engine)
     app.dependency_overrides[get_statistics_repository] = lambda: repository
     headers = {"Authorization": f"Bearer {create_internal_access_token()}"}
     try:
@@ -328,10 +328,10 @@ def test_statistics_deduplicates_users_across_names_and_channels(tmp_path: Path)
 
 
 def test_channel_queries_and_export_include_all_matching_records(tmp_path: Path):
-    engine = asyncio.run(_seed_statistics_database(tmp_path / "export.db"))
+    engine = asyncio.run(_seed_statistics_database())
 
     async def append_export_records():
-        repository = SqliteConversationRecordRepository(engine)
+        repository = ConversationRecordRepository(engine)
         for index in range(105):
             await repository.append(ConversationRecord(
                 request_id=str(uuid4()),
@@ -350,7 +350,7 @@ def test_channel_queries_and_export_include_all_matching_records(tmp_path: Path)
         ))
 
     asyncio.run(append_export_records())
-    repository = SqliteConversationStatisticsRepository(engine)
+    repository = ConversationStatisticsRepository(engine)
     app.dependency_overrides[get_statistics_repository] = lambda: repository
     headers = {"Authorization": f"Bearer {create_internal_access_token()}"}
     params = [("channel", "feishu"), ("user_id", "session-alice"), ("user_id", "session-bob"), ("keyword", " export question ")]
@@ -393,8 +393,8 @@ def test_channel_queries_and_export_include_all_matching_records(tmp_path: Path)
 
 
 def test_statistics_downloads_the_yaml_for_one_record(tmp_path: Path):
-    engine = asyncio.run(_seed_statistics_database(tmp_path / "downloads.db"))
-    repository = SqliteConversationStatisticsRepository(engine)
+    engine = asyncio.run(_seed_statistics_database())
+    repository = ConversationStatisticsRepository(engine)
     app.dependency_overrides[get_statistics_repository] = lambda: repository
     headers = {"Authorization": f"Bearer {create_internal_access_token()}"}
     try:
@@ -405,7 +405,7 @@ def test_statistics_downloads_the_yaml_for_one_record(tmp_path: Path):
             unauthorized = client.get(path)
             missing_record = client.get("/statistics/records/999/yaml", headers=headers)
             invalid_id = client.get("/statistics/records/0/yaml", headers=headers)
-            archive = tmp_path / "downloads" / f"{record['request_id']}.yaml"
+            archive = tmp_path / "record" / f"{record['request_id']}.yaml"
             archive.unlink()
             missing_file = client.get(path, headers=headers)
             outside = tmp_path / "outside.yaml"

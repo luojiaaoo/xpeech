@@ -1,12 +1,27 @@
 [path]
 session_path = "data/session"
 session_history_path = "data/session/history"
-session_record_path = "data/session/record.db"
-session_schedule_path = "data/session/schedule.db"
+session_record_yaml_path = "data/session/record"
 workspace_base_path = "data/workspace_base"
 sandbox_home_path = "assets/sandbox-home"
 cache_path = "data/cache"
 log_path = "data/logs"
+
+[database]
+# 对话记录、Web 用户与登录会话、飞书 Token、定时任务共用一个 PostgreSQL 数据库。
+# 所有连接统一使用 READ COMMITTED（读已提交）隔离级别。
+# 默认连接 Docker Compose 中的 postgres 服务；本地直接运行时改为 127.0.0.1 或实际数据库地址。
+# 服务启动时自动建表；使用外部数据库时请预先创建数据库和账号。
+host = "postgres"
+port = 5432
+name = "xpeech"
+username = "xpeech"
+password = "replace-with-a-database-password"
+sslmode = "prefer"
+connect_timeout = 10
+# 每个进程、每个连接池的配置；多副本部署时请计入总连接数。
+pool_size = 5
+max_overflow = 10
 
 [logging]
 retention_days = 7
@@ -45,7 +60,6 @@ custom_system_prompt = ""
 # timeout = 10.0
 
 [web_client]
-database_path = "data/web_client/users.db"
 # Web 对话原始事件历史，按用户 ID 和 channel + session_id 分文件保存。
 session_history_path = "data/web_client/session_history"
 max_history_days = 30
@@ -163,6 +177,3 @@ tool_timeout = 120
 [feishu]
 app_id = "cli_aa8fcbaccae41cba"
 app_secret = "xxxxxxx"
-
-[feishu.lark_cli]
-database_path = "data/lark-token-manager/tokens.db"

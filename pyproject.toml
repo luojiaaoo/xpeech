@@ -7,7 +7,6 @@ requires-python = ">=3.12"
 dependencies = [
     "APScheduler>=3.11,<4",
     "aiofiles>=25.1.0",
-    "aiosqlite>=0.21.0",
     "arxiv>=2.1.3",
     "async-lru>=2.3.0",
     "asyncer>=0.0.17",
@@ -25,6 +24,7 @@ dependencies = [
     "moviepy>=1.0.3",
     "openai>=2.36.0",
     "pillow>=12.2.0",
+    "psycopg[binary]>=3.2",
     "pyjwt>=2.12.1",
     "pydantic-settings>=2.14.0",
     "python-multipart>=0.0.27",

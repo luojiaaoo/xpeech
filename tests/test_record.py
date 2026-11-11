@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 import yaml
 from sqlalchemy import inspect
-from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -15,11 +14,14 @@ from xpeech.agent.loop import AgentLoop
 from xpeech.agent.record import (
     TABLE_NAME,
     ConversationRecord,
-    SqliteConversationRecordRepository,
+    ConversationRecordRepository,
     create_db_and_tables,
 )
 from xpeech.agent.server.schema import InboundMessage, InputText
 from xpeech.provider.schema import LLMResponse, ToolCallChunk, ToolCallRequest
+from xpeech.utils.database import get_async_database_engine
+
+pytestmark = pytest.mark.usefixtures("postgres_database")
 
 
 def make_response(
@@ -48,13 +50,12 @@ def make_response(
     return response
 
 
-class TestSqliteConversationRecordRepository:
+class TestConversationRecordRepository:
     @pytest.mark.asyncio
     async def test_appends_all_session_records_to_one_database(self, tmp_path: Path):
-        database_path = tmp_path / "record.db"
-        engine = create_async_engine(f"sqlite+aiosqlite:///{database_path.as_posix()}")
+        engine = get_async_database_engine()
         await create_db_and_tables(engine)
-        repository = SqliteConversationRecordRepository(engine)
+        repository = ConversationRecordRepository(engine)
         first_created_at = datetime(2026, 8, 19, 1, 2, 3, tzinfo=UTC)
         second_created_at = datetime(2026, 8, 19, 1, 3, 4, tzinfo=UTC)
         record = ConversationRecord(
@@ -89,7 +90,6 @@ class TestSqliteConversationRecordRepository:
         await repository.append(record)
         await repository.append(second_record)
 
-        assert database_path.is_file()
         try:
             async with engine.connect() as connection:
                 columns, indexes = await connection.run_sync(
@@ -123,7 +123,7 @@ class TestSqliteConversationRecordRepository:
                 input_tokens=12,
                 output_tokens=4,
                 model_call_count=1,
-                created_at=first_created_at.replace(tzinfo=None),
+                created_at=first_created_at,
                 duration_s=1.25,
             ),
             ConversationRecord(
@@ -138,7 +138,7 @@ class TestSqliteConversationRecordRepository:
                 input_tokens=8,
                 output_tokens=3,
                 model_call_count=1,
-                created_at=second_created_at.replace(tzinfo=None),
+                created_at=second_created_at,
                 duration_s=2.5,
             ),
         ]
@@ -244,10 +244,9 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         mapping_tool_call_funcs={"fake_tool": fake_tool},
     )
     agent_loop.history = YamlHistoryRepository(tmp_path / "history")
-    database_path = tmp_path / "record.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path.as_posix()}")
+    engine = get_async_database_engine()
     await create_db_and_tables(engine)
-    agent_loop.records = SqliteConversationRecordRepository(engine)
+    agent_loop.records = ConversationRecordRepository(engine)
     message = InboundMessage(
         user_id="session",
         session_id="018f0000-0000-7000-8000-000000000001",
@@ -307,6 +306,6 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     assert record.input_tokens == sum(usage.get("prompt_tokens") or 0 for usage in usages)
     assert record.output_tokens == sum(usage.get("completion_tokens") or 0 for usage in usages)
     assert record.model_call_count == 2
-    assert started_at.replace(tzinfo=None) <= record.created_at <= completed_at.replace(tzinfo=None)
+    assert started_at <= record.created_at <= completed_at
     assert record.duration_s is not None
     assert record.duration_s >= 0

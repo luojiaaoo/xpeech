@@ -8,6 +8,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
+pytestmark = pytest.mark.usefixtures("postgres_database")
+
 web_client_app = import_module("xpeech.subapp.channel.web_client.app")
 oauth_routes = import_module("xpeech.subapp.channel.web_client.routes.auth")
 settings_module = import_module("xpeech.config.settings")
@@ -82,7 +84,6 @@ def test_oauth2_filter_allows_when_any_output_is_produced():
 
 def test_oauth2_jq_expression_settings_are_validated_at_startup(tmp_path: Path):
     WebClientSettingsConfig(
-        database_path=tmp_path / "users.db",
     )
 
     with pytest.raises(ValueError, match="jq 表达式"):
@@ -109,13 +110,11 @@ def test_web_client_oauth2_settings_are_a_list_with_unique_provider_names(
     tmp_path: Path,
 ):
     config = WebClientSettingsConfig(
-        database_path=tmp_path / "users.db",
     )
     assert config.oauth2 == []
 
     with pytest.raises(ValueError, match="provider_name must be unique"):
         WebClientSettingsConfig(
-            database_path=tmp_path / "users.db",
             oauth2=[
                 OAuth2SettingsConfig(provider_name="Provider"),
                 OAuth2SettingsConfig(provider_name=" provider "),
@@ -180,7 +179,6 @@ def test_oauth2_login_maps_to_an_existing_web_user(
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
-            database_path=tmp_path / "oauth-users.db",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
             cookie_name="xpeech_session_oauth",
@@ -407,7 +405,6 @@ def test_oauth2_login_uses_the_selected_provider(tmp_path: Path, monkeypatch):
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
-            database_path=tmp_path / "multi-provider-users.db",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
             oauth2=(
@@ -464,7 +461,6 @@ def test_oauth2_endpoints_are_hidden_when_disabled(tmp_path: Path, monkeypatch):
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
-            database_path=tmp_path / "oauth-disabled-users.db",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
         )

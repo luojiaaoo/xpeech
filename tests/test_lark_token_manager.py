@@ -1,22 +1,26 @@
-import uuid
 import hashlib
 import time
+import uuid
 
 import httpx
 import pytest
 import pytest_asyncio
-from sqlalchemy import event, inspect
-from sqlalchemy.orm import registry
-from sqlmodel import Field, Session, SQLModel, create_engine
+from sqlalchemy import inspect
+from sqlmodel import SQLModel
+
+from xpeech.utils.database import get_database_engine
+
+pytestmark = pytest.mark.usefixtures("postgres_database")
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def isolated_token_manager(tmp_path, monkeypatch):
+async def isolated_token_manager(postgres_database, monkeypatch):
     import asyncio
 
     import xpeech.subapp.lark_token_manager.app as manager
 
-    store = manager.TokenStore(tmp_path / "manager.db")
+    store = manager.TokenStore(get_database_engine())
+    store.initialize()
     monkeypatch.setattr(manager, "store", store)
     monkeypatch.setattr(manager, "_poll_tasks", {})
     try:
@@ -28,129 +32,13 @@ async def isolated_token_manager(tmp_path, monkeypatch):
         await asyncio.gather(*tasks, return_exceptions=True)
         store.close()
 
-
-@pytest.fixture
-def legacy_token_database(tmp_path):
-    path = tmp_path / "tokens.db"
-    legacy_registry = registry()
-
-    class LegacyModel(SQLModel, registry=legacy_registry):
-        pass
-
-    class LegacySession(LegacyModel, table=True):
-        __tablename__ = "sessions"
-
-        session_id: str = Field(primary_key=True)
-        user_id: str | None = None
-        user_name: str | None = None
-        access_token: str | None = None
-        refresh_token: str | None = None
-        scope: str = ""
-        access_expires_at: int = 0
-        refresh_expires_at: int = 0
-        status: str = "unauthorized"
-        updated_at: int = 0
-
-    class LegacyAuthorization(LegacyModel, table=True):
-        __tablename__ = "device_authorizations"
-
-        session_id: str = Field(primary_key=True)
-        device_code: str
-        user_code: str = ""
-        verification_uri: str
-        verification_uri_complete: str = ""
-        scope: str
-        interval_seconds: int = 5
-        expires_at: int
-        status: str = "pending"
-        last_error: str = ""
-        updated_at: int
-
-    engine = create_engine(f"sqlite:///{path.as_posix()}")
-    try:
-        LegacySession.metadata.create_all(engine)
-        with Session(engine) as database:
-            database.add(LegacySession(
-                session_id="employee-1", user_id="ou_123", access_token="access", refresh_token="refresh",
-                scope="offline_access", access_expires_at=123, refresh_expires_at=456, status="authorized",
-            ))
-            database.add(LegacyAuthorization(
-                session_id="employee-1", device_code="device", verification_uri="https://example.com/device",
-                scope="offline_access", expires_at=9999999999, updated_at=1,
-            ))
-            database.commit()
-    finally:
-        engine.dispose()
-    return path, LegacySession, LegacyAuthorization
-
-
-def test_token_store_migrates_local_and_feishu_identities(legacy_token_database):
-    from xpeech.subapp.lark_token_manager.dao import TokenStore
-
-    path, _, _ = legacy_token_database
-
-    for _ in range(2):
-        migrated = TokenStore(path)
-        try:
-            with migrated.engine.connect() as connection:
-                assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
-                assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 30000
-                assert connection.exec_driver_sql("PRAGMA secure_delete").scalar_one() == 1
-            row = migrated.row("employee-1")
-            assert row.user_id == "employee-1"
-            assert row.open_id == "ou_123"
-            assert row.access_token == "access"
-            assert row.refresh_token == "refresh"
-            assert row.scope == "offline_access"
-            assert row.access_expires_at == 123
-            assert row.refresh_expires_at == 456
-            assert row.status == "authorized"
-            pending = migrated.authorization("employee-1")
-            assert pending.device_code == "device"
-            assert pending.scope == "offline_access"
-            assert pending.expires_at == 9999999999
-        finally:
-            migrated.close()
-
-
-def test_token_store_rolls_back_failed_legacy_migration(legacy_token_database):
-    from xpeech.subapp.lark_token_manager.dao import TokenStore
-
-    path, legacy_session, legacy_authorization = legacy_token_database
-
-    def fail_copy(session, *_args):
-        if session.new:
-            raise RuntimeError("simulated migration failure")
-
-    event.listen(Session, "before_flush", fail_copy)
-    try:
-        with pytest.raises(RuntimeError, match="simulated migration failure"):
-            TokenStore(path)
-    finally:
-        event.remove(Session, "before_flush", fail_copy)
-
-    engine = create_engine(f"sqlite:///{path.as_posix()}")
-    try:
-        assert "session_id" in {column["name"] for column in inspect(engine).get_columns("sessions")}
-        with Session(engine) as session:
-            assert session.get(legacy_session, "employee-1").access_token == "access"
-            assert session.get(legacy_authorization, "employee-1").device_code == "device"
-    finally:
-        engine.dispose()
-
-    store = TokenStore(path)
-    try:
-        assert store.row("employee-1").open_id == "ou_123"
-    finally:
-        store.close()
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("open_id", ["ou_123", None])
 async def test_authorization_status_and_logout_use_open_id(tmp_path, monkeypatch, open_id):
     import xpeech.subapp.lark_token_manager.app as manager
 
-    store = manager.TokenStore(tmp_path / "tokens.db")
+    store = manager.TokenStore(get_database_engine())
+    store.initialize()
     monkeypatch.setattr(manager, "store", store)
     try:
         store.ensure("employee-1")
@@ -424,8 +312,8 @@ async def test_device_poll_persists_completion_and_cleans_pending_authorization(
 def test_token_store_reopens_current_schema_and_keeps_metadata_isolated(tmp_path):
     from xpeech.subapp.lark_token_manager.dao import DeviceAuthorization, TokenSession, TokenStore
 
-    path = tmp_path / "current.db"
-    store = TokenStore(path)
+    store = TokenStore(get_database_engine())
+    store.initialize()
     store.ensure("employee")
     store.update_session("employee", {"open_id": "ou_employee", "access_token": "existing"})
     store.save_authorization(DeviceAuthorization(
@@ -434,14 +322,15 @@ def test_token_store_reopens_current_schema_and_keeps_metadata_isolated(tmp_path
     ))
     store.close()
 
-    store = TokenStore(path)
+    store = TokenStore(get_database_engine())
+    store.initialize()
     try:
         assert store.row("employee").access_token == "existing"
         assert store.row("employee").open_id == "ou_employee"
         assert store.authorization("employee").device_code == "device"
         assert store.pending_user_ids(99) == ["employee"]
         assert store.pending_user_ids(100) == []
-        assert set(inspect(store.engine).get_table_names()) == {"sessions", "device_authorizations"}
+        assert set(inspect(store.engine).get_table_names()) == {"lark_token_sessions", "lark_device_authorizations"}
         assert TokenSession.metadata is DeviceAuthorization.metadata
         assert TokenSession.metadata is not SQLModel.metadata
     finally:

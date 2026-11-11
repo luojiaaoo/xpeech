@@ -14,6 +14,7 @@ from ..agent.server.schema import InputText
 from ..config.settings import settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import LLMResponse, ToolCallRequest
+from ..utils.database import get_async_database_engine
 from ..utils.question import USER_TIMEOUT, build_execution_question
 from .compression import ConversationCompressor
 from .helper import strip_internal_message_metadata
@@ -24,7 +25,7 @@ from .prompt.helper import (
     set_system_prompt,
 )
 from .prompt.system import build_system_prompt
-from .record import ConversationRecord, SqliteConversationRecordRepository
+from .record import ConversationRecord, ConversationRecordRepository
 from .server.context import get_request_id
 from .server.schema import InboundMessage
 from .tool_executor import ToolExecutor
@@ -87,7 +88,7 @@ class AgentLoop:
             settings.path.session_history_path,
             max_history_days=settings.llm.max_history_days,
         )
-        self.records = SqliteConversationRecordRepository()
+        self.records = ConversationRecordRepository(get_async_database_engine())
         self._model_call_count = 0
         self._input_tokens = 0
         self._output_tokens = 0

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import random
 from datetime import datetime, timedelta
-from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
@@ -14,7 +13,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from loguru import logger
-from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from ...agent.server.schema import BackgroundMessageChannel, FeishuBackgroundMessage
 from ...agent.tools.schedule.schema import (
@@ -22,9 +21,7 @@ from ...agent.tools.schedule.schema import (
     ScheduledExecutionResult,
     ScheduledTask,
 )
-from ...config.settings import settings
 from ...utils.internal_jwt import create_internal_access_token
-from ...utils.sqlite import configure_sqlite_connection
 
 BACKGROUND_TASK_FAILURE_MESSAGE = "定时任务执行失败，请稍后重试。"
 EXECUTION_TIMEOUT_SECONDS = 3600.0
@@ -56,12 +53,6 @@ BACKGROUND_MESSAGE_QUEUES: dict[
 }
 _scheduler: AsyncIOScheduler | None = None
 _schedule_lock = Lock()
-
-
-def _scheduler_database_path(database_path: Path | None = None) -> Path:
-    path = (database_path if database_path is not None else settings.path.session_schedule_path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def get_background_scheduler() -> AsyncIOScheduler:
@@ -118,7 +109,7 @@ def _migrate_legacy_channel_kwargs(scheduler: AsyncIOScheduler) -> None:
 
 
 def start_background_scheduler(
-    database_path: Path | None = None,
+    engine: Engine,
     *,
     now: datetime | None = None,
 ) -> AsyncIOScheduler:
@@ -128,9 +119,7 @@ def start_background_scheduler(
     if _scheduler is not None and _scheduler.running:
         return _scheduler
 
-    path = _scheduler_database_path(database_path)
-    jobstore = SQLAlchemyJobStore(url=f"sqlite:///{path.as_posix()}")
-    event.listen(jobstore.engine, "connect", configure_sqlite_connection)
+    jobstore = SQLAlchemyJobStore(engine=engine)
     scheduler = AsyncIOScheduler(
         jobstores={"default": jobstore},
     )
@@ -142,7 +131,7 @@ def start_background_scheduler(
             current_time = current_time.replace(tzinfo=timezone)
         else:
             current_time = current_time.astimezone(timezone)
-        # TODO: 所有环境的 schedule.db 都用新代码启动过一次（启动日志不再出现
+        # TODO: 所有环境的任务都用新代码启动过一次（启动日志不再出现
         #  "Migrated legacy scheduled job"）后，删除 _migrate_legacy_channel_kwargs 及此调用。
         _migrate_legacy_channel_kwargs(scheduler)
         _skip_jobs_missed_while_stopped(scheduler, current_time)
@@ -152,7 +141,7 @@ def start_background_scheduler(
         raise
 
     _scheduler = scheduler
-    logger.info("Background scheduler started database={}", path)
+    logger.info("Background scheduler started")
     return scheduler
 
 

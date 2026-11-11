@@ -39,10 +39,13 @@ from xpeech.subapp.scheduler.background import (
     stop_background_scheduler,
 )
 from xpeech.utils.channel_jwt import ChannelTokenParams, create_token
+from xpeech.utils.database import get_database_engine
 from xpeech.utils.internal_jwt import (
     create_internal_access_token,
     decode_internal_access_token,
 )
+
+pytestmark = pytest.mark.usefixtures("postgres_database")
 
 TEST_SCHEDULER_URL = "http://127.0.0.1:8090"
 TEST_BACKEND_URL = "http://127.0.0.1:7878"
@@ -201,18 +204,17 @@ async def test_schedule_api_offloads_database_calls(monkeypatch, scheduler_http)
 
 
 @pytest.mark.asyncio
-async def test_scheduler_database_connections_use_wal(tmp_path: Path):
-    scheduler = start_background_scheduler(tmp_path / "schedule.db")
+async def test_scheduler_uses_postgresql():
+    scheduler = start_background_scheduler(get_database_engine())
     engine = scheduler._jobstores["default"].engine
-    with engine.connect() as first, engine.connect() as second:
-        for connection in (first, second):
-            assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
-            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 30000
+    assert engine.dialect.name == "postgresql"
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SHOW timezone").scalar_one() == "UTC"
 
 
 @pytest.mark.asyncio
 async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(tmp_path: Path):
-    scheduler = start_background_scheduler(tmp_path / "schedule.db")
+    scheduler = start_background_scheduler(get_database_engine())
     now = datetime.now(scheduler.timezone)
 
     job = schedule_feishu_task(
@@ -261,8 +263,7 @@ async def test_schedule_uses_system_timezone_and_rejects_past_and_invalid_cron(t
 
 @pytest.mark.asyncio
 async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
-    database = tmp_path / "schedule.db"
-    scheduler = start_background_scheduler(database)
+    scheduler = start_background_scheduler(get_database_engine())
     base = datetime.now(scheduler.timezone)
     date_job = schedule_feishu_task(
         prompt="once",
@@ -286,7 +287,7 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
     await asyncio.sleep(0)
 
     future_now = base + timedelta(hours=2)
-    restored = start_background_scheduler(database, now=future_now)
+    restored = start_background_scheduler(get_database_engine(), now=future_now)
     assert restored.get_job(date_job.id) is None
     restored_cron = restored.get_job(cron_job.id)
     assert restored_cron is not None
@@ -296,8 +297,7 @@ async def test_restart_removes_missed_date_and_advances_cron(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_restart_migrates_legacy_channel_from_session_metadata(tmp_path: Path, monkeypatch):
-    database = tmp_path / "schedule.db"
-    scheduler = start_background_scheduler(database)
+    scheduler = start_background_scheduler(get_database_engine())
     run_at = datetime.now(scheduler.timezone) + timedelta(hours=1)
     # channel 独立成字段之前写入的任务 kwargs 里没有 channel，当时的函数签名允许；
     # 绕过 add_job 对今日签名的校验来构造这样的旧行。
@@ -320,7 +320,7 @@ async def test_restart_migrates_legacy_channel_from_session_metadata(tmp_path: P
     stop_background_scheduler()
     await asyncio.sleep(0)
 
-    restored = start_background_scheduler(database)
+    restored = start_background_scheduler(get_database_engine())
     job = restored.get_job("legacy-job")
     assert job.kwargs["channel"] == "feishu"
     assert job.kwargs["session_metadata"] == {"open_id": "ou_1", "custom": "kept"}
@@ -328,13 +328,13 @@ async def test_restart_migrates_legacy_channel_from_session_metadata(tmp_path: P
 
     stop_background_scheduler()
     await asyncio.sleep(0)
-    stable = start_background_scheduler(database)
+    stable = start_background_scheduler(get_database_engine())
     assert stable.get_job("legacy-job").kwargs == job.kwargs
 
 
 @pytest.mark.asyncio
 async def test_tools_capture_context_list_across_channels_and_enforce_cancel_owner(tmp_path: Path, scheduler_http):
-    scheduler = start_background_scheduler(tmp_path / "schedule.db")
+    scheduler = start_background_scheduler(get_database_engine())
     args = FeishuScheduleArgs(
         prompt="daily report",
         run_at=datetime.now(scheduler.timezone) + timedelta(hours=1),
@@ -387,7 +387,7 @@ async def test_tools_capture_context_list_across_channels_and_enforce_cancel_own
 
 @pytest.mark.asyncio
 async def test_user_can_have_at_most_four_scheduled_tasks(tmp_path: Path):
-    scheduler = start_background_scheduler(tmp_path / "schedule.db")
+    scheduler = start_background_scheduler(get_database_engine())
     run_at = datetime.now(scheduler.timezone) + timedelta(hours=1)
     common = {
         "run_at": run_at,
@@ -423,7 +423,7 @@ async def test_user_can_have_at_most_four_scheduled_tasks(tmp_path: Path):
     ],
 )
 async def test_feishu_schedule_validates_delivery_context(tmp_path: Path, channel, metadata, error):
-    scheduler = start_background_scheduler(tmp_path / "schedule.db")
+    scheduler = start_background_scheduler(get_database_engine())
     args = FeishuScheduleArgs(
         prompt="task",
         run_at=datetime.now(scheduler.timezone) + timedelta(hours=1),
@@ -685,10 +685,9 @@ async def test_background_poll_rejects_invalid_jwt(app, token_kind, scheduler_ht
 async def test_only_scheduler_lifespan_starts_scheduling(tmp_path, monkeypatch):
     from xpeech.agent.server import server
 
-    monkeypatch.setattr(settings.path, "session_schedule_path", tmp_path / "schedule.db")
     monkeypatch.setattr(server, "create_db_and_tables", AsyncMock())
     monkeypatch.setattr(server, "close_all_mcp_connections", AsyncMock())
-    monkeypatch.setattr(server, "record_engine", SimpleNamespace(dispose=AsyncMock()))
+    monkeypatch.setattr(server, "get_async_database_engine", lambda: SimpleNamespace(dispose=AsyncMock()))
 
     async with server.lifespan(backend_app):
         assert background._scheduler is None
@@ -778,7 +777,7 @@ async def test_channel_jwt_cannot_access_internal_endpoints(app, method, path, c
 
 @pytest.mark.asyncio
 async def test_scheduler_api_validates_context_and_time(tmp_path, scheduler_http):
-    start_background_scheduler(tmp_path / "schedule.db")
+    start_background_scheduler(get_database_engine())
     payload = {
         "prompt": "task",
         "run_at": "2000-01-01T00:00:00+08:00",
@@ -803,7 +802,7 @@ async def test_scheduler_api_validates_context_and_time(tmp_path, scheduler_http
 
 @pytest.mark.asyncio
 async def test_scheduler_api_limit_is_shared_across_http_clients(tmp_path, scheduler_http):
-    start_background_scheduler(tmp_path / "schedule.db")
+    start_background_scheduler(get_database_engine())
     args = FeishuScheduleArgs(prompt="task", cron="0 9 * * *")
     for _ in range(4):
         await feishu_schedule(

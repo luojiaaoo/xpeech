@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
 from ...config.settings import settings
+from ...utils.database import get_database_engine
 from .dao import DeviceAuthorization, TokenSession, TokenStore
 
 DEVICE_AUTH_URL = "https://accounts.feishu.cn/oauth/v1/device_authorization"
@@ -65,7 +66,7 @@ class MigrateRequest(BaseModel):
     refresh_token_expires_at: int = 0
 
 
-store = TokenStore(settings.feishu.lark_cli.database_path)
+store = TokenStore(get_database_engine())
 _poll_tasks: dict[str, asyncio.Task[None]] = {}
 
 
@@ -304,6 +305,7 @@ async def refresh_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    store.initialize()
     refresh_task = asyncio.create_task(refresh_loop())
     for user_id in store.pending_user_ids(int(time.time())):
         _schedule_poll(user_id)

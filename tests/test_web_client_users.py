@@ -1,7 +1,10 @@
 from importlib import import_module
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+
+pytestmark = pytest.mark.usefixtures("postgres_database")
 
 web_client_app = import_module("xpeech.subapp.channel.web_client.app")
 InjectPromptWebConfig = web_client_app.InjectPromptWebConfig
@@ -13,7 +16,6 @@ def test_password_login_can_resolve_injected_prompt(tmp_path: Path):
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
-            database_path=tmp_path / "inject-prompt-users.db",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
             inject_prompt=InjectPromptWebConfig(
@@ -44,7 +46,6 @@ def test_admin_can_delete_a_user_but_not_themselves(tmp_path: Path):
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
-            database_path=tmp_path / "users.db",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
             cookie_name="xpeech_session_users",
@@ -84,7 +85,6 @@ def test_regular_user_can_change_their_own_password(tmp_path: Path):
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
-            database_path=tmp_path / "password-users.db",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
             cookie_name="xpeech_session_password",

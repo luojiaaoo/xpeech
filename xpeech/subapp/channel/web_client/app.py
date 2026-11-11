@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 
 from ....utils.channel_jwt import UserJWTAuth
+from ....utils.database import get_async_database_engine
 from .dao import User, WebClientDAO
 from .history import JsonlEventHistoryRepository
 from .models import (
@@ -56,9 +57,9 @@ def _password_matches(password: str, encoded: str) -> bool:
 
 
 def create_app(config: WebConfig) -> FastAPI:
-    dao = WebClientDAO(config.database_path)
+    dao = WebClientDAO(get_async_database_engine())
     history = JsonlEventHistoryRepository(
-        (config.session_history_path or config.database_path.parent / "session_history").resolve(),
+        (config.session_history_path or Path("data/web_client/session_history")).resolve(),
         max_history_days=config.max_history_days,
     )
 
@@ -248,7 +249,6 @@ def run(
     )
     config = WebConfig(
         backend_url=backend_url.rstrip("/"),
-        database_path=settings.web_client.database_path.resolve(),
         session_history_path=settings.web_client.session_history_path.resolve(),
         max_history_days=settings.web_client.max_history_days,
         static_dir=static_dir.resolve(),

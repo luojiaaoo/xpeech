@@ -12,12 +12,14 @@ from xpeech.subapp.channel.web_client.dao import (
     User,
     WebClientDAO,
 )
+from xpeech.utils.database import get_async_database_engine
+
+pytestmark = pytest.mark.usefixtures("postgres_database")
 
 
 @pytest.mark.asyncio
 async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
-    database_path = tmp_path / "web-client.db"
-    dao = WebClientDAO(database_path)
+    dao = WebClientDAO(get_async_database_engine())
     generated_hashes: list[str] = []
 
     def default_admin_hash() -> str:
@@ -124,6 +126,5 @@ async def test_web_client_dao_manages_users_and_sessions(tmp_path: Path):
     finally:
         await dao.close()
 
-    assert database_path.is_file()
     assert User.metadata is not SQLModel.metadata
     assert AuthenticationSession.metadata is User.metadata

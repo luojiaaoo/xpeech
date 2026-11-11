@@ -12,12 +12,14 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
-from sqlalchemy.orm import registry
-from sqlmodel import Field, Session, SQLModel, create_engine, func, select
+from sqlmodel import Session, func, select
 
 from xpeech.config.settings import JWTChannelConfig, settings
 from xpeech.subapp.channel.helper import BackendJWTParams, ChatStream
 from xpeech.subapp.channel.web_client.dao import AuthenticationSession, User, WebClientDAO
+from xpeech.utils.database import get_async_database_engine, get_database_engine
+
+pytestmark = pytest.mark.usefixtures("postgres_database")
 
 web = import_module("xpeech.subapp.channel.web_client.app")
 proxy = import_module("xpeech.subapp.channel.web_client.routes.proxy")
@@ -37,7 +39,7 @@ def client(tmp_path: Path, monkeypatch):
         "crm": JWTChannelConfig(secret_key="crm-test-channel-key-at-least-64-characters-for-sha512-signing-tests"),
     })
     app = web.create_app(web.WebConfig(
-        backend_url="http://backend.test", database_path=tmp_path / "users.db",
+        backend_url="http://backend.test",
         static_dir=tmp_path / "missing", system_name="Assistant",
     ))
     with TestClient(app) as client:
@@ -107,7 +109,7 @@ def test_embed_validation_is_stateless_and_does_not_create_users_or_sessions(cli
         assert mocked.await_args.args[0] == BackendJWTParams(token)
     assert client.post("/api/auth/logout", headers=headers).status_code == 204
     assert client.get("/api/auth/embed", headers=headers).status_code == 200
-    engine = create_engine(f"sqlite:///{(tmp_path / 'users.db').as_posix()}")
+    engine = get_database_engine()
     try:
         with Session(engine) as database:
             assert database.exec(select(User.user_id)).all() == ["admin"]
@@ -350,35 +352,15 @@ def test_local_cookie_requests_accept_uuidv7_sessions(client, monkeypatch, path,
 
 
 @pytest.mark.asyncio
-async def test_old_local_session_schema_is_preserved_without_creating_embedded_table(tmp_path):
-    path = tmp_path / "old-users.db"
-
-    class LegacyModel(SQLModel, registry=registry()):
-        pass
-
-    class LegacySession(LegacyModel, table=True):
-        __tablename__ = "sessions"
-
-        token_hash: str = Field(primary_key=True)
-        user_id: int
-        expires_at: datetime
-        created_at: datetime
-
-    engine = create_engine(f"sqlite:///{path.as_posix()}")
-    try:
-        LegacySession.metadata.create_all(engine)
-        with Session(engine) as database:
-            database.add(LegacySession(
-                token_hash="old-session", user_id=1,
-                expires_at=datetime(2999, 1, 1), created_at=datetime(2026, 1, 1),
-            ))
-            database.commit()
-    finally:
-        engine.dispose()
-    dao = WebClientDAO(path)
+async def test_local_sessions_survive_reinitialization():
+    dao = WebClientDAO(get_async_database_engine())
     try:
         await dao.initialize(lambda: "admin-hash")
-        assert (await dao.get_user_for_session("old-session")).user_id == "admin"
+        admin = await dao.get_user_by_user_id("admin")
+        await dao.create_session(
+            token_hash="old-session", user_id=admin.id,
+            expires_at=datetime(2999, 1, 1, tzinfo=UTC),
+        )
         await dao.initialize(lambda: "unused")
         assert (await dao.get_user_for_session("old-session")).user_id == "admin"
         async with dao.engine.connect() as connection:
