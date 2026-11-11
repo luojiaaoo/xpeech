@@ -395,7 +395,7 @@ linux_sandbox = pytest.mark.skipif(
 @pytest_asyncio.fixture
 async def manager(tmp_path, monkeypatch, request):
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     if hasattr(request, "param"):
         monkeypatch.setattr(settings.tool.shell, "sandbox_idle_timeout_seconds", request.param)
     manager = SandboxManager()

@@ -91,7 +91,7 @@ async def test_unreadable_directory_does_not_break_long_term_memory(tmp_path, mo
     await create_workspace_templates(tmp_path)
     await MemoryStore(tmp_path).write_long_term("important-fact")
 
-    def unreadable(_root):
+    async def unreadable(_root):
         raise PermissionError("unreadable directory")
 
     monkeypatch.setattr(memory_module, "build_memo_tree", unreadable)

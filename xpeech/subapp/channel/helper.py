@@ -1,17 +1,19 @@
 import json
 from collections.abc import AsyncIterator
-from contextlib import ExitStack
 from dataclasses import dataclass
 from email.message import Message as EmailMessage
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from asyncer import asyncify
+import anyio
 import httpx
 from httpx_sse import EventSource
 from yarl import URL
 
 from ...utils.channel_jwt import UserTokenParams, create_token
+from ...utils.helper import stack_ensure_aclosing
 from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
@@ -45,6 +47,21 @@ class BackendJWTParams:
 
 
 BackendAuthParams = BackendUserParams | BackendJWTParams
+
+
+class _AsyncMultipartStream(httpx.AsyncByteStream):
+    """Keep HTTPX's synchronous multipart file reads off the event loop."""
+
+    def __init__(self, stream: httpx.SyncByteStream):
+        self._stream = stream
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        iterator = iter(self._stream)
+        while (chunk := await asyncify(next)(iterator, None)) is not None:
+            yield chunk
+
+    async def aclose(self) -> None:
+        await asyncify(self._stream.close)()
 
 
 def _backend_headers(
@@ -89,16 +106,13 @@ async def open_chat_stream(
     try:
         headers = _backend_headers(BackendUserParams(user_id, channel), sender_name)
         headers.update({"x-session-id": session_id, "Accept": "text/event-stream", "Cache-Control": "no-store"})
-        response = await client.send(
-            client.build_request(
-                "POST",
-                chat_url,
-                headers=headers,
-                data=data,
-                files=files,
-            ),
-            stream=True,
+        request = client.build_request(
+            "POST", chat_url, headers=headers, data=data, files=files,
         )
+        if files:
+            # https://github.com/encode/httpx/pull/3698
+            request.stream = _AsyncMultipartStream(request.stream)
+        response = await client.send(request, stream=True)
     except BaseException:
         await client.aclose()
         raise
@@ -138,11 +152,11 @@ async def iter_chat_events(
             else:
                 raise TypeError(f"Unsupported message content type: {type(item)!r}")
 
-    with ExitStack() as stack:
-        upload_files = [
-            ("files", (file_path.name, stack.enter_context(file_path.open("rb")), "application/octet-stream"))
-            for file_path in files
-        ]
+    async with stack_ensure_aclosing() as stack:
+        upload_files = []
+        for file_path in files:
+            file = await stack.enter_async_context(await anyio.open_file(file_path, "rb"))
+            upload_files.append(("files", (file_path.name, file.wrapped, "application/octet-stream")))
         stream = await open_chat_stream(
             user_id,
             sender_name,

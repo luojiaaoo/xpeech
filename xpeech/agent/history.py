@@ -5,7 +5,7 @@ from stat import FILE_ATTRIBUTE_REPARSE_POINT, S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode
 
-import aiofiles.os
+import anyio
 import yaml
 from loguru import logger
 
@@ -56,7 +56,7 @@ class YamlHistoryRepository:
             raise PathProtectionError("History user_id must be non-empty")
         directory = self._base_dir / quote(user_id, safe="").replace(".", "%2E")
         try:
-            stat_result = await aiofiles.os.stat(directory, follow_symlinks=False)
+            stat_result = await anyio.Path(directory).stat(follow_symlinks=False)
         except FileNotFoundError:
             pass
         else:
@@ -84,10 +84,10 @@ class YamlHistoryRepository:
         cutoff = (datetime.now(UTC) - timedelta(days=self._max_history_days)).timestamp()
         histories: list[_HistoryFile] = []
         directory = await self._user_history_dir(user_id)
-        for entry in await aiofiles.os.scandir(directory):
-            path = directory / entry.name
+        async for entry in anyio.Path(directory).iterdir():
+            path = Path(entry)
             try:
-                stat_result = await aiofiles.os.stat(path, follow_symlinks=False)
+                stat_result = await entry.stat(follow_symlinks=False)
             except FileNotFoundError:
                 continue
             if S_ISDIR(stat_result.st_mode):
@@ -104,7 +104,7 @@ class YamlHistoryRepository:
                     raise ValueError("Non-canonical history filename")
             except (ValueError, PathProtectionError):
                 try:
-                    await aiofiles.os.unlink(path)
+                    await entry.unlink()
                 except FileNotFoundError:
                     pass
                 logger.info("Invalid session history file deleted path={}", path.name)
@@ -118,7 +118,7 @@ class YamlHistoryRepository:
             )
             if stat_result.st_mtime < cutoff and session_id != protected_session_id:
                 try:
-                    await aiofiles.os.unlink(path)
+                    await entry.unlink()
                 except FileNotFoundError:
                     pass
                 logger.info("Expired session history file deleted path={}", history.path.name)
@@ -198,7 +198,7 @@ class YamlHistoryRepository:
         """加载历史、移除失效的系统提示词，并触发文件清理。"""
         path = await self._history_path(user_id, session_id, channel=channel)
         await self._maintain_history_files(user_id=user_id, protected_session_id=session_id)
-        if not await aiofiles.os.path.isfile(path):
+        if not await anyio.Path(path).is_file():
             return []
         return await self._load_path(path)
 
@@ -238,7 +238,7 @@ class YamlHistoryRepository:
         """删除会话历史，文件不存在时忽略。"""
         path = await self._history_path(user_id, session_id, channel=channel)
         try:
-            await aiofiles.os.unlink(path)
+            await anyio.Path(path).unlink()
         except FileNotFoundError:
             pass
         logger.info("Session history deleted")

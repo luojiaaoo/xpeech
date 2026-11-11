@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-import aiofiles
+import anyio
 import yaml
 from sqlalchemy import DateTime, Index
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -89,8 +89,7 @@ class ConversationRecordRepository:
                 messages, Dumper=LiteralDumper, default_flow_style=False,
                 allow_unicode=True, indent=4, sort_keys=False, width=1000,
             )
-            async with aiofiles.open(path, "w", encoding="utf-8") as file:
-                await file.write(serialized)
+            await anyio.Path(path).write_text(serialized, encoding="utf-8")
         async with AsyncSession(self._engine) as session:
             session.add(record)
             await session.commit()

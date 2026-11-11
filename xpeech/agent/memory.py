@@ -1,9 +1,9 @@
-import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import anyio
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -19,27 +19,30 @@ ToolExecutorCallable = Callable[
 ]
 
 
-def build_memo_tree(root: Path) -> str:
+async def build_memo_tree(root: Path) -> str:
     """Render category/Markdown-file levels, with 必读.md first in each category."""
     if root.is_symlink():
         return ""
     try:
-        entries = sorted(root.iterdir(), key=lambda path: (path.name.casefold(), path.name))
+        entries = sorted(
+            [path async for path in anyio.Path(root).iterdir()],
+            key=lambda path: (path.name.casefold(), path.name),
+        )
     except FileNotFoundError:
         return ""
 
-    categories: list[tuple[Path, list[Path]]] = []
+    categories: list[tuple[anyio.Path, list[anyio.Path]]] = []
     for directory in entries:
-        if directory.name.startswith(".") or directory.is_symlink() or not directory.is_dir():
+        if directory.name.startswith(".") or await directory.is_symlink() or not await directory.is_dir():
             continue
         files = sorted(
-            (
-                path for path in directory.iterdir()
+            [
+                path async for path in directory.iterdir()
                 if not path.name.startswith(".")
-                and not path.is_symlink()
-                and path.is_file()
                 and path.suffix == ".md"
-            ),
+                and not await path.is_symlink()
+                and await path.is_file()
+            ],
             key=lambda path: (path.name != "必读.md", path.name.casefold(), path.name),
         )
         if files:
@@ -115,7 +118,7 @@ class MemoryStore:
         """扫描当前用户的备忘录目录并注入字符树，不读取正文或索引文件。"""
         heading = "## Self-improvement Memos\nRoot: memory/self-improving/"
         try:
-            tree = await asyncio.to_thread(build_memo_tree, self.memo_root)
+            tree = await build_memo_tree(self.memo_root)
         except OSError:
             logger.warning("Unable to scan self-improvement memos")
             return (

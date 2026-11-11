@@ -5,7 +5,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-import aiofiles.os
+import anyio
 import yaml
 from loguru import logger
 from pydantic import BaseModel, Field, computed_field, field_validator
@@ -95,7 +95,7 @@ class SkillInfo(BaseModel):
         return self.content[match.end() :].strip()
 
 
-def iter_builtin_skill_dirs() -> list[Path]:
+async def iter_builtin_skill_dirs() -> list[Path]:
     """Return valid built-in skill directories in a stable order."""
     if get_lark_user_access_token():
         excluded_skill_names = {LARK_SKILLS_DIR_NAME, LARK_CLI_AUTH_SKILL_DIR_NAME}
@@ -103,13 +103,13 @@ def iter_builtin_skill_dirs() -> list[Path]:
         excluded_skill_names = {LARK_TOKEN_SKILLS_DIR_NAME}
 
     return sorted(
-        (
-            skill_dir
-            for skill_dir in BUILTIN_SKILLS_DIR.iterdir()
-            if skill_dir.is_dir()
-            and (skill_dir / "SKILL.md").is_file()
-            and skill_dir.name not in excluded_skill_names
-        ),
+        [
+            Path(skill_dir)
+            async for skill_dir in anyio.Path(BUILTIN_SKILLS_DIR).iterdir()
+            if skill_dir.name not in excluded_skill_names
+            and await skill_dir.is_dir()
+            and await (skill_dir / "SKILL.md").is_file()
+        ],
         key=lambda skill_dir: skill_dir.name,
     )
 
@@ -138,18 +138,21 @@ class SkillsLoader:
 
     async def _workspace_skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
         """Return workspace skill documents without shadowing built-in directories."""
-        builtin_dir_names = {skill_dir.name for skill_dir in iter_builtin_skill_dirs()}
+        builtin_dir_names = {
+            skill_dir.name
+            for skill_dir in await iter_builtin_skill_dirs()
+        }
         files: list[tuple[Path, Literal["builtin", "workspace"]]] = []
         if self.workspace_skills is not None:
             await ensure_path_async(self.workspace_skills)
-            entries = await aiofiles.os.scandir(self.workspace_skills)
+            entries = [entry async for entry in anyio.Path(self.workspace_skills).iterdir()]
             for entry in sorted(entries, key=lambda item: item.name):
                 skill_dir = self.workspace_skills / entry.name
                 skill_file = skill_dir / "SKILL.md"
                 if (
                     entry.name not in builtin_dir_names
-                    and await aiofiles.os.path.isdir(skill_dir)
-                    and await aiofiles.os.path.isfile(skill_file)
+                    and await anyio.Path(skill_dir).is_dir()
+                    and await anyio.Path(skill_file).is_file()
                 ):
                     files.append((skill_file, "workspace"))
         return files
@@ -195,7 +198,10 @@ class SkillsLoader:
     async def list_builtin_skill_info(self) -> list[SkillInfo]:
         """Return available built-in skills without accessing workspace skills."""
         return await self._load_skill_info(
-            [(skill_dir / "SKILL.md", "builtin") for skill_dir in iter_builtin_skill_dirs()],
+            [
+                (skill_dir / "SKILL.md", "builtin")
+                for skill_dir in await iter_builtin_skill_dirs()
+            ],
             set(),
         )
 

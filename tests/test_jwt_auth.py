@@ -1,3 +1,4 @@
+from unittest.mock import AsyncMock
 import asyncio
 import tomllib
 from datetime import UTC, datetime, timedelta
@@ -122,7 +123,7 @@ def test_access_token_does_not_carry_lark_user_access_token():
 async def test_chat_injects_isolated_shell_tokens_without_saving_them(tmp_path, monkeypatch):
     monkeypatch.setattr(settings.path, "cache_path", tmp_path / "cache")
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "sandbox-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     monkeypatch.setenv("LARKSUITE_CLI_USER_ACCESS_TOKEN", "u-process-token")
     both_started = asyncio.Event()
     started = []

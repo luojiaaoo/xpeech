@@ -63,11 +63,11 @@ def write_source(output_path: Path, source: str) -> None:
             output_file.write(source)
             output_file.flush()
             os.fsync(output_file.fileno())
-        os.chmod(temporary_name, 0o600)
-        os.replace(temporary_name, output_path)
+        Path(temporary_name).chmod(0o600)
+        Path(temporary_name).replace(output_path)
     except BaseException:
         try:
-            os.unlink(temporary_name)
+            Path(temporary_name).unlink()
         except FileNotFoundError:
             pass
         raise

@@ -7,6 +7,7 @@ import pytest
 
 from xpeech.utils import file_io
 from xpeech.utils.file_io import LockedFile
+from xpeech.utils.helper import ensure_finish_async
 
 
 @pytest.mark.asyncio
@@ -17,7 +18,6 @@ async def test_standalone_operations_are_serial_for_same_path(tmp_path, monkeypa
     alias = tmp_path / "alias.txt"
     alias.symlink_to(path.name)
     file = LockedFile(path)
-    run_file_io = file_io._run_file_io
     active = 0
     maximum = 0
 
@@ -27,11 +27,11 @@ async def test_standalone_operations_are_serial_for_same_path(tmp_path, monkeypa
         maximum = max(maximum, active)
         try:
             await asyncio.sleep(0)
-            return await run_file_io(operation)
+            return await ensure_finish_async(operation)
         finally:
             active -= 1
 
-    monkeypatch.setattr(file_io, "_run_file_io", track_operations)
+    monkeypatch.setattr(file_io, "ensure_finish_async", track_operations)
     methods = [
         ("read_text", ()), ("write_text", ("text",)),
         ("append_text", (" appended",)), ("read_bytes", ()),
@@ -190,10 +190,11 @@ async def test_readers_see_complete_versions_and_writes_preserve_mode(tmp_path, 
     path = tmp_path / "script.sh"
     path.write_text("old", encoding="utf-8")
     path.chmod(0o750)
+    original_mode = stat.S_IMODE(path.stat().st_mode)
     ready = asyncio.Event()
     release = Event()
     loop = asyncio.get_running_loop()
-    replace = file_io.os.replace
+    replace = Path.replace
 
     def pause_before_publish(source, target):
         loop.call_soon_threadsafe(ready.set)
@@ -201,7 +202,7 @@ async def test_readers_see_complete_versions_and_writes_preserve_mode(tmp_path, 
             raise TimeoutError("test did not release publication")
         replace(source, target)
 
-    monkeypatch.setattr(file_io.os, "replace", pause_before_publish)
+    monkeypatch.setattr(Path, "replace", pause_before_publish)
     task = asyncio.create_task(LockedFile(path).write_text("new" * 100_000))
     try:
         await asyncio.wait_for(ready.wait(), 5)
@@ -211,7 +212,7 @@ async def test_readers_see_complete_versions_and_writes_preserve_mode(tmp_path, 
         await task
 
     assert path.read_text(encoding="utf-8") == "new" * 100_000
-    assert stat.S_IMODE(path.stat().st_mode) == 0o750
+    assert stat.S_IMODE(path.stat().st_mode) == original_mode
     assert list(tmp_path.iterdir()) == [path]
 
 
@@ -224,7 +225,7 @@ async def test_failed_publication_keeps_original_and_cleans_temporary(tmp_path, 
     def fail_publish(*_args):
         raise OSError("disk error")
 
-    monkeypatch.setattr(file_io.os, "replace", fail_publish)
+    monkeypatch.setattr(Path, "replace", fail_publish)
     with pytest.raises(OSError, match="disk error"):
         if binary:
             await LockedFile(path).write_bytes(b"replacement")
@@ -236,13 +237,14 @@ async def test_failed_publication_keeps_original_and_cleans_temporary(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_cancelled_write_keeps_lock_until_worker_finishes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cancellation", ["asyncio", "anyio"])
+async def test_cancelled_write_keeps_lock_until_worker_finishes(tmp_path, monkeypatch, cancellation):
     path = tmp_path / "content"
     path.write_text("old", encoding="utf-8")
     ready = asyncio.Event()
     release = Event()
     loop = asyncio.get_running_loop()
-    replace = file_io.os.replace
+    replace = Path.replace
 
     def pause_before_publish(source, target):
         loop.call_soon_threadsafe(ready.set)
@@ -250,22 +252,33 @@ async def test_cancelled_write_keeps_lock_until_worker_finishes(tmp_path, monkey
             raise TimeoutError("test did not release publication")
         replace(source, target)
 
-    monkeypatch.setattr(file_io.os, "replace", pause_before_publish)
-    first = asyncio.create_task(LockedFile(path).write_text("first"))
+    monkeypatch.setattr(Path, "replace", pause_before_publish)
+    scopes = []
+
+    async def write():
+        with file_io.anyio.CancelScope() as scope:
+            scopes.append(scope)
+            await LockedFile(path).write_text("first")
+
+    first = asyncio.create_task(write())
     second = None
     try:
         await asyncio.wait_for(ready.wait(), 5)
-        first.cancel()
+        cancel = first.cancel if cancellation == "asyncio" else scopes[0].cancel
+        cancel()
         await asyncio.sleep(0)
         # 重复取消任务也不能提前释放文件锁。
-        first.cancel()
+        cancel()
         second = asyncio.create_task(LockedFile(path).write_text("second"))
         await asyncio.sleep(0)
         assert not first.done()
         assert not second.done()
     finally:
         release.set()
-        with pytest.raises(asyncio.CancelledError):
+        if cancellation == "asyncio":
+            with pytest.raises(asyncio.CancelledError):
+                await first
+        else:
             await first
         if second is not None:
             await second
@@ -277,13 +290,13 @@ async def test_cancelled_write_keeps_lock_until_worker_finishes(tmp_path, monkey
 @pytest.mark.asyncio
 async def test_create_if_absent_never_overwrites_a_competing_creator(tmp_path, monkeypatch):
     path = tmp_path / "MEMORY.md"
-    link = file_io.os.link
+    link = file_io.anyio.Path.hardlink_to
 
-    def competing_create(source, target):
+    async def competing_create(target, source):
         Path(target).write_text("user content", encoding="utf-8")
-        link(source, target)
+        await link(target, source)
 
-    monkeypatch.setattr(file_io.os, "link", competing_create)
+    monkeypatch.setattr(file_io.anyio.Path, "hardlink_to", competing_create)
 
     assert not await LockedFile(path).create_text("template")
     assert path.read_text(encoding="utf-8") == "user content"

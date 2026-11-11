@@ -1,3 +1,4 @@
+from unittest.mock import AsyncMock
 import asyncio
 import json
 import os
@@ -598,7 +599,7 @@ async def test_stdio_sandbox_isolates_files_and_cleans_up_children(tmp_path, mon
     (config_home / ".mcp-config").write_text("managed config")
     monkeypatch.setenv("HOME", str(backend_home))
     monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     (workspace / "worker.py").write_text(
         "import time\nfrom pathlib import Path\nwhile True:\n"
         "    with Path('heartbeat').open('ab') as file:\n        file.write(b'x')\n"
@@ -871,7 +872,7 @@ async def test_collect_mcp_tool_skips_unavailable_server(tmp_path, monkeypatch: 
 async def test_connections_are_reused_and_expire(tmp_path, monkeypatch: pytest.MonkeyPatch, user_scoped, transport):
     await mcp_client.close_all_mcp_connections()
     monkeypatch.setattr(mcp_client, "MCP_CONNECTION_TTL_SECONDS", 0.06)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
 
     class FakeSession:
         async def list_tools(self):
@@ -1276,7 +1277,7 @@ async def test_stdio_server_reconnects_immediately_after_failed_initialization(t
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     server = workspace / "server.py"
     server.write_text('''
 import json

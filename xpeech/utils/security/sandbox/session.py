@@ -6,10 +6,10 @@ import json
 import os
 import signal
 import sys
-import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 from loguru import logger
 
 from ....agent.server.context import get_lark_user_access_token, get_user_id
@@ -44,6 +44,7 @@ class SandboxSession:
         self.users = 0
         self.process = None
         self.stderr = None
+        self._stderr_context = None
         self.idle_task = None
         self.wrapped_command: list[str] | None = None
         self.reader_task = None
@@ -78,14 +79,15 @@ class SandboxSession:
             ):
                 return
             await self.stop()
-        self.stderr = tempfile.TemporaryFile()  # noqa: SIM115 -- owned by the session; closed in stop().
+        self._stderr_context = anyio.TemporaryFile()
+        self.stderr = await self._stderr_context.__aenter__()
         try:
             spawning = asyncio.create_task(
                 asyncio.create_subprocess_exec(
                     *command,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=self.stderr,
+                    stderr=self.stderr.wrapped,
                     cwd=self.workspace,
                     start_new_session=True,
                 )
@@ -98,8 +100,8 @@ class SandboxSession:
             async with asyncio.timeout(30):
                 ready = await self.process.stdout.readline()
             if ready != b"ready\n":
-                self.stderr.seek(0)
-                detail = self.stderr.read().decode("utf-8", errors="replace")
+                await self.stderr.seek(0)
+                detail = (await self.stderr.read()).decode("utf-8", errors="replace")
                 raise RuntimeError(f"Sandbox failed to start: {detail}")
         except BaseException:
             await self.stop()
@@ -124,8 +126,9 @@ class SandboxSession:
             await _stop_process(self.process)
             self.process = None
         if self.stderr is not None:
-            self.stderr.close()
+            await self._stderr_context.__aexit__(None, None, None)
             self.stderr = None
+            self._stderr_context = None
         self.wrapped_command = None
 
     async def send(self, request: dict) -> None:

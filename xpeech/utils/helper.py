@@ -1,21 +1,20 @@
 from pathlib import Path
+import asyncio
 import base64
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
 import math
 import re
 import inspect
 from asyncer import asyncify
+import anyio
 import yaml
 from importlib.util import spec_from_file_location, module_from_spec
 import sys
-from litellm import token_counter as _token_counter
 from io import BytesIO
 from PIL import Image
-import tempfile
 from async_lru import alru_cache
-
-from .file_io import LockedFile
-
 
 # PIL.Image.ANTIALIAS is deprecated, use PIL.Image.Resampling.LANCZOS instead
 if not hasattr(Image, "ANTIALIAS"):
@@ -29,6 +28,43 @@ def ensure_async(func):
         return func
     else:
         return asyncify(func)
+
+
+async def ensure_finish_async[T](operation: Callable[[], Awaitable[T]]) -> T:
+    """等待异步操作结束；调用方被取消时，先等待操作完成，再传递取消异常。
+
+    取消异步任务不会停止已运行的线程，因此必须等待线程完成，
+    避免提前释放锁或清理仍在使用的临时文件。
+    """
+    async def run() -> T:
+        with anyio.CancelScope(shield=True):
+            return await operation()
+
+    task = asyncio.create_task(run())
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        with anyio.CancelScope(shield=True):
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not task.cancelled():
+                task.exception()
+        raise
+
+
+@asynccontextmanager
+async def stack_ensure_aclosing() -> AsyncIterator[AsyncExitStack]:
+    """取消时仍等待栈内资源关闭和清理完成。"""
+    stack = AsyncExitStack()
+    try:
+        yield stack
+    finally:
+        await ensure_finish_async(stack.aclose)
 
 
 def format_exception2llm(e: Exception) -> str:
@@ -66,6 +102,8 @@ def format_now(format_string: str = "%Y-%m-%d") -> str:
 
 
 async def token_counter(messages: list[dict], tools: list[dict] | None = None) -> int:
+    from litellm import token_counter as _token_counter
+
     cleaned_messages, video_tokens = await _strip_video_blocks_and_count_tokens(messages)
     return _token_counter(model="gpt-4o", messages=cleaned_messages, tools=tools) + video_tokens
 
@@ -78,6 +116,8 @@ def _parse_base64_url(url: str):
 
 
 async def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[list[dict], int]:
+    from .file_io import LockedFile
+
     cleaned_messages = []
     video_tokens = 0
 
@@ -94,7 +134,8 @@ async def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[li
                 cleaned_content.append(block)
                 continue
             _, _bytes = _parse_base64_url(block["video_url"]["url"])
-            with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
+            async with stack_ensure_aclosing() as stack:
+                temp_dir = await stack.enter_async_context(anyio.TemporaryDirectory(prefix="xpeech-video-"))
                 video_path = Path(temp_dir) / "video.mp4"
                 await LockedFile(video_path).write_bytes(_bytes)
                 duration = (await read_video_metadata(video_path))["duration"]
@@ -164,6 +205,8 @@ async def compress_video(
     Returns:
         压缩后的视频字节和 MIME 类型
     """
+    from .file_io import LockedFile
+
     output_path = output_path.with_suffix(".mp4")
     if not input_path.exists():
         raise FileNotFoundError(f"Input video file not found: {input_path}")

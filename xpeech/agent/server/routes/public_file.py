@@ -3,6 +3,7 @@ from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID
 
+import anyio
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
@@ -19,7 +20,7 @@ def _preview_url_path(preview_id: UUID, relative_path: Path, *, is_directory: bo
     return f"{settings.tool.browser_preview.route_path}/{preview_id}/{suffix}"
 
 
-def _render_directory_navigation(preview_id: UUID, directory: Path, relative_path: Path) -> str:
+async def _render_directory_navigation(preview_id: UUID, directory: Path, relative_path: Path) -> str:
     display_path = "/" if not relative_path.parts else f"/{relative_path.as_posix()}/"
     links: list[str] = []
 
@@ -28,11 +29,10 @@ def _render_directory_navigation(preview_id: UUID, directory: Path, relative_pat
         links.append(f'<li><a href="{escape(parent_url, quote=True)}">../</a></li>')
 
     entries = sorted(
-        directory.iterdir(),
-        key=lambda entry: (not entry.is_dir(), entry.name.casefold(), entry.name),
+        [(entry, await entry.is_dir()) async for entry in anyio.Path(directory).iterdir()],
+        key=lambda item: (not item[1], item[0].name.casefold(), item[0].name),
     )
-    for entry in entries:
-        is_directory = entry.is_dir()
+    for entry, is_directory in entries:
         entry_url = _preview_url_path(
             preview_id,
             relative_path / entry.name,
@@ -81,8 +81,8 @@ async def preview_file(preview_id: UUID, file_path: str):
     if preview_file_path.is_dir():
         html_files = [
             entry
-            for entry in preview_file_path.iterdir()
-            if entry.is_file() and entry.suffix.lower() == ".html"
+            async for entry in anyio.Path(preview_file_path).iterdir()
+            if entry.suffix.lower() == ".html" and await entry.is_file()
         ]
         if len(html_files) == 1:
             html_url = _preview_url_path(
@@ -92,7 +92,7 @@ async def preview_file(preview_id: UUID, file_path: str):
             )
             return RedirectResponse(html_url, headers=_NO_STORE_HEADERS)
         return HTMLResponse(
-            _render_directory_navigation(preview_id, preview_file_path, relative_path),
+            await _render_directory_navigation(preview_id, preview_file_path, relative_path),
             headers=_NO_STORE_HEADERS,
         )
     if preview_file_path.is_file():

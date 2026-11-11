@@ -5,18 +5,19 @@ from typing import Any
 from ...agent.memory import MemoryStore
 from ...agent.skills.skill import SkillsLoader
 from ...config.settings import settings
+from ...utils.file_io import LockedFile
 
 BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
 
 
-def _load_bootstrap_files(workspace) -> str:
+async def _load_bootstrap_files(workspace: Path) -> str:
     """加载工作区内的全部引导文件。"""
     parts = []
 
     for filename in BOOTSTRAP_FILES:
         file_path = workspace / filename
         if file_path.exists():
-            content = file_path.read_text(encoding="utf-8")
+            content = await LockedFile(file_path).read_text()
             parts.append(f"## {filename}\n\n{content}")
 
     return "\n\n".join(parts) if parts else ""
@@ -158,7 +159,7 @@ async def build_system_prompt(
     parts.append(_get_ethical_guidelines())
 
     # AGENTS.md / SOUL.md / USER.md / TOOLS.md
-    parts.append(_load_bootstrap_files(workspace))
+    parts.append(await _load_bootstrap_files(workspace))
 
     # 长期记忆
     memory = MemoryStore(workspace)

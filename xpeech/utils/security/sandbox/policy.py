@@ -1,9 +1,9 @@
 """Command policy for the workspace execution environment."""
 
-import os
 import re
 import shlex
 from collections.abc import Callable
+from pathlib import Path
 
 
 def is_direct_python_pip_exec(cmd: str) -> bool:
@@ -32,7 +32,7 @@ def is_direct_python_pip_exec(cmd: str) -> bool:
     assign_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
 
     def basename(x: str) -> str:
-        return os.path.basename(x.strip()).lower()
+        return Path(x.strip()).name.lower()
 
     def is_python_pip(x: str) -> bool:
         return bool(python_pip_re.match(basename(x)))

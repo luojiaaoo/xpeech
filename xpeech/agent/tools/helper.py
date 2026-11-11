@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Type, get_type_hints
 
+import anyio
 from openai import pydantic_function_tool
 from pydantic import BaseModel
 
@@ -15,11 +16,11 @@ from ...utils.security import sandbox
 from ..skills.skill import BUILTIN_SKILLS_DIR
 
 
-def get_mime_type(path: Path) -> str | None:
+async def get_mime_type(path: Path) -> str | None:
     """Return a best-effort MIME type, preferring file content over its name."""
     try:
-        with path.open("rb") as file:
-            data = file.read(12)
+        async with await anyio.open_file(path, "rb") as file:
+            data = await file.read(12)
     except OSError:
         data = b""
 

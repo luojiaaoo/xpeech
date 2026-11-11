@@ -26,7 +26,7 @@ def _enter_network_userns(net_fd: int) -> None:
     try:
         # setns cannot re-enter the caller's current user namespace. Root
         # normally remains in that namespace, keeping host mount access.
-        if not os.path.samestat(os.fstat(user_fd), os.stat("/proc/self/ns/user")):
+        if not os.path.samestat(os.fstat(user_fd), Path("/proc/self/ns/user").stat()):
             os.setns(user_fd, 0)
     finally:
         os.close(user_fd)
@@ -129,7 +129,7 @@ def run(command: list[str]) -> int:
             # Pin the network namespace before entering its owner userns.
             # Looking it up through /proc/<pid> after that transition races
             # bwrap's credential changes and can fail the ptrace access check.
-            net = stack.enter_context(open(f"/proc/{pid}/ns/net", "rb", buffering=0))
+            net = stack.enter_context(Path(f"/proc/{pid}/ns/net").open("rb", buffering=0))
             net_fd = net.fileno()
             # The PID/UID map does not imply that bwrap finished setting up
             # loopback (notably for root, whose UID map already exists).

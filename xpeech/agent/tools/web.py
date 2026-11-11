@@ -7,6 +7,7 @@ import httpx
 import trafilatura
 from baidusearch.baidusearch import search as _baidu_search
 from loguru import logger
+from asyncer import asyncify
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from ...utils.security.network import validate_url_target
@@ -70,7 +71,7 @@ async def _fetch_and_convert(url: str, *, include_images: bool = False) -> str:
     ) as client:
         response = await client.get(url)
         response.raise_for_status()
-        return await asyncio.to_thread(_response_to_markdown, response, include_images=include_images)
+        return await asyncify(_response_to_markdown)(response, include_images=include_images)
 
 
 def _response_to_markdown(response: httpx.Response, *, include_images: bool = False) -> str:
@@ -116,7 +117,7 @@ async def baidu_search(args: BaiduSearchArgs) -> str:
     """
     try:
         async with asyncio.timeout(_SEARCH_TIMEOUT_SECONDS):
-            items = await asyncio.to_thread(_baidu_search, args.query, args.max_results)
+            items = await asyncify(_baidu_search)(args.query, args.max_results)
         hits = [
             {
                 "title": item.get("title", ""),

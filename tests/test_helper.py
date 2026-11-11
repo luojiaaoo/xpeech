@@ -2,6 +2,7 @@ import asyncio
 from io import BytesIO
 from pathlib import Path
 
+import anyio
 import pytest
 from PIL import Image
 from starlette.datastructures import UploadFile
@@ -170,6 +171,36 @@ async def test_incomplete_uploads_are_not_published_and_temporary_is_cleaned(tmp
         task.cancel()
     with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
         await task
+
+    directory = tmp_path / "attachments" / helper.format_now()
+    assert list(directory.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_anyio_cancelled_upload_cleans_temporary_files(tmp_path):
+    started = asyncio.Event()
+    scopes = []
+
+    class InterruptedUpload:
+        filename = "report.csv"
+        reads = 0
+
+        async def read(self, _size):
+            self.reads += 1
+            if self.reads == 1:
+                return b"partial content"
+            started.set()
+            await anyio.sleep_forever()
+
+    async def upload():
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            await file_io.save_to_workspace(InterruptedUpload(), tmp_path)
+
+    task = asyncio.create_task(upload())
+    await asyncio.wait_for(started.wait(), 5)
+    scopes[0].cancel()
+    await asyncio.wait_for(task, 5)
 
     directory = tmp_path / "attachments" / helper.format_now()
     assert list(directory.iterdir()) == []

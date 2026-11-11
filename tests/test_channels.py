@@ -1,4 +1,5 @@
 """Custom JWT channels select public and matching Skill/MCP resources."""
+from unittest.mock import AsyncMock
 
 import asyncio
 import json
@@ -127,7 +128,7 @@ def test_skill_api_filters_using_channel(
         filter_line = f"filter: {filter_expr}\n" if filter_expr else ""
         skill_file.write_text(f"---\nname: {name}\n{filter_line}---\n# {name}\n")
         builtin_dirs.append(skill_file.parent)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: builtin_dirs)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtin_dirs))
     for name, filter_expr in [("user-public", None), ("user-crm", 'channel("crm")'), ("user-erp", 'channel("erp")')]:
         skill_file = tmp_path / "tag-user" / "skills" / name / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
@@ -166,7 +167,7 @@ async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tm
     skill_dir = tmp_path / "builtin" / "classified"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("---\nname: classified\ntags: [finance, 'Long Form']\n---\n# Instructions\n")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [skill_dir])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[skill_dir]))
 
     [skill] = await SkillsLoader(tmp_path).list_skill_info()
     assert skill.metadata.filter is None
@@ -232,7 +233,7 @@ async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tm
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text('---\nname: dedicated\nfilter: channel("crm")\nalways: true\n---\n# CRM instructions')
     builtin_dirs = [skill_file.parent] if source == "builtin" else []
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: builtin_dirs)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtin_dirs))
     loader = SkillsLoader(tmp_path)
     prompt = await loader.build_skills_prompt()
     if source == "builtin":
@@ -252,7 +253,7 @@ async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tm
 @pytest.mark.parametrize("filter_yaml", ["channel()", "[1]", "['crm']", "import os", "123"])
 @pytest.mark.asyncio
 async def test_invalid_skill_filters_are_skipped(monkeypatch, tmp_path, filter_yaml):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     skill_file = tmp_path / "skills" / "invalid" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text(f"---\nname: invalid\nfilter: {filter_yaml}\n---\n# Invalid")

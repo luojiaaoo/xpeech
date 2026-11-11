@@ -69,7 +69,7 @@ def test_sandbox_home_rejects_symlink(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypatch):
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
 
     args = await sandbox.wrap_sandbox_command("true", tmp_path, skills_loader=SkillsLoader(tmp_path))
 
@@ -85,7 +85,7 @@ async def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypa
 @pytest.mark.asyncio
 async def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monkeypatch):
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
 
     args = await sandbox.wrap_sandbox_command("true", tmp_path, network_isolation=False, skills_loader=SkillsLoader(tmp_path))
 
@@ -110,7 +110,7 @@ async def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(backend_home))
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
 
     relative_workspace = Path("~/workspace")
     assert sandbox.get_sandbox_home(relative_workspace) == workspace / "home"
@@ -264,7 +264,7 @@ async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
         config_file.write_text("mirror config", encoding="utf-8")
 
     monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     for key in ("GOPATH", "GOMODCACHE", "GOCACHE", "GOENV"):
         monkeypatch.setenv(key, str(tmp_path / "backend-go" / key))
     user_id = "test-session"
@@ -386,7 +386,7 @@ async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
     if not host_fonts.stdout.strip():
         pytest.skip("Requires system Chinese fonts (e.g. fonts-noto-cjk)")
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
 
     command = await sandbox.wrap_sandbox_command(
         font_command, tmp_path, skills_loader=SkillsLoader(tmp_path), network_isolation=False,
@@ -423,7 +423,7 @@ async def test_sandbox_analyzes_ethernet_capture_with_tshark(tmp_path, monkeypat
     capture += struct.pack("<IIII", 1, 0, len(frame), len(frame)) + frame
     (workspace / "sample.cap").write_bytes(capture)
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
 
     command = await sandbox.wrap_sandbox_command(
         ["tshark", "-n", "-r", "sample.cap", "-Y", "arp", "-T", "json"],
@@ -467,7 +467,7 @@ async def test_sandbox_converts_document_with_libreoffice(tmp_path, monkeypatch,
 </office:document>
 ''', encoding="utf-8")
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
 
     command = await sandbox.wrap_sandbox_command(
         [
@@ -590,7 +590,7 @@ try {
     await new Promise(resolve => server.close(resolve));
 }
 ''')
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
 
     result = await executor_module.sandbox_manager.run(
@@ -645,7 +645,7 @@ async def test_go_cross_compiles_windows_and_linux_amd64(tmp_path, monkeypatch, 
         # Download and verify through the sandbox network, then build solely
         # from the workspace's module cache for both target platforms.
         download_command = "go mod download all; go mod verify >&2; export GOPROXY=off; "
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     monkeypatch.setattr(settings.path, "sandbox_home_path", Path("assets/sandbox-home").resolve())
 
     command = await sandbox.wrap_sandbox_command(
@@ -708,7 +708,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
     managed_config = config_home / ".audit-config"
     managed_config.write_text("read-only config", encoding="utf-8")
     monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", list)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     heartbeat = workspace / "heartbeat"
     worker = "for ((i=0; i<40; i++)); do printf x >> heartbeat; sleep 0.05; done"
     command = (
@@ -766,7 +766,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
 @pytest.mark.asyncio
 async def test_concurrent_sandboxes_have_private_ports_and_ipc(tmp_path, monkeypatch):
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: iter(()))
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     program = """
 import json, os, socket, sys
 tcp = socket.socket()

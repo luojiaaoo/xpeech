@@ -1,4 +1,6 @@
 import json
+from io import BytesIO
+from threading import get_ident
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,6 +15,36 @@ from xpeech.utils.channel_jwt import UserJWTAuth
 TEST_CHANNEL = "test"
 TEST_SECRET_KEY = "test-channel-key-that-is-at-least-32-bytes"
 SESSION_ID = "018f0000-0000-7000-8000-000000000001"
+
+
+@pytest.mark.asyncio
+async def test_multipart_upload_reads_files_off_the_event_loop(monkeypatch):
+    monkeypatch.setitem(settings.jwt.channels, TEST_CHANNEL, JWTChannelConfig(secret_key=TEST_SECRET_KEY))
+    event_loop_thread = get_ident()
+    reads = []
+
+    class File(BytesIO):
+        def read(self, *args):
+            reads.append(get_ident())
+            assert reads[-1] != event_loop_thread
+            return super().read(*args)
+
+    async def respond(request):
+        body = await request.aread()
+        assert b'filename="report.txt"' in body
+        assert b"file content" in body
+        return httpx.Response(200, content=b"ok")
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client_class(
+        transport=httpx.MockTransport(respond), **kwargs,
+    ))
+    stream = await helper.open_chat_stream(
+        "alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL,
+        session_id=SESSION_ID, files=[("files", ("report.txt", File(b"file content")))],
+    )
+    await stream.aclose()
+    assert reads
 
 
 @pytest.mark.asyncio

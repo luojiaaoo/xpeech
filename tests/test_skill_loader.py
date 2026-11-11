@@ -72,7 +72,7 @@ def test_engineering_skill_metadata_and_upstream_integrity(skill_name: str):
 
 @pytest.mark.asyncio
 async def test_skills_loader_creates_workspace_when_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     workspace = tmp_path / "workspace"
 
     loader = SkillsLoader(workspace)
@@ -90,14 +90,17 @@ async def test_list_builtin_skill_info_does_not_access_workspace(tmp_path, monke
     builtin_dir.mkdir()
     skill_file = builtin_dir / "SKILL.md"
     skill_file.write_text("---\nname: builtin-name\n---\nBuilt-in instructions")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [builtin_dir])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[builtin_dir]))
     workspace = None if workspace_kind == "none" else tmp_path / "workspace"
     if workspace_kind == "existing":
         workspace_skill = workspace / "skills/custom/SKILL.md"
         workspace_skill.parent.mkdir(parents=True)
         workspace_skill.write_text("---\nname: custom\n---\nWorkspace instructions")
     monkeypatch.setattr(skill_module, "ensure_path_async", AsyncMock(side_effect=AssertionError("Workspace accessed")))
-    monkeypatch.setattr(skill_module.aiofiles.os, "scandir", AsyncMock(side_effect=AssertionError("Workspace scanned")))
+    def fail_workspace_scan(path):
+        raise AssertionError("Workspace scanned")
+
+    monkeypatch.setattr(skill_module.anyio.Path, "iterdir", fail_workspace_scan)
 
     [skill] = await SkillsLoader(workspace).list_builtin_skill_info()
 
@@ -161,7 +164,7 @@ async def test_interactive_skill_filter_applies_to_list_and_prompt(
         "# Interactive instructions\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [skill_dir] if source == "builtin" else [])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[skill_dir] if source == "builtin" else []))
     regular_dir = tmp_path / "skills" / "regular-skill"
     regular_dir.mkdir(parents=True)
     (regular_dir / "SKILL.md").write_text(
@@ -234,7 +237,7 @@ async def test_skill_metadata_drives_list_and_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     workspace = tmp_path / "workspace"
     skill_dir = workspace / "skills" / "custom-skill"
     skill_dir.mkdir(parents=True)
@@ -268,7 +271,7 @@ async def test_skill_name_comes_from_document_not_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     workspace = tmp_path / "workspace"
     skill_file = workspace / "skills" / "folder-name" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
@@ -297,7 +300,7 @@ async def test_builtin_name_takes_precedence_over_workspace_name(
         "---\nname: shared-name\ndescription: Built-in\n---\n# Built-in\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [builtin_dir])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[builtin_dir]))
     workspace = tmp_path / "workspace"
     workspace_skill = workspace / "skills" / "workspace-folder" / "SKILL.md"
     workspace_skill.parent.mkdir(parents=True)
@@ -320,7 +323,7 @@ async def test_filtered_builtin_directory_still_takes_precedence_over_workspace(
     builtin_dir = tmp_path / "builtin/shared-folder"
     builtin_dir.mkdir(parents=True)
     (builtin_dir / "SKILL.md").write_text('---\nname: shared-name\nfilter: channel("crm")\n---\nBuilt-in')
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [builtin_dir])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[builtin_dir]))
     workspace = tmp_path / "workspace"
     for folder in ("shared-folder", "other-folder"):
         skill_file = workspace / "skills" / folder / "SKILL.md"
@@ -339,7 +342,7 @@ async def test_workspace_skills_ignore_filter_while_builtins_enforce_it(tmp_path
     builtin_dir = tmp_path / "builtin/gated-skill"
     builtin_dir.mkdir(parents=True)
     (builtin_dir / "SKILL.md").write_text('---\nname: gated-skill\nfilter: channel("crm")\n---\nBuilt-in')
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [builtin_dir])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[builtin_dir]))
     workspace = tmp_path / "workspace"
     skill_file = workspace / "skills" / "workspace-skill" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
@@ -357,7 +360,7 @@ async def test_skill_metadata_defaults_and_invalid_name_is_skipped(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     workspace = tmp_path / "workspace"
     skill_dir = workspace / "skills" / "custom-skill"
     skill_dir.mkdir(parents=True)
@@ -381,7 +384,7 @@ async def test_skill_metadata_defaults_and_invalid_name_is_skipped(
 
 @pytest.mark.asyncio
 async def test_build_prompt_reads_each_skill_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     skill_file = tmp_path / "workspace" / "skills" / "always-skill" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text(
@@ -415,7 +418,7 @@ async def test_build_prompt_marks_internal_skill_without_activating_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: [])
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
     skill_file = tmp_path / "workspace" / "skills" / "internal-skill" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text(

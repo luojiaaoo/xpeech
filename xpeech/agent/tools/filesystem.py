@@ -1,9 +1,9 @@
 import base64
 import difflib
-import tempfile
 from pathlib import Path
 from typing import Any, Self
 
+import anyio
 from pydantic import BaseModel, Field, model_validator
 
 from ...utils.file_io import (
@@ -11,7 +11,7 @@ from ...utils.file_io import (
     ensure_path_async,
     super_read_text,
 )
-from ...utils.helper import compress_image, compress_video, read_video_metadata
+from ...utils.helper import compress_image, compress_video, read_video_metadata, stack_ensure_aclosing
 from .helper import get_mime_type, safe_resolve_workspace_path
 
 
@@ -101,7 +101,7 @@ def build_file_tools(workspace: Path, max_result_chars: int = 10_000):
         if not raw:
             return f"(Empty file: {path})"
 
-        mime = get_mime_type(file_path)
+        mime = await get_mime_type(file_path)
         if not mime or not mime.startswith("image/"):
             raise ValueError(f"Not an image file: {path} (MIME: {mime or 'unknown'})")
 
@@ -157,7 +157,8 @@ def build_file_tools(workspace: Path, max_result_chars: int = 10_000):
             effective_duration = duration - start_time
 
         try:
-            with tempfile.TemporaryDirectory(prefix="xpeech-video-") as temp_dir:
+            async with stack_ensure_aclosing() as stack:
+                temp_dir = await stack.enter_async_context(anyio.TemporaryDirectory(prefix="xpeech-video-"))
                 raw, output_mime = await compress_video(
                     input_path=file_path,
                     output_path=Path(temp_dir) / f"{file_path.stem}_compressed.mp4",

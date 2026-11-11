@@ -5,6 +5,8 @@ import shlex
 import sys
 from pathlib import Path
 
+import anyio
+
 from ....agent.server.context import get_user_id
 from ....agent.skills.skill import SkillsLoader
 from ....config.settings import settings
@@ -41,20 +43,22 @@ def _sandbox_path(home: Path) -> str:
     return ":".join(entry for entry in path_entries if entry)
 
 
-def _iter_sandbox_home_config_files() -> list[tuple[Path, Path]]:
+async def _iter_sandbox_home_config_files() -> list[tuple[Path, Path]]:
     """Return (source, relative path) pairs for sandbox HOME config files."""
     config_root = settings.path.sandbox_home_path
     if not config_root.is_dir():
         return []
 
     config_files: list[tuple[Path, Path]] = []
-    for source in sorted(config_root.rglob("*")):
-        if not source.is_file() or source.is_symlink():
+    sources = [source async for source in anyio.Path(config_root).rglob("*")]
+    for source in sorted(sources, key=Path):
+        if not await source.is_file() or await source.is_symlink():
             continue
-        resolved_source = source.resolve()
+        source_path = Path(source)
+        resolved_source = source_path.resolve()
         if not resolved_source.is_relative_to(config_root):
             continue
-        config_files.append((resolved_source, source.relative_to(config_root)))
+        config_files.append((resolved_source, source_path.relative_to(config_root)))
     return config_files
 
 
@@ -145,7 +149,7 @@ async def wrap_sandbox_command(
 
     # Keep centrally managed HOME config files read-only while all writable
     # HOME state remains private to the current workspace.
-    for source, relative_path in _iter_sandbox_home_config_files():
+    for source, relative_path in await _iter_sandbox_home_config_files():
         args.extend(["--ro-bind", str(source), str(home / relative_path)])
 
     # Present built-in and custom skills through one workspace/skills tree.

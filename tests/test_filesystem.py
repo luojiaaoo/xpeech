@@ -18,19 +18,22 @@ from xpeech.agent.tools.helper import get_mime_type
         (b"RIFF\x00\x00\x00\x00WEBPcontent", "image/webp"),
     ],
 )
-def test_get_mime_type_detects_content_before_extension(tmp_path: Path, data: bytes, expected: str):
+@pytest.mark.asyncio
+async def test_get_mime_type_detects_content_before_extension(tmp_path: Path, data: bytes, expected: str):
     file_path = tmp_path / "misleading.txt"
     file_path.write_bytes(data)
 
-    assert get_mime_type(file_path) == expected
+    assert await get_mime_type(file_path) == expected
 
 
-def test_get_mime_type_falls_back_to_extension():
-    assert get_mime_type(Path("example.mp4")) == "video/mp4"
+@pytest.mark.asyncio
+async def test_get_mime_type_falls_back_to_extension():
+    assert await get_mime_type(Path("example.mp4")) == "video/mp4"
 
 
-def test_get_mime_type_returns_none_when_unknown():
-    assert get_mime_type(Path("example.unknown")) is None
+@pytest.mark.asyncio
+async def test_get_mime_type_returns_none_when_unknown():
+    assert await get_mime_type(Path("example.unknown")) is None
 
 
 @pytest.mark.asyncio

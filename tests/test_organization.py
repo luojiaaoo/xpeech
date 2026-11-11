@@ -1,4 +1,5 @@
 """验证技能和 MCP 服务统一按用户组织查询结果进行筛选。"""
+from unittest.mock import AsyncMock
 
 import asyncio
 import json
@@ -73,7 +74,7 @@ async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_
         path.write_text(f"---\nname: {name}\nalways: true\n{extra}---\n# Instructions for {name}\n")
         if source == "builtin":
             builtin_dirs.append(path.parent)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: builtin_dirs)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtin_dirs))
 
     # org("") 是非法过滤表达式，在元数据解析阶段即被跳过，与来源无关。
     unfiltered = {"public", "engineering", "sales", "other-channel"}
@@ -159,7 +160,7 @@ def test_skill_api_looks_up_authenticated_user_and_ignores_claims(monkeypatch, t
         path.parent.mkdir(parents=True)
         path.write_text(f'---\nname: {name}\nfilter: org("company/{name}/")\n---\n')
         directories.append(path.parent)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", lambda: directories)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=directories))
     calls = []
 
     async def execute(command, variables, **kwargs):

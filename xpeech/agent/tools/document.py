@@ -1,9 +1,9 @@
 """使用 anydoc 将本地文档转换为 Markdown。"""
 
-import asyncio
 from pathlib import Path
 
 import anydoc
+from asyncer import asyncify
 from pydantic import BaseModel, Field
 
 from .helper import safe_resolve_workspace_path
@@ -23,7 +23,7 @@ async def read_document(file_path: Path, display_path: str) -> str:
         raise ValueError(f"Not a file: {display_path}")
 
     try:
-        content = await asyncio.to_thread(anydoc.to_markdown, str(file_path))
+        content = await asyncify(anydoc.to_markdown)(str(file_path))
         if not content or not content.strip():
             return f"(Empty document: {display_path})"
         return content
