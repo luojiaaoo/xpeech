@@ -33,7 +33,7 @@ max_history_days = 30
 
 文件按 URL 编码后的用户 ID 分目录，文件名为
 `channel=[channel]&session_id=[session_id].jsonl`，每行保存一个 JSON 事件，不重复保存文件名中的
-通道和会话 ID。通道和用户 ID 均从已验证的 Cookie 用户或 JWT 取得；普通页面通道为 `web_client`，
+通道和会话 ID。通道和用户 ID 均从已验证的 Cookie 用户或 JWT 取得；普通页面默认通道为 `web_client`，
 嵌入页面通道为 JWT `kid`。每次流式对话会记录一条用于界面还原的 `user` 事件（包含附件名称）以及
 后端 SSE 原始事件，同一会话续聊时逐行追加保存；
 `/api/chat_sync` 的独立后台执行不写入该历史。查询或保存时按文件修改时间清理超过保留天数的文件，
@@ -43,6 +43,11 @@ max_history_days = 30
 通过 `GET /api/history/sessions/{session_id}` 读取事件。两个接口都返回 `Cache-Control: no-store`；
 读取尚未创建或已清理的会话返回空 `events`。历史中的提问表单仅供查看，新的消息仍使用选中的
 `session_id` 发送。
+
+普通登录页可通过 `?channel=crm` 选择 `jwt.channels.web_client.allow_extra_channels`
+白名单中的自定义通道，系统名和推荐问题的配置见[主文档](../../../../README.md)。
+该选择绑定到登录会话，不能在登录后的 API 上通过 channel 参数覆盖。
+`channel` 与 `embed` 参数互斥，嵌入模式必须使用本文的 JS/JWT 认证流程。
 
 嵌入功能默认可用，允许任意业务网站接入，无需启用开关或配置来源白名单。
 Web 客户端和 backend 均允许任意来源的 CORS 请求、请求方法及请求头；

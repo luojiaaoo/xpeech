@@ -78,7 +78,7 @@ class _SSEEventCollector:
 def _history_identity(user: User | UserJWTAuth) -> tuple[str, str]:
     if isinstance(user, UserJWTAuth):
         return user.user_id, user.channel
-    return user.user_id, "web_client"
+    return user.user_id, user.channel
 
 
 def _validated_chat_session_id(user: User | UserJWTAuth, session_id: str | None) -> str | None:
@@ -109,7 +109,7 @@ def _validated_sender_name(user: User | UserJWTAuth, sender_name: str | None) ->
 def _backend_auth(user: User | UserJWTAuth) -> BackendAuthParams:
     if isinstance(user, UserJWTAuth):
         return BackendJWTParams(jwt_token=user.token)
-    return BackendUserParams(user_id=user.user_id, channel="web_client")
+    return BackendUserParams(user_id=user.user_id, channel=user.channel)
 
 
 def _cookie_websocket_origin_allowed(websocket: WebSocket) -> bool:

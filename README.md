@@ -998,6 +998,32 @@ npm run build
 PC 显示历史侧栏，窄屏使用历史抽屉。已打开会话切换时仅隐藏，回复继续运行，历史菜单显示加载状态；
 每次回复使用一条会话专属 WebSocket，完成后关闭，不为空闲会话保留连接。独立页面继续使用账号登录，
 嵌入页面继续使用 JS 注入 JWT。
+
+Web 登录入口支持按 channel 定制系统名和推荐问题列表。在 `conf.toml` 中添加：
+
+```toml
+[[jwt.channels.web_client.allow_extra_channels]]
+channel = "crm"
+system_name = "客户服务助手"
+recommended_questions = ["如何查询客户资料？", "帮我整理本周的跟进计划"]
+
+[jwt.channels.crm]
+secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
+```
+
+访问 `http://localhost:7939/?channel=crm` 后，登录页、登录后的系统名称和浏览器标签页
+都显示「客户服务助手」，新会话欢迎区使用对应的推荐问题，点击问题可填入输入框。
+推荐问题列表为空时不显示推荐问题；未指定 channel 时使用默认系统和推荐问题。
+仅允许白名单中已配置独立 JWT 密钥的自定义 channel，不能指定 `internal`、`feishu`
+或未配置的通道。每个 channel 只能出现一次。
+
+channel 只在登录入口选择，账号密码、OAuth2 扫码和 OAuth2 链接登录都会将选择绑定到
+服务端登录会话。登录成功后从地址中移除 `channel`；刷新页面仍保留系统名和推荐问题。
+转发给后端的 JWT 使用该 channel 的 `kid` 和密钥，聊天、文件、问答与历史记录均跟随
+会话 channel。已有其他 channel 的登录状态时，需要在目标登录页重新登录。
+`channel` 与 `embed` 参数互斥；嵌入模式必须通过 `embed.js` 的 JS/JWT 认证流程接入，
+不能通过登录页的 channel 参数建立嵌入认证，详见 [嵌入接入文档](xpeech/subapp/channel/web_client/README.md)。
+
 Web 原始事件历史由 `web_client.session_history_path` 配置，默认为
 `data/web_client/session_history`，按用户 ID 分目录、按 `channel + session_id` 命名 YAML 文件；
 `web_client.max_history_days` 默认为 30，控制这类文件的保留天数。该目录与 Agent 的

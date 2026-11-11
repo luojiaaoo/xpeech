@@ -16,11 +16,13 @@ function oauth2LoginKey(providerName: string) {
 
 export default function LoginPage({
   systemName,
+  channel,
   oauth2,
   injectPromptEnabled,
   onLogin,
 }: {
   systemName: string;
+  channel: string;
   oauth2: AppConfig['oauth2'];
   injectPromptEnabled: boolean;
   onLogin: (user: User) => void;
@@ -51,17 +53,17 @@ export default function LoginPage({
     if (!autoRedirectProvider) return;
     setQrError(undefined);
     try {
-      const qr = await authApi.createOAuth2Qr(autoRedirectProvider.provider_name, injectPromptState);
+      const qr = await authApi.createOAuth2Qr(autoRedirectProvider.provider_name, injectPromptState, channel);
       window.location.replace(qr.authorization_url);
     } catch (error) {
       setQrError(String(error));
     }
-  }, [autoRedirectProvider, injectPromptState]);
+  }, [autoRedirectProvider, injectPromptState, channel]);
 
   async function submit(values: { user_id: string; password: string }) {
     setSubmitting(true);
     try {
-      onLogin(await authApi.login(values.user_id, values.password));
+      onLogin(await authApi.login(values.user_id, values.password, channel));
     } catch (error) {
       message.error(String(error));
     } finally {
@@ -83,6 +85,7 @@ export default function LoginPage({
         const qr = await authApi.createOAuth2Qr(
           selectedProviderName,
           injectPromptState,
+          channel,
         );
         if (cancelled) return;
         setQrLogin(qr);
@@ -112,7 +115,7 @@ export default function LoginPage({
       cancelled = true;
       if (pollTimer !== undefined) window.clearTimeout(pollTimer);
     };
-  }, [autoRedirectProvider, injectPromptState, onLogin, qrRefreshKey, selectedOAuth2Provider]);
+  }, [autoRedirectProvider, injectPromptState, channel, onLogin, qrRefreshKey, selectedOAuth2Provider]);
 
   useEffect(() => {
     if (!autoRedirectProvider) return;

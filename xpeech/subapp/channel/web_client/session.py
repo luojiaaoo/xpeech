@@ -5,8 +5,31 @@ from typing import Annotated
 import jwt
 from fastapi import Header, HTTPException
 
-from ....config.settings import settings
+from ....config.settings import WebExtraChannelConfig, settings
 from ....utils.channel_jwt import UserJWTAuth
+
+
+def web_channel(channel_name: str | None) -> str:
+    """Only explicitly allowed custom channels may use local web login."""
+    if channel_name is None or channel_name == "web_client":
+        return "web_client"
+    web = settings.jwt.channels.get("web_client")
+    if (
+        channel_name not in {"internal", "feishu"}
+        and channel_name in settings.jwt.channels
+        and web is not None
+        and any(extra.channel == channel_name for extra in web.allow_extra_channels)
+    ):
+        return channel_name
+    raise HTTPException(422, "该 channel 未允许通过 Web 登录")
+
+
+def web_channel_config(channel_name: str) -> WebExtraChannelConfig | None:
+    web_channel(channel_name)
+    web = settings.jwt.channels.get("web_client")
+    return next(
+        (extra for extra in web.allow_extra_channels if extra.channel == channel_name), None,
+    ) if web else None
 
 
 def embedded_channel(channel_name: str | None) -> str:

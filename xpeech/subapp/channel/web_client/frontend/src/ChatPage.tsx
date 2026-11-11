@@ -138,9 +138,10 @@ function renderStreamContent(type: StreamEventType, content: string, streaming: 
 }
 
 export default function ChatPage({
-  systemName, sessionId, active = true, embedded = false, onNewConversation, onHistoryUpdated, onRunningChange,
+  systemName, recommendedQuestions, sessionId, active = true, embedded = false, onNewConversation, onHistoryUpdated, onRunningChange,
 }: {
   systemName: string;
+  recommendedQuestions?: string[];
   sessionId: string;
   active?: boolean;
   embedded?: boolean;
@@ -390,11 +391,9 @@ export default function ChatPage({
             <Welcome icon={<div className="welcome-icon"><RobotOutlined /></div>} title={`你好，我是 ${systemName}`} description="可以和我聊天，也可以上传图片和文件让我分析。" />
             <Prompts
               wrap
-              items={[
-                { key: 'intro', label: '介绍一下你能做什么' },
-                { key: 'summary', label: '帮我总结一份文档' },
-                { key: 'plan', label: '帮我制定一个工作计划' },
-              ]}
+              items={(recommendedQuestions ?? [
+                '介绍一下你能做什么', '帮我总结一份文档', '帮我制定一个工作计划',
+              ]).map((question, index) => ({ key: String(index), label: question }))}
               onItemClick={(info) => setValue(String(info.data.label))}
             />
           </Flex>

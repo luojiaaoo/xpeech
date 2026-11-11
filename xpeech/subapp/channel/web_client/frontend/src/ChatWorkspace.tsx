@@ -16,8 +16,9 @@ function formatUpdatedAt(value: string) {
   }).format(date);
 }
 
-export default function ChatWorkspace({ systemName, embedded = false }: {
+export default function ChatWorkspace({ systemName, recommendedQuestions, embedded = false }: {
   systemName: string;
+  recommendedQuestions?: string[];
   embedded?: boolean;
 }) {
   const [sessionId, setSessionId] = useState(uuidv7);
@@ -150,6 +151,7 @@ export default function ChatWorkspace({ systemName, embedded = false }: {
             >
               <ChatPage
                 systemName={systemName}
+                recommendedQuestions={recommendedQuestions}
                 sessionId={id}
                 active={id === sessionId}
                 embedded={embedded}

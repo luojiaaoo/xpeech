@@ -52,6 +52,7 @@ class WebConfig:
 class LoginBody(BaseModel):
     user_id: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=256)
+    channel: str | None = None
 
 
 class PasswordChangeBody(BaseModel):
@@ -60,6 +61,7 @@ class PasswordChangeBody(BaseModel):
 
 class OAuth2CreateBody(BaseModel):
     provider_name: str = Field(min_length=1, max_length=32)
+    channel: str | None = None
     state: str | None = Field(
         default=None,
         min_length=INJECT_PROMPT_STATE_MIN_LENGTH,
@@ -110,4 +112,5 @@ def public_user(user: User) -> dict[str, object]:
         "is_admin": user.is_admin,
         "is_active": user.is_active,
         "created_at": user.created_at.isoformat(),
+        "channel": user.channel,
     }

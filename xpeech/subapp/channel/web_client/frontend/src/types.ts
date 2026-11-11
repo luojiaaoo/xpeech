@@ -5,6 +5,7 @@ export interface User {
   is_admin: boolean;
   is_active: boolean;
   created_at: string;
+  channel: string;
 }
 
 export interface OAuth2Provider {
@@ -15,6 +16,8 @@ export interface OAuth2Provider {
 
 export interface AppConfig {
   system_name: string;
+  channel: string;
+  recommended_questions: string[] | null;
   inject_prompt: {
     enabled: boolean;
   };

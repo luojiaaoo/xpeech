@@ -33,7 +33,7 @@ from ..models import (
     WebConfig,
     public_user,
 )
-from ..session import session_token
+from ..session import session_token, web_channel
 
 SESSION_DAYS = 7
 OAUTH2_LOGIN_MINUTES = 5
@@ -52,6 +52,7 @@ class OAuth2LoginAttempt:
     redirect_uri: str
     code_verifier: str | None
     expires_at: datetime
+    channel: str = "web_client"
     inject_prompt_state: str | None = None
     user_id: str | None = None
     error: str | None = None
@@ -200,7 +201,8 @@ def create_auth_router(
             "OAuth2 登录服务商不存在",
         )
 
-    async def create_login_session(user: User, response: Response) -> None:
+    async def create_login_session(user: User, response: Response, channel: str = "web_client") -> None:
+        channel = web_channel(channel)
         if user.id is None:
             raise RuntimeError("数据库用户缺少主键")
         token = secrets.token_urlsafe(32)
@@ -208,7 +210,9 @@ def create_auth_router(
             token_hash=hashlib.sha256(token.encode()).hexdigest(),
             user_id=user.id,
             expires_at=datetime.now(UTC) + timedelta(days=SESSION_DAYS),
+            channel=channel,
         )
+        user._channel = channel
         response.set_cookie(
             config.cookie_name,
             token,
@@ -221,10 +225,11 @@ def create_auth_router(
 
     @router.post("/login")
     async def login(body: LoginBody, response: Response):
+        channel = web_channel(body.channel)
         user = await dao.get_user_by_user_id(body.user_id)
         if user is None or not user.is_active or not password_matches(body.password, user.password_hash):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户 ID 或密码错误")
-        await create_login_session(user, response)
+        await create_login_session(user, response, channel)
         return public_user(user)
 
     @router.get("/inject-prompt")
@@ -257,6 +262,7 @@ def create_auth_router(
         request: Request,
         body: OAuth2CreateBody,
     ):
+        channel = web_channel(body.channel)
         oauth2 = resolve_oauth2_provider(body.provider_name)
 
         prune_oauth2_attempts()
@@ -303,6 +309,7 @@ def create_auth_router(
             code_verifier=code_verifier,
             expires_at=datetime.now(UTC) + timedelta(minutes=OAUTH2_LOGIN_MINUTES),
             inject_prompt_state=inject_prompt_state,
+            channel=channel,
         )
         oauth2_state_index[state_value] = login_id
 
@@ -424,7 +431,7 @@ def create_auth_router(
                 url=target_url,
                 status_code=status.HTTP_303_SEE_OTHER,
             )
-            await create_login_session(user, callback_response)
+            await create_login_session(user, callback_response, attempt.channel)
             discard_oauth2_attempt(login_id or "")
             return callback_response
 
@@ -455,7 +462,7 @@ def create_auth_router(
         if user is None or not user.is_active:
             discard_oauth2_attempt(body.login_id)
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "账号不存在或已停用")
-        await create_login_session(user, response)
+        await create_login_session(user, response, attempt.channel)
         discard_oauth2_attempt(body.login_id)
         return {
             "status": "approved",

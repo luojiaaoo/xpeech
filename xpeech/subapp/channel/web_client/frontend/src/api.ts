@@ -44,7 +44,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   const response = await fetch(url, {
     ...init,
-    credentials: memoryJWT ? 'omit' : 'same-origin',
+    credentials: init?.credentials ?? (memoryJWT ? 'omit' : 'same-origin'),
     headers,
   });
   if (!response.ok) {
@@ -77,12 +77,12 @@ function injectPrompt(state: string) {
   return pending;
 }
 
-function createOAuth2Qr(providerName: string, state?: string) {
+function createOAuth2Qr(providerName: string, state?: string, channel?: string) {
   const create = () => request<OAuth2QrLogin>('/api/auth/oauth2/qr', {
     method: 'POST',
-    body: JSON.stringify({ provider_name: providerName, ...(state ? { state } : {}) }),
+    body: JSON.stringify({ provider_name: providerName, ...(state ? { state } : {}), ...(channel ? { channel } : {}) }),
   });
-  const requestKey = JSON.stringify([providerName, state ?? null]);
+  const requestKey = JSON.stringify([providerName, state ?? null, channel ?? null]);
 
   const existing = oauth2CreateRequests.get(requestKey);
   if (existing) return existing;
@@ -95,8 +95,8 @@ function createOAuth2Qr(providerName: string, state?: string) {
 
 export const authApi = {
   me: () => request<User>('/api/auth/me'),
-  login: (userId: string, password: string) =>
-    request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ user_id: userId, password }) }),
+  login: (userId: string, password: string, channel?: string) =>
+    request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ user_id: userId, password, ...(channel ? { channel } : {}) }) }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
   changePassword: (newPassword: string) => request<void>('/api/auth/password', {
     method: 'PATCH',
@@ -111,7 +111,10 @@ export const authApi = {
 };
 
 export const appApi = {
-  config: () => request<AppConfig>('/api/config'),
+  config: (channel?: string, options?: Pick<RequestInit, 'credentials'>) => request<AppConfig>(
+    `/api/config${channel === undefined ? '' : `?${new URLSearchParams({ channel })}`}`,
+    options,
+  ),
 };
 
 export const historyApi = {

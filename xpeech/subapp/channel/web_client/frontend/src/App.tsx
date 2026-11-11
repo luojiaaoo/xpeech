@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { Avatar, Button, Dropdown, Form, Input, Layout, Modal, Skeleton, Space, Typography, message } from 'antd';
+import { Alert, Avatar, Button, Dropdown, Form, Input, Layout, Modal, Skeleton, Space, Typography, message } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   DashboardOutlined,
@@ -25,7 +25,11 @@ function PageFallback() {
 }
 
 export default function App() {
-  if (new URLSearchParams(window.location.search).get('embed') === '1') {
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('embed') && (params.has('channel') || params.get('embed') !== '1')) {
+    return <Alert type="error" showIcon message="channel 和 embed 参数互斥；嵌入模式请使用 JS 认证。" />;
+  }
+  if (params.get('embed') === '1') {
     return <Suspense fallback={<EmbeddedLoading />}><EmbeddedApp /></Suspense>;
   }
   return <StandaloneApp />;
@@ -34,18 +38,34 @@ export default function App() {
 function StandaloneApp() {
   const [appConfig, setAppConfig] = useState<AppConfig>();
   const [user, setUser] = useState<User | null>();
+  const [configError, setConfigError] = useState<string>();
   const [userManagementOpen, setUserManagementOpen] = useState(false);
   const [statisticsOpen, setStatisticsOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordForm] = Form.useForm();
 
   useEffect(() => {
-    appApi.config().then((config) => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.getAll('channel').length > 1) {
+      setConfigError('只能指定一个 channel');
+      return;
+    }
+    Promise.all([
+      appApi.config(params.get('channel') ?? undefined),
+      authApi.me().catch(() => null),
+    ]).then(([config, currentUser]) => {
       setAppConfig(config);
       document.title = config.system_name;
-    });
-    authApi.me().then(setUser).catch(() => setUser(null));
+      setUser(currentUser?.channel === config.channel ? currentUser : null);
+    }).catch((error) => setConfigError(String(error)));
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('channel');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [user]);
 
   useEffect(() => {
     if (!user || !appConfig?.inject_prompt.enabled) return;
@@ -74,13 +94,16 @@ function StandaloneApp() {
     };
   }, [appConfig?.inject_prompt.enabled, user]);
 
+  if (configError) return <Alert type="error" showIcon message="无法打开系统" description={configError} />;
   if (user === undefined || appConfig === undefined) return <PageFallback />;
   const systemName = appConfig.system_name;
+  const channel = appConfig.channel;
   if (user === null) {
     return (
       <Suspense fallback={<PageFallback />}>
         <LoginPage
           systemName={systemName}
+          channel={channel}
           oauth2={appConfig.oauth2}
           injectPromptEnabled={appConfig.inject_prompt.enabled}
           onLogin={setUser}
@@ -94,6 +117,9 @@ function StandaloneApp() {
     setStatisticsOpen(false);
     setPasswordOpen(false);
     await authApi.logout();
+    const url = new URL(window.location.href);
+    if (channel !== 'web_client') url.searchParams.set('channel', channel);
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
     setUser(null);
   }
 
@@ -183,7 +209,11 @@ function StandaloneApp() {
           </Space>
         </Layout.Header>
         <Layout.Content className="app-main">
-          <ChatWorkspace key={user.id} systemName={systemName} />
+          <ChatWorkspace
+            key={`${user.id}:${user.channel}`}
+            systemName={systemName}
+            recommendedQuestions={appConfig.recommended_questions ?? undefined}
+          />
         </Layout.Content>
         {user.is_admin ? (
           <Modal

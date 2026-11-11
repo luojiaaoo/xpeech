@@ -14,7 +14,7 @@ export default function EmbeddedApp() {
 
   useEffect(() => {
     let active = true;
-    appApi.config().then((value) => {
+    appApi.config(undefined, { credentials: 'omit' }).then((value) => {
       if (active) {
         setConfig(value);
       }

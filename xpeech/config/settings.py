@@ -202,6 +202,16 @@ class LLMConfig(BaseModel):
 
         return self._api_key_selector.next(self._api_keys)
 
+class WebExtraChannelConfig(BaseModel):
+    """A custom channel available through the web login page."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    channel: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+    system_name: str = Field(min_length=1, pattern=r"\S")
+    recommended_questions: list[str] = Field(default_factory=list)
+
+
 class JWTChannelConfig(BaseModel):
     """A JWT channel identified by its name (the JWT header kid)."""
 
@@ -210,6 +220,7 @@ class JWTChannelConfig(BaseModel):
     secret_key: str = Field(min_length=32, repr=False)
     system_identity_prompt: str = ""
     custom_system_prompt: str = ""
+    allow_extra_channels: list[WebExtraChannelConfig] = Field(default_factory=list)
 
 
 class JWTConfig(BaseModel):
@@ -240,6 +251,15 @@ class JWTConfig(BaseModel):
         ]
         if len(set(all_secrets)) != len(all_secrets):
             raise ValueError("JWT internal and channel keys must use distinct values")
+        for name, channel in self.channels.items():
+            if name != "web_client" and channel.allow_extra_channels:
+                raise ValueError("allow_extra_channels can only be configured on jwt.channels.web_client")
+            extra_names = [extra.channel for extra in channel.allow_extra_channels]
+            if len(extra_names) != len(set(extra_names)):
+                raise ValueError("allow_extra_channels contains duplicate channels")
+            for extra_name in extra_names:
+                if extra_name in {"web_client", "feishu", "internal"} or extra_name not in names:
+                    raise ValueError("allow_extra_channels must reference configured custom JWT channels")
         return self
 
 

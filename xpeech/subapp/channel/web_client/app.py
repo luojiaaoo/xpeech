@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 import uvicorn
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
@@ -25,7 +25,7 @@ from .routes.admin import create_admin_router
 from .routes.auth import create_auth_router
 from .routes.embed import create_embed_router
 from .routes.proxy import create_proxy_router
-from .session import require_embedded_jwt
+from .session import require_embedded_jwt, web_channel, web_channel_config
 
 PBKDF2_ITERATIONS = 600_000
 XPEECH_FAVICON = Path(__file__).resolve().parents[4] / "assets" / "favicon.ico"
@@ -89,6 +89,24 @@ def create_app(config: WebConfig) -> FastAPI:
 
     @app.middleware("http")
     async def embed_frame_policy(request: Request, call_next):
+        params = request.query_params
+        if "channel" in params and "embed" in params:
+            return JSONResponse({"detail": "channel 和 embed 参数互斥"}, status_code=400)
+        # Statistics already uses channel as a data filter, never as a login identity.
+        statistics_filter = request.url.path == "/api/statistics" or request.url.path.startswith("/api/statistics/")
+        if "channel" in params and not statistics_filter:
+            if request.url.path not in {"/", "/api/config"}:
+                return JSONResponse({"detail": "channel 参数只允许用于登录入口"}, status_code=400)
+            if len(params.getlist("channel")) != 1:
+                return JSONResponse({"detail": "只能指定一个 channel"}, status_code=400)
+            try:
+                web_channel(params["channel"])
+            except HTTPException as error:
+                return JSONResponse({"detail": error.detail}, status_code=error.status_code)
+        if "embed" in params and params["embed"] != "1":
+            return JSONResponse({"detail": "embed 必须使用 embed=1 并通过 JS 认证"}, status_code=400)
+        if "embed" in params and request.url.path != "/":
+            return JSONResponse({"detail": "embed 参数只允许用于 JS 嵌入入口"}, status_code=400)
         response = await call_next(request)
         if request.query_params.get("embed") == "1":
             response.headers["Content-Security-Policy"] = "frame-ancestors *"
@@ -120,9 +138,22 @@ def create_app(config: WebConfig) -> FastAPI:
         )
 
     @app.get("/api/config")
-    async def public_config():
+    async def public_config(
+        response: Response,
+        channel: str | None = None,
+        token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
+    ):
+        if channel is None and token:
+            user = await dao.get_user_for_session(hashlib.sha256(token.encode()).hexdigest())
+            if user is not None:
+                channel = user.channel
+        channel = web_channel(channel)
+        custom = web_channel_config(channel)
+        response.headers["Cache-Control"] = "no-store"
         return {
-            "system_name": config.system_name,
+            "system_name": custom.system_name if custom else config.system_name,
+            "channel": channel,
+            "recommended_questions": custom.recommended_questions if custom else None,
             "inject_prompt": {"enabled": config.inject_prompt.enabled},
             "oauth2": [
                 {
@@ -146,6 +177,7 @@ def create_app(config: WebConfig) -> FastAPI:
         user = await dao.get_user_for_session(token_hash)
         if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
+        web_channel(user.channel)
         return user
 
     def current_user(identity: Annotated[User | UserJWTAuth, Depends(current_identity)]) -> User:

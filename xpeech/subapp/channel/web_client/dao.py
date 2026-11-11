@@ -1,10 +1,11 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from pydantic import PrivateAttr
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlalchemy.orm import registry
+from sqlalchemy.orm import reconstructor, registry
 from sqlmodel import Field, SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -33,6 +34,17 @@ class User(_WebClientSQLModel, table=True):
     is_admin: bool = Field(default=False)
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=_now, sa_type=DateTime(timezone=True))
+    _channel: str = PrivateAttr(default="web_client")
+
+    @reconstructor
+    def _initialize_session_channel(self) -> None:
+        # SQLAlchemy bypasses Pydantic initialization when loading a user.
+        self._channel = "web_client"
+
+    @property
+    def channel(self) -> str:
+        """Channel of the verified login session; never read from request headers."""
+        return self._channel
 
 
 class AuthenticationSession(_WebClientSQLModel, table=True):
@@ -51,6 +63,17 @@ class AuthenticationSession(_WebClientSQLModel, table=True):
     )
     expires_at: datetime = Field(sa_type=DateTime(timezone=True))
     created_at: datetime = Field(default_factory=_now, sa_type=DateTime(timezone=True))
+
+
+class AuthenticationSessionChannel(_WebClientSQLModel, table=True):
+    """Optional channel binding; existing sessions continue to use web_client."""
+
+    __tablename__ = "web_session_channels"
+
+    token_hash: str = Field(
+        sa_column=Column(String, ForeignKey("sessions.token_hash", ondelete="CASCADE"), primary_key=True)
+    )
+    channel: str
 
 
 class DuplicateUserIdError(Exception):
@@ -119,10 +142,14 @@ class WebClientDAO:
     ) -> User | None:
         """读取有效会话对应的启用用户。"""
         statement = (
-            select(User)
+            select(User, AuthenticationSessionChannel.channel)
             .join(
                 AuthenticationSession,
                 User.id == AuthenticationSession.user_id,
+            )
+            .outerjoin(
+                AuthenticationSessionChannel,
+                AuthenticationSession.token_hash == AuthenticationSessionChannel.token_hash,
             )
             .where(
                 AuthenticationSession.token_hash == token_hash,
@@ -131,7 +158,12 @@ class WebClientDAO:
             )
         )
         async with AsyncSession(self._engine) as session:
-            return (await session.exec(statement)).one_or_none()
+            result = (await session.exec(statement)).one_or_none()
+            if result is None:
+                return None
+            user, channel = result
+            user._channel = channel or "web_client"
+            return user
 
     async def get_user_by_user_id(self, user_id: str) -> User | None:
         """按唯一用户 ID 读取用户。"""
@@ -146,6 +178,7 @@ class WebClientDAO:
         token_hash: str,
         user_id: int,
         expires_at: datetime,
+        channel: str = "web_client",
     ) -> None:
         async with AsyncSession(self._engine) as session:
             session.add(
@@ -155,6 +188,9 @@ class WebClientDAO:
                     expires_at=expires_at,
                 )
             )
+            if channel != "web_client":
+                await session.flush()
+                session.add(AuthenticationSessionChannel(token_hash=token_hash, channel=channel))
             await session.commit()
 
     async def delete_session(self, token_hash: str) -> None:

@@ -41,6 +41,12 @@ access_token_expire_seconds = 60
 secret_key = "replace-with-a-different-web-channel-secret-key"
 system_identity_prompt = ""
 custom_system_prompt = ""
+# 可选：允许登录页通过 /?channel=crm 进入定制系统。每项包含 channel、系统名、推荐问题列表。
+# channel 必须另行配置在 jwt.channels 中，使用其独立密钥。
+# [[jwt.channels.web_client.allow_extra_channels]]
+# channel = "crm"
+# system_name = "客户服务助手"
+# recommended_questions = ["如何查询客户资料？", "帮我整理本周的跟进计划"]
 
 [jwt.channels.feishu]
 secret_key = "replace-with-a-different-feishu-channel-secret"
