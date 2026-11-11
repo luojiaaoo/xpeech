@@ -3,6 +3,7 @@ from contextlib import aclosing
 from types import SimpleNamespace
 
 import pytest
+from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
 
 from xpeech.provider import helper
 from xpeech.provider.helper import LiteLLMRetryClient
@@ -269,3 +270,67 @@ async def test_cancel_while_waiting_for_permit_does_not_release_another_slot(mon
         await task
 
     assert semaphore.locked()
+
+
+@pytest.mark.asyncio
+async def test_sdk_shield_and_suppressed_cancellation_cannot_extend_close_deadline(monkeypatch):
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    finish = asyncio.Event()
+    closed = asyncio.Event()
+
+    class SlowStream:
+        async def aclose(self):
+            started.set()
+            try:
+                await finish.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                # 模拟 SDK 吞掉取消后继续等待清理。
+                await finish.wait()
+            finally:
+                closed.set()
+
+    wrapper = CustomStreamWrapper.__new__(CustomStreamWrapper)
+    wrapper.completion_stream = SlowStream()
+    monkeypatch.setattr(helper, "STREAM_CLOSE_TIMEOUT", 0.02)
+    task = asyncio.create_task(helper._close_stream(wrapper))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        done, _ = await asyncio.wait({task}, timeout=0.3)
+        assert task in done  # SDK 的 shield 和取消处理不能延长调用方等待时间。
+        await task
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        assert not closed.is_set()
+        assert helper._STREAM_CLOSE_TASKS  # 未结束的清理任务仍有引用。
+    finally:
+        finish.set()
+        await asyncio.wait_for(task, timeout=1)
+        await asyncio.wait_for(closed.wait(), timeout=1)
+        if helper._STREAM_CLOSE_TASKS:
+            await asyncio.gather(*tuple(helper._STREAM_CLOSE_TASKS), return_exceptions=True)
+        await asyncio.sleep(0)  # 等待 Task 的 done callback 移除保留引用。
+    assert not helper._STREAM_CLOSE_TASKS
+
+
+@pytest.mark.asyncio
+async def test_cancelling_close_wait_also_cancels_sdk_cleanup(monkeypatch):
+    started = asyncio.Event()
+    closed = asyncio.Event()
+
+    class Stream:
+        async def aclose(self):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+
+    task = asyncio.create_task(helper._close_stream(Stream()))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(closed.wait(), timeout=1)
+    await asyncio.sleep(0)
+    assert not helper._STREAM_CLOSE_TASKS

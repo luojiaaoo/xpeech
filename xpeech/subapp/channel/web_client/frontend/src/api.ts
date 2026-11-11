@@ -250,10 +250,21 @@ function chatHeaders(sessionId: string): Headers {
 
 async function sendChat(path: string, text: string, files: File[], options: ChatOptions) {
   const headers = chatHeaders(options?.sessionId);
+  options.signal?.throwIfAborted();
   const form = new FormData();
   form.set('content', JSON.stringify(text.trim() ? [{ text: text.trim() }] : []));
   if (memoryJWT) form.set('session_metadata', JSON.stringify(memorySessionMetadata));
-  files.forEach((file) => form.append('files', file, file.name));
+  // Disk-backed Files received through cross-site postMessage can be read with
+  // arrayBuffer(), but Chromium may reject Response(form).blob() for them.
+  // Copy the bytes in this frame before constructing the multipart body.
+  const uploads = await Promise.all(files.map(async (file) => {
+    try {
+      return new Blob([await file.arrayBuffer()], { type: file.type });
+    } catch (error) {
+      throw new Error(`读取附件失败（${file.name}）：${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+  }));
+  uploads.forEach((blob, index) => form.append('files', blob, files[index].name));
   if (memorySenderName !== null) {
     headers.set('x-sender-name', encodeURIComponent(memorySenderName));
   }

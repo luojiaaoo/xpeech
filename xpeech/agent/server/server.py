@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -19,14 +19,11 @@ configure_logging()
 async def lifespan(_app: FastAPI):
     engine = get_async_database_engine()
     await create_db_and_tables(engine)
-    try:
+    async with AsyncExitStack() as cleanup:
+        cleanup.push_async_callback(engine.dispose)
+        cleanup.push_async_callback(close_all_sandboxes)
+        cleanup.push_async_callback(close_all_mcp_connections)
         yield
-    finally:
-        try:
-            await close_all_mcp_connections()
-        finally:
-            await close_all_sandboxes()
-            await engine.dispose()
 
 
 app = FastAPI(

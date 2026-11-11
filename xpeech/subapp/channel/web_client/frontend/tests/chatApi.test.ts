@@ -273,7 +273,7 @@ test('synchronous chat forwards authentication, session, metadata and JSON mode 
   let expired = 0;
   const calls: { url: string; init: RequestInit }[] = [];
   const context = vm.createContext({
-    Headers, FormData, Event, Response,
+    Headers, FormData, Event, Response, Blob,
     window: { dispatchEvent() { expired++; } },
     fetch: async (url: string, init: RequestInit) => { calls.push({ url, init }); return response; },
   });
@@ -286,7 +286,11 @@ test('synchronous chat forwards authentication, session, metadata and JSON mode 
   const controller = new AbortController();
   const bytes = new Uint8Array([0, 255, 128]);
   const files = [new File([bytes], '报告.bin', { type: 'application/octet-stream' }), new File(['second'], 'other.txt', { type: 'text/plain' })];
+  let fileReads = 0;
+  const readFile = files[0].arrayBuffer.bind(files[0]);
+  files[0].arrayBuffer = async () => { fileReads++; return readFile(); };
   const events = await api.chatSync('hello::请严格以JSON格式回复::', files, { sessionId: 'session', signal: controller.signal });
+  assert.equal(fileReads, 1, 'copy cross-site file bytes before multipart encoding');
   assert.equal(events[0].context, 'answer');
   assert.equal(events[1].event, 'send_file');
   assert.equal(events[1].context, 'reports/报告.pdf');
@@ -333,7 +337,7 @@ test('synchronous uploads preserve case-sensitive multipart boundaries', async (
   }
   let received: FormData | undefined;
   const context = vm.createContext({
-    Headers, FormData, Response: MultipartResponse,
+    Headers, FormData, Blob, Response: MultipartResponse,
     fetch: async (_url: string, init: RequestInit) => {
       assert.equal((init.headers as Headers).get('content-type'), contentType);
       assert.equal((init.body as Blob).type, contentType.toLowerCase());
@@ -361,7 +365,7 @@ test('synchronous uploads cancelled while encoding never send a request', async 
     }
   }
   const context = vm.createContext({
-    Headers, FormData, Response: EncodingResponse,
+    Headers, FormData, Blob, Response: EncodingResponse,
     fetch: async () => { sent++; return Response.json([]); },
   });
   const source = stripTypeScriptTypes(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
@@ -375,6 +379,31 @@ test('synchronous uploads cancelled while encoding never send a request', async 
   }), { name: 'AbortError' });
   assert.equal(sent, 0);
   await assert.rejects(api.chatSync('hello', files, {
+    sessionId: 'session', signal: controller.signal,
+  }), { name: 'AbortError' });
+  assert.equal(sent, 0);
+});
+
+test('synchronous uploads report unreadable files and stop if cancelled while reading', async () => {
+  let sent = 0;
+  const context = vm.createContext({
+    Headers, FormData, Blob, Response,
+    fetch: async () => { sent++; return Response.json([]); },
+  });
+  const source = stripTypeScriptTypes(readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'));
+  const module = new vm.SourceTextModule(source, { context });
+  await module.link(() => { throw new Error('Only type imports are expected'); });
+  await module.evaluate();
+  const api = module.namespace as { chatSync: Function };
+  const file = new File(['attachment'], '报告.txt');
+  file.arrayBuffer = async () => { throw new Error('File is no longer readable'); };
+  await assert.rejects(api.chatSync('hello', [file], { sessionId: 'session' }),
+    /读取附件失败（报告.txt）：.*File is no longer readable/);
+  assert.equal(sent, 0);
+
+  const controller = new AbortController();
+  file.arrayBuffer = async () => { controller.abort(); return new ArrayBuffer(0); };
+  await assert.rejects(api.chatSync('hello', [file], {
     sessionId: 'session', signal: controller.signal,
   }), { name: 'AbortError' });
   assert.equal(sent, 0);

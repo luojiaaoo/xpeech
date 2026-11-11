@@ -1,8 +1,7 @@
 import asyncio
 import random
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import anyio
@@ -14,35 +13,33 @@ from ..config.settings import settings
 
 LLM_PARALLEL_SEMAPHORE = asyncio.Semaphore(settings.llm.parallel)
 STREAM_CLOSE_TIMEOUT = 5.0
+_STREAM_CLOSE_TASKS: set[asyncio.Task[None]] = set()
 
 
 async def _close_stream(response: Any) -> None:
-    """限时清理 HTTP 连接，清理期间不占用模型并发名额。"""
+    """最多等待指定时间清理连接，不受 SDK 内部 AnyIO shield 影响。"""
     close = getattr(response, "aclose", None)
     if close is None:
         return
-    with anyio.move_on_after(STREAM_CLOSE_TIMEOUT, shield=True) as close_scope:
+
+    async def close_response() -> None:
         try:
             await close()
         except Exception as exc:  # noqa: BLE001 - 清理异常不能覆盖原始的流异常。
             logger.opt(exception=exc).warning("Failed to close LiteLLM stream")
-    if close_scope.cancel_called:
-        logger.warning("Timed out closing LiteLLM stream")
 
-
-@asynccontextmanager
-async def _completion_stream(**kwargs: Any) -> AsyncIterator[Any]:
-    """通过调用方的 aclosing 关闭链归还模型名额，再限时清理上游连接。"""
-    semaphore = LLM_PARALLEL_SEMAPHORE
-    await semaphore.acquire()
-    response = None
-    try:
-        response = await acompletion(**kwargs)
-        yield response
-    finally:
-        semaphore.release()
-        if response is not None:
-            await _close_stream(response)
+    task = asyncio.create_task(close_response())
+    # 超时后 SDK 可能吞掉取消，保留任务引用，直至其真正结束。
+    _STREAM_CLOSE_TASKS.add(task)
+    task.add_done_callback(_STREAM_CLOSE_TASKS.discard)
+    with anyio.CancelScope(shield=True):
+        try:
+            done, _ = await asyncio.wait({task}, timeout=STREAM_CLOSE_TIMEOUT)
+            if not done:
+                logger.warning("Timed out closing LiteLLM stream")
+        finally:
+            if not task.done():
+                task.cancel()
 
 
 def _format_error(exc: APIStatusError) -> str:
@@ -78,9 +75,17 @@ class LiteLLMRetryClient:
         start_time = time.time()
         for attempt in range(self.max_retries + 1):
             try:
-                async with _completion_stream(**kwargs) as response:
+                semaphore = LLM_PARALLEL_SEMAPHORE
+                await semaphore.acquire()
+                response = None
+                try:
+                    response = await acompletion(**kwargs)
                     async for chunk in response:
                         yield chunk
+                finally:
+                    semaphore.release()
+                    if response is not None:
+                        await _close_stream(response)
 
                 elapsed = time.time() - start_time
                 logger.info(
