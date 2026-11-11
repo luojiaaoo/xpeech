@@ -268,8 +268,8 @@ class AgentLoop:
                     question_event = QuestionEvent(event=asyncio.Event())
                     self.SESSION_QUESTION_EVENT[session_key] = question_event
                     question_start_time = time.perf_counter()
-                    yield {"event": "question", "context": execution.value.question}
                     try:
+                        yield {"event": "question", "context": execution.value.question}
                         await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
                         logger.info("User answered the question {}", question_event.answer)
                     except TimeoutError:
@@ -452,7 +452,7 @@ class AgentLoop:
 
                 # 如果有工具调用
                 if response.has_tool_calls:
-                    async for i in self.tool_call(
+                    async with aclosing(self.tool_call(
                         response,
                         messages_yaml,
                         loop_count,
@@ -462,8 +462,9 @@ class AgentLoop:
                         session_metadata=message.session_metadata,
                         channel=message.channel,
                         turn_messages=turn_messages,
-                    ):
-                        yield i
+                    )) as tool_events:
+                        async for i in tool_events:
+                            yield i
                 else:
                     # 没有工具，结束循环
                     final_content = response.content

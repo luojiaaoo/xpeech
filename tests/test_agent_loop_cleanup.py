@@ -12,7 +12,10 @@ from xpeech.agent import loop as loop_module
 from xpeech.agent.history import YamlHistoryRepository
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.server.schema import InboundMessage, InputText
-from xpeech.provider.schema import LLMResponse
+from xpeech.agent.tool_executor import ToolExecutor
+from xpeech.agent.tools.execution_request import EXECUTION_DESCRIPTION
+from xpeech.agent.tools.interactions import ExecutionRequest, QuestionRequest
+from xpeech.provider.schema import LLMResponse, ToolCallChunk
 
 
 def response(*chunks):
@@ -114,3 +117,65 @@ async def test_interruption_persists_existing_context(turn, exit_kind):
             await task
     assert await saved_turn(agent, message) == [{"role": "user", "content": "hi"}]
     agent.records.append.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmation", [False, True])
+@pytest.mark.parametrize("exit_kind", ["close", "cancel"])
+async def test_closing_or_cancelling_question_clears_waiter_immediately(turn, confirmation, exit_kind):
+    agent, message = turn
+    executions = []
+
+    async def execute():
+        executions.append("executed")
+        return "done"
+
+    async def ask():
+        return ExecutionRequest() if confirmation else QuestionRequest(question='{"fields":[]}')
+
+    ask.execution_function = execute
+    agent.mapping_tool_call_funcs = {"ask": ask}
+    agent.tool_executor = ToolExecutor(
+        workspace=agent.workspace, max_result_chars=1000, mapping_tool_call_funcs=agent.mapping_tool_call_funcs,
+    )
+    agent.chat.return_value = response(("tool_calls", ToolCallChunk(
+        index=0, id="question-1", name="ask", arguments='{"' + EXECUTION_DESCRIPTION + '":"确认执行"}',
+    )))
+    key = (message.user_id, message.session_id)
+    events = agent.run(message)
+    question_received = asyncio.Event()
+    task = None
+    other_key = (message.user_id, "018f0000-0000-7000-8000-000000000002")
+    other = loop_module.QuestionEvent(event=asyncio.Event())
+    AgentLoop.SESSION_QUESTION_EVENT[other_key] = other
+    try:
+        if exit_kind == "close":
+            async for event in events:
+                if event["event"] == "question":
+                    break
+            assert key in AgentLoop.SESSION_QUESTION_EVENT
+            await events.aclose()
+        else:
+            async def consume():
+                async for event in events:
+                    if event["event"] == "question":
+                        question_received.set()
+
+            task = asyncio.create_task(consume())
+            await asyncio.wait_for(question_received.wait(), timeout=1)
+            await asyncio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert key not in AgentLoop.SESSION_QUESTION_EVENT
+        assert AgentLoop.SESSION_QUESTION_EVENT[other_key] is other
+        assert executions == []
+        assert (await saved_turn(agent, message))[0] == {"role": "user", "content": "hi"}
+    finally:
+        AgentLoop.SESSION_QUESTION_EVENT.pop(key, None)
+        AgentLoop.SESSION_QUESTION_EVENT.pop(other_key, None)
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await events.aclose()
