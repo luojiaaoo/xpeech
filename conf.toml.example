@@ -21,7 +21,7 @@ sslmode = "prefer"
 connect_timeout = 10
 # 每个进程、每个连接池的配置；多副本部署时请计入总连接数。
 pool_size = 5
-max_overflow = 10
+max_overflow = 5
 
 [logging]
 retention_days = 7

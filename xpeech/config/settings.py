@@ -80,7 +80,7 @@ class DatabaseConfig(BaseModel):
     sslmode: Literal["disable", "allow", "prefer", "require", "verify-ca", "verify-full"] = "prefer"
     connect_timeout: int = Field(default=10, ge=1)
     pool_size: int = Field(default=5, ge=1)
-    max_overflow: int = Field(default=10, ge=0)
+    max_overflow: int = Field(default=5, ge=0)
 
 
 class BrowserPreviewConfig(BaseModel):

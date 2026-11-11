@@ -26,6 +26,7 @@ x-xpeech-service: &xpeech-service
 services:
   postgres:
     image: postgres:17-alpine
+    command: ["postgres", "-c", "max_connections=256"]
     environment:
       TZ: Asia/Shanghai
       POSTGRES_DB: ${POSTGRES_DB:-xpeech}

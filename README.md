@@ -300,7 +300,7 @@ Compose 已配置相同入口。
 Compose 会启动六类容器：
 
 - `lark-token-manager`：飞书用户令牌管理服务
-- `backend`：Xpeech API、Agent 和工具执行服务，默认启动 16 个副本
+- `backend`：Xpeech API、Agent 和工具执行服务，默认启动 8 个副本
 - `scheduler`：单实例调度服务，独占 `schedule.db`，通过 Nginx 调用 backend 执行到期任务
 - `nginx`：后端 API 入口，按 JWT `sub` 将同一用户稳定分配到同一 backend
 - `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
@@ -589,7 +589,7 @@ password = "replace-with-a-database-password"
 sslmode = "prefer"
 connect_timeout = 10
 pool_size = 5
-max_overflow = 10
+max_overflow = 5
 ```
 
 默认主机名 `postgres` 对应 Compose 中的数据库服务。本地直接运行时，将 `host` 改为
@@ -603,6 +603,9 @@ Compose 自带 PostgreSQL 服务，数据持久化到项目的 `data/postgres` �
 `POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD` 初始化数据库。
 PostgreSQL 默认通过宿主机的 `7890` 端口对外提供连接，可在 `.env` 中设置
 `POSTGRES_PORT` 调整对外端口；Compose 内部仍使用 `postgres:5432`。
+Compose 将 PostgreSQL 最大连接数默认设为 `256`，可通过 `.env` 中的
+`POSTGRES_MAX_CONNECTIONS` 覆盖。修改后运行 `docker compose up -d postgres`
+重建数据库容器使配置生效，期间数据库连接会短暂中断。
 应用统一读取 `conf.toml` 的 `[database]` 连接配置，数据库名、账号和密码应与初始化配置一致。
 
 旧 SQLite 文件不会自动导入 PostgreSQL；升级已有部署时，需要先导入旧数据再切换服务。
