@@ -35,8 +35,10 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .conversation-toolbar .anticon { font-size: 14px; }
 .conversation-toolbar .ant-btn:not(:disabled):hover { color: #245bdb; background: #f0f4fa; }
 .conversation-toolbar .ant-btn:focus-visible { outline: 2px solid #3370ff; outline-offset: 2px; }
+.conversation-toolbar .new-conversation-button { border: 1px solid #d5dce5; padding-inline: 10px; }
+.conversation-toolbar .new-conversation-button:not(:disabled):hover { border-color: #9bb8ef; }
 .mobile-history-toggle { display: none; }
-.conversation-title { min-width: 0; margin-inline-start: 8px; color: #8a94a3; font-size: 12px; }
+.conversation-toolbar .conversation-title { min-width: 0; margin-inline-start: 12px; color: #1f2329; font-size: 16px; font-weight: 600; }
 .conversation-body { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .conversation-sidebar {
   width: 264px;
@@ -361,152 +363,6 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   align-items: center;
   justify-content: center;
 }
-.brand-visual {
-  position: relative;
-  width: min(610px, 100%, 62vh);
-  aspect-ratio: 1;
-  pointer-events: none;
-  animation: visualIn 1.2s .15s cubic-bezier(.22, 1, .36, 1) both;
-}
-.brand-visual::before {
-  content: "";
-  position: absolute;
-  inset: 10%;
-  border-radius: 50%;
-  background: radial-gradient(circle, #99c7ff38 0, #788dff14 38%, transparent 69%);
-  filter: blur(10px);
-  animation: coreBreathe 4.8s ease-in-out infinite;
-}
-.brand-visual::after {
-  content: "";
-  position: absolute;
-  top: 49%;
-  left: -22%;
-  width: 144%;
-  height: 1px;
-  opacity: .3;
-  background: linear-gradient(90deg, transparent, #b9caff, transparent);
-  transform: rotate(-18deg);
-}
-.brand-core {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 72%;
-  aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid #dbe8ff47;
-  border-radius: 50%;
-  color: #fff;
-  background:
-    radial-gradient(circle at 50% 50%, #527bdb57 0, #253d9870 46%, #111f657a 74%, #0c174b8f 100%),
-    linear-gradient(145deg, #80b9ff3d, #526ae052 48%, #5535bd61);
-  box-shadow:
-    inset 0 0 60px #a7c9ff21,
-    inset 0 1px #ffffff5c,
-    0 0 85px #77a7ff61,
-    0 34px 90px #101e6866;
-  backdrop-filter: blur(8px);
-  transform: translate(-50%, -50%);
-  animation: coreFloat 6s ease-in-out infinite;
-}
-.brand-core::before {
-  content: "";
-  position: absolute;
-  inset: 7%;
-  border: 1px solid #b8ceff1f;
-  border-radius: 50%;
-  box-shadow: inset 0 0 45px #9dbdff14;
-}
-.lobster-constellation {
-  position: relative;
-  z-index: 1;
-  width: 88%;
-  height: 88%;
-  overflow: visible;
-  filter: drop-shadow(0 0 8px #9fc0ff99);
-}
-.constellation-lines path {
-  fill: none;
-  stroke: #c2d6ff;
-  stroke-width: 1.35;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  opacity: .74;
-  animation: constellationDraw 2.4s .45s cubic-bezier(.65, 0, .35, 1) forwards;
-}
-.constellation-lines path:nth-child(2n) { animation-delay: .62s; }
-.constellation-lines path:nth-child(3n) { animation-delay: .78s; }
-.constellation-stars circle {
-  fill: #f7fbff;
-  stroke: #a9c5ff;
-  stroke-width: 1.5;
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: starReveal .35s 1.35s ease-out forwards, starTwinkle 3.4s 1.8s ease-in-out infinite;
-}
-.constellation-stars circle:nth-child(3n) { animation-delay: 1.5s, 2.2s; }
-.constellation-stars circle:nth-child(4n) { animation-delay: 1.65s, 2.7s; }
-.constellation-stars circle:nth-child(5n) { animation-delay: 1.8s, 3.1s; }
-.constellation-stars circle:nth-child(10n + 1) {
-  filter: drop-shadow(0 0 7px #fff);
-}
-.core-ring {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  border: 1px solid #b7cbff52;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-}
-.core-ring::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  right: -5px;
-  width: 9px;
-  height: 9px;
-  border: 2px solid #dce8ff;
-  border-radius: 50%;
-  background: #779cff;
-  box-shadow: 0 0 22px 7px #89b0ff;
-}
-.core-ring-one {
-  width: 58%;
-  height: 58%;
-  animation: coreRingSpin 16s linear infinite;
-}
-.core-ring-two {
-  width: 88%;
-  height: 88%;
-  border-style: dashed;
-  opacity: .62;
-  animation: coreRingSpinReverse 28s linear infinite;
-}
-.core-ring-two::after {
-  top: 15%;
-  right: 14%;
-  width: 6px;
-  height: 6px;
-  border: 0;
-  background: #dcceff;
-}
-.core-satellite {
-  position: absolute;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 0 24px 8px #a9c4ff;
-  animation: satellitePulse 3s ease-in-out infinite;
-}
-.satellite-one { top: 19%; left: 20%; }
-.satellite-two { right: 15%; bottom: 23%; width: 5px; height: 5px; animation-delay: -1.4s; }
 .brand-content {
   position: relative;
   z-index: 2;
@@ -514,7 +370,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: -38px;
+  margin-top: 0;
   text-align: center;
   animation: brandContentIn .8s cubic-bezier(.22, 1, .36, 1) both;
 }
@@ -606,6 +462,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   border: 0;
   background: #dbc6ff;
 }
+.brand-particles { position: absolute; inset: 0; pointer-events: none; }
 .brand-particles i {
   position: absolute;
   z-index: -1;
@@ -1265,41 +1122,6 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   from { opacity: 0; transform: translateY(24px) scale(.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
-@keyframes visualIn {
-  from { opacity: 0; transform: translateY(22px) scale(.86); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes coreFloat {
-  0%, 100% { transform: translate(-50%, -50%) scale(.985); }
-  50% { transform: translate(-50%, calc(-50% - 9px)) scale(1.018); }
-}
-@keyframes coreBreathe {
-  0%, 100% { opacity: .65; transform: scale(.92); }
-  50% { opacity: 1; transform: scale(1.08); }
-}
-@keyframes coreRingSpin {
-  from { transform: translate(-50%, -50%) rotate(0); }
-  to { transform: translate(-50%, -50%) rotate(360deg); }
-}
-@keyframes coreRingSpinReverse {
-  from { transform: translate(-50%, -50%) rotate(360deg); }
-  to { transform: translate(-50%, -50%) rotate(0); }
-}
-@keyframes satellitePulse {
-  0%, 100% { opacity: .35; transform: scale(.7); }
-  50% { opacity: 1; transform: scale(1.15); }
-}
-@keyframes constellationDraw {
-  to { stroke-dashoffset: 0; }
-}
-@keyframes starReveal {
-  from { opacity: 0; transform: scale(0); }
-  to { opacity: 1; transform: scale(1); }
-}
-@keyframes starTwinkle {
-  0%, 100% { opacity: .55; transform: scale(.86); }
-  50% { opacity: 1; transform: scale(1.25); }
-}
 @keyframes nameShimmer {
   from { background-position: 180% center; }
   to { background-position: -60% center; }
@@ -1349,13 +1171,12 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   }
   .login-brand {
     place-items: center;
-    padding: 18px 24px 54px;
+    padding: 24px;
   }
   .brand-stage { width: 310px; }
-  .brand-visual { width: 175px; }
   .brand-content {
     width: 100%;
-    margin-top: -22px;
+    margin-top: 0;
     transform: none;
   }
   .login-brand .brand-system-name {
@@ -1383,7 +1204,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .conversation-sidebar, .desktop-history-toggle { display: none; }
   .conversation-toolbar { padding-inline: 8px; }
   .mobile-history-toggle { display: inline-flex; }
-  .conversation-title { margin-inline-start: 2px; }
+  .conversation-toolbar .conversation-title { margin-inline-start: 2px; }
   .bubble-list { padding: 14px 14px 12px; }
   .bubble-list .ant-bubble.ant-bubble-start:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-end: 0; }
   .bubble-list .ant-bubble.ant-bubble-end:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-start: 0; }
@@ -1411,13 +1232,6 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .statistics-qa-viewport { height: 292px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .brand-visual,
-  .brand-core,
-  .brand-visual::before,
-  .core-ring,
-  .core-satellite,
-  .constellation-lines path,
-  .constellation-stars circle,
   .brand-system-name,
   .brand-name-signal span::after,
   .brand-content,
@@ -1432,6 +1246,4 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   .statistics-qa-row {
     animation: none !important;
   }
-  .constellation-lines path { stroke-dashoffset: 0; }
-  .constellation-stars circle { opacity: 1; transform: scale(1); }
 }

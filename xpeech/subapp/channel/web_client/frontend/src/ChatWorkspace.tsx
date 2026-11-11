@@ -132,7 +132,7 @@ export default function ChatWorkspace({ systemName, recommendedQuestions, embedd
           aria-label="打开历史会话"
           onClick={() => setMobileHistoryOpen(true)}
         />
-        <Button className="new-conversation-button" type="text" icon={<PlusOutlined aria-hidden />} onClick={newConversation}>
+        <Button className="new-conversation-button" type="default" icon={<PlusOutlined aria-hidden />} onClick={newConversation}>
           新建会话
         </Button>
         <Typography.Text className="conversation-title" ellipsis>{title}</Typography.Text>
