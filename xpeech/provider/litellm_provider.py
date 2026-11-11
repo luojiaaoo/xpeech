@@ -1,5 +1,6 @@
 import functools
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
+from contextlib import aclosing
 from typing import Any
 
 import litellm
@@ -221,53 +222,54 @@ class LiteLLMProvider:
 
     def _parse_response(
         self,
-        response: AsyncIterator[Any],
+        response: AsyncGenerator[Any, None],
     ) -> LLMResponse:
         """将 LiteLLM 的流式响应解析为统一的混合内容流。"""
         response_holder: dict[str, LLMResponse] = {}
 
-        async def iter_mix_chunks() -> AsyncIterator[StreamChunk]:
-            async for chunk in response:
-                parsed_response = response_holder["response"]
-                usage = getattr(chunk, "usage", None)
-                if usage is not None:
-                    parsed_response.set_usage(
-                        {
-                            "prompt_tokens": getattr(usage, "prompt_tokens", None),
-                            "completion_tokens": getattr(usage, "completion_tokens", None),
-                            "total_tokens": getattr(usage, "total_tokens", None),
-                        }
-                    )
+        async def iter_mix_chunks() -> AsyncGenerator[StreamChunk, None]:
+            async with aclosing(response):
+                async for chunk in response:
+                    parsed_response = response_holder["response"]
+                    usage = getattr(chunk, "usage", None)
+                    if usage is not None:
+                        parsed_response.set_usage(
+                            {
+                                "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                                "completion_tokens": getattr(usage, "completion_tokens", None),
+                                "total_tokens": getattr(usage, "total_tokens", None),
+                            }
+                        )
 
-                choices = getattr(chunk, "choices", None) or []
-                if not choices:
-                    continue
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
 
-                choice = choices[0]
-                if choice.finish_reason is not None:
-                    parsed_response.set_finish_reason(choice.finish_reason)
+                    choice = choices[0]
+                    if choice.finish_reason is not None:
+                        parsed_response.set_finish_reason(choice.finish_reason)
 
-                delta = choice.delta
-                reasoning = getattr(delta, "reasoning_content", None)
-                if reasoning:
-                    yield "reasoning_content", reasoning
+                    delta = choice.delta
+                    reasoning = getattr(delta, "reasoning_content", None)
+                    if reasoning:
+                        yield "reasoning_content", reasoning
 
-                content = getattr(delta, "content", None)
-                if content:
-                    yield "content", content
+                    content = getattr(delta, "content", None)
+                    if content:
+                        yield "content", content
 
-                for tool_call in getattr(delta, "tool_calls", None) or []:
-                    index = getattr(tool_call, "index", 0) or 0
-                    function = getattr(tool_call, "function", None)
-                    yield (
-                        "tool_calls",
-                        ToolCallChunk(
-                            index=index,
-                            id=getattr(tool_call, "id", None),
-                            name=getattr(function, "name", None),
-                            arguments=getattr(function, "arguments", None),
-                        ),
-                    )
+                    for tool_call in getattr(delta, "tool_calls", None) or []:
+                        index = getattr(tool_call, "index", 0) or 0
+                        function = getattr(tool_call, "function", None)
+                        yield (
+                            "tool_calls",
+                            ToolCallChunk(
+                                index=index,
+                                id=getattr(tool_call, "id", None),
+                                name=getattr(function, "name", None),
+                                arguments=getattr(function, "arguments", None),
+                            ),
+                        )
 
         parsed_response = LLMResponse(
             iter_mix_chunks=iter_mix_chunks(),

@@ -1,13 +1,65 @@
+import asyncio
 import inspect
 import threading
+from contextlib import aclosing
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
+from xpeech.provider import helper
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, RegisteredTool, ToolCallChunk, ToolCallRequest
 from xpeech.utils.helper import token_counter
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_kind", ["break", "cancel_flush"])
+async def test_closing_parsed_model_stream_returns_permit_without_task_exit(monkeypatch, exit_kind):
+    semaphore = asyncio.Semaphore(1)
+    reading = asyncio.Event()
+    closed = asyncio.Event()
+
+    async def upstream():
+        try:
+            yield stream_chunk(delta=SimpleNamespace(content="partial", reasoning_content=None, tool_calls=None))
+            reading.set()
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    sdk_stream = upstream()  # 保留引用，验证关闭链不依赖 GC。
+
+    async def fake_acompletion(**_kwargs):
+        return sdk_stream
+
+    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
+    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
+    provider = LiteLLMProvider(
+        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    )
+    response = await provider.chat(messages=[])
+    completed = []
+    response.add_completion_callback(completed.append)
+    if exit_kind == "break":
+        async with aclosing(response.iter_mix_chunks) as chunks:
+            async for chunk in chunks:
+                assert chunk == ("content", "partial")
+                assert semaphore.locked()
+                break
+    else:
+        task = asyncio.create_task(response.flush())
+        await asyncio.wait_for(reading.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert closed.is_set()
+    await asyncio.wait_for(semaphore.acquire(), timeout=1)
+    assert semaphore.locked()
+    semaphore.release()
+    assert completed == []
+    with pytest.raises(ValueError, match="Content is not available"):
+        _ = response.content
 
 
 def stream_chunk(*, delta=None, finish_reason=None, usage=None):

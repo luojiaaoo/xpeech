@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import count
@@ -409,17 +410,18 @@ class AgentLoop:
                         json_output=message.json_output,
                     )
 
-                    async for kind, chunk in response.iter_mix_chunks:
-                        if kind == "reasoning_content" and isinstance(chunk, str):
-                            yield {"event": "thinking", "context": chunk}
-                        elif kind == "reasoning_content_end":
-                            yield {"event": "thinking_end", "context": ""}
-                        elif kind == "content" and isinstance(chunk, str):
-                            yield {"event": "assistant", "context": chunk}
-                        elif kind == "content_end":
-                            yield {"event": "assistant_end", "context": ""}
-                        elif (kind == "tool_calls" and isinstance(chunk, ToolCallRequest)) or (kind == "tool_calls_end"):
-                            pass  # 工具调用事件在后续处理
+                    async with aclosing(response.iter_mix_chunks) as chunks:
+                        async for kind, chunk in chunks:
+                            if kind == "reasoning_content" and isinstance(chunk, str):
+                                yield {"event": "thinking", "context": chunk}
+                            elif kind == "reasoning_content_end":
+                                yield {"event": "thinking_end", "context": ""}
+                            elif kind == "content" and isinstance(chunk, str):
+                                yield {"event": "assistant", "context": chunk}
+                            elif kind == "content_end":
+                                yield {"event": "assistant_end", "context": ""}
+                            elif (kind == "tool_calls" and isinstance(chunk, ToolCallRequest)) or (kind == "tool_calls_end"):
+                                pass  # 工具调用事件在后续处理
                 except HTTPException:
                     raise
                 except Exception as exc:

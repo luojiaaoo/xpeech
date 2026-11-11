@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import aclosing
 from types import SimpleNamespace
 
 import pytest
@@ -218,7 +219,7 @@ async def test_close_returns_permit_before_sdk_cleanup(monkeypatch, cleanup):
 
 
 @pytest.mark.asyncio
-async def test_task_exit_and_later_stream_close_release_exactly_once(monkeypatch):
+async def test_aclosing_and_later_stream_close_release_exactly_once(monkeypatch):
     semaphore = asyncio.Semaphore(1)
     closed = asyncio.Event()
     close_count = 0
@@ -243,7 +244,8 @@ async def test_task_exit_and_later_stream_close_release_exactly_once(monkeypatch
     stream = LiteLLMRetryClient().acompletion()
 
     async def consume_one_chunk():
-        assert await anext(stream) == "chunk"
+        async with aclosing(stream):
+            assert await anext(stream) == "chunk"
 
     await asyncio.create_task(consume_one_chunk())
     await asyncio.wait_for(closed.wait(), timeout=1)

@@ -1,7 +1,7 @@
 import asyncio
 import random
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -14,7 +14,6 @@ from ..config.settings import settings
 
 LLM_PARALLEL_SEMAPHORE = asyncio.Semaphore(settings.llm.parallel)
 STREAM_CLOSE_TIMEOUT = 5.0
-_STREAM_CLEANUP_TASKS: set[asyncio.Task[None]] = set()
 
 
 async def _close_stream(response: Any) -> None:
@@ -33,50 +32,17 @@ async def _close_stream(response: Any) -> None:
 
 @asynccontextmanager
 async def _completion_stream(**kwargs: Any) -> AsyncIterator[Any]:
-    """在消费任务的生命周期内管理模型流及其并发名额。
-
-    每个模型流应由同一个任务消费，流的生命周期不能超过该任务。
-    即使转发生成器暂停在 yield，任务结束回调也能兜底归还名额。
-    生成器可能在稍后再次清理，因此释放操作必须保证幂等。
-    """
+    """通过调用方的 aclosing 关闭链归还模型名额，再限时清理上游连接。"""
     semaphore = LLM_PARALLEL_SEMAPHORE
-    owner = asyncio.current_task()
-    response = None
-    released = False
-
-    def release() -> None:
-        nonlocal released
-        if not released:
-            released = True
-            semaphore.release()
-
-    def take_response() -> Any:
-        nonlocal response
-        upstream, response = response, None
-        return upstream
-
-    def owner_done(_task: asyncio.Task[Any]) -> None:
-        release()
-        upstream = take_response()
-        if upstream is not None:
-            cleanup = asyncio.create_task(_close_stream(upstream))
-            # 避免被 gc 回收，其实也不会被回收
-            _STREAM_CLEANUP_TASKS.add(cleanup)
-            cleanup.add_done_callback(_STREAM_CLEANUP_TASKS.discard)
-
     await semaphore.acquire()
-    if owner is not None:
-        owner.add_done_callback(owner_done)
+    response = None
     try:
         response = await acompletion(**kwargs)
         yield response
     finally:
-        if owner is not None:
-            owner.remove_done_callback(owner_done)
-        release()
-        upstream = take_response()
-        if upstream is not None:
-            await _close_stream(upstream)
+        semaphore.release()
+        if response is not None:
+            await _close_stream(response)
 
 
 def _format_error(exc: APIStatusError) -> str:
@@ -105,7 +71,7 @@ class LiteLLMRetryClient:
         self.max_delay = max_delay
         self.jitter = jitter
 
-    async def acompletion(self, **kwargs: Any) -> AsyncIterator[Any]:
+    async def acompletion(self, **kwargs: Any) -> AsyncGenerator[Any, None]:
         """流式获取模型响应，并保留并发限制和限流重试机制。"""
         kwargs["stream"] = True
         kwargs.setdefault("stream_options", {"include_usage": True})
