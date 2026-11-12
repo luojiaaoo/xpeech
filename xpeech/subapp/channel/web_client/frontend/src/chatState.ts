@@ -115,6 +115,7 @@ export type ChatDisplayItem = ChatMessage | {
   role: 'process';
   messages: ChatMessage[];
   running: boolean;
+  tokenUsage?: string;
 };
 
 // Keep the event history intact; folding only changes how each turn is displayed.
@@ -136,7 +137,10 @@ export function chatDisplayItems(messages: ChatMessage[], running = false): Chat
     const user = visible[0]?.role === 'user' ? visible.shift() : undefined;
     if (user) items.push(user);
     if (process.length || active) {
-      items.push({ key: `process_${turn[0].key}`, role: 'process', messages: process, running: active });
+      items.push({
+        key: `process_${turn[0].key}`, role: 'process', messages: process, running: active,
+        tokenUsage: turn.findLast((item) => item.role === 'summary')?.tokenUsage,
+      });
     }
     items.push(...visible);
     start = end;

@@ -63,6 +63,7 @@ async function chatPage(stopChat: (sessionId: string) => Promise<{ stopped: bool
       collectReplies: () => ({ push() {}, finish() {} }), connectEmbedBridge() {}, postToParent() {},
     },
     './ToolCallCard': { default: 'ToolCallCard' },
+    './ProcessPanel': { default: 'ProcessPanel' },
     './pendingUserPrefix': { readPendingUserPrefix: () => null, subscribePendingUserPrefix() {}, takePendingUserPrefix: () => null },
   };
   const { outputText } = ts.transpileModule(readFileSync(new URL('../src/ChatPage.tsx', import.meta.url), 'utf8'), {
@@ -100,19 +101,13 @@ async function chatPage(stopChat: (sessionId: string) => Promise<{ stopped: bool
   return { render, items: () => render('BubbleList').items, streams, errors, running, messages: () => slots[0].value, cleanupHistory };
 }
 
-test('the process is closed by default with only a spinner and line, then the final answer and usage appear outside', async () => {
+test('the process receives its running state and usage while the final answer and usage appear outside', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('hello');
   const initialProcess = page.items()[1];
   assert.equal(initialProcess.role, 'process');
-  assert.equal(initialProcess.content.type, 'details');
-  assert.equal(initialProcess.content.props.open, undefined);
-  const summary = initialProcess.content.props.children[0];
-  assert.equal(summary.type, 'summary');
-  assert.equal(summary.props.children.length, 2);
-  assert.equal(summary.props.children[0].type, 'LoadingOutlined');
-  assert.equal(summary.props.children[0].props.spin, true);
-  assert.equal(summary.props.children[1].props.className, 'process-line');
+  assert.equal(initialProcess.content.type, 'ProcessPanel');
+  assert.equal(initialProcess.content.props.running, true);
 
   const stream = page.streams[0];
   for (const event of [
@@ -120,7 +115,7 @@ test('the process is closed by default with only a spinner and line, then the fi
     { event: 'assistant', context: '正在读取' },
     { event: 'tool_call', context: '[["tool-1","read_file",{}]]' },
     { event: 'assistant', context: '最终回复' },
-    { event: 'token_usage', context: '{"总 Token":100}' },
+    { event: 'token_usage', context: '{"总 Token":100,"会话时长":"2秒"}' },
   ]) stream.receive(event);
   assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'process', 'summary']);
   assert.equal(page.items()[1].key, initialProcess.key);
@@ -130,8 +125,8 @@ test('the process is closed by default with only a spinner and line, then the fi
   const items = page.items();
   assert.deepEqual(Array.from(items, (item: any) => item.role), ['user', 'process', 'assistant', 'summary']);
   assert.equal(items[1].key, initialProcess.key);
-  assert.equal(items[1].content.props.open, undefined);
-  assert.equal(items[1].content.props.children[0].props.children[0].type, 'CheckCircleOutlined');
+  assert.equal(items[1].content.props.running, false);
+  assert.equal(items[1].content.props.tokenUsage, '{"总 Token":100,"会话时长":"2秒"}');
   assert.equal(items[2].content.props.children.props.content, '最终回复');
   assert.equal(items[3].content.props.className, 'bubble-footer');
   assert.equal(items[3].content.props.children[0].props['aria-label'], 'Token 使用情况');

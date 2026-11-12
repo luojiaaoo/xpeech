@@ -43,7 +43,7 @@ test('folds a running turn into one process item until its final reply is known'
 test('keeps each historical final reply and usage visible while folding earlier messages per turn', () => {
   const history = chatMessagesFromEvents([
     event('user', '第一问'), event('assistant', '中间回复'), event('assistant_end'),
-    event('thinking', '分析'), event('assistant', '第一答'), event('token_usage', '{"总 Token":100}'),
+    event('thinking', '分析'), event('assistant', '第一答'), event('token_usage', '{"总 Token":100,"会话时长":"2秒"}'),
     event('user', '第二问'), event('assistant', '第二答'), event('token_usage', '{"总 Token":200}'),
   ]);
   const items = chatDisplayItems(startChatTurn(history, '第三问'), true);
@@ -51,8 +51,9 @@ test('keeps each historical final reply and usage visible while folding earlier 
     'user', 'process', 'assistant', 'summary', 'user', 'assistant', 'summary', 'user', 'process',
   ]);
   assert.deepEqual(items.filter(item => item.role === 'assistant').map(item => item.content), ['第一答', '第二答']);
-  assert.deepEqual(items.filter(item => item.role === 'summary').map(item => item.tokenUsage), ['{"总 Token":100}', '{"总 Token":200}']);
+  assert.deepEqual(items.filter(item => item.role === 'summary').map(item => item.tokenUsage), ['{"总 Token":100,"会话时长":"2秒"}', '{"总 Token":200}']);
   assert.deepEqual(items.filter(item => item.role === 'process').map(item => item.running), [false, true]);
+  assert.equal(items[1].role === 'process' && items[1].tokenUsage, '{"总 Token":100,"会话时长":"2秒"}');
 });
 
 test('keeps interactive questions, files and errors visible even without an assistant reply', () => {

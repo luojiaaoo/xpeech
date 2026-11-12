@@ -20,6 +20,7 @@ import { collectReplies, connectEmbedBridge, postToParent } from './embedBridge'
 import type { SyncOptions } from './embedBridge';
 import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn, startChatTurn } from './chatState';
 import ToolCallCard from './ToolCallCard';
+import ProcessPanel from './ProcessPanel';
 import {
   readPendingUserPrefix,
   subscribePendingUserPrefix,
@@ -397,19 +398,13 @@ export default function ChatPage({
       key: item.key,
       role: item.role,
       content: item.role === 'process' ? (
-        <details className="process-panel">
-          <summary aria-label={item.running ? '正在处理，点击展开过程' : '查看处理过程'}>
-            {item.running ? <LoadingOutlined spin /> : <CheckCircleOutlined />}
-            <span className="process-line" aria-hidden="true" />
-          </summary>
-          <div className="process-content">
-            {item.messages.filter((entry) => !entry.transient).map((entry) => (
-              <div key={entry.key} className={`process-entry process-entry-${entry.role}`}>
-                {renderMessage(entry)}
-              </div>
-            ))}
-          </div>
-        </details>
+        <ProcessPanel running={item.running} tokenUsage={item.tokenUsage}>
+          {item.messages.filter((entry) => !entry.transient).map((entry) => (
+            <div key={entry.key} className={`process-entry process-entry-${entry.role}`}>
+              {renderMessage(entry)}
+            </div>
+          ))}
+        </ProcessPanel>
       ) : renderMessage(item),
     }));
   }, [loading, messages, sessionId]);

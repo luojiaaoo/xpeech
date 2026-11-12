@@ -185,18 +185,25 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .process-panel { width: 100%; min-width: 0; }
 .process-panel > summary {
   display: flex;
-  min-height: 28px;
+  min-height: 40px;
   align-items: center;
-  gap: 10px;
-  color: #8993a1;
+  gap: 7px;
+  padding: 4px 0 14px;
+  border-bottom: 1px solid #dedede;
+  color: #666;
+  font-size: 14px;
+  line-height: 22px;
   cursor: pointer;
   list-style: none;
+  user-select: none;
 }
 .process-panel > summary::-webkit-details-marker { display: none; }
 .process-panel > summary:focus-visible { outline: 2px solid #3370ff; outline-offset: 3px; border-radius: 5px; }
-.process-line { flex: 1; height: 1px; background: #e1e6ee; }
-.process-panel > summary:hover { color: #526782; }
-.process-panel > summary:hover .process-line { background: #bac6d6; }
+.process-spinner { flex: 0 0 auto; margin-inline-end: 5px; color: #999; font-size: 12px; }
+.process-label { font-variant-numeric: tabular-nums; }
+.process-chevron { color: #888; font-size: 9px; transition: transform .2s; }
+.process-panel[open] > summary .process-chevron { transform: rotate(90deg); }
+.process-panel > summary:hover { color: #333; }
 .process-content { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding: 8px 0 8px 16px; border-inline-start: 1px solid #e8ecf2; }
 .process-entry { min-width: 0; }
 .chat-thinking { padding-block: 3px !important; }
