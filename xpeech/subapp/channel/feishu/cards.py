@@ -5,7 +5,7 @@ from typing import Any
 
 from ....agent.tools.execution_request import EXECUTION_PARAMETERS
 from ....utils.question import validate_confirm_question_json, validate_question_form_json
-from .formatting import ensure_markdown, plain_text
+from .formatting import collapsible_header, ensure_markdown, plain_text
 
 
 def build_feishu_tool_details(call: dict[str, Any]) -> dict[str, Any]:
@@ -18,7 +18,7 @@ def build_feishu_tool_details(call: dict[str, Any]) -> dict[str, Any]:
     return {
         "tag": "collapsible_panel",
         "expanded": False,
-        "header": {"title": plain_text("工具与参数")},
+        "header": collapsible_header("工具与参数"),
         "elements": [{"tag": "markdown", "content": ensure_markdown(details, 6000)}],
     }
 
@@ -247,7 +247,7 @@ def _build_feishu_confirm_card(
         })
         elements.append({
             "tag": "collapsible_panel", "expanded": False,
-            "header": {"title": plain_text("查看结果")},
+            "header": collapsible_header("结果"),
             "elements": [{"tag": "markdown", "content": ensure_markdown(result_text, 6000)}],
         })
     buttons = [

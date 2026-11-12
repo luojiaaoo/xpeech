@@ -77,7 +77,7 @@ async def test_each_tool_has_its_own_card_and_result_updates_by_id(monkeypatch, 
             "tool_call_id": "fast", "name": "shell", "result": "fast result", "success": True,
         })
         first = channel.update_card_element_content.await_args
-        assert first.args == ("card-1", "main", "**fast**\nfast result")
+        assert first.args == ("card-1", "main", "fast result")
         yield tool_event(ChatEventType.TOOL_CALL_RESULT, {
             "tool_call_id": "slow", "name": "shell", "result": "slow result", "success": True,
         })
@@ -98,15 +98,15 @@ async def test_each_tool_has_its_own_card_and_result_updates_by_id(monkeypatch, 
     for index, command in enumerate(["slow", "fast"]):
         card = channel.create_card_instance.await_args_list[index].args[0]
         assert card["config"]["streaming_mode"] is True
-        panel, details = card["body"]["elements"]
+        [panel] = card["body"]["elements"]
         assert panel["tag"] == "collapsible_panel" and panel["expanded"] is False
         title = panel["header"]["title"]["content"]
         assert command in title and ("fast" if command == "slow" else "slow") not in title
-        assert details["expanded"] is False
-        assert command in details["elements"][0]["content"]
+        assert title == f'> 工具调用 · shell {{"command":"{command}","execution_title":"{command}"}}'
+        assert panel["elements"][0]["content"] == "执行中…"
     second_card_id = "card-3" if with_assistant else "card-2"
     channel.update_card_element_content.assert_any_await(
-        second_card_id, "main", "**echo**\nsecond result", sequence=1,
+        second_card_id, "main", "second result", sequence=1,
     )
     channel.finish_streaming_card.assert_any_await(second_card_id, sequence=2)
     assert channel.finish_streaming_card.await_count == (4 if with_assistant else 3)
@@ -139,10 +139,9 @@ async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(mon
     )
 
     card = bridge.channel.create_card_instance.await_args.args[0]
-    element, details = card["body"]["elements"]
-    assert element["header"]["title"]["content"] == "自定义工具标题 · echo"
+    [element] = card["body"]["elements"]
+    assert element["header"]["title"]["content"] == "> 自定义工具标题 · echo aaaaaaa…"
     assert element["tag"] == "collapsible_panel"
-    assert "a" * 30 in details["elements"][0]["content"]
     assert "a" * 30 not in element["header"]["title"]["content"]
     body = element["elements"][0]
     assert body["text_size"] == "normal"
@@ -151,7 +150,7 @@ async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(mon
     bridge.channel.update_card_element_content.assert_awaited_once_with(
         "card-0",
         "main",
-        "**echo**\n" + "x" * 11 + "…",
+        "x" * 11 + "…",
         sequence=1,
     )
 
@@ -344,7 +343,7 @@ async def test_repeated_tool_result_replaces_matching_id_instead_of_appending(mo
     assert "new B" in content and "old B" not in content
     assert "A" not in content
     assert bridge.channel.update_card_element_content.await_args.args[0] == "card-1"
-    bridge.channel.update_card_element_content.assert_any_await("card-0", "main", "**shell**\nA", sequence=1)
+    bridge.channel.update_card_element_content.assert_any_await("card-0", "main", "A", sequence=1)
 
 
 @pytest.mark.asyncio
@@ -374,12 +373,12 @@ async def test_failure_only_colors_matching_title_and_preserves_folded_values(mo
     patch = bridge.channel.patch_card_element.await_args
     assert patch.args[:2] == ("card-1", "panel")
     assert patch.args[2] == {"header": {
-        "title": {"tag": "markdown", "content": '<font color="red">工具调用 · 相同标题</font>'},
-        "expanded_title": {"tag": "markdown", "content": '<font color="red">收起工具结果</font>'},
+        "title": {"tag": "markdown", "content": '<font color="red">&gt; 工具调用 · shell {"command":"&lt;same&gt;&amp;","execution_title":"相同标题","execution_description":"相同说明"}</font>'},
+        "expanded_title": {"tag": "markdown", "content": '<font color="red">∨ 工具调用 · shell {"command":"&lt;same&gt;&amp;","execution_title":"相同标题","execution_description":"相同说明"}</font>'},
     }}
     assert patch.kwargs["sequence"] == 2
     assert [call.args[0] for call in bridge.channel.create_card_instance.await_args_list] == original_cards
-    # 成功重试恢复原始标题，不重建参数折叠区或设置展开状态。
+    # 成功重试恢复原始标题，不重建卡片或设置展开状态。
     await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
         "tool_call_id": "b", "name": "shell", "result": "recovered", "success": True,
     }), progress)
@@ -401,7 +400,7 @@ async def test_failed_result_truncation_does_not_add_color_tags(monkeypatch):
     }), ToolProgress())
     card = bridge.channel.create_card_instance.await_args.args[0]
     panel = card["body"]["elements"][0]
-    assert panel["elements"][0]["content"] == "**shell**\n&lt;…"
+    assert panel["elements"][0]["content"] == "&lt;&amp;&lt;…"
     assert '<font color="red">' in panel["header"]["title"]["content"]
 
 
@@ -417,7 +416,7 @@ async def test_failed_tool_xml_code_keeps_fences_and_only_colors_its_title(monke
     cards = [call.args[0] for call in bridge.channel.create_card_instance.await_args_list]
     for card in cards:
         assert card["body"]["elements"][0]["elements"][0]["content"] == (
-            "**shell**\n" + code + "正文 &lt;outside/&gt;"
+            code + "正文 &lt;outside/&gt;"
         )
     assert '<font color="red">' in cards[0]["body"]["elements"][0]["header"]["title"]["content"]
     assert '<font' not in cards[1]["body"]["elements"][0]["header"]["title"]["content"]
@@ -458,8 +457,8 @@ async def test_truncated_tool_code_block_does_not_swallow_the_next_result(monkey
             "tool_call_id": call_id, "name": "shell", "result": result, "success": success,
         }), progress)
     cards = [call.args[0] for call in bridge.channel.create_card_instance.await_args_list]
-    assert cards[0]["body"]["elements"][0]["elements"][0]["content"] == "**shell**\n" + code[:19] + "…\n```"
-    assert cards[1]["body"]["elements"][0]["elements"][0]["content"] == "**shell**\n&lt;error/&gt;"
+    assert cards[0]["body"]["elements"][0]["elements"][0]["content"] == code[:19] + "…\n```"
+    assert cards[1]["body"]["elements"][0]["elements"][0]["content"] == "&lt;error/&gt;"
 
 
 @pytest.mark.asyncio
@@ -511,7 +510,22 @@ async def test_shell_command_failure_only_colors_its_card_title(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_custom_tool_copy_is_visible_and_function_arguments_are_folded(monkeypatch):
+async def test_empty_tool_output_is_not_left_running(monkeypatch):
+    bridge = bridge_with_channel()
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    progress = ToolProgress()
+    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+        {"tool_call_id": "empty", "name": "shell", "arguments": {}},
+    ]), progress)
+    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+        "tool_call_id": "empty", "name": "shell", "result": "", "success": True,
+    }), progress)
+    assert bridge.channel.update_card_element_content.await_args.args[2] == "（无输出）"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["shell", "read_file", "custom_tool"])
+async def test_all_tools_show_unmodified_arguments_in_header_and_only_output_when_expanded(monkeypatch, tool_name):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     progress = ToolProgress()
@@ -520,21 +534,20 @@ async def test_custom_tool_copy_is_visible_and_function_arguments_are_folded(mon
         "execution_title": "创建 test 文件夹", "execution_description": "创建名为 test 的文件夹。",
     }
     await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
-        {"tool_call_id": "create-test", "name": "shell", "arguments": arguments},
+        {"tool_call_id": "create-test", "name": tool_name, "arguments": arguments},
     ]), progress)
     card = bridge.channel.create_card_instance.await_args.args[0]
-    summary, details = card["body"]["elements"]
-    assert summary["header"]["title"]["content"] == "工具调用 · 创建 test 文件夹"
-    assert "创建名为 test 的文件夹。" in summary["elements"][0]["content"]
-    assert "shell" not in json.dumps(summary) and "mkdir" not in json.dumps(summary)
-    assert details["tag"] == "collapsible_panel" and details["expanded"] is False
-    assert details["header"]["title"]["content"] == "工具与参数"
-    params = details["elements"][0]["content"]
-    assert "shell" in params and "mkdir -p test" in params and "10000" in params
-    assert "execution_" not in params
+    [summary] = card["body"]["elements"]
+    title = f'工具调用 · {tool_name} ' + json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+    assert summary["header"] == {
+        "title": {"tag": "plain_text", "content": f"> {title}"},
+        "expanded_title": {"tag": "plain_text", "content": f"∨ {title}"},
+    }
+    assert summary["elements"][0]["content"] == "执行中…"
+    assert "execution_title" in title and "execution_description" in title
 
     await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
-        "tool_call_id": "create-test", "name": "shell", "result": "Exit code: 0", "success": True,
+        "tool_call_id": "create-test", "name": tool_name, "result": "Exit code: 0", "success": True,
     }), progress)
     content = bridge.channel.update_card_element_content.await_args.args[2]
-    assert content == "**创建 test 文件夹**\n创建名为 test 的文件夹。\n\nExit code: 0"
+    assert content == "Exit code: 0"

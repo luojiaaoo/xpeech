@@ -373,7 +373,7 @@ export default function ChatPage({
         const tool = turn.find(entry => entry.toolCall?.id === item.questionToolId)?.toolCall;
         content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} readOnly={item.historical} tool={tool} /></Suspense>;
       } else if (item.role === 'file') {
-        content = <FileCard path={item.content} active={active} sessionId={embedded ? sessionId : undefined} />;
+        content = <FileCard path={item.content} active={active} />;
       } else if (item.role === 'status') {
         content = <div className="chat-status-text">{item.transient ? <LoadingOutlined spin /> : null}{item.content}</div>;
       } else if (item.role === 'error') {
@@ -407,7 +407,7 @@ export default function ChatPage({
         </ProcessPanel>
       ) : renderMessage(item),
     }));
-  }, [active, embedded, loading, messages, sessionId]);
+  }, [active, loading, messages, sessionId]);
 
   const attachmentItems: AttachmentsProps['items'] = files.map((file, index) => ({
     uid: `${index}-${file.name}-${file.lastModified}`,

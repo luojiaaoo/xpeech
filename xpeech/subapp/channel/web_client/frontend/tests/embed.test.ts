@@ -197,7 +197,7 @@ test('maximize, restore and minimize preserve the iframe and the floating window
   app.api.destroy();
 });
 
-test('only current iframe preview messages maximize chat, and closing restores the original window mode', async () => {
+test('preview messages do not change the user-selected window mode', async () => {
   const app = await runtime();
   app.api.init(jwtFor(), 'Alice');
   await tick();
@@ -205,42 +205,15 @@ test('only current iframe preview messages maximize chat, and closing restores t
   const panel = app.hosts[0].ids.get('panel')!;
   app.message({ type: 'xpeech:interaction-ready', session_id: 'one' });
   const preview = { type: 'xpeech:preview', session_id: 'one', preview_id: 'report.pptx', open: true };
-  for (const [data, origin, source] of [
-    [preview, 'https://attacker.test', app.frames[0].contentWindow],
-    [preview, 'https://assistant.test', {}],
-    [{ ...preview, session_id: 'old' }, 'https://assistant.test', app.frames[0].contentWindow],
-  ] as const) app.message(data, origin, source);
-  assert.equal(panel.classes.has('maximized'), false);
   app.message(preview);
-  assert.equal(panel.classes.has('maximized'), true);
-  app.message({ ...preview, preview_id: 'other.docx' });
   app.message({ ...preview, open: false });
-  assert.equal(panel.classes.has('maximized'), true);
-  app.message({ ...preview, preview_id: 'other.docx', open: false });
   assert.equal(panel.classes.has('maximized'), false);
   app.api.maximize();
   app.message(preview);
   app.message({ ...preview, open: false });
   assert.equal(panel.classes.has('maximized'), true);
-  app.api.restore();
-  app.message(preview);
   app.message({ type: 'xpeech:interaction-unavailable', session_id: 'one' });
-  assert.equal(panel.classes.has('maximized'), false);
-  app.api.destroy();
-});
-
-test('manual window controls override temporary preview maximization', async () => {
-  const app = await runtime();
-  app.api.init(jwtFor(), 'Alice');
-  await tick();
-  app.api.open();
-  app.message({ type: 'xpeech:interaction-ready', session_id: 'one' });
-  const preview = { type: 'xpeech:preview', session_id: 'one', preview_id: 'report.pptx', open: true };
-  app.message(preview);
-  app.api.restore();
-  app.api.maximize();
-  app.message({ ...preview, open: false });
-  assert.equal(app.hosts[0].ids.get('panel')!.classes.has('maximized'), true);
+  assert.equal(panel.classes.has('maximized'), true);
   app.api.destroy();
 });
 

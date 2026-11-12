@@ -716,7 +716,8 @@ def test_execution_confirmation_uses_custom_copy_and_folds_function_and_argument
     assert elements[0]["text"]["content"] == "先确认 test 文件夹存在，然后删除并验证。"
     details = elements[1]
     assert details["tag"] == "collapsible_panel" and details["expanded"] is False
-    assert details["header"]["title"]["content"] == "工具与参数"
+    assert details["header"]["title"]["content"] == "> 工具与参数"
+    assert details["header"]["expanded_title"]["content"] == "∨ 工具与参数"
     assert "shell" in details["elements"][0]["content"]
     assert "rm -rf test" in details["elements"][0]["content"]
     buttons = [column["elements"][0] for column in elements[-1]["columns"]]
@@ -724,7 +725,8 @@ def test_execution_confirmation_uses_custom_copy_and_folds_function_and_argument
     assert all(button["disabled"] == (state != "pending") for button in buttons)
     assert ("请在 300 秒内确认" in json.dumps(elements, ensure_ascii=False)) == (state == "pending")
     if result:
-        assert elements[-2]["header"]["title"]["content"] == "查看结果"
+        assert elements[-2]["header"]["title"]["content"] == "> 结果"
+        assert elements[-2]["header"]["expanded_title"]["content"] == "∨ 结果"
 
 
 @pytest.mark.parametrize("description", [None, "执行参数：\n这只是说明，不是参数 JSON"])
@@ -929,8 +931,8 @@ def test_thinking_card_wraps_content_in_collapsible_panel():
         "element_id": "panel",
         "expanded": False,
         "header": {
-            "title": {"tag": "plain_text", "content": "查看思考过程"},
-            "expanded_title": {"tag": "plain_text", "content": "收起思考过程"},
+            "title": {"tag": "plain_text", "content": "> 查看思考过程"},
+            "expanded_title": {"tag": "plain_text", "content": "∨ 查看思考过程"},
         },
         "elements": [
             {

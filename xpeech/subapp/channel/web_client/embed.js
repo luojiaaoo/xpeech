@@ -32,8 +32,6 @@ var resize = null;
 var panelSize = null;
 var maximized = false;
 var normalPanelBounds = null;
-var previewIds = new Set();
-var previewAutoMaximized = false;
 var suppressLauncherClick = false;
 var interactionSession = null;
 var requestSequence = 0;
@@ -211,7 +209,6 @@ function initialize() {
   closeButton.addEventListener("click", close);
   minimizeButton.addEventListener("click", minimize);
   maximizeButton.addEventListener("click", function () {
-    previewAutoMaximized = false;
     setMaximized(!maximized);
   });
   root.addEventListener("keydown", function (event) {
@@ -362,21 +359,14 @@ function setMaximized(value) {
 function maximize() {
   if (!host) return;
   open();
-  previewAutoMaximized = false;
   setMaximized(true);
 }
 function restore() {
   if (!host) return;
-  previewAutoMaximized = false;
   setMaximized(false);
   if (!panel.classList.contains('open')) open();
 }
 function minimize() { close(); }
-function clearPreviews() {
-  previewIds.clear();
-  if (previewAutoMaximized) setMaximized(false);
-  previewAutoMaximized = false;
-}
 function hideButton() {
   if (launcher) {
     if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
@@ -399,7 +389,6 @@ function report(error) {
   window.dispatchEvent(new CustomEvent("xpeech:error", { detail: { message: detail } }));
 }
 function removeFrame() {
-  clearPreviews();
   clearTimeout(frameTimer);
   frameReady = false;
   interactionSession = null;
@@ -436,7 +425,6 @@ function onMessage(event) {
   var data = event.data;
   if (!data || typeof data !== "object") return;
   if (data.type === "xpeech:ready") {
-    clearPreviews();
     interactionSession = null;
     rejectRequests('聊天页面已重新加载', true);
     frameReady = true;
@@ -445,7 +433,6 @@ function onMessage(event) {
   } else if (data.type === "xpeech:authenticated") {
     if (verifiedJWT) status.hidden = true;
   } else if (data.type === "xpeech:interaction-ready" && typeof data.session_id === 'string') {
-    if (interactionSession !== data.session_id) clearPreviews();
     if (interactionSession && interactionSession !== data.session_id) rejectRequests('会话已切换', true);
     interactionSession = data.session_id;
     pendingRequests.forEach(function (pending, id) {
@@ -457,20 +444,8 @@ function onMessage(event) {
     });
     flushRequests();
   } else if (data.type === "xpeech:interaction-unavailable" && data.session_id === interactionSession) {
-    clearPreviews();
     interactionSession = null;
     rejectRequests('会话已切换或关闭', true);
-  } else if (data.type === 'xpeech:preview' && verifiedJWT && data.session_id === interactionSession &&
-      typeof data.preview_id === 'string' && data.preview_id && typeof data.open === 'boolean') {
-    if (data.open) {
-      if (!previewIds.size) {
-        previewAutoMaximized = !maximized;
-        setMaximized(true);
-      }
-      previewIds.add(data.preview_id);
-    } else if (previewIds.delete(data.preview_id) && !previewIds.size) {
-      clearPreviews();
-    }
   } else if (data.type === "xpeech:response") {
     var pending = pendingRequests.get(data.request_id);
     if (!pending || !pending.sent || data.session_id !== pending.sessionId) return;

@@ -11,14 +11,12 @@ from lark_channel import SendResult
 from loguru import logger
 
 from ..schema import ChatEvent, ChatEventType
-from .cards import build_feishu_tool_details
 from .config import FEISHU_STREAM_UPDATE_INTERVAL_SECONDS
 from .formatting import OUTPUT_EVENT_TYPES, ensure_markdown
 
 
 @dataclass
 class ToolCardProgress:
-    call: dict[str, Any]
     title: str
     card_id: str | None = None
     sequence: int = 0
@@ -54,7 +52,7 @@ class FeishuDeliveryMixin:
             }, progress, result=payload)
             return
 
-        text = self._format_tool_result(state.call, payload["result"])
+        text = self._format_tool_result(payload["result"])
         message, _ = self._format_chat_event(
             ChatEvent(event=ChatEventType.TOOL_CALL, context=text), title=state.title,
         )
@@ -76,13 +74,9 @@ class FeishuDeliveryMixin:
     async def _create_tool_progress(
         self, to: str, call: dict[str, Any], progress: ToolProgress, *, result: dict[str, Any] | None = None,
     ) -> None:
-        state = ToolCardProgress(call=call, title=self._format_tool_title(call))
+        state = ToolCardProgress(title=self._format_tool_title(call))
         progress.cards[call["tool_call_id"]] = state
-        arguments = call.get("arguments")
-        has_description = isinstance(arguments, dict) and arguments.get("execution_description")
-        text = ""
-        if result is not None or has_description:
-            text = self._format_tool_result(call, result["result"] if result is not None else "执行中…")
+        text = self._format_tool_result(result["result"]) if result is not None else "执行中…"
         message, _ = self._format_chat_event(
             ChatEvent(event=ChatEventType.TOOL_CALL, context=text), title=state.title,
         )
@@ -92,7 +86,6 @@ class FeishuDeliveryMixin:
         state.failed = result is not None and result.get("success") is False
         if state.failed:
             panel["header"] = self._tool_progress_header(state.header, True)
-        card["body"]["elements"].append(build_feishu_tool_details(call))
         state.card_id = await self.channel.create_card_instance(card)
         send_result = await self.channel.send_card_by_reference(to, state.card_id)
         self._ensure_send_success(send_result, operation="send tool card")

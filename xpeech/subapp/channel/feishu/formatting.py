@@ -13,6 +13,11 @@ def plain_text(content: str) -> dict[str, str]:
     return {"tag": "plain_text", "content": content}
 
 
+def collapsible_header(title: str) -> dict[str, Any]:
+    """展开前后保持标题内容一致，仅切换前置箭头。"""
+    return {"title": plain_text(f"> {title}"), "expanded_title": plain_text(f"∨ {title}")}
+
+
 _CODE_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)")
 
 
@@ -167,7 +172,7 @@ class FeishuEventFormatter:
         if event.event == ChatEventType.ERROR:
             return f"**[错误]** {content}"
         if event.event == ChatEventType.TOOL_CALL:
-            return content or "执行中…"
+            return content or "（无输出）"
         if event.event == ChatEventType.TOKEN_USAGE:
             return f"**[词元]** {self._format_token_usage(content)}"
         return f"[{event.event}]\n{content}"
@@ -184,6 +189,7 @@ class FeishuEventFormatter:
         output = OUTPUT_EVENT_TYPES[event.event]
         content = output["content"]
         text = content if isinstance(content, str) else self._format_chat_event_content(event)
+        raw_text = text
         text = ensure_markdown(text, output.get("max_chars"))
         element = {
             "tag": "markdown",
@@ -197,16 +203,9 @@ class FeishuEventFormatter:
 
         card_element = element
         if "title" in output:
-            header = {
-                "title": plain_text(
-                    self._truncate(
-                        output["title"] + (f" · {title}" if title else ""),
-                        output.get("max_title_chars"),
-                    )
-                ),
-            }
-            if "expanded_title" in output:
-                header["expanded_title"] = plain_text(output["expanded_title"])
+            header = collapsible_header(output["title"] + (f" · {title}" if title else ""))
+            for heading in header.values():
+                heading["content"] = self._truncate(heading["content"], output.get("max_title_chars"))
             card_element = {
                 "tag": "collapsible_panel",
                 "element_id": "panel",
@@ -215,31 +214,18 @@ class FeishuEventFormatter:
                 "elements": [element],
             }
 
+        card = {"schema": "2.0", "body": {"elements": [card_element]}}
+        iter_content = None
         if content is ...:
             element["element_id"] = "main"
-            return (
-                {
-                    "card": {
-                        "schema": "2.0",
-                        "config": {
-                            "streaming_mode": True,
-                            "summary": {"content": ""},
-                        },
-                        "body": {"elements": [card_element]},
-                    }
-                },
-                event.context if isinstance(event.context, AsyncIterator) else None,
-            )
-
-        return (
-            {
-                "card": {
-                    "schema": "2.0",
-                    "body": {"elements": [card_element]},
-                }
-            },
-            None,
-        )
+            card["config"] = {"streaming_mode": True, "summary": {"content": ""}}
+            iter_content = event.context if isinstance(event.context, AsyncIterator) else None
+        message = {"card": card}
+        # 折叠与展开标题均会计入卡片体积，长 Unicode 标题时为其预留正文空间。
+        excess_bytes = len(json.dumps(message, ensure_ascii=False).encode("utf-8")) - 29_999
+        if excess_bytes > 0:
+            element["content"] = ensure_markdown(raw_text, max(0, len(text) - excess_bytes))
+        return message, iter_content
 
     def _format_token_usage(self, context: str) -> str:
         data: dict[str, str] = json.loads(context)
@@ -252,22 +238,16 @@ class FeishuEventFormatter:
         return text[: max(0, max_chars - 1)] + "…"
 
     def _format_tool_title(self, call: dict[str, Any]) -> str:
-        """生成单个工具调用的标题。"""
+        """所有工具统一显示函数名和原始参数。"""
         arguments = call["arguments"]
-        copy = arguments if isinstance(arguments, dict) else {}
-        title = copy.get("execution_title") or copy.get("execution_description") or call["name"]
-        return self._truncate(title, OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL].get("max_argument_chars"))
+        text = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+        text = self._truncate(text, OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL].get("max_argument_chars"))
+        return f'{call["name"]} {text}'
 
-    def _format_tool_result(self, call: dict[str, Any], result: Any) -> str:
-        """生成单个工具调用的结果文本。"""
+    def _format_tool_result(self, result: Any) -> str:
+        """展开普通工具调用只显示输出。"""
         output = OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL]
-        name = self._format_tool_title(call)
-        arguments = call["arguments"]
-        description = arguments.get("execution_description") if isinstance(arguments, dict) else None
         text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, separators=(",", ":"))
-        text = "".join(part for part, _ in _markdown_parts(
+        return "".join(part for part, _ in _markdown_parts(
             self._truncate(text, output.get("max_result_chars")), close_unfinished=True,
         ))
-        if description and description != name:
-            text = f"{description}\n\n{text}"
-        return f"**{name}**\n{text}"
