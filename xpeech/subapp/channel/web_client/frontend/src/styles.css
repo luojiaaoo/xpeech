@@ -1299,12 +1299,20 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   }
 }
 
-.question-confirm { border: 1px solid #dce5f0; }
-.question-confirm-description { font-size: 15px; line-height: 1.7; }
-.question-execution-details { margin-bottom: 16px; color: #667085; }
-.question-execution-details summary { cursor: pointer; font-size: 12px; }
-.question-tool-name { margin-top: 10px; font-family: monospace; }
+.question-confirm { display: flex; flex-direction: column; gap: 16px; padding: 24px; border: 1px solid #dce5f0; }
+.question-confirm > h5.ant-typography { margin: 0; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.question-confirm .question-confirm-description { margin: 0; font-size: 15px; line-height: 1.85; }
+.question-execution-details { color: #667085; }
+.question-execution-details summary { width: fit-content; cursor: pointer; font-size: 13px; line-height: 1.6; }
+.question-tool-name { margin-top: 12px; font-family: monospace; }
+.question-execution-details pre { margin: 8px 0 0; padding: 12px; border-radius: 8px; background: #eef2f7; font-size: 12px; line-height: 1.6; }
 .question-execution-details pre, .question-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; }
-.question-confirm-hint { font-size: 12px; }
+.question-confirm .question-confirm-hint { margin: 0; font-size: 12px; line-height: 1.7; }
+.question-confirm-footer { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding-top: 16px; border-top: 1px solid #dce5f0; }
+.question-confirm-actions .ant-btn { min-width: 80px; }
+.question-confirm-footer > .ant-typography { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .question-confirm { padding: 20px 16px; }
+}
 .question-confirm-failed { background: #fff2f0; border-color: #ffccc7; }
 .question-confirm-failed .ant-typography, .question-result-error { color: #cf1322; }

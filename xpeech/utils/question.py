@@ -77,8 +77,8 @@ class ConfirmQuestion(StrictBaseModel):
     description: str | None = None
     tool_call_id: str | None = None
     tool_name: str | None = None
-    confirm_label: str = "确认"
-    view_label: str = "查看"
+    arguments: dict[str, Any] | None = None
+    timeout_seconds: int | None = Field(default=None, gt=0)
 
 
 def validate_question_form_json(data: str | dict[str, Any]) -> dict[str, Any]:
@@ -105,20 +105,16 @@ def validate_confirm_question_json(data: str | dict[str, Any]) -> dict[str, Any]
 
 def build_execution_question(
     tool_name: str, arguments: dict[str, Any], description: str, *,
-    tool_call_id: str | None = None, title: str | None = None, confirm_label: str = "确认", view_label: str = "查看",
+    tool_call_id: str | None = None, title: str | None = None,
 ) -> str:
-    """通过确认问题展示执行说明、参数和确认 / 取消按钮。"""
+    """将执行说明与工具详情分开传递，交由各端独立渲染。"""
     return ConfirmQuestion(
         title=title or "执行确认",
         tool_call_id=tool_call_id,
         tool_name=tool_name,
-        confirm_label=confirm_label,
-        view_label=view_label,
-        description=(
-            f"执行说明：{description}\n\n"
-            f"执行参数：\n{json.dumps(arguments, ensure_ascii=False, indent=2)}\n\n"
-            f"请在 {USER_TIMEOUT} 秒内确认；取消或超时均不会执行。"
-        ),
+        description=description,
+        arguments=arguments,
+        timeout_seconds=USER_TIMEOUT,
     ).model_dump_json()
 
 

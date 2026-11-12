@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from ....agent.tools.execution_request import EXECUTION_PARAMETERS
@@ -25,10 +24,6 @@ def build_feishu_tool_details(calls: list[dict[str, Any]]) -> dict[str, Any]:
         "elements": [{"tag": "markdown", "content": ensure_markdown("\n\n".join(details), 6000)}],
     }
 
-
-_EXECUTION_DESCRIPTION = re.compile(
-    r"^执行说明：([\s\S]*?)\n\n执行参数：\n([\s\S]*)\n\n(请在 \d+ 秒内确认；取消或超时均不会执行。)$"
-)
 
 def build_feishu_background_task_card(
     content: str,
@@ -219,18 +214,6 @@ def _build_feishu_confirm_card(
 ) -> dict[str, Any]:
     elements: list[dict[str, Any]] = []
     description = question["description"]
-    details = None
-    hint = None
-    match = _EXECUTION_DESCRIPTION.fullmatch(description or "") if question["tool_name"] else None
-    if match:
-        try:
-            arguments = json.loads(match[2])
-        except ValueError:
-            pass  # 未识别的旧内容保持完整展示，避免丢失参数。
-        else:
-            description = match[1]
-            hint = match[3]
-            details = build_feishu_tool_details([{"name": question["tool_name"], "arguments": arguments}])
     if description:
         elements.append(
             {
@@ -246,10 +229,15 @@ def _build_feishu_confirm_card(
             }
         )
 
-    if details:
-        elements.append(details)
-    if hint and not disabled and tool_result is None:
-        elements.append({"tag": "markdown", "content": hint, "text_size": "notation"})
+    if question["tool_name"]:
+        elements.append(build_feishu_tool_details([{
+            "name": question["tool_name"], "arguments": question["arguments"],
+        }]))
+    if question["timeout_seconds"] is not None and not disabled and tool_result is None:
+        elements.append({
+            "tag": "markdown", "text_size": "notation",
+            "content": f"请在 {question['timeout_seconds']} 秒内确认；取消或超时均不会执行。",
+        })
 
     failed = tool_result is not None and tool_result.get("success") is False
     if tool_result is not None:
@@ -261,7 +249,7 @@ def _build_feishu_confirm_card(
         })
         elements.append({
             "tag": "collapsible_panel", "expanded": False,
-            "header": {"title": plain_text(question["view_label"])},
+            "header": {"title": plain_text("查看结果")},
             "elements": [{"tag": "markdown", "content": ensure_markdown(result_text, 6000)}],
         })
     buttons = [
@@ -277,7 +265,7 @@ def _build_feishu_confirm_card(
                 "tool_call_id": question["tool_call_id"],
             }}],
         }
-        for label, decision in ((question["confirm_label"], "confirm"), ("取消", "cancel"))
+        for label, decision in (("确认", "confirm"), ("取消", "cancel"))
     ]
     elements.append(_feishu_question_actions(buttons))
 

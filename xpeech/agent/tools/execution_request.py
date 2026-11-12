@@ -12,15 +12,12 @@ from .helper import get_tool_model_cls
 from .interactions import ExecutionRequest
 
 EXECUTION_DESCRIPTION = "execution_description"
+EXECUTION_TITLE = "execution_title"
 # 需要用户确认时返回的标记，Agent 主循环识别后询问用户再执行原函数。
 EXECUTION_REQUEST = ExecutionRequest()
 _DESCRIPTION = "说明本次执行具体要做什么以及目的。"
-_EXECUTION_LABELS = {
-    "execution_title": ("执行确认", "根据本次操作生成简短的确认卡片标题。"),
-    "execution_confirm_label": ("确认", "根据本次操作生成简短的确认按钮文案，例如：发送、删除、运行。"),
-    "execution_view_label": ("查看", "根据本次操作生成查看执行结果的简短按钮文案，例如：查看结果、查看详情。"),
-}
-EXECUTION_PARAMETERS = {EXECUTION_DESCRIPTION, *_EXECUTION_LABELS}
+_TITLE = "根据本次操作生成简短的确认卡片标题。"
+EXECUTION_PARAMETERS = {EXECUTION_DESCRIPTION, EXECUTION_TITLE}
 
 
 class ExecutionDecision(StrEnum):
@@ -58,10 +55,7 @@ def build_execution_request_tool(
         f"{function.__name__}ExecutionArgs",
         __base__=model_info.model_cls,
         execution_description=(str, Field(description=_DESCRIPTION, min_length=1, pattern=r"\S")),
-        **{
-            name: (str, Field(default=default, description=description, min_length=1, pattern=r"\S"))
-            for name, (default, description) in _EXECUTION_LABELS.items()
-        },
+        execution_title=(str, Field(default="执行确认", description=_TITLE, min_length=1, pattern=r"\S")),
     )
 
     execution_function = ensure_async(function)
@@ -107,11 +101,13 @@ def execution_request_schema(tool_json: dict[str, Any]) -> dict[str, Any]:
         "minLength": 1,
         "pattern": r"\S",
     }
-    for name, (default, description) in _EXECUTION_LABELS.items():
-        properties[name] = {
-            "type": "string", "description": description, "default": default,
-            "minLength": 1, "pattern": r"\S",
-        }
+    properties[EXECUTION_TITLE] = {
+        "type": "string",
+        "description": _TITLE,
+        "default": "执行确认",
+        "minLength": 1,
+        "pattern": r"\S",
+    }
     parameters.setdefault("required", []).append(EXECUTION_DESCRIPTION)
     function["description"] = f"{function.get('description', '')}\n\n{_DESCRIPTION}".strip()
     return schema

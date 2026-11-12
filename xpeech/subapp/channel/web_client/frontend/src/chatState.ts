@@ -177,7 +177,7 @@ export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): Chat
   if (role === 'question') {
     try {
       const question = JSON.parse(event.context);
-      const toolName = question.tool_name || (question.title?.startsWith('执行确认：') ? question.title.slice('执行确认：'.length) : undefined);
+      const toolName = question.tool_name;
       if (question.type === 'confirm' && typeof question.tool_call_id === 'string') {
         questionToolId = question.tool_call_id;
       } else if (question.type === 'confirm' && toolName) {

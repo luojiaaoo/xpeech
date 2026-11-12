@@ -287,7 +287,7 @@ async def test_confirmation_cards_are_updated_by_tool_call_id_with_out_of_order_
         for call_id in ["b", "a"]:
             yield tool_event(ChatEventType.QUESTION, {
                 "type": "confirm", "title": f"确认 {call_id}", "description": "执行命令",
-                "tool_call_id": call_id, "tool_name": "shell", "view_label": "查看输出",
+                "tool_call_id": call_id, "tool_name": "shell",
             })
         yield tool_event(ChatEventType.TOOL_CALL_RESULT, {
             "tool_call_id": "b", "name": "shell", "result": "RuntimeError: B failed", "success": False, "duration_seconds": 0,
@@ -492,7 +492,6 @@ async def test_custom_tool_copy_is_visible_and_function_arguments_are_folded(mon
     arguments = {
         "command": "mkdir -p test", "timeout_ms": 10000,
         "execution_title": "创建 test 文件夹", "execution_description": "创建名为 test 的文件夹。",
-        "execution_confirm_label": "创建", "execution_view_label": "查看结果",
     }
     await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
         {"tool_call_id": "create-test", "name": "shell", "arguments": arguments},

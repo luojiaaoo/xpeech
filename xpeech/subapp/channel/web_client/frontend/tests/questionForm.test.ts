@@ -51,18 +51,33 @@ test('ordinary questions keep form inputs and their submit button', async () => 
 });
 
 const executionQuestion = {
-  type: 'confirm', title: '执行确认：shell',
-  description: '执行说明：输出 hello\n\n执行参数：\n{\n  "command": "echo hello"\n}\n\n请在 300 秒内确认；取消或超时均不会执行。',
+  type: 'confirm', title: '输出问候语', description: '输出 hello',
+  tool_name: 'shell', arguments: { command: 'echo hello' }, timeout_seconds: 300,
 };
 
 test('execution confirmation emphasizes description and folds tool name and arguments', async () => {
   const html = await renderQuestion(executionQuestion);
   assert.ok(html.includes('输出 hello'));
+  assert.ok(html.includes('输出问候语'));
   assert.ok(/<details class="question-execution-details"><summary>工具与参数<\/summary>/.test(html));
   assert.ok(!/<details[^>]*\bopen/.test(html));
   assert.ok(html.includes('shell'));
   assert.ok(html.includes('echo hello'));
+  const body = html.replace(/<details[\s\S]*?<\/details>/g, '');
+  assert.ok(!body.includes('shell'));
+  assert.ok(!body.includes('echo hello'));
+  assert.ok(body.includes('300'));
   assert.ok(!html.includes('查看'));
+});
+
+test('structured tool details do not depend on description format or nonempty arguments', async () => {
+  for (const description of [undefined, '执行参数：\n这只是说明，不是参数 JSON']) {
+    const html = await renderQuestion({ ...executionQuestion, description, arguments: {} });
+    const details = html.match(/<details[\s\S]*?<\/details>/)?.[0] || '';
+    assert.ok(details.includes('shell'));
+    assert.ok(details.includes('{}'));
+    if (description) assert.ok(html.includes(description));
+  }
 });
 
 test('completed confirmations allow viewing results even in read-only history', async () => {
@@ -87,15 +102,15 @@ test('cancelled and timed out confirmations hide results and use the success fla
 });
 
 
-test('custom titles and action labels preserve folded tool details and result viewing', async () => {
-  const question = { ...executionQuestion, title: '运行测试命令', tool_name: 'shell', confirm_label: '运行', view_label: '查看输出' };
+test('custom titles preserve folded details with fixed action labels', async () => {
+  const question = { ...executionQuestion, title: '运行测试命令', tool_name: 'shell' };
   for (const success of [true, false]) {
     const html = await renderQuestion(question, { id: '1', name: 'shell', status: 'completed', success, output: 'hello' });
     const text = html.replace(/<[^>]+>/g, '').replace(/\s+/g, '');
     assert.ok(text.includes('运行测试命令'));
-    assert.ok(text.includes('查看输出'));
+    assert.ok(text.includes('查看结果'));
     const confirmButton = html.match(/<button\b[^>]*>([\s\S]*?)<\/button>/)?.[1] || '';
-    assert.equal(confirmButton.replace(/<[^>]+>/g, '').replace(/\s+/g, ''), '运行');
+    assert.equal(confirmButton.replace(/<[^>]+>/g, '').replace(/\s+/g, ''), '确认');
     assert.ok(html.includes('question-execution-details'));
     assert.equal(html.includes('question-confirm-failed'), !success);
   }

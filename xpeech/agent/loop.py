@@ -31,7 +31,7 @@ from .record import ConversationRecord, ConversationRecordRepository
 from .server.context import get_request_id
 from .server.schema import InboundMessage
 from .tool_executor import ToolExecutor
-from .tools.execution_request import EXECUTION_DESCRIPTION, EXECUTION_PARAMETERS
+from .tools.execution_request import EXECUTION_DESCRIPTION, EXECUTION_PARAMETERS, EXECUTION_TITLE
 from .tools.interactions import (
     ExecutionRequest,
     InteractionRequest,
@@ -212,9 +212,7 @@ class AgentLoop:
                     question = build_execution_question(
                         tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION],
                         tool_call_id=tool_call.id,
-                        title=tool_call.arguments.get("execution_title"),
-                        confirm_label=tool_call.arguments.get("execution_confirm_label", "确认"),
-                        view_label=tool_call.arguments.get("execution_view_label", "查看"),
+                        title=tool_call.arguments.get(EXECUTION_TITLE),
                     )
                     # 等待用户确认本次执行。
                     logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")

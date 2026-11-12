@@ -707,7 +707,7 @@ def test_execution_confirmation_uses_custom_copy_and_folds_function_and_argument
     context = build_execution_question(
         "shell", {"command": "rm -rf test", "timeout_ms": 10000},
         "先确认 test 文件夹存在，然后删除并验证。", tool_call_id="delete-test",
-        title="删除 test 文件夹", confirm_label="删除", view_label="查看删除结果",
+        title="删除 test 文件夹",
     )
     result = {"success": True, "result": "已删除"} if state == "finished" else None
     card = build_feishu_question_card(context, disabled=state == "submitted", tool_result=result)
@@ -720,17 +720,25 @@ def test_execution_confirmation_uses_custom_copy_and_folds_function_and_argument
     assert "shell" in details["elements"][0]["content"]
     assert "rm -rf test" in details["elements"][0]["content"]
     buttons = [column["elements"][0] for column in elements[-1]["columns"]]
-    assert [button["text"]["content"] for button in buttons] == ["删除", "取消"]
+    assert [button["text"]["content"] for button in buttons] == ["确认", "取消"]
     assert all(button["disabled"] == (state != "pending") for button in buttons)
     assert ("请在 300 秒内确认" in json.dumps(elements, ensure_ascii=False)) == (state == "pending")
     if result:
-        assert elements[-2]["header"]["title"]["content"] == "查看删除结果"
+        assert elements[-2]["header"]["title"]["content"] == "查看结果"
 
 
-def test_unrecognized_execution_description_stays_visible_in_full():
-    description = "执行说明：测试\n\n执行参数：\n这不是 JSON\n\n请在 300 秒内确认；取消或超时均不会执行。"
-    card = build_feishu_question_card(json.dumps({"type": "confirm", "tool_name": "shell", "description": description}))
-    assert card["body"]["elements"][0]["text"]["content"] == description
+@pytest.mark.parametrize("description", [None, "执行参数：\n这只是说明，不是参数 JSON"])
+def test_structured_tool_details_do_not_depend_on_description_format(description):
+    card = build_feishu_question_card(json.dumps({
+        "type": "confirm", "tool_name": "shell", "description": description, "arguments": {},
+    }))
+    elements = card["body"]["elements"]
+    if description:
+        assert elements.pop(0)["text"]["content"] == description
+    details = elements[0]
+    assert details["tag"] == "collapsible_panel" and details["expanded"] is False
+    assert "shell" in details["elements"][0]["content"]
+    assert "{}" in details["elements"][0]["content"]
 
 
 @pytest.mark.asyncio

@@ -27,8 +27,8 @@ interface ConfirmQuestion extends QuestionBase {
   type: 'confirm';
   tool_call_id?: string | null;
   tool_name?: string | null;
-  confirm_label?: string;
-  view_label?: string;
+  arguments?: Record<string, unknown> | null;
+  timeout_seconds?: number | null;
   description?: string;
 }
 
@@ -51,10 +51,8 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
     // Fall back to a free-text answer.
   }
   const confirmation = question?.type === 'confirm';
-  const rawDescription = question?.type === 'confirm' ? question.description : question?.subtitle;
-  const execution = question?.type === 'confirm' && (question.tool_name || question.title?.startsWith('执行确认：'));
-  const parts = execution ? rawDescription?.match(/^执行说明：([\s\S]*?)\n\n执行参数：\n([\s\S]*)\n\n(请在 \d+ 秒内确认；取消或超时均不会执行。)$/) : null;
-  const description = parts ? parts[1] : rawDescription;
+  const description = question?.type === 'confirm' ? question.description : question?.subtitle;
+  const execution = question?.type === 'confirm' && Boolean(question.tool_name);
   const output = tool?.output;
   const resultText = output === undefined ? '已确认，等待执行结果…'
     : typeof output === 'string' ? output : JSON.stringify(output, null, 2);
@@ -95,21 +93,25 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
   return (
     <Form layout="vertical" disabled={!confirmation && (settled || readOnly)} onFinish={submit}
       className={`question-form${confirmation ? ' question-confirm' : ''}${failed ? ' question-confirm-failed' : ''}`}>
-      <Typography.Title level={5}>{question?.type === 'confirm' && question.tool_name ? question.title : execution ? '执行确认' : question?.title || (confirmation ? '请确认' : '需要补充信息')}</Typography.Title>
+      <Typography.Title level={5}>{question?.title || (execution ? '执行确认' : confirmation ? '请确认' : '需要补充信息')}</Typography.Title>
       {description ? (
         <Typography.Paragraph type={confirmation ? undefined : 'secondary'} className={confirmation ? 'question-confirm-description' : undefined}
           style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
           {description}
         </Typography.Paragraph>
       ) : null}
-      {parts ? (
+      {question?.type === 'confirm' && question.tool_name ? (
         <details className="question-execution-details">
           <summary>工具与参数</summary>
-          <div className="question-tool-name">{question?.type === 'confirm' && question.tool_name || question?.title?.slice('执行确认：'.length)}</div>
-          <pre>{parts[2]}</pre>
+          <div className="question-tool-name">{question.tool_name}</div>
+          {question.arguments != null ? <pre>{JSON.stringify(question.arguments, null, 2)}</pre> : null}
         </details>
       ) : null}
-      {parts && !settled && !readOnly ? <Typography.Paragraph type="secondary" className="question-confirm-hint">{parts[3]}</Typography.Paragraph> : null}
+      {question?.type === 'confirm' && question.timeout_seconds != null && !settled && !readOnly ? (
+        <Typography.Paragraph type="secondary" className="question-confirm-hint">
+          请在 {question.timeout_seconds} 秒内确认；取消或超时均不会执行。
+        </Typography.Paragraph>
+      ) : null}
       {!confirmation && (fields.length === 0 ? (
         <Form.Item name="answer"><Input.TextArea rows={3} placeholder="请输入回答" /></Form.Item>
       ) : fields.map((field) => (
@@ -134,18 +136,20 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
       )))}
       {confirmation ? (
         <>
-          <Space wrap>
-            <Button type="primary" onClick={() => submit({ decision: 'confirm' })} disabled={settled || readOnly || submitting}
-              loading={submitting}>
-              {question?.type === 'confirm' && question.confirm_label || '确认'}
-            </Button>
-            <Button onClick={() => submit({ decision: 'cancel' })} disabled={settled || readOnly || submitting}>
-              取消
-            </Button>
-            {canView ? <Button danger={failed} onClick={() => setViewing(true)}>{question?.type === 'confirm' && question.view_label || '查看'}</Button> : null}
+          <div className="question-confirm-footer">
+            <Space wrap size={12} className="question-confirm-actions">
+              <Button type="primary" onClick={() => submit({ decision: 'confirm' })} disabled={settled || readOnly || submitting}
+                loading={submitting}>
+                确认
+              </Button>
+              <Button onClick={() => submit({ decision: 'cancel' })} disabled={settled || readOnly || submitting}>
+                取消
+              </Button>
+              {canView ? <Button danger={failed} onClick={() => setViewing(true)}>查看结果</Button> : null}
+            </Space>
             {status ? <Typography.Text type={failed ? 'danger' : 'secondary'} role="status">{status}</Typography.Text> : null}
             {readOnly && !status ? <Typography.Text type="secondary">历史提问仅供查看</Typography.Text> : null}
-          </Space>
+          </div>
           <Drawer placement="right" size="large" title={failed ? '执行异常' : execution ? '执行结果' : '确认详情'} open={viewing}
             onClose={() => setViewing(false)}>
             <pre className={`question-result${failed ? ' question-result-error' : ''}`}>{resultText}</pre>

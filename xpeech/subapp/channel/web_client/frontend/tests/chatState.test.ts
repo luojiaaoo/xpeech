@@ -216,7 +216,7 @@ test('associates execution questions with pending calls and preserves success fl
   const messages = apply([
     tools('tool_call', [['a', 'shell', {}], ['b', 'shell', {}]]),
     toolResult({ id: 'a', name: 'shell', result: 'ok', duration_seconds: 0, success: true }),
-    event('question', '{"type":"confirm","title":"执行确认：shell"}'),
+    event('question', '{"type":"confirm","title":"运行命令","tool_name":"shell"}'),
     toolResult({ id: 'b', name: 'shell', result: 'RuntimeError: failed', duration_seconds: 0, success: false }),
   ]);
   assert.equal(messages.find(item => item.role === 'question')?.questionToolId, 'b');

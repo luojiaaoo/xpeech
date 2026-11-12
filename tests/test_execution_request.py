@@ -321,8 +321,9 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
             assert executions == []
             form = validate_confirm_question_json(event["context"])
             assert form["tool_call_id"] == call.id
-            assert "输出 hello" in form["description"]
-            assert "echo hello" in form["description"]
+            assert form["description"] == "输出 hello"
+            assert form["arguments"] == {"command": "echo hello"}
+            assert form["timeout_seconds"] == 300
             assert form["type"] == "confirm"
             assert "fields" not in form
             card = build_feishu_question_card(event["context"])
@@ -608,8 +609,6 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
             "extra": 1,
             "execution_description": "测试 MCP 调用",
             "execution_title": "发送测试消息",
-            "execution_confirm_label": "发送",
-            "execution_view_label": "查看回复",
         },
     )
     denied = not_interactive and needs_confirmation is not False
@@ -620,8 +619,10 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
             assert not not_interactive
             question = validate_confirm_question_json(event["context"])
             assert question["title"] == "发送测试消息"
-            assert question["confirm_label"] == "发送"
-            assert question["view_label"] == "查看回复"
+            assert question["description"] == "测试 MCP 调用"
+            assert question["arguments"] == {"text": "hello", "extra": 1}
+            assert "confirm_label" not in question
+            assert "view_label" not in question
             assert "execution_title" not in question["description"]
             assert remote_calls == []
             await answer({"decision": "confirm"})
@@ -697,24 +698,26 @@ async def test_custom_confirmation_copy_is_not_passed_to_original_tool(tmp_path,
     ))
     call = ToolCallRequest(id="custom-copy", name="shell", arguments={
         "command": "echo hello", "execution_description": "输出 hello",
-        "execution_title": "测试命令", "execution_confirm_label": "运行", "execution_view_label": "查看输出",
+        "execution_title": "测试命令",
     })
     async for event in stream_for(tmp_path, current_provider, [call], []):
         if event["event"] == "question":
             question = validate_confirm_question_json(event["context"])
             assert question["title"] == "测试命令"
-            assert question["confirm_label"] == "运行"
-            assert question["view_label"] == "查看输出"
+            assert question["description"] == "输出 hello"
+            assert question["arguments"] == {"command": "echo hello"}
+            assert "confirm_label" not in question
+            assert "view_label" not in question
             assert "execution_title" not in question["description"]
             card = build_feishu_question_card(event["context"])
-            assert card["body"]["elements"][-1]["columns"][0]["elements"][0]["text"]["content"] == "运行"
+            assert card["body"]["elements"][-1]["columns"][0]["elements"][0]["text"]["content"] == "确认"
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
             assert json.loads(event["context"])["result"] == "hello"
     assert executions == [{"command": "echo hello"}]
 
 
-@pytest.mark.parametrize("parameter", ["execution_title", "execution_confirm_label", "execution_view_label"])
+@pytest.mark.parametrize("parameter", ["execution_title"])
 def test_confirmation_copy_is_in_schema_and_rejects_blank_values(parameter):
     async def ping():
         """Ping."""
@@ -724,5 +727,7 @@ def test_confirmation_copy_is_in_schema_and_rejects_blank_values(parameter):
     wrapped = build_execution_request_tool(ping)
     model = get_tool_model_cls(wrapped).model_cls
     assert parameter in as_tool(wrapped)["function"]["parameters"]["properties"]
+    assert "execution_confirm_label" not in as_tool(wrapped)["function"]["parameters"]["properties"]
+    assert "execution_view_label" not in as_tool(wrapped)["function"]["parameters"]["properties"]
     with pytest.raises(ValueError):
         model(execution_description="测试", **{parameter: "  "})
