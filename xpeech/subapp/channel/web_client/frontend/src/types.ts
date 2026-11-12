@@ -174,7 +174,8 @@ export interface ChatEvent {
 }
 
 export interface ToolCallResult {
-  id: string;
+  tool_call_id?: string;
+  id?: string; // Legacy event history.
   name: string;
   result: unknown;
   duration_seconds: number;

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+from dataclasses import dataclass, field
+from typing import Any
 
 import httpx
 from lark_channel import (
@@ -25,7 +27,6 @@ from ..helper import download_file as download_channel_file
 from ..helper import iter_chat_events, notify_question
 from ..schema import ChatEvent, ChatEventType, Message
 from .cards import (
-    FINISH_CARD_CONTENT,
     build_feishu_background_task_card,
     build_feishu_question_card,
 )
@@ -36,6 +37,15 @@ from .formatting import FeishuEventFormatter
 from .inbound import FeishuInboundMixin, UnsupportedFeishuMessageError
 
 BACKGROUND_MESSAGE_RETRY_SECONDS = 2.0
+
+
+@dataclass
+class _QuestionCard:
+    message_id: str
+    context: str
+    disabled: bool = False
+    submitting: bool = False
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class FeishuBridge(
@@ -55,6 +65,7 @@ class FeishuBridge(
         self.app_id = app_id
         self.app_secret = app_secret
         self.session_update_message_id: dict[str, str] = {}
+        self.question_cards: dict[str, _QuestionCard] = {}
         self.channel = XpeechFeishuChannel(
             app_id=self.app_id,
             app_secret=self.app_secret,
@@ -96,21 +107,45 @@ class FeishuBridge(
             button_data = card_action_event.action.value
             if isinstance(button_data, dict) and button_data.get("decision") in ("confirm", "cancel"):
                 form_data = {"decision": button_data["decision"]}
-        await notify_question(
-            user_id,
-            form_data,
-            self.chat_url,
-            "feishu",
-            session_id=DEFAULT_SESSION_ID,
-        )
-        result = await self.channel.update_card(
-            card_action_event.message_id,
-            FINISH_CARD_CONTENT,
-        )
-        self._ensure_send_success(
-            result,
-            operation="update completed question card",
-        )
+        card = self.question_cards.get(card_action_event.message_id)
+        if card is None:
+            return
+        async with card.lock:
+            if card.disabled or card.submitting:
+                return
+            card.submitting = True
+        try:
+            await notify_question(
+                user_id,
+                form_data,
+                self.chat_url,
+                "feishu",
+                session_id=DEFAULT_SESSION_ID,
+            )
+            async with card.lock:
+                # 执行结果可能先于提交响应到达，保留已经完成的卡片。
+                if card.disabled:
+                    return
+                card.disabled = True
+                try:
+                    result = await self.channel.update_card(
+                        card.message_id, build_feishu_question_card(card.context, disabled=True, answers=form_data),
+                    )
+                    self._ensure_send_success(result, operation="disable submitted question")
+                except Exception:
+                    logger.exception("Failed to disable Feishu question card message_id={}", card.message_id)
+        finally:
+            async with card.lock:
+                card.submitting = False
+
+    async def _finish_confirmation_card(self, card: _QuestionCard, tool_result: dict[str, Any]) -> None:
+        async with card.lock:
+            card.disabled = True
+            result = await self.channel.update_card(
+                card.message_id, build_feishu_question_card(card.context, tool_result=tool_result),
+            )
+            self._ensure_send_success(result, operation="update execution confirmation card")
+            self.question_cards.pop(card.message_id, None)
 
     async def consume(self, messages: list[Message]) -> None:
         message = messages[-1]
@@ -119,6 +154,8 @@ class FeishuBridge(
         reply_to = message.message_id
         sender_name = message.sender_name
         tool_progress = ToolProgress()
+        tool_question_cards: dict[str, _QuestionCard] = {}
+        question_message_ids: set[str] = set()
         for source in messages:
             try:
                 await self.add_reaction(source)
@@ -140,6 +177,14 @@ class FeishuBridge(
                         await self.finish_tool_progress(tool_progress)
                         tool_progress = ToolProgress()
                     await self.send_tool_progress(chat_id, event, tool_progress)
+                    if event.event == ChatEventType.TOOL_CALL_RESULT:
+                        try:
+                            payload = json.loads(event.context)
+                            tool_call_id = payload["tool_call_id"]
+                        except (ValueError, TypeError, KeyError):
+                            tool_call_id = None
+                        if tool_call_id in tool_question_cards:
+                            await self._finish_confirmation_card(tool_question_cards.pop(tool_call_id), payload)
                     continue
                 if event.event == ChatEventType.SEND_FILE:
                     downloaded_file = await download_channel_file(
@@ -167,7 +212,14 @@ class FeishuBridge(
                     self._ensure_send_success(
                         result,
                         operation="send question card",
+                        require_message_id=True,
                     )
+                    question = json.loads(event.context)
+                    card = _QuestionCard(result.message_id, event.context)
+                    self.question_cards[result.message_id] = card
+                    question_message_ids.add(result.message_id)
+                    if question.get("type") == "confirm" and question.get("tool_call_id"):
+                        tool_question_cards[question["tool_call_id"]] = card
                     continue
 
                 formatted = self._format_chat_event(event)
@@ -200,6 +252,8 @@ class FeishuBridge(
                 user_id,
             )
         finally:
+            for message_id in question_message_ids:
+                self.question_cards.pop(message_id, None)
             await self.finish_tool_progress(tool_progress)
 
     async def _send_backend_error(

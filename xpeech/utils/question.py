@@ -75,6 +75,7 @@ class ConfirmQuestion(StrictBaseModel):
     type: Literal["confirm"] = "confirm"
     title: str = "请确认"
     description: str | None = None
+    tool_call_id: str | None = None
     tool_name: str | None = None
     confirm_label: str = "确认"
     view_label: str = "查看"
@@ -104,11 +105,12 @@ def validate_confirm_question_json(data: str | dict[str, Any]) -> dict[str, Any]
 
 def build_execution_question(
     tool_name: str, arguments: dict[str, Any], description: str, *,
-    title: str | None = None, confirm_label: str = "确认", view_label: str = "查看",
+    tool_call_id: str | None = None, title: str | None = None, confirm_label: str = "确认", view_label: str = "查看",
 ) -> str:
     """通过确认问题展示执行说明、参数和确认 / 取消按钮。"""
     return ConfirmQuestion(
         title=title or "执行确认",
+        tool_call_id=tool_call_id,
         tool_name=tool_name,
         confirm_label=confirm_label,
         view_label=view_label,

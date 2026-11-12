@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+import re
+from collections.abc import AsyncIterator, Iterator
 from html import escape
 from typing import Any, NotRequired, TypedDict
 
@@ -12,17 +13,73 @@ def plain_text(content: str) -> dict[str, str]:
     return {"tag": "plain_text", "content": content}
 
 
+_CODE_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)")
+
+
+def _markdown_parts(content: str, *, close_unfinished: bool = False) -> Iterator[tuple[str, bool]]:
+    """分出围栏代码块；流式输出中尚未闭合的代码块延伸到当前末尾。"""
+    fence = ""
+    lines: list[str] = []
+    for line in content.splitlines(keepends=True):
+        match = _CODE_FENCE.match(line)
+        if fence:
+            lines.append(line)
+            if (match and match[1][0] == fence[0] and len(match[1]) >= len(fence)
+                    and not match[2].strip()):
+                yield "".join(lines), True
+                lines = []
+                fence = ""
+        elif match and (match[1][0] != "`" or "`" not in match[2]):
+            if lines:
+                yield "".join(lines), False
+            lines = [line]
+            fence = match[1]
+        else:
+            lines.append(line)
+    if lines:
+        text = "".join(lines)
+        if fence and close_unfinished:
+            # 独立工具结果可能被截断；补齐围栏，避免吞掉下一条结果。
+            text += ("" if text.endswith(("\r", "\n")) else "\n") + fence
+        yield text, bool(fence)
+
+
 def ensure_markdown(content: str, max_chars: int | None = None) -> str:
-    """保留 Markdown，转义动态文本中的 XML/HTML，避免被解析为飞书标签。"""
-    content = escape(content, quote=False)
+    """保留代码块原文，仅转义正文中的 XML/HTML，避免被解析为飞书标签。"""
+    parts = [(text if code else escape(text, quote=False), code) for text, code in _markdown_parts(content)]
+    content = "".join(text for text, _ in parts)
     if max_chars is not None and len(content) > max_chars:
-        content = content[:max(0, max_chars - 1)]
-        # 截断时不保留残缺的 HTML 实体。
-        last_entity = content.rfind("&")
-        if last_entity > content.rfind(";"):
-            content = content[:last_entity]
-        content += "…"
+        if max_chars <= 0:
+            return ""
+        remaining = max_chars - 1
+        truncated = []
+        for text, code in parts:
+            prefix = text[:remaining]
+            if not code and len(prefix) < len(text):
+                # 只在转义过的正文中移除残缺实体，代码中的 & 是原始字符。
+                last_entity = prefix.rfind("&")
+                if last_entity > prefix.rfind(";"):
+                    prefix = prefix[:last_entity]
+            truncated.append(prefix)
+            remaining -= len(text)
+            if remaining <= 0:
+                break
+        content = "".join(truncated) + "…"
     return content
+
+
+def color_markdown(content: str, color: str) -> str:
+    """给已转义的正文着色，保持代码块及其围栏独占一行。"""
+    parts = []
+    for text, code in _markdown_parts(content):
+        if code:
+            parts.append(text)
+        else:
+            body = text.rstrip("\r\n")
+            if body:
+                parts.append(f'<font color="{color}">{body}</font>')
+            parts.append(text[len(body):])
+    return "".join(parts)
 
 
 class OutputEventType(TypedDict):
@@ -215,28 +272,19 @@ class FeishuEventFormatter:
         limit = output.get("max_result_chars" if is_result else "max_argument_chars")
         try:
             payload = json.loads(event.context)
-        except (json.JSONDecodeError, TypeError):
+            if is_result:
+                name = self._truncate(payload["name"], output.get("max_argument_chars"))
+                value = payload["result"]
+                text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                text = "".join(part for part, _ in _markdown_parts(self._truncate(text, limit), close_unfinished=True))
+                return f"**{name}**\n{text}"
+
+            lines = []
+            for call in payload:
+                name = self._truncate(call["name"], output.get("max_argument_chars"))
+                value = call["arguments"]
+                text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                lines.append(f"{name} {self._truncate(text, limit)}")
+            return " | ".join(lines)
+        except (json.JSONDecodeError, TypeError, KeyError):
             return self._truncate(str(event.context), limit)
-        if is_result:
-            if (
-                not isinstance(payload, dict)
-                or not {"id", "name", "result", "duration_seconds"}.issubset(payload)
-                or not isinstance(payload["id"], str)
-                or not isinstance(payload["name"], str)
-            ):
-                return self._truncate(str(event.context), limit)
-            name = self._truncate(payload["name"], output.get("max_argument_chars"))
-            value = payload["result"]
-            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-            return f"**{name}**\n{self._truncate(text, limit)}"
-        if not isinstance(payload, list) or not all(
-            isinstance(entry, list) and len(entry) >= 3 and isinstance(entry[1], str) for entry in payload
-        ):
-            return self._truncate(str(event.context), limit)
-        lines = []
-        for _, name, value, *_ in payload:
-            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-            name = self._truncate(name, output.get("max_argument_chars"))
-            text = self._truncate(text, limit)
-            lines.append(f"{name} {text}")
-        return " | ".join(lines)

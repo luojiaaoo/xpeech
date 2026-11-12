@@ -152,7 +152,10 @@ class AgentLoop:
         # 先记录，再输出；暂停在 yield 时，finally 仍能保存这条消息。
         yield {
             "event": "tool_call",
-            "context": json.dumps([(i.id, i.name, i.arguments) for i in response.tool_calls]),
+            "context": json.dumps([
+                {"tool_call_id": i.id, "name": i.name, "arguments": i.arguments}
+                for i in response.tool_calls
+            ]),
         }
 
         # 执行工具调用
@@ -208,6 +211,7 @@ class AgentLoop:
                     arguments = {key: value for key, value in tool_call.arguments.items() if key not in EXECUTION_PARAMETERS}
                     question = build_execution_question(
                         tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION],
+                        tool_call_id=tool_call.id,
                         title=tool_call.arguments.get("execution_title"),
                         confirm_label=tool_call.arguments.get("execution_confirm_label", "确认"),
                         view_label=tool_call.arguments.get("execution_view_label", "查看"),
@@ -293,7 +297,7 @@ class AgentLoop:
                 tool_result_content = result
 
             tool_call_result = {
-                "id": tool_call.id,
+                "tool_call_id": tool_call.id,
                 "name": tool_call.name,
                 "result": tool_result_content,
                 "duration_seconds": duration_seconds,

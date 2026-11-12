@@ -1,4 +1,5 @@
 import asyncio
+import json
 from html import unescape
 from pathlib import Path
 from time import time
@@ -29,8 +30,8 @@ import xpeech.subapp.channel.feishu.delivery as feishu_delivery
 import xpeech.subapp.channel.feishu.inbound as feishu_inbound
 from xpeech.subapp.channel.feishu.bridge import FeishuBridge
 from xpeech.subapp.channel.feishu.cards import (
-    FINISH_CARD_CONTENT,
     build_feishu_background_task_card,
+    build_feishu_question_card,
 )
 from xpeech.subapp.channel.feishu.channel import XpeechFeishuChannel
 from xpeech.subapp.channel.feishu.config import DEFAULT_SESSION_ID
@@ -64,8 +65,15 @@ def _bridge_with_channel(
     channel.block_batch_scope = MagicMock()
     channel.unblock_batch_scope = MagicMock()
     bridge.session_update_message_id = {}
+    bridge.question_cards = {}
     bridge.get_user_identity = AsyncMock(return_value=(employee_no, email))
     return bridge
+
+
+def _remember_question(bridge, message_id, question):
+    card = feishu_bridge._QuestionCard(message_id, json.dumps(question))
+    bridge.question_cards[message_id] = card
+    return card
 
 
 def test_channel_uses_expected_compatibility_configuration():
@@ -91,6 +99,9 @@ async def test_sdk_batches_busy_messages_and_card_answer_unblocks_agent(tmp_path
     bridge.get_user_identity = AsyncMock(return_value=("E1001", "alice@example.com"))
     channel.download_resource_to_file = AsyncMock(return_value=tmp_path / "report.txt")
     channel.update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_question"))
+    question_card = _remember_question(bridge, "om_question", {
+        "type": "form", "fields": [{"type": "input", "name": "answer", "label": "回答"}],
+    })
     first_started = asyncio.Event()
     answered = asyncio.Event()
     batches = []
@@ -164,7 +175,9 @@ async def test_sdk_batches_busy_messages_and_card_answer_unblocks_agent(tmp_path
         "feishu",
         session_id=DEFAULT_SESSION_ID,
     )
-    channel.update_card.assert_awaited_once_with("om_question", FINISH_CARD_CONTENT)
+    channel.update_card.assert_awaited_once_with(
+        "om_question", build_feishu_question_card(question_card.context, disabled=True, answers={"answer": "yes"}),
+    )
 
 
 @pytest.mark.parametrize(
@@ -613,11 +626,24 @@ async def test_card_action_uses_typed_form_value(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(feishu_bridge, "notify_question", notify_question)
     update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_message"))
     bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    question_card = _remember_question(bridge, "om_message", {
+        "type": "form", "fields": [
+            {"type": "input", "name": "answer", "label": "回答", "default_value": "initial"},
+            {"type": "select", "name": "choice", "label": "单选", "options": [{"label": "A", "value": "a"}]},
+            {"type": "multi_select", "name": "tags", "label": "多选", "options": [{"label": "B", "value": "b"}]},
+            {"type": "date", "name": "day", "label": "日期"},
+            {"type": "datetime", "name": "when", "label": "时间"},
+        ],
+    })
+    answers = {
+        "answer": "typed", "choice": "a", "tags": ["b"],
+        "day": "2026-11-12 +0800", "when": "2026-11-12 09:30 +0800",
+    }
     event = CardActionEvent(
         message_id="om_message",
         chat_id="oc_chat",
         operator=EventOperator(open_id="ou_sender"),
-        action=CardActionPayload(form_value={"answer": "typed"}),
+        action=CardActionPayload(form_value=answers),
         raw={"event": {"action": {"form_value": {"answer": "raw"}}}},
     )
 
@@ -625,13 +651,26 @@ async def test_card_action_uses_typed_form_value(monkeypatch: pytest.MonkeyPatch
 
     notify_question.assert_awaited_once_with(
         "E1001",
-        {"answer": "typed"},
+        answers,
         "http://backend.test",
         "feishu",
         session_id=DEFAULT_SESSION_ID,
     )
     bridge.get_user_identity.assert_awaited_once_with("ou_sender")
-    update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
+    update_card.assert_awaited_once_with(
+        "om_message", build_feishu_question_card(question_card.context, disabled=True, answers=answers),
+    )
+    elements = update_card.await_args.args[1]["body"]["elements"][0]["elements"]
+    fields = {element["name"]: element for element in elements if "name" in element}
+    assert all(field["disabled"] for field in fields.values())
+    assert fields["answer"]["default_value"] == "typed"
+    assert fields["choice"]["initial_option"] == "a"
+    assert fields["tags"]["selected_values"] == ["b"]
+    assert fields["day"]["initial_date"] == "2026-11-12"
+    assert fields["when"]["initial_datetime"] == "2026-11-12 09:30"
+    submit = elements[-1]["columns"][0]["elements"][0]
+    assert submit["disabled"] is True
+    assert submit["text"]["content"] == "提交"
 
 
 @pytest.mark.asyncio
@@ -641,17 +680,153 @@ async def test_confirmation_button_callback_submits_decision(monkeypatch, decisi
     monkeypatch.setattr(feishu_bridge, "notify_question", notify_question)
     update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_message"))
     bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    question_card = _remember_question(bridge, "om_message", {"type": "confirm", "description": "继续执行？"})
     event = CardActionEvent(
         message_id="om_message",
         chat_id="oc_chat",
         operator=EventOperator(open_id="ou_sender"),
-        action=CardActionPayload(tag="button", value={"decision": decision}),
+        action=CardActionPayload(tag="button", value={"type": "confirm", "decision": decision, "tool_call_id": None}),
     )
     await bridge._on_card_action(event)
     notify_question.assert_awaited_once_with(
         "E1001", {"decision": decision}, "http://backend.test", "feishu", session_id=DEFAULT_SESSION_ID,
     )
-    update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
+    update_card.assert_awaited_once_with(
+        "om_message", build_feishu_question_card(question_card.context, disabled=True),
+    )
+    card = update_card.await_args.args[1]
+    assert card["body"]["elements"][0]["text"]["content"] == "继续执行？"
+    assert all(column["elements"][0]["disabled"] for column in card["body"]["elements"][-1]["columns"])
+    await bridge._on_card_action(event)
+    assert notify_question.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [SendResult(success=False), RuntimeError("Feishu unavailable")])
+async def test_card_update_failure_does_not_block_answer_submission(monkeypatch, failure):
+    notify = AsyncMock()
+    monkeypatch.setattr(feishu_bridge, "notify_question", notify)
+
+    async def update(*_args, **_kwargs):
+        notify.assert_awaited_once()
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    update_card = AsyncMock(side_effect=update)
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    card = _remember_question(bridge, "om_message", {"type": "confirm"})
+    event = CardActionEvent(
+        message_id="om_message", chat_id="oc_chat", operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(tag="button", value={"decision": "confirm"}),
+    )
+
+    await bridge._on_card_action(event)
+    await bridge._on_card_action(event)
+
+    notify.assert_awaited_once_with(
+        "E1001", {"decision": "confirm"}, bridge.chat_url, "feishu", session_id=DEFAULT_SESSION_ID,
+    )
+    assert card.disabled is True
+    assert update_card.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmation", [False, True])
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+async def test_failed_answer_does_not_disable_card_and_allows_retry(monkeypatch, confirmation, error_type):
+    update_card = AsyncMock(return_value=SendResult(success=True))
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    question = {"type": "confirm"} if confirmation else {
+        "type": "form", "fields": [{"type": "input", "name": "answer", "label": "回答"}],
+    }
+    card = _remember_question(bridge, "om_message", question)
+    answers = {"decision": "confirm"} if confirmation else {"answer": "保留我的回答"}
+    error = error_type("submission interrupted")
+    notify = AsyncMock(side_effect=[error, None])
+    monkeypatch.setattr(feishu_bridge, "notify_question", notify)
+    event = CardActionEvent(
+        message_id="om_message", chat_id="oc_chat", operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(form_value=answers),
+    )
+
+    with pytest.raises(error_type) as exc:
+        await bridge._on_card_action(event)
+    assert exc.value is error
+    assert card.disabled is False
+    assert card.submitting is False
+    update_card.assert_not_awaited()
+
+    await bridge._on_card_action(event)
+    await bridge._on_card_action(event)
+    assert card.disabled is True
+    assert notify.await_count == 2
+    update_card.assert_awaited_once_with(
+        "om_message", build_feishu_question_card(card.context, disabled=True, answers=answers),
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_submission_ignores_duplicate_clicks_without_disabling_card(monkeypatch):
+    update_card = AsyncMock(return_value=SendResult(success=True))
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    card = _remember_question(bridge, "om_message", {"type": "confirm"})
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def submit(*_args, **_kwargs):
+        update_card.assert_not_awaited()
+        started.set()
+        await release.wait()
+
+    notify = AsyncMock(side_effect=submit)
+    monkeypatch.setattr(feishu_bridge, "notify_question", notify)
+    event = CardActionEvent(
+        message_id="om_message", chat_id="oc_chat", operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(tag="button", value={"decision": "confirm"}),
+    )
+    callback = asyncio.create_task(bridge._on_card_action(event))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert card.submitting is True
+        assert card.disabled is False
+        await asyncio.wait_for(bridge._on_card_action(event), timeout=1)
+        notify.assert_awaited_once()
+        update_card.assert_not_awaited()
+    finally:
+        release.set()
+        await asyncio.wait_for(callback, timeout=1)
+    assert card.submitting is False
+    assert card.disabled is True
+    update_card.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish_success", [False, True])
+async def test_failed_submission_does_not_change_a_finished_confirmation(monkeypatch, finish_success):
+    update_card = AsyncMock(return_value=SendResult(success=finish_success))
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    card = _remember_question(bridge, "om_message", {"type": "confirm", "tool_call_id": "call-1"})
+    tool_result = {"success": True, "result": "已执行"}
+
+    async def notify(*_args, **_kwargs):
+        await bridge._finish_confirmation_card(card, tool_result)
+        raise RuntimeError("submission response lost")
+
+    monkeypatch.setattr(feishu_bridge, "notify_question", notify)
+    event = CardActionEvent(
+        message_id="om_message", chat_id="oc_chat", operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(tag="button", value={"decision": "confirm"}),
+    )
+
+    with pytest.raises(RuntimeError):
+        await bridge._on_card_action(event)
+    assert card.disabled is True
+    assert card.submitting is False
+    assert update_card.await_count == 1
+    assert update_card.await_args.args == (
+        "om_message", build_feishu_question_card(card.context, tool_result=tool_result),
+    )
 
 
 @pytest.mark.parametrize(
@@ -948,3 +1123,60 @@ async def test_consume_returns_backend_http_error_to_user(
         "color": "red",
     }
     assert "streaming_mode" not in sent_message["card"].get("config", {})
+
+
+@pytest.mark.asyncio
+async def test_execution_result_cannot_be_overwritten_by_submitted_confirmation_state(monkeypatch):
+    update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_message"))
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    question_card = _remember_question(bridge, "om_message", {"type": "confirm", "tool_call_id": "call-1"})
+    tool_result = {"success": False, "result": "执行出错"}
+    final_card = build_feishu_question_card(question_card.context, tool_result=tool_result)
+
+    async def notify(*_args, **_kwargs):
+        update_card.assert_not_awaited()
+        await bridge._finish_confirmation_card(question_card, tool_result)
+
+    monkeypatch.setattr(feishu_bridge, "notify_question", notify)
+    event = CardActionEvent(
+        message_id="om_message", chat_id="oc_chat", operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(tag="button", value={
+            "type": "confirm", "decision": "confirm", "tool_call_id": "call-1",
+        }),
+    )
+    await bridge._on_card_action(event)
+    update_card.assert_awaited_once_with("om_message", final_card)
+
+
+@pytest.mark.asyncio
+async def test_confirmation_timeout_before_identity_lookup_finishes_keeps_final_card(monkeypatch):
+    update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_message"))
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    question_card = _remember_question(bridge, "om_message", {"type": "confirm", "tool_call_id": "call-1"})
+    identity_started = asyncio.Event()
+    release_identity = asyncio.Event()
+
+    async def identity(_open_id):
+        identity_started.set()
+        await release_identity.wait()
+        return "E1001", None
+
+    bridge.get_user_identity = identity
+    notify = AsyncMock()
+    monkeypatch.setattr(feishu_bridge, "notify_question", notify)
+    event = CardActionEvent(
+        message_id="om_message", chat_id="oc_chat", operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(tag="button", value={"type": "confirm", "decision": "confirm"}),
+    )
+    callback = asyncio.create_task(bridge._on_card_action(event))
+    try:
+        await asyncio.wait_for(identity_started.wait(), timeout=1)
+        tool_result = {"success": False, "result": "用户确认超时，工具未执行。"}
+        await bridge._finish_confirmation_card(question_card, tool_result)
+    finally:
+        release_identity.set()
+        await asyncio.wait_for(callback, timeout=1)
+    update_card.assert_awaited_once_with(
+        "om_message", build_feishu_question_card(question_card.context, tool_result=tool_result),
+    )
+    notify.assert_not_awaited()

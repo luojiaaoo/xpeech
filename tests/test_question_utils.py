@@ -13,7 +13,7 @@ from xpeech.utils.question import (
 @pytest.mark.parametrize("serialized", [False, True])
 def test_confirmation_question_has_no_form_fields(serialized):
     question = {"type": "confirm", "title": "执行确认", "description": "是否继续？\n请确认执行参数。"}
-    assert validate_confirm_question_json(json.dumps(question) if serialized else question) == {**question, "tool_name": None, "confirm_label": "确认", "view_label": "查看"}
+    assert validate_confirm_question_json(json.dumps(question) if serialized else question) == {**question, "tool_call_id": None, "tool_name": None, "confirm_label": "确认", "view_label": "查看"}
 
 
 @pytest.mark.parametrize("extra", [{"fields": []}, {"submit_label": "执行"}, {"subtitle": "旧副标题"}])

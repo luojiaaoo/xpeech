@@ -320,6 +320,7 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
         if event["event"] == "question":
             assert executions == []
             form = validate_confirm_question_json(event["context"])
+            assert form["tool_call_id"] == call.id
             assert "输出 hello" in form["description"]
             assert "echo hello" in form["description"]
             assert form["type"] == "confirm"
@@ -341,13 +342,14 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
             buttons = [column["elements"][0] for column in actions["columns"]]
             assert [button["text"]["content"] for button in buttons] == ["确认", "取消"]
             assert [button["behaviors"][0]["value"] for button in buttons] == [
-                {"decision": "confirm"}, {"decision": "cancel"},
+                {"decision": "confirm", "type": "confirm", "tool_call_id": call.id},
+                {"decision": "cancel", "type": "confirm", "tool_call_id": call.id},
             ]
             await answer(reply)
 
     assert [event["event"] for event in events] == ["tool_call", "question", "tool_call_result"]
     result = json.loads(events[-1]["context"])
-    assert (result["id"], result["name"]) == ("shell-1", "shell")
+    assert (result["tool_call_id"], result["name"]) == ("shell-1", "shell")
     assert history[-1]["content"] == result["result"]
     assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
     if expected == "confirmed":

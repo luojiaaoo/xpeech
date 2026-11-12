@@ -47,7 +47,8 @@ export function finishChatTurn(messages: ChatMessage[]): ChatMessage[] {
 
 function isToolCallResult(payload: unknown): payload is ToolCallResult {
   return typeof payload === 'object' && payload !== null && !Array.isArray(payload)
-    && 'id' in payload && typeof payload.id === 'string'
+    && (('tool_call_id' in payload && typeof payload.tool_call_id === 'string')
+      || ('id' in payload && typeof payload.id === 'string'))
     && 'name' in payload && typeof payload.name === 'string'
     && 'result' in payload
     && 'duration_seconds' in payload && typeof payload.duration_seconds === 'number'
@@ -76,19 +77,23 @@ function applyToolEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[
   if (isResult) {
     if (isToolCallResult(payload)) {
       updateToolCall(next, {
-        id: payload.id, name: payload.name, output: payload.result,
+        id: (payload.tool_call_id ?? payload.id)!, name: payload.name, output: payload.result,
         status: 'completed', durationSeconds: payload.duration_seconds,
         ...(typeof payload.success === 'boolean' ? { success: payload.success } : {}),
       });
       return next;
     }
-  } else if (Array.isArray(payload) && payload.every((entry) => (
-    Array.isArray(entry) && entry.length >= 3 && typeof entry[0] === 'string' && typeof entry[1] === 'string'
-  ))) {
-    for (const [id, name, input] of payload) {
-      updateToolCall(next, { id, name, input, status: 'running' });
+  } else if (Array.isArray(payload)) {
+    // Read older tuple events as well as the explicit ID payload.
+    const calls = payload.map(entry => Array.isArray(entry)
+      ? { tool_call_id: entry[0], name: entry[1], arguments: entry[2] } : entry);
+    if (calls.every(call => call && typeof call.tool_call_id === 'string'
+      && typeof call.name === 'string' && 'arguments' in call)) {
+      for (const call of calls) {
+        updateToolCall(next, { id: call.tool_call_id, name: call.name, input: call.arguments, status: 'running' });
+      }
+      return next;
     }
-    return next;
   }
   return [...next, {
     key: key('tool'), role: 'tool', content: '',
@@ -173,7 +178,9 @@ export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): Chat
     try {
       const question = JSON.parse(event.context);
       const toolName = question.tool_name || (question.title?.startsWith('执行确认：') ? question.title.slice('执行确认：'.length) : undefined);
-      if (question.type === 'confirm' && toolName) {
+      if (question.type === 'confirm' && typeof question.tool_call_id === 'string') {
+        questionToolId = question.tool_call_id;
+      } else if (question.type === 'confirm' && toolName) {
         const turn = next.slice(turnStart(next));
         questionToolId = turn.find(item => item.toolCall?.status === 'running'
           && item.toolCall.name === toolName

@@ -269,7 +269,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
 
     tool_result_event = next(event for event in events if event["event"] == "tool_call_result")
     tool_result = json.loads(tool_result_event["context"])
-    assert (tool_result["id"], tool_result["name"], tool_result["result"]) == (
+    assert (tool_result["tool_call_id"], tool_result["name"], tool_result["result"]) == (
         "call-1", "fake_tool", "tool result"
     )
     assert tool_result["duration_seconds"] >= 0

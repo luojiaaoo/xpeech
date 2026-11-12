@@ -233,3 +233,21 @@ test('custom confirmation titles associate results using the tool name', () => {
   ]);
   assert.equal(messages.find(item => item.role === 'question')?.questionToolId, 'a');
 });
+
+
+test('explicit tool IDs associate confirmation cards and out-of-order results without using names', () => {
+  const messages = apply([
+    event('tool_call', JSON.stringify([
+      { tool_call_id: 'a', name: 'shell', arguments: { command: 'A' } },
+      { tool_call_id: 'b', name: 'shell', arguments: { command: 'B' } },
+    ])),
+    event('question', '{"type":"confirm","title":"先确认 B","tool_call_id":"b"}'),
+    event('question', '{"type":"confirm","title":"再确认 A","tool_call_id":"a"}'),
+    toolResult({ tool_call_id: 'b', name: 'shell', result: 'B', duration_seconds: 0, success: false }),
+    toolResult({ tool_call_id: 'a', name: 'shell', result: 'A', duration_seconds: 1, success: true }),
+  ]);
+  assert.deepEqual(messages.filter(item => item.role === 'question').map(item => item.questionToolId), ['b', 'a']);
+  assert.deepEqual(messages.filter(item => item.toolCall).map(item => [item.toolCall?.id, item.toolCall?.output, item.toolCall?.success]), [
+    ['a', 'A', true], ['b', 'B', false],
+  ]);
+});

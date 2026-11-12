@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, DatePicker, Form, Input, Modal, Select, Space, Typography, message } from 'antd';
+import { Button, DatePicker, Form, Input, Drawer, Select, Space, Typography, message } from 'antd';
 import { answerQuestion } from './api';
 import type { ToolCallInfo } from './types';
 
@@ -25,6 +25,7 @@ interface FormQuestion extends QuestionBase {
 
 interface ConfirmQuestion extends QuestionBase {
   type: 'confirm';
+  tool_call_id?: string | null;
   tool_name?: string | null;
   confirm_label?: string;
   view_label?: string;
@@ -145,10 +146,10 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
             {status ? <Typography.Text type={failed ? 'danger' : 'secondary'} role="status">{status}</Typography.Text> : null}
             {readOnly && !status ? <Typography.Text type="secondary">历史提问仅供查看</Typography.Text> : null}
           </Space>
-          <Modal title={failed ? '执行异常' : execution ? '执行结果' : '确认详情'} open={viewing}
-            onCancel={() => setViewing(false)} footer={null}>
+          <Drawer placement="right" size="large" title={failed ? '执行异常' : execution ? '执行结果' : '确认详情'} open={viewing}
+            onClose={() => setViewing(false)}>
             <pre className={`question-result${failed ? ' question-result-error' : ''}`}>{resultText}</pre>
-          </Modal>
+          </Drawer>
         </>
       ) : readOnly ? <Typography.Text type="secondary">历史提问仅供查看</Typography.Text> : (
         <Button type="primary" htmlType="submit" loading={submitting} disabled={answered || readOnly}>

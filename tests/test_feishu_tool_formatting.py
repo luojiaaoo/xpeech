@@ -3,7 +3,7 @@ from html import unescape
 
 import pytest
 
-from xpeech.subapp.channel.feishu.formatting import OUTPUT_EVENT_TYPES, FeishuEventFormatter
+from xpeech.subapp.channel.feishu.formatting import OUTPUT_EVENT_TYPES, FeishuEventFormatter, ensure_markdown
 from xpeech.subapp.channel.schema import ChatEvent, ChatEventType
 
 
@@ -43,7 +43,7 @@ def test_tool_results_are_stream_data_without_a_separate_card_format():
     formatter = FeishuEventFormatter()
     event = tool_event(
         ChatEventType.TOOL_CALL_RESULT,
-        {"id": "id", "name": "shell", "result": "result", "duration_seconds": 0},
+        {"tool_call_id": "id", "name": "shell", "result": "result", "duration_seconds": 0},
     )
     assert ChatEventType.TOOL_CALL_RESULT not in OUTPUT_EVENT_TYPES
     assert formatter._format_chat_event(event) is None
@@ -59,7 +59,7 @@ def test_tool_card_displays_markup_as_text_without_changing_tool_results(raw):
     formatter = FeishuEventFormatter()
     event = tool_event(
         ChatEventType.TOOL_CALL_RESULT,
-        {"id": "id", "name": "web_fetch", "result": raw, "duration_seconds": 0},
+        {"tool_call_id": "id", "name": "web_fetch", "result": raw, "duration_seconds": 0},
     )
     result_text = formatter._format_tool_event(event)
     assert result_text == "**web_fetch**\n" + raw
@@ -80,6 +80,38 @@ def test_tool_card_truncation_keeps_html_entities_complete(monkeypatch):
     content = message["card"]["body"]["elements"][0]["elements"][0]["content"]
     assert len(content) <= 8
     assert content == "&lt;…"
+
+
+@pytest.mark.parametrize("fence", ["```", "````", "~~~"])
+@pytest.mark.parametrize("closed", [False, True])
+def test_xml_code_blocks_preserve_source_while_surrounding_text_is_escaped(fence, closed):
+    code = f'{fence}xml\n<root value="a & b">&amp; <at id="all" /></root>\n'
+    suffix = ""
+    if closed:
+        code += fence + "\n"
+        suffix = "正文 <outside>&"
+    raw = "**标题** <outside>&\n" + code + suffix
+    assert ensure_markdown(raw) == (
+        "**标题** &lt;outside&gt;&amp;\n" + code
+        + ("正文 &lt;outside&gt;&amp;" if closed else "")
+    )
+
+
+def test_shorter_or_mismatched_fences_do_not_end_a_code_block():
+    code = "````xml\n<one/>\n```\n<two/>\n~~~~\n<three/>\n````\n"
+    assert ensure_markdown(code + "<outside/>") == code + "&lt;outside/&gt;"
+
+
+def test_multiple_code_blocks_and_crlf_line_endings_are_preserved():
+    raw = "```xml\r\n<first/>&\r\n```\r\n<outside/>\r\n```html\r\n<div/>\r\n```"
+    assert ensure_markdown(raw) == raw.replace("<outside/>", "&lt;outside/&gt;")
+
+
+def test_truncation_preserves_literal_ampersands_inside_code_and_complete_entities_outside():
+    code = "```xml\n<root>&literal</root>\n```\n"
+    limit = len("```xml\n<root>&lit") + 1
+    assert ensure_markdown(code, limit) == "```xml\n<root>&lit…"
+    assert ensure_markdown(code + "<&" * 10, len(code) + 8) == code + "&lt;…"
 
 
 @pytest.mark.parametrize("event_type", [ChatEventType.ERROR, ChatEventType.COMMAND, ChatEventType.TOKEN_USAGE])
@@ -105,10 +137,10 @@ def test_truncation_limits_are_configured_in_output_event_types(monkeypatch):
     }
     monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, output)
     formatter = FeishuEventFormatter()
-    summary = formatter._format_tool_event(tool_event(ChatEventType.TOOL_CALL, [["id", "echo", "参" * 30]]))
+    summary = formatter._format_tool_event(tool_event(ChatEventType.TOOL_CALL, [{"tool_call_id": "id", "name": "echo", "arguments": "参" * 30}]))
     text = formatter._format_tool_event(tool_event(
         ChatEventType.TOOL_CALL_RESULT,
-        {"id": "id", "name": "echo", "result": "果" * 30, "duration_seconds": 0},
+        {"tool_call_id": "id", "name": "echo", "result": "果" * 30, "duration_seconds": 0},
     ))
     assert summary == "echo " + "参" * 9 + "…"
     assert text == "**echo**\n" + "果" * 19 + "…"
@@ -128,7 +160,7 @@ def test_empty_and_structured_results_are_preserved(value):
     text = FeishuEventFormatter()._format_tool_event(
         tool_event(
             ChatEventType.TOOL_CALL_RESULT,
-            {"id": "id", "name": "search", "result": value, "duration_seconds": 0},
+            {"tool_call_id": "id", "name": "search", "result": value, "duration_seconds": 0},
         ),
     )
     expected = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))

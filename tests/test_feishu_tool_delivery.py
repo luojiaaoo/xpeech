@@ -23,6 +23,7 @@ def bridge_with_channel():
     bridge = object.__new__(FeishuBridge)
     bridge.chat_url = "http://backend.test"
     bridge.session_update_message_id = {}
+    bridge.question_cards = {}
     bridge.add_reaction = AsyncMock()
     bridge.channel = SimpleNamespace(
         create_card_instance=AsyncMock(side_effect=["tools-card", "assistant-card"]),
@@ -65,13 +66,13 @@ async def test_each_tool_batch_has_its_own_collapsed_streaming_card(monkeypatch,
         yield tool_event(
             ChatEventType.TOOL_CALL,
             [
-                ["slow", "shell", {"command": "slow"}],
-                ["fast", "shell", {"command": "fast"}],
+                {"tool_call_id": "slow", "name": "shell", "arguments": {"command": "slow"}},
+                {"tool_call_id": "fast", "name": "shell", "arguments": {"command": "fast"}},
             ],
         )
         yield tool_event(
             ChatEventType.TOOL_CALL_RESULT,
-            {"id": "fast", "name": "shell", "result": "fast result", "duration_seconds": 0},
+            {"tool_call_id": "fast", "name": "shell", "result": "fast result", "duration_seconds": 0},
         )
         first = channel.update_card_element_content.await_args
         assert first.args[:2] == ("tools-card", "main")
@@ -79,15 +80,15 @@ async def test_each_tool_batch_has_its_own_collapsed_streaming_card(monkeypatch,
         assert "slow result" not in first.args[2]
         yield tool_event(
             ChatEventType.TOOL_CALL_RESULT,
-            {"id": "slow", "name": "shell", "result": "slow result", "duration_seconds": 1},
+            {"tool_call_id": "slow", "name": "shell", "result": "slow result", "duration_seconds": 1},
         )
         if with_assistant:
             yield ChatEvent(event=ChatEventType.ASSISTANT, context=assistant_text())
-        yield tool_event(ChatEventType.TOOL_CALL, [["fast", "echo", {"text": "second round"}]])
+        yield tool_event(ChatEventType.TOOL_CALL, [{"tool_call_id": "fast", "name": "echo", "arguments": {"text": "second round"}}])
         channel.finish_streaming_card.assert_any_await("tools-card", sequence=3)
         yield tool_event(
             ChatEventType.TOOL_CALL_RESULT,
-            {"id": "fast", "name": "echo", "result": "second result", "duration_seconds": 0},
+            {"tool_call_id": "fast", "name": "echo", "result": "second result", "duration_seconds": 0},
         )
 
     monkeypatch.setattr(bridge_module, "iter_chat_events", events)
@@ -146,12 +147,12 @@ async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(mon
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     bridge = bridge_with_channel()
     progress = ToolProgress()
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [["id", "echo", "a" * 30]]), progress)
+    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [{"tool_call_id": "id", "name": "echo", "arguments": "a" * 30}]), progress)
     await bridge.send_tool_progress(
         "chat",
         tool_event(
             ChatEventType.TOOL_CALL_RESULT,
-            {"id": "id", "name": "echo", "result": "x" * 30, "duration_seconds": 0},
+            {"tool_call_id": "id", "name": "echo", "result": "x" * 30, "duration_seconds": 0},
         ),
         progress,
     )
@@ -193,12 +194,12 @@ async def test_rss_batch_results_are_escaped_before_card_updates(monkeypatch):
     async def events(*_args, **_kwargs):
         yield tool_event(
             ChatEventType.TOOL_CALL,
-            [[str(i), "web_fetch", {"url": "https://example.test/rss"}] for i in range(10)],
+            [{"tool_call_id": str(i), "name": "web_fetch", "arguments": {"url": "https://example.test/rss"}} for i in range(10)],
         )
         for i in range(10):
             yield tool_event(
                 ChatEventType.TOOL_CALL_RESULT,
-                {"id": str(i), "name": "web_fetch", "result": rss, "duration_seconds": 0},
+                {"tool_call_id": str(i), "name": "web_fetch", "result": rss, "duration_seconds": 0},
             )
         yield ChatEvent(event=ChatEventType.ASSISTANT, context=assistant_text())
 
@@ -220,7 +221,7 @@ async def test_tool_card_stream_is_finished_when_consumption_fails_or_is_cancell
     waiting = asyncio.Event()
 
     async def events(*_args, **_kwargs):
-        yield tool_event(ChatEventType.TOOL_CALL, [["call", "shell", {}]])
+        yield tool_event(ChatEventType.TOOL_CALL, [{"tool_call_id": "call", "name": "shell", "arguments": {}}])
         waiting.set()
         if cancel:
             await asyncio.Event().wait()
@@ -258,3 +259,174 @@ async def test_header_patch_uses_sdk_partial_update_and_checks_response(monkeypa
     assert request.element_id == "tools"
     assert request.request_body.sequence == 3
     assert json.loads(request.request_body.partial_element) == header
+
+
+@pytest.mark.asyncio
+async def test_confirmation_cards_are_updated_by_tool_call_id_with_out_of_order_results(monkeypatch):
+    bridge = bridge_with_channel()
+    channel = bridge.channel
+    channel.send = AsyncMock(side_effect=[
+        SendResult(success=True, message_id="question-b"),
+        SendResult(success=True, message_id="question-a"),
+    ])
+    channel.update_card = AsyncMock(return_value=SendResult(success=True))
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+
+    async def events(*_args, **_kwargs):
+        yield tool_event(ChatEventType.TOOL_CALL, [
+            {"tool_call_id": "a", "name": "shell", "arguments": {"command": "A"}},
+            {"tool_call_id": "b", "name": "shell", "arguments": {"command": "B"}},
+        ])
+        for call_id in ["b", "a"]:
+            yield tool_event(ChatEventType.QUESTION, {
+                "type": "confirm", "title": f"确认 {call_id}", "description": "执行命令",
+                "tool_call_id": call_id, "tool_name": "shell", "view_label": "查看输出",
+            })
+        yield tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": "b", "name": "shell", "result": "RuntimeError: B failed", "success": False, "duration_seconds": 0,
+        })
+        yield tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": "a", "name": "shell", "result": "A done", "success": True, "duration_seconds": 1,
+        })
+
+    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    await bridge.consume([message()])
+    updates = channel.update_card.await_args_list
+    assert len(updates) == 2
+    assert [call.args[0] for call in updates] == ["question-b", "question-a"]
+    assert updates[0].args[1]["header"]["template"] == "red"
+    assert updates[1].args[1]["header"]["template"] == "blue"
+    assert "RuntimeError: B failed" in json.dumps(updates[0].args[1])
+    assert "A done" in json.dumps(updates[1].args[1])
+    assert "RuntimeError" not in json.dumps(updates[1].args[1])
+    for update in updates:
+        buttons = update.args[1]["body"]["elements"][-1]["columns"]
+        assert all(column["elements"][0]["disabled"] for column in buttons)
+    assert bridge.question_cards == {}
+    for call, call_id in zip(channel.send.await_args_list, ["b", "a"], strict=True):
+        card = call.args[1]["card"]
+        button = card["body"]["elements"][-1]["columns"][0]["elements"][0]
+        assert button["behaviors"][0]["value"]["type"] == "confirm"
+        assert button["behaviors"][0]["value"]["tool_call_id"] == call_id
+
+
+@pytest.mark.asyncio
+async def test_repeated_tool_result_replaces_matching_id_instead_of_appending(monkeypatch):
+    bridge = bridge_with_channel()
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    progress = ToolProgress()
+    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+        {"tool_call_id": "a", "name": "shell", "arguments": {}},
+        {"tool_call_id": "b", "name": "shell", "arguments": {}},
+    ]), progress)
+    for call_id, result in [("b", "old B"), ("a", "A"), ("b", "new B")]:
+        await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": call_id, "name": "shell", "result": result, "duration_seconds": 0,
+        }), progress)
+    content = bridge.channel.update_card_element_content.await_args.args[2]
+    assert "new B" in content and "old B" not in content
+    assert "A" in content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collapsed", [False, True])
+async def test_only_failed_tool_id_is_red_even_with_identical_names_and_results(monkeypatch, collapsed):
+    bridge = bridge_with_channel()
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    if not collapsed:
+        output = {**OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL]}
+        output.pop("title")
+        monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, output)
+    progress = ToolProgress()
+    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+        {"tool_call_id": call_id, "name": "shell", "arguments": {}} for call_id in ["a", "b"]
+    ]), progress)
+
+    for call_id, success in [("b", False), ("a", True)]:
+        await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": call_id, "name": "shell", "result": "<output>&", "success": success,
+        }), progress)
+    content = bridge.channel.update_card_element_content.await_args.args[2]
+    result_text = "**shell**\n&lt;output&gt;&amp;"
+    assert content == f'{result_text}\n\n<font color="red">{result_text}</font>'
+
+    # 同一个 ID 的新结果替换原内容，同时清除先前的失败样式。
+    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+        "tool_call_id": "b", "name": "shell", "result": "recovered", "success": True,
+    }), progress)
+    assert bridge.channel.update_card_element_content.await_args.args[2] == f"{result_text}\n\n**shell**\nrecovered"
+
+
+@pytest.mark.asyncio
+async def test_failed_result_truncation_keeps_color_tags_and_escaped_entities_complete(monkeypatch):
+    bridge = bridge_with_channel()
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, {
+        **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL], "max_chars": 15,
+    })
+    progress = ToolProgress()
+    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+        "tool_call_id": "a", "name": "shell", "result": "<&" * 20, "success": False,
+    }), progress)
+    card = bridge.channel.create_card_instance.await_args.args[0]
+    content = card["body"]["elements"][0]["elements"][0]["content"]
+    assert content == '<font color="red">**shell**\n&lt;…</font>'
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_xml_code_keeps_fences_and_does_not_color_successful_result(monkeypatch):
+    bridge = bridge_with_channel()
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    progress = ToolProgress()
+    code = '```xml\n<root>&amp; <at id="all" /></root>\n```\n'
+    for call_id, success in [("a", False), ("b", True)]:
+        await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": call_id, "name": "shell", "result": code + "正文 <outside/>", "success": success,
+        }), progress)
+    content = bridge.channel.update_card_element_content.await_args.args[2]
+    assert content == (
+        '<font color="red">**shell**</font>\n' + code
+        + '<font color="red">正文 &lt;outside/&gt;</font>\n\n'
+        + "**shell**\n" + code + "正文 &lt;outside/&gt;"
+    )
+
+
+@pytest.mark.asyncio
+async def test_streamed_xml_code_is_preserved_across_split_fences_and_tags(monkeypatch):
+    bridge = bridge_with_channel()
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+
+    async def chunks():
+        for token in ["正文 <outside/>\n`", "``xml\n<root>&", "amp;</root>\n`", "``\n<outside/>"]:
+            yield token
+
+    message, stream = bridge._format_chat_event(ChatEvent(event=ChatEventType.ASSISTANT, context=chunks()))
+    await bridge.send("chat", message, stream)
+    updates = [call.args[2] for call in bridge.channel.update_card_element_content.await_args_list]
+    prefix = "正文 &lt;outside/&gt;\n"
+    assert updates == [
+        prefix + "`",
+        prefix + "```xml\n<root>&",
+        prefix + "```xml\n<root>&amp;</root>\n`",
+        prefix + "```xml\n<root>&amp;</root>\n```\n&lt;outside/&gt;",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_truncated_tool_code_block_does_not_swallow_the_next_result(monkeypatch):
+    bridge = bridge_with_channel()
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, {
+        **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL], "max_result_chars": 20,
+    })
+    progress = ToolProgress()
+    code = "```xml\n<root>" + "x" * 30 + "</root>\n```"
+    for call_id, result, success in [("a", code, True), ("b", "<error/>", False)]:
+        await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": call_id, "name": "shell", "result": result, "success": success,
+        }), progress)
+    content = bridge.channel.update_card_element_content.await_args.args[2]
+    assert content == (
+        "**shell**\n" + code[:19] + "…\n```\n\n"
+        + '<font color="red">**shell**\n&lt;error/&gt;</font>'
+    )

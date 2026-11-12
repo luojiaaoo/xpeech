@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from lark_channel import SendResult
 from loguru import logger
 
 from ..schema import ChatEvent, ChatEventType
 from .config import FEISHU_STREAM_UPDATE_INTERVAL_SECONDS
-from .formatting import OUTPUT_EVENT_TYPES, ensure_markdown
+from .formatting import OUTPUT_EVENT_TYPES, color_markdown, ensure_markdown
 
 
 @dataclass
@@ -18,6 +19,8 @@ class ToolProgress:
     sequence: int = 0
     title: str = ""
     text: str = ""
+    results: dict[str, str] = field(default_factory=dict)
+    failures: set[str] = field(default_factory=set)
 
 
 class FeishuDeliveryMixin:
@@ -34,16 +37,55 @@ class FeishuDeliveryMixin:
                 " | ".join(filter(None, (progress.title, text))),
                 output.get("max_title_chars"),
             )
+            try:
+                for entry in json.loads(event.context):
+                    tool_call_id = entry["tool_call_id"]
+                    progress.results.setdefault(tool_call_id, "")
+            except (ValueError, TypeError, KeyError):
+                pass
         else:
-            progress.text = self._truncate(
-                "\n\n".join(filter(None, (progress.text, text))),
-                output.get("max_chars"),
-            )
+            try:
+                payload = json.loads(event.context)
+                tool_call_id = payload["tool_call_id"]
+            except (ValueError, TypeError, KeyError):
+                tool_call_id = None
+                payload = {}
+            if isinstance(tool_call_id, str):
+                progress.results[tool_call_id] = text
+                if payload.get("success") is False:
+                    progress.failures.add(tool_call_id)
+                else:
+                    progress.failures.discard(tool_call_id)
+                progress.text = self._truncate(
+                    "\n\n".join(filter(None, progress.results.values())), output.get("max_chars"),
+                )
+            else:
+                progress.text = self._truncate(
+                    "\n\n".join(filter(None, (progress.text, text))), output.get("max_chars"),
+                )
         message, _ = self._format_chat_event(
             ChatEvent(event=ChatEventType.TOOL_CALL, context=progress.text),
             title=progress.title,
         )
         card = message["card"]
+        if progress.failures:
+            element = card["body"]["elements"][0]
+            body = element["elements"][0] if element["tag"] == "collapsible_panel" else element
+            content = body["content"]
+            parts = []
+            # 在统一转义、截断后按 ID 标色，避免截断标签或把工具输出当作标签解析。
+            for call_id, result_text in progress.results.items():
+                if not result_text or not content:
+                    continue
+                if parts:
+                    parts.append(content[:2])  # 结果之间的换行。
+                    content = content[2:]
+                length = len(ensure_markdown(result_text))
+                result_content, content = content[:length], content[length:]
+                if call_id in progress.failures and result_content:
+                    result_content = color_markdown(result_content, "red")
+                parts.append(result_content)
+            body["content"] = "".join(parts) + content
         if progress.card_id is None:
             progress.card_id = await self.channel.create_card_instance(card)
             result = await self.channel.send_card_by_reference(to, progress.card_id)
