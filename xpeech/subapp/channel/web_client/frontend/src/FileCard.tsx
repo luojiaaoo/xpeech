@@ -3,10 +3,13 @@ import { Button, Modal, Spin, Typography, message } from 'antd';
 import { DownloadOutlined, EyeOutlined, FileOutlined } from '@ant-design/icons';
 import { downloadFile } from './api';
 import { fileName, filePreviewKind } from './filePreviewKind';
+import { postToParent } from './embedBridge';
 
 const FilePreview = lazy(() => import('./FilePreview'));
 
-export default function FileCard({ path, active = true }: { path: string; active?: boolean }) {
+export default function FileCard({ path, active = true, sessionId }: {
+  path: string; active?: boolean; sessionId?: string;
+}) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const name = fileName(path);
@@ -15,6 +18,12 @@ export default function FileCard({ path, active = true }: { path: string; active
   useEffect(() => {
     if (!active) setPreviewOpen(false);
   }, [active]);
+
+  useEffect(() => {
+    if (!previewOpen || !active || !sessionId) return;
+    postToParent({ type: 'xpeech:preview', session_id: sessionId, preview_id: path, open: true });
+    return () => postToParent({ type: 'xpeech:preview', session_id: sessionId, preview_id: path, open: false });
+  }, [active, path, previewOpen, sessionId]);
 
   async function download() {
     setDownloading(true);

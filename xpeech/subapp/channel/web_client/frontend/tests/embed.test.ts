@@ -38,7 +38,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
     classList = { add: (s: string) => this.classes.add(s), remove: (s: string) => this.classes.delete(s), contains: (s: string) => this.classes.has(s) };
     contentWindow = { postMessage: (data: any, origin: string) => sent.push({ data, origin }) };
     set innerHTML(_value: string) {
-      for (const id of ['panel', 'title', 'launcher', 'close', 'body', 'status']) this.ids.set(id, new Element());
+      for (const id of ['panel', 'title', 'launcher', 'close', 'minimize', 'maximize', 'body', 'status']) this.ids.set(id, new Element());
       this.ids.get('panel')!.geometry = { left: 564, top: 12, width: 440, height: 700 };
     }
     attachShadow() { return this; }
@@ -104,19 +104,20 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { init: Function; hideButton: Function; showButton: Function; open: Function; close: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function };
+  const api = module.namespace as { init: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function };
   return { window, context, frames, calls, hosts, sent, message, listeners, timers, api };
 }
 
 test('loading the SDK creates no UI or requests until init and leaves website globals alone', async () => {
   const app = await runtime();
   app.api.open(); app.api.close(); app.api.hideButton(); app.api.showButton();
+  app.api.maximize(); app.api.restore(); app.api.minimize();
   await tick();
   assert.equal(app.hosts.length, 0);
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'newConversation', 'onChatFile', 'onReply', 'open', 'send', 'setInput', 'showButton']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'restore', 'send', 'setInput', 'showButton']);
 });
 
 test('init validates the original JWT without exchanging it and only delivers to its own iframe', async () => {
@@ -160,6 +161,87 @@ test('button and panel visibility are independent and closing preserves the ifra
   app.api.showButton();
   assert.equal(launcher.hidden, false);
   assert.equal(app.calls.length, 1);
+});
+
+test('maximize, restore and minimize preserve the iframe and the floating window dimensions', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.api.open();
+  const panel = app.hosts[0].ids.get('panel')!;
+  const button = app.hosts[0].ids.get('maximize')!;
+  Object.assign(panel.style, { left: '150px', top: '100px', width: '600px', height: '500px' });
+  const normal = { ...panel.style };
+  button.events.click();
+  assert.equal(panel.classes.has('maximized'), true);
+  assert.equal(panel.style.width, '1024px');
+  assert.equal(panel.style.height, '768px');
+  assert.equal(button.attrs['aria-label'], '还原聊天窗口');
+  button.events.click();
+  assert.deepEqual(panel.style, normal);
+  app.api.maximize();
+  app.window.innerWidth = 800;
+  app.window.innerHeight = 640;
+  app.listeners.get('resize')!.forEach(handler => handler());
+  assert.equal(panel.style.width, '800px');
+  assert.equal(panel.style.height, '640px');
+  app.hosts[0].ids.get('minimize')!.events.click();
+  assert.equal(panel.classes.has('open'), false);
+  app.api.open();
+  assert.equal(panel.classes.has('maximized'), true);
+  app.api.restore();
+  assert.equal(panel.style.width, '600px');
+  assert.equal(panel.style.height, '500px');
+  assert.equal(app.frames.length, 1);
+  assert.equal(app.frames[0].removed, false);
+  app.api.destroy();
+});
+
+test('only current iframe preview messages maximize chat, and closing restores the original window mode', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.api.open();
+  const panel = app.hosts[0].ids.get('panel')!;
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'one' });
+  const preview = { type: 'xpeech:preview', session_id: 'one', preview_id: 'report.pptx', open: true };
+  for (const [data, origin, source] of [
+    [preview, 'https://attacker.test', app.frames[0].contentWindow],
+    [preview, 'https://assistant.test', {}],
+    [{ ...preview, session_id: 'old' }, 'https://assistant.test', app.frames[0].contentWindow],
+  ] as const) app.message(data, origin, source);
+  assert.equal(panel.classes.has('maximized'), false);
+  app.message(preview);
+  assert.equal(panel.classes.has('maximized'), true);
+  app.message({ ...preview, preview_id: 'other.docx' });
+  app.message({ ...preview, open: false });
+  assert.equal(panel.classes.has('maximized'), true);
+  app.message({ ...preview, preview_id: 'other.docx', open: false });
+  assert.equal(panel.classes.has('maximized'), false);
+  app.api.maximize();
+  app.message(preview);
+  app.message({ ...preview, open: false });
+  assert.equal(panel.classes.has('maximized'), true);
+  app.api.restore();
+  app.message(preview);
+  app.message({ type: 'xpeech:interaction-unavailable', session_id: 'one' });
+  assert.equal(panel.classes.has('maximized'), false);
+  app.api.destroy();
+});
+
+test('manual window controls override temporary preview maximization', async () => {
+  const app = await runtime();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.api.open();
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'one' });
+  const preview = { type: 'xpeech:preview', session_id: 'one', preview_id: 'report.pptx', open: true };
+  app.message(preview);
+  app.api.restore();
+  app.api.maximize();
+  app.message({ ...preview, open: false });
+  assert.equal(app.hosts[0].ids.get('panel')!.classes.has('maximized'), true);
+  app.api.destroy();
 });
 
 test('dragging the launcher moves it without opening chat, while small pointer movements still click', async () => {

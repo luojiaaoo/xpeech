@@ -112,6 +112,11 @@ function onLogout() {
 聊天窗口支持通过四条边或四个角拖拽调整大小，鼠标和触屏均可操作。最小尺寸为
 320 × 360px，最大尺寸限制在视口内，并保留 12px 边距；视口较小时会自动缩小以适应屏幕。
 收起再打开会保留调整后的大小，调用 `destroy()` 后恢复默认尺寸。
+
+标题栏在关闭按钮左侧依次提供最小化、最大化/还原按钮。最大化占满宿主页面的视口，最小化收起为悬浮按钮，
+保留 iframe 和当前会话。打开文件预览时，iframe 通过校验来源及会话的 `postMessage` 通知
+外层自动最大化；关闭预览、切换会话后恢复原窗口尺寸。原先已最大化，或预览期间手动
+调整了窗口模式时，保留用户选择。
 页面刷新后，如果业务网站恢复了登录状态，在模块加载完成后调用 `onLoginSuccess(currentUser)`。
 单页应用退出时先调用 `destroy()`，下次登录再调用 `init()`；浏览器会复用同一 URL 的模块实例。
 单独导入模块不会显示组件或发起认证请求，只有调用 `init()` 才会初始化。
@@ -128,6 +133,9 @@ function onLogout() {
 | `assistant.showButton()` | 显示浮动按钮，不自动打开聊天窗口 |
 | `assistant.open()` | 通过代码主动展开聊天 iframe，无需用户点击浮动按钮 |
 | `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
+| `assistant.maximize()` | 展开并最大化聊天窗口 |
+| `assistant.restore()` | 还原为浮动窗口并展开 |
+| `assistant.minimize()` | 最小化为悬浮按钮，保留 iframe 和会话 |
 | `assistant.setInput(text, { timeoutMs? } = {})` | 替换当前对话输入框内容（允许空字符串清空），不自动发送；返回 `Promise<{ session_id }>` |
 | `assistant.addFiles(files, { timeoutMs? } = {})` | 将 `File[]` 追加到当前对话框的待发送附件，显示附件列表，不自动上传或发送；返回 `Promise<{ session_id }>` |
 | `assistant.newConversation({ timeoutMs? } = {})` | 新建会话，清空对话框及草稿，等待新输入框就绪后返回 `Promise<{ session_id }>` |

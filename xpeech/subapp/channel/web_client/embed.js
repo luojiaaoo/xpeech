@@ -7,6 +7,8 @@ var root = null;
 var panel = null;
 var launcher = null;
 var closeButton = null;
+var minimizeButton = null;
+var maximizeButton = null;
 var body = null;
 var status = null;
 var frame = null;
@@ -28,6 +30,10 @@ var needsRetry = false;
 var drag = null;
 var resize = null;
 var panelSize = null;
+var maximized = false;
+var normalPanelBounds = null;
+var previewIds = new Set();
+var previewAutoMaximized = false;
 var suppressLauncherClick = false;
 var interactionSession = null;
 var requestSequence = 0;
@@ -156,20 +162,24 @@ function initialize() {
   '@media(prefers-reduced-motion:reduce){#launcher{animation:none;transition:none}#launcher:hover{transform:none}}' +
   '#panel{display:none;position:fixed;width:min(440px,calc(100vw - 24px));height:min(700px,calc(100dvh - 100px));background:white;border:1px solid #dfe5ef;border-radius:16px;box-shadow:0 12px 48px #152c6733;overflow:hidden;flex-direction:column;pointer-events:auto}' +
   '#panel.open{display:flex}header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #edf0f5;flex-shrink:0}' +
+  'header strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.window-actions{display:flex;gap:4px;margin-left:12px}#panel.maximized{border-radius:0}#panel.maximized .resize-handle{display:none}' +
+  '#panel.open.maximized~#launcher{visibility:hidden}' +
   '#panel.resizing{user-select:none}#panel.resizing iframe{pointer-events:none}' +
   '.resize-handle{position:absolute;z-index:3;touch-action:none;user-select:none}' +
   '.resize-n,.resize-s{left:14px;right:14px;height:6px;cursor:ns-resize}.resize-n{top:0}.resize-s{bottom:0}' +
   '.resize-e,.resize-w{top:14px;bottom:14px;width:6px;cursor:ew-resize}.resize-e{right:0}.resize-w{left:0}' +
   '.resize-ne,.resize-nw,.resize-se,.resize-sw{width:14px;height:14px}.resize-ne,.resize-sw{cursor:nesw-resize}.resize-nw,.resize-se{cursor:nwse-resize}' +
   '.resize-ne,.resize-nw{top:0}.resize-se,.resize-sw{bottom:0}.resize-ne,.resize-se{right:0}.resize-nw,.resize-sw{left:0}' +
-  '#close{background:none;border:0;font-size:24px;color:#5b6578}#body{flex:1;min-height:0;position:relative}' +
+  '.window-actions button{display:grid;place-items:center;width:30px;height:30px;background:none;border:0;border-radius:6px;font-size:22px;color:#5b6578}.window-actions button:hover{background:#f0f3f8}#body{flex:1;min-height:0;position:relative}' +
   '#status{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px;background:#fff;color:#68788f;line-height:1.6;font-size:14px;text-align:center;overflow:auto}iframe{display:block;width:100%;height:100%;border:0}' +
   'button:focus-visible{outline:3px solid #8ab4ff;outline-offset:3px}[hidden]{display:none!important}' +
-  '</style><section id="panel" role="dialog"><header><strong id="title"></strong><button id="close" aria-label="关闭聊天">×</button></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-expanded="false" title="点击打开聊天，拖动调整位置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg></button>';
+  '</style><section id="panel" role="dialog"><header><strong id="title"></strong><div class="window-actions"><button id="minimize" aria-label="最小化聊天" title="最小化">−</button><button id="maximize" aria-label="最大化聊天" title="最大化">□</button><button id="close" aria-label="关闭聊天" title="关闭">×</button></div></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-expanded="false" title="点击打开聊天，拖动调整位置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg></button>';
   document.body.appendChild(host);
   panel = root.getElementById("panel");
   launcher = root.getElementById("launcher");
   closeButton = root.getElementById("close");
+  minimizeButton = root.getElementById("minimize");
+  maximizeButton = root.getElementById("maximize");
   body = root.getElementById("body");
   status = root.getElementById("status");
   ["n", "e", "s", "w", "ne", "nw", "se", "sw"].forEach(function (edge) {
@@ -199,6 +209,11 @@ function initialize() {
   launcher.addEventListener("pointercancel", endDrag);
   launcher.addEventListener("lostpointercapture", endDrag);
   closeButton.addEventListener("click", close);
+  minimizeButton.addEventListener("click", minimize);
+  maximizeButton.addEventListener("click", function () {
+    previewAutoMaximized = false;
+    setMaximized(!maximized);
+  });
   root.addEventListener("keydown", function (event) {
     if (event.key === "Escape") close();
   });
@@ -211,6 +226,13 @@ function clamp(value, min, max) {
 }
 function positionPanel() {
   if (!host || !panel.classList.contains("open")) return;
+  if (maximized) {
+    panel.style.left = "0px";
+    panel.style.top = "0px";
+    panel.style.width = window.innerWidth + "px";
+    panel.style.height = window.innerHeight + "px";
+    return;
+  }
   if (panelSize) {
     panel.style.width = Math.min(Math.max(panelSize.width, 320), Math.max(0, window.innerWidth - 24)) + "px";
     panel.style.height = Math.min(Math.max(panelSize.height, 360), Math.max(0, window.innerHeight - 24)) + "px";
@@ -258,6 +280,7 @@ function endDrag(event) {
   if (launcher.hasPointerCapture(event.pointerId)) launcher.releasePointerCapture(event.pointerId);
 }
 function startResize(event, edge) {
+  if (maximized) return;
   if (!event.isPrimary || event.button !== 0 || drag || resize || !panel.classList.contains("open")) return;
   var rect = panel.getBoundingClientRect();
   resize = {
@@ -315,6 +338,45 @@ function close() {
   launcher.setAttribute("aria-expanded", "false");
   if (!launcher.hidden) launcher.focus();
 }
+function setMaximized(value) {
+  if (!host || maximized === value) return;
+  if (resize) endResize({ pointerId: resize.id });
+  if (value) normalPanelBounds = panel.getBoundingClientRect();
+  maximized = value;
+  if (value) panel.classList.add('maximized');
+  else panel.classList.remove('maximized');
+  maximizeButton.textContent = value ? '❐' : '□';
+  maximizeButton.setAttribute('aria-label', value ? '还原聊天窗口' : '最大化聊天');
+  maximizeButton.title = value ? '还原' : '最大化';
+  if (value) positionPanel();
+  else if (normalPanelBounds) {
+    var width = Math.min(normalPanelBounds.width, Math.max(0, window.innerWidth - 24));
+    var height = Math.min(normalPanelBounds.height, Math.max(0, window.innerHeight - 24));
+    panelSize = { width: width, height: height };
+    panel.style.width = width + 'px';
+    panel.style.height = height + 'px';
+    panel.style.left = clamp(normalPanelBounds.left, 12, window.innerWidth - width - 12) + 'px';
+    panel.style.top = clamp(normalPanelBounds.top, 12, window.innerHeight - height - 12) + 'px';
+  }
+}
+function maximize() {
+  if (!host) return;
+  open();
+  previewAutoMaximized = false;
+  setMaximized(true);
+}
+function restore() {
+  if (!host) return;
+  previewAutoMaximized = false;
+  setMaximized(false);
+  if (!panel.classList.contains('open')) open();
+}
+function minimize() { close(); }
+function clearPreviews() {
+  previewIds.clear();
+  if (previewAutoMaximized) setMaximized(false);
+  previewAutoMaximized = false;
+}
 function hideButton() {
   if (launcher) {
     if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
@@ -337,6 +399,7 @@ function report(error) {
   window.dispatchEvent(new CustomEvent("xpeech:error", { detail: { message: detail } }));
 }
 function removeFrame() {
+  clearPreviews();
   clearTimeout(frameTimer);
   frameReady = false;
   interactionSession = null;
@@ -373,6 +436,7 @@ function onMessage(event) {
   var data = event.data;
   if (!data || typeof data !== "object") return;
   if (data.type === "xpeech:ready") {
+    clearPreviews();
     interactionSession = null;
     rejectRequests('聊天页面已重新加载', true);
     frameReady = true;
@@ -381,6 +445,7 @@ function onMessage(event) {
   } else if (data.type === "xpeech:authenticated") {
     if (verifiedJWT) status.hidden = true;
   } else if (data.type === "xpeech:interaction-ready" && typeof data.session_id === 'string') {
+    if (interactionSession !== data.session_id) clearPreviews();
     if (interactionSession && interactionSession !== data.session_id) rejectRequests('会话已切换', true);
     interactionSession = data.session_id;
     pendingRequests.forEach(function (pending, id) {
@@ -392,8 +457,20 @@ function onMessage(event) {
     });
     flushRequests();
   } else if (data.type === "xpeech:interaction-unavailable" && data.session_id === interactionSession) {
+    clearPreviews();
     interactionSession = null;
     rejectRequests('会话已切换或关闭', true);
+  } else if (data.type === 'xpeech:preview' && verifiedJWT && data.session_id === interactionSession &&
+      typeof data.preview_id === 'string' && data.preview_id && typeof data.open === 'boolean') {
+    if (data.open) {
+      if (!previewIds.size) {
+        previewAutoMaximized = !maximized;
+        setMaximized(true);
+      }
+      previewIds.add(data.preview_id);
+    } else if (previewIds.delete(data.preview_id) && !previewIds.size) {
+      clearPreviews();
+    }
   } else if (data.type === "xpeech:response") {
     var pending = pendingRequests.get(data.request_id);
     if (!pending || !pending.sent || data.session_id !== pending.sessionId) return;
@@ -584,9 +661,11 @@ function destroy() {
   if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
   if (resize) endResize({ pointerId: resize.id });
   panelSize = null;
+  maximized = false;
+  normalPanelBounds = null;
   suppressLauncherClick = false;
   if (host) host.remove();
-  host = root = panel = launcher = closeButton = body = status = null;
+  host = root = panel = launcher = closeButton = minimizeButton = maximizeButton = body = status = null;
 }
 
-export { init, hideButton, showButton, open, close, destroy, setInput, addFiles, newConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile };
+export { init, hideButton, showButton, open, close, maximize, restore, minimize, destroy, setInput, addFiles, newConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile };
