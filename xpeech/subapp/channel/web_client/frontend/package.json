@@ -5,15 +5,19 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "demo:preview": "node scripts/preview-demo.mjs",
     "test": "node --experimental-vm-modules --experimental-strip-types --test tests/*.test.ts",
     "build": "tsc --noEmit && vite build",
     "lint:antd": "antd lint ./src --format json"
   },
   "dependencies": {
+    "@aiden0z/pptx-renderer": "^1.4.0",
     "@ant-design/icons": "^6.3.2",
+    "@ant-design/plots": "^2.6.8",
     "@ant-design/x": "^2.9.0",
     "@ant-design/x-markdown": "^2.9.0",
-    "@ant-design/plots": "^2.6.8",
+    "@js-preview/docx": "^1.6.4",
+    "@js-preview/excel": "^1.7.14",
     "antd": "^6.6.1",
     "dayjs": "^1.11.19",
     "prismjs": "^1.30.0",

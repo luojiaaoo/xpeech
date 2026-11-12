@@ -1,0 +1,20 @@
+.preview-demo { max-width: 1400px; margin: 0 auto; padding: 48px 32px; }
+.preview-demo-header { display: flex; align-items: center; gap: 20px; margin-bottom: 32px; }
+.preview-demo-mark { display: grid; place-items: center; flex-shrink: 0; width: 64px; height: 64px; border-radius: 18px; background: #3370ff; color: #fff; font-size: 30px; }
+.preview-demo-header h2.ant-typography { margin: 0 0 8px; }
+.preview-demo-header .ant-typography { margin-bottom: 0; }
+.preview-demo-header > .ant-tag { margin-inline-start: auto; white-space: nowrap; }
+.preview-demo-toolbar { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; margin-bottom: 28px; }
+.preview-demo-toolbar .ant-segmented { max-width: 100%; overflow-x: auto; }
+.preview-demo-directory { font-size: 12px; overflow-wrap: anywhere; }
+.preview-demo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 20px; }
+.preview-demo-item { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.preview-demo-meta { display: flex; align-items: center; justify-content: space-between; padding-inline: 2px; font-size: 12px; }
+.preview-demo-item .chat-file-card { flex: 1; width: 100%; }
+.preview-demo-loading { display: grid; place-items: center; padding: 80px; }
+@media (max-width: 600px) {
+  .preview-demo { padding: 28px 18px; }
+  .preview-demo-header { flex-wrap: wrap; gap: 14px; }
+  .preview-demo-header h2.ant-typography { font-size: 24px; }
+  .preview-demo-header > .ant-tag { margin-inline-start: 0; }
+}

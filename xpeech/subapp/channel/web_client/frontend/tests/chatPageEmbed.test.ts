@@ -57,6 +57,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
     './chatState': { appendChatEvent() {}, chatDisplayItems: () => [], chatMessagesFromEvents: () => [], finishChatTurn() {}, startChatTurn() {} },
     './ToolCallCard': { default: 'ToolCallCard' },
     './ProcessPanel': { default: 'ProcessPanel' },
+    './FileCard': { default: 'FileCard' },
     './pendingUserPrefix': { readPendingUserPrefix: () => null, subscribePendingUserPrefix() {}, takePendingUserPrefix: () => null },
   };
   const { outputText } = ts.transpileModule(readFileSync(new URL('../src/ChatPage.tsx', import.meta.url), 'utf8'), {

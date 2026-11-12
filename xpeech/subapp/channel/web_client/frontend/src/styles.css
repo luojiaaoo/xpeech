@@ -260,7 +260,19 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .tool-card-failed .tool-card-section-label,
 .tool-card-failed .tool-card-section pre { color: #cf1322; }
 .chat-status-text { display: flex; align-items: center; gap: 7px; color: #8a94a3; font-size: 13px; overflow-wrap: anywhere; }
-.chat-file-button { max-width: 100%; height: auto; min-height: 32px; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.chat-file-card { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; width: 480px; max-width: 100%; padding: 16px; border: 1px solid #dce5f0; border-radius: 12px; background: #fff; box-sizing: border-box; }
+.chat-file-icon { padding: 12px; border-radius: 10px; background: #eef4ff; color: #3370ff; font-size: 24px; }
+.chat-file-info { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 100px; }
+.chat-file-name { font-weight: 500; overflow-wrap: anywhere; }
+.chat-file-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.file-preview-modal .ant-modal-title { padding-inline-end: 24px; overflow-wrap: anywhere; }
+.file-preview-modal .ant-modal-body { height: min(72vh, 850px); overflow: auto; margin-top: 16px; }
+.file-preview-body { position: relative; height: 100%; }
+.file-preview-loading { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 120px; color: #667085; }
+.file-preview-office, .file-preview-document { height: 100%; min-height: 300px; }
+.file-preview-office[hidden] { display: none; }
+.file-preview-docx, .file-preview-pptx { overflow: auto; background: #f5f7fa; }
+.file-preview-body > .markdown-content { padding: 16px; }
 .chat-summary { padding-block: 2px 8px !important; }
 .bubble-footer { display: flex; width: 100%; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px; }
 .bubble-copy-button { margin-inline-start: auto; flex: 0 0 auto; }

@@ -24,6 +24,17 @@ PC 宽度下历史会话显示在左侧，窄屏下通过抽屉打开；点击�
 最后一条助手回复和 Token 使用情况直接显示。
 历史会话使用相同的折叠方式，文件下载、提问表单和错误提示保持可见。
 
+`send_file` 返回的文件以附件卡片显示，提供下载按钮。`.docx`、`.xls`、`.xlsx`、`.pptx`、
+`.md` 和 `.markdown` 文件额外提供预览按钮，在弹窗中查看；Markdown 复用 Ant Design X Markdown，
+Word 和 Excel 分别使用 `@js-preview/docx`、`@js-preview/excel`，PowerPoint 使用 `@aiden0z/pptx-renderer`。
+预览库按需加载，文件通过现有鉴权下载接口读取，不依赖外部 Office 在线服务。
+旧版 `.doc`、`.ppt` 及其他格式仍可下载，不提供浏览器预览。
+
+本地演示：在 `frontend` 目录运行 `npm run demo:preview`，打开
+`http://127.0.0.1:5175/preview-demo.html`。演示页直接读取当前用户下载目录中的上述文件，
+无需后端或登录；也可通过 `npm run demo:preview -- "其他目录"` 指定目录。
+演示文件接口仅在此命令启动的本机服务器上启用，不接入正式应用。
+
 普通页面和嵌入页面的 `/api/chat`、`/api/chat_sync`、`/api/chat/stop` 和 `/api/answer_question`
 都必须显式提供规范的小写 UUIDv7 `x-session-id`，省略、空值或格式非法均返回 422。
 WebSocket `/api/chat/ws` 的启动消息必须提供同样格式的 `session_id`。
