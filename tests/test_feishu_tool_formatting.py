@@ -47,7 +47,7 @@ def test_tool_results_are_stream_data_without_a_separate_card_format():
     )
     assert ChatEventType.TOOL_CALL_RESULT not in OUTPUT_EVENT_TYPES
     assert formatter._format_chat_event(event) is None
-    assert formatter._format_tool_event(event) == "**shell**\nresult"
+    assert formatter._format_tool_result({"name": "shell", "arguments": {}}, "result") == "**shell**\nresult"
 
 
 @pytest.mark.parametrize("raw", [
@@ -61,7 +61,7 @@ def test_tool_card_displays_markup_as_text_without_changing_tool_results(raw):
         ChatEventType.TOOL_CALL_RESULT,
         {"tool_call_id": "id", "name": "web_fetch", "result": raw, "duration_seconds": 0},
     )
-    result_text = formatter._format_tool_event(event)
+    result_text = formatter._format_tool_result({"name": "web_fetch", "arguments": {}}, raw)
     assert result_text == "**web_fetch**\n" + raw
     message, _ = formatter._format_chat_event(ChatEvent(event=ChatEventType.TOOL_CALL, context=result_text))
     content = message["card"]["body"]["elements"][0]["elements"][0]["content"]
@@ -137,12 +137,9 @@ def test_truncation_limits_are_configured_in_output_event_types(monkeypatch):
     }
     monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, output)
     formatter = FeishuEventFormatter()
-    summary = formatter._format_tool_event(tool_event(ChatEventType.TOOL_CALL, [{"tool_call_id": "id", "name": "echo", "arguments": "参" * 30}]))
-    text = formatter._format_tool_event(tool_event(
-        ChatEventType.TOOL_CALL_RESULT,
-        {"tool_call_id": "id", "name": "echo", "result": "果" * 30, "duration_seconds": 0},
-    ))
-    assert summary == "echo " + "参" * 9 + "…"
+    summary = formatter._format_tool_title({"name": "echo", "arguments": {"execution_title": "题" * 30}})
+    text = formatter._format_tool_result({"name": "echo", "arguments": {}}, "果" * 30)
+    assert summary == "题" * 9 + "…"
     assert text == "**echo**\n" + "果" * 19 + "…"
     message, _ = formatter._format_chat_event(
         ChatEvent(event=ChatEventType.TOOL_CALL, context=text * 10),
@@ -157,12 +154,7 @@ def test_truncation_limits_are_configured_in_output_event_types(monkeypatch):
 
 @pytest.mark.parametrize("value", ["", None, ["item"], {"found": [1, 2]}])
 def test_empty_and_structured_results_are_preserved(value):
-    text = FeishuEventFormatter()._format_tool_event(
-        tool_event(
-            ChatEventType.TOOL_CALL_RESULT,
-            {"tool_call_id": "id", "name": "search", "result": value, "duration_seconds": 0},
-        ),
-    )
+    text = FeishuEventFormatter()._format_tool_result({"name": "search", "arguments": {}}, value)
     expected = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
     assert text == "**search**\n" + expected
 
@@ -173,12 +165,3 @@ def test_default_limits_bound_a_large_unicode_card():
         title="😃" * 5_000,
     )
     assert len(json.dumps(message, ensure_ascii=False).encode("utf-8")) < 30_000
-
-
-@pytest.mark.parametrize("raw", [
-    "not JSON", '{"unexpected":true}', '[["id"]]', '["id","echo","old format",0]',
-    '{"id":"id","name":"echo","duration_seconds":0}',
-])
-@pytest.mark.parametrize("event_type", [ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT])
-def test_malformed_tool_events_remain_visible(raw, event_type):
-    assert FeishuEventFormatter()._format_tool_event(ChatEvent(event=event_type, context=raw)) == raw

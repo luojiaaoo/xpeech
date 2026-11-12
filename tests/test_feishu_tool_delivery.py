@@ -1,5 +1,7 @@
 import asyncio
 import json
+from copy import deepcopy
+from itertools import count
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -32,8 +34,9 @@ def bridge_with_channel():
     bridge.session_update_message_id = {}
     bridge.question_cards = {}
     bridge.add_reaction = AsyncMock()
+    card_ids = count()
     bridge.channel = SimpleNamespace(
-        create_card_instance=AsyncMock(side_effect=["tools-card", "assistant-card"]),
+        create_card_instance=AsyncMock(side_effect=lambda _card: f"card-{next(card_ids)}"),
         send_card_by_reference=AsyncMock(return_value=SendResult(success=True, message_id="message")),
         update_card_element_content=AsyncMock(),
         patch_card_element=AsyncMock(),
@@ -56,89 +59,62 @@ def message():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("with_assistant", [False, True])
-async def test_each_tool_batch_has_its_own_collapsed_streaming_card(monkeypatch, with_assistant):
+async def test_each_tool_has_its_own_card_and_result_updates_by_id(monkeypatch, with_assistant):
     bridge = bridge_with_channel()
     channel = bridge.channel
-    channel.create_card_instance.side_effect = (
-        ["tools-card", "assistant-card", "second-tools-card"]
-        if with_assistant
-        else ["tools-card", "second-tools-card"]
-    )
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
 
     async def assistant_text():
         yield "continuing"
 
     async def events(*_args, **_kwargs):
-        yield tool_event(
-            ChatEventType.TOOL_CALL,
-            [
-                {"tool_call_id": "slow", "name": "shell", "arguments": {"command": "slow"}},
-                {"tool_call_id": "fast", "name": "shell", "arguments": {"command": "fast"}},
-            ],
-        )
-        yield tool_event(
-            ChatEventType.TOOL_CALL_RESULT,
-            {"tool_call_id": "fast", "name": "shell", "result": "fast result", "duration_seconds": 0},
-        )
+        yield tool_event(ChatEventType.TOOL_CALL, [
+            {"tool_call_id": "slow", "name": "shell", "arguments": {"command": "slow", "execution_title": "slow"}},
+            {"tool_call_id": "fast", "name": "shell", "arguments": {"command": "fast", "execution_title": "fast"}},
+        ])
+        assert channel.create_card_instance.await_count == 2
+        yield tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": "fast", "name": "shell", "result": "fast result", "success": True,
+        })
         first = channel.update_card_element_content.await_args
-        assert first.args[:2] == ("tools-card", "main")
-        assert "fast result" in first.args[2]
-        assert "slow result" not in first.args[2]
-        yield tool_event(
-            ChatEventType.TOOL_CALL_RESULT,
-            {"tool_call_id": "slow", "name": "shell", "result": "slow result", "duration_seconds": 1},
-        )
+        assert first.args == ("card-1", "main", "**fast**\nfast result")
+        yield tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": "slow", "name": "shell", "result": "slow result", "success": True,
+        })
         if with_assistant:
             yield ChatEvent(event=ChatEventType.ASSISTANT, context=assistant_text())
-        yield tool_event(ChatEventType.TOOL_CALL, [{"tool_call_id": "fast", "name": "echo", "arguments": {"text": "second round"}}])
-        channel.finish_streaming_card.assert_any_await("tools-card", sequence=3)
-        yield tool_event(
-            ChatEventType.TOOL_CALL_RESULT,
-            {"tool_call_id": "fast", "name": "echo", "result": "second result", "duration_seconds": 0},
-        )
+        yield tool_event(ChatEventType.TOOL_CALL, [
+            {"tool_call_id": "fast", "name": "echo", "arguments": {"text": "second round"}},
+        ])
+        channel.finish_streaming_card.assert_any_await("card-0", sequence=2)
+        channel.finish_streaming_card.assert_any_await("card-1", sequence=2)
+        yield tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": "fast", "name": "echo", "result": "second result", "success": True,
+        })
 
     monkeypatch.setattr(bridge_module, "iter_chat_events", events)
     await bridge.consume([message()])
-
-    assert channel.create_card_instance.await_count == (3 if with_assistant else 2)
-    card = channel.create_card_instance.await_args_list[0].args[0]
-    assert card["config"]["streaming_mode"] is True
-    [panel] = card["body"]["elements"]
-    assert panel["tag"] == "collapsible_panel"
-    assert panel["expanded"] is False
-    assert "slow" in panel["header"]["title"]["content"]
-    assert "fast" in panel["header"]["title"]["content"]
-    second_card = channel.create_card_instance.await_args_list[-1].args[0]
-    [second_panel] = second_card["body"]["elements"]
-    assert second_panel["tag"] == "collapsible_panel"
-    assert second_panel["expanded"] is False
-    title = second_panel["header"]["title"]["content"]
-    assert "echo" in title and "second round" in title
-    assert "slow" not in title and "fast" not in title
-    assert second_panel["elements"][0]["content"] == "执行中…"
-    channel.patch_card_element.assert_not_awaited()
-    updates = [call for call in channel.update_card_element_content.await_args_list if call.args[0] == "tools-card"]
-    assert len(updates) == 2
-    assert [call.kwargs["sequence"] for call in updates] == [1, 2]
-    assert all(text in updates[-1].args[2] for text in ("fast result", "slow result"))
-    assert "second result" not in updates[-1].args[2]
-    assert "执行中…" not in updates[-1].args[2]
-    assert sum(call.args == ("chat", "tools-card") for call in channel.send_card_by_reference.await_args_list) == 1
-    assert sum(
-        call.args == ("chat", "second-tools-card") for call in channel.send_card_by_reference.await_args_list
-    ) == 1
+    assert channel.create_card_instance.await_count == (4 if with_assistant else 3)
+    for index, command in enumerate(["slow", "fast"]):
+        card = channel.create_card_instance.await_args_list[index].args[0]
+        assert card["config"]["streaming_mode"] is True
+        panel, details = card["body"]["elements"]
+        assert panel["tag"] == "collapsible_panel" and panel["expanded"] is False
+        title = panel["header"]["title"]["content"]
+        assert command in title and ("fast" if command == "slow" else "slow") not in title
+        assert details["expanded"] is False
+        assert command in details["elements"][0]["content"]
+    second_card_id = "card-3" if with_assistant else "card-2"
     channel.update_card_element_content.assert_any_await(
-        "second-tools-card", "main", "**echo**\nsecond result", sequence=1
+        second_card_id, "main", "**echo**\nsecond result", sequence=1,
     )
-    channel.finish_streaming_card.assert_any_await("tools-card", sequence=3)
-    channel.finish_streaming_card.assert_any_await("second-tools-card", sequence=2)
-    assert channel.finish_streaming_card.await_count == (3 if with_assistant else 2)
+    channel.finish_streaming_card.assert_any_await(second_card_id, sequence=2)
+    assert channel.finish_streaming_card.await_count == (4 if with_assistant else 3)
+    channel.patch_card_element.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("collapsed", [False, True])
-async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(monkeypatch, collapsed):
+async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(monkeypatch):
     output = {
         **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL],
         "title": "自定义工具标题",
@@ -148,8 +124,6 @@ async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(mon
         "max_argument_chars": 8,
         "max_result_chars": 12,
     }
-    if not collapsed:
-        output.pop("title")
     monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, output)
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     bridge = bridge_with_channel()
@@ -165,18 +139,17 @@ async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(mon
     )
 
     card = bridge.channel.create_card_instance.await_args.args[0]
-    [element] = card["body"]["elements"]
-    if collapsed:
-        assert "自定义工具标题" in element["header"]["title"]["content"]
-        assert "echo aaaaaaa…" in element["header"]["title"]["content"]
-    else:
-        assert element["tag"] == "markdown"
-    body = element["elements"][0] if collapsed else element
+    element, details = card["body"]["elements"]
+    assert element["header"]["title"]["content"] == "自定义工具标题 · echo"
+    assert element["tag"] == "collapsible_panel"
+    assert "a" * 30 in details["elements"][0]["content"]
+    assert "a" * 30 not in element["header"]["title"]["content"]
+    body = element["elements"][0]
     assert body["text_size"] == "normal"
     assert body["text_align"] == "center"
     assert "icon" not in body
     bridge.channel.update_card_element_content.assert_awaited_once_with(
-        "tools-card",
+        "card-0",
         "main",
         "**echo**\n" + "x" * 11 + "…",
         sequence=1,
@@ -213,22 +186,35 @@ async def test_rss_batch_results_are_escaped_before_card_updates(monkeypatch):
     monkeypatch.setattr(bridge_module, "iter_chat_events", events)
     await bridge.consume([message()])
 
-    updates = [call for call in channel.update_card_element_content.await_args_list if call.args[0] == "tools-card"]
+    updates = [call for call in channel.update_card_element_content.await_args_list if call.args[0] in {f"card-{i}" for i in range(10)}]
     assert len(updates) == 10
+    assert {call.args[0] for call in updates} == {f"card-{i}" for i in range(10)}
+    assert channel.create_card_instance.await_count == 11
     assert all("&lt;rss&gt;" in call.args[2] for call in updates)
     channel.update_card_element_content.assert_any_await(
-        "assistant-card", "main", "All RSS results received", sequence=1,
+        "card-10", "main", "All RSS results received", sequence=1,
     )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", [False, True])
-async def test_tool_card_stream_is_finished_when_consumption_fails_or_is_cancelled(monkeypatch, cancel):
+@pytest.mark.parametrize("failed_card", [None, "card-0", "card-1"])
+async def test_tool_card_stream_is_finished_when_consumption_fails_or_is_cancelled(
+    monkeypatch, cancel, failed_card,
+):
     bridge = bridge_with_channel()
     waiting = asyncio.Event()
 
+    async def finish(card_id, *, sequence):
+        if card_id == failed_card:
+            raise RuntimeError("card close failed")
+
+    bridge.channel.finish_streaming_card.side_effect = finish
+
     async def events(*_args, **_kwargs):
-        yield tool_event(ChatEventType.TOOL_CALL, [{"tool_call_id": "call", "name": "shell", "arguments": {}}])
+        yield tool_event(ChatEventType.TOOL_CALL, [
+            {"tool_call_id": call_id, "name": "shell", "arguments": {}} for call_id in ["a", "b"]
+        ])
         waiting.set()
         if cancel:
             await asyncio.Event().wait()
@@ -246,7 +232,31 @@ async def test_tool_card_stream_is_finished_when_consumption_fails_or_is_cancell
         else:
             await task
 
-    bridge.channel.finish_streaming_card.assert_awaited_once_with("tools-card", sequence=1)
+    bridge.channel.finish_streaming_card.assert_any_await("card-0", sequence=1)
+    bridge.channel.finish_streaming_card.assert_any_await("card-1", sequence=1)
+    assert bridge.channel.finish_streaming_card.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_tool_card_finish_failure_does_not_interrupt_the_next_batch(monkeypatch):
+    bridge = bridge_with_channel()
+    bridge.channel.finish_streaming_card.side_effect = [RuntimeError("card close failed"), None, None]
+
+    async def events(*_args, **_kwargs):
+        yield tool_event(ChatEventType.TOOL_CALL, [
+            {"tool_call_id": call_id, "name": "shell", "arguments": {}} for call_id in ["a", "b"]
+        ])
+        yield tool_event(ChatEventType.TOOL_CALL, [
+            {"tool_call_id": "c", "name": "echo", "arguments": {}},
+        ])
+
+    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    await bridge.consume([message()])
+
+    assert bridge.channel.create_card_instance.await_count == 3
+    assert [call.args[0] for call in bridge.channel.finish_streaming_card.await_args_list] == [
+        "card-0", "card-1", "card-2",
+    ]
 
 
 @pytest.mark.asyncio
@@ -332,70 +342,85 @@ async def test_repeated_tool_result_replaces_matching_id_instead_of_appending(mo
         }), progress)
     content = bridge.channel.update_card_element_content.await_args.args[2]
     assert "new B" in content and "old B" not in content
-    assert "A" in content
+    assert "A" not in content
+    assert bridge.channel.update_card_element_content.await_args.args[0] == "card-1"
+    bridge.channel.update_card_element_content.assert_any_await("card-0", "main", "**shell**\nA", sequence=1)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("collapsed", [False, True])
-async def test_only_failed_tool_id_is_red_even_with_identical_names_and_results(monkeypatch, collapsed):
+@pytest.mark.parametrize("expanded", [False, True])
+async def test_failure_only_colors_matching_title_and_preserves_folded_values(monkeypatch, expanded):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
-    if not collapsed:
-        output = {**OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL]}
-        output.pop("title")
-        monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, output)
+    monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, {
+        **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL], "expanded": expanded, "expanded_title": "收起工具结果",
+    })
     progress = ToolProgress()
     await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
-        {"tool_call_id": call_id, "name": "shell", "arguments": {}} for call_id in ["a", "b"]
+        {"tool_call_id": call_id, "name": "shell", "arguments": {
+            "command": "<same>&", "execution_title": "相同标题", "execution_description": "相同说明",
+        }} for call_id in ["a", "b"]
     ]), progress)
-
+    original_cards = deepcopy([call.args[0] for call in bridge.channel.create_card_instance.await_args_list])
     for call_id, success in [("b", False), ("a", True)]:
         await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
             "tool_call_id": call_id, "name": "shell", "result": "<output>&", "success": success,
         }), progress)
-    content = bridge.channel.update_card_element_content.await_args.args[2]
-    result_text = "**shell**\n&lt;output&gt;&amp;"
-    assert content == f'{result_text}\n\n<font color="red">{result_text}</font>'
-
-    # 同一个 ID 的新结果替换原内容，同时清除先前的失败样式。
+    updates = bridge.channel.update_card_element_content.await_args_list
+    assert [call.args[0] for call in updates] == ["card-1", "card-0"]
+    assert updates[0].args[2] == updates[1].args[2]
+    assert "&lt;output&gt;&amp;" in updates[0].args[2]
+    assert '<font' not in updates[0].args[2]
+    patch = bridge.channel.patch_card_element.await_args
+    assert patch.args[:2] == ("card-1", "panel")
+    assert patch.args[2] == {"header": {
+        "title": {"tag": "markdown", "content": '<font color="red">工具调用 · 相同标题</font>'},
+        "expanded_title": {"tag": "markdown", "content": '<font color="red">收起工具结果</font>'},
+    }}
+    assert patch.kwargs["sequence"] == 2
+    assert [call.args[0] for call in bridge.channel.create_card_instance.await_args_list] == original_cards
+    # 成功重试恢复原始标题，不重建参数折叠区或设置展开状态。
     await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
         "tool_call_id": "b", "name": "shell", "result": "recovered", "success": True,
     }), progress)
-    assert bridge.channel.update_card_element_content.await_args.args[2] == f"{result_text}\n\n**shell**\nrecovered"
+    assert bridge.channel.patch_card_element.await_args.args == (
+        "card-1", "panel", {"header": original_cards[1]["body"]["elements"][0]["header"]},
+    )
+    assert bridge.channel.update_card_element_content.await_args.args[2].endswith("recovered")
+    assert bridge.channel.create_card_instance.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_failed_result_truncation_keeps_color_tags_and_escaped_entities_complete(monkeypatch):
+async def test_failed_result_truncation_does_not_add_color_tags(monkeypatch):
     bridge = bridge_with_channel()
-    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, {
         **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL], "max_chars": 15,
     })
-    progress = ToolProgress()
     await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
         "tool_call_id": "a", "name": "shell", "result": "<&" * 20, "success": False,
-    }), progress)
+    }), ToolProgress())
     card = bridge.channel.create_card_instance.await_args.args[0]
-    content = card["body"]["elements"][0]["elements"][0]["content"]
-    assert content == '<font color="red">**shell**\n&lt;…</font>'
+    panel = card["body"]["elements"][0]
+    assert panel["elements"][0]["content"] == "**shell**\n&lt;…"
+    assert '<font color="red">' in panel["header"]["title"]["content"]
 
 
 @pytest.mark.asyncio
-async def test_failed_tool_xml_code_keeps_fences_and_does_not_color_successful_result(monkeypatch):
+async def test_failed_tool_xml_code_keeps_fences_and_only_colors_its_title(monkeypatch):
     bridge = bridge_with_channel()
-    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     progress = ToolProgress()
     code = '```xml\n<root>&amp; <at id="all" /></root>\n```\n'
     for call_id, success in [("a", False), ("b", True)]:
         await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
             "tool_call_id": call_id, "name": "shell", "result": code + "正文 <outside/>", "success": success,
         }), progress)
-    content = bridge.channel.update_card_element_content.await_args.args[2]
-    assert content == (
-        '<font color="red">**shell**</font>\n' + code
-        + '<font color="red">正文 &lt;outside/&gt;</font>\n\n'
-        + "**shell**\n" + code + "正文 &lt;outside/&gt;"
-    )
+    cards = [call.args[0] for call in bridge.channel.create_card_instance.await_args_list]
+    for card in cards:
+        assert card["body"]["elements"][0]["elements"][0]["content"] == (
+            "**shell**\n" + code + "正文 &lt;outside/&gt;"
+        )
+    assert '<font color="red">' in cards[0]["body"]["elements"][0]["header"]["title"]["content"]
+    assert '<font' not in cards[1]["body"]["elements"][0]["header"]["title"]["content"]
 
 
 @pytest.mark.asyncio
@@ -432,15 +457,13 @@ async def test_truncated_tool_code_block_does_not_swallow_the_next_result(monkey
         await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
             "tool_call_id": call_id, "name": "shell", "result": result, "success": success,
         }), progress)
-    content = bridge.channel.update_card_element_content.await_args.args[2]
-    assert content == (
-        "**shell**\n" + code[:19] + "…\n```\n\n"
-        + '<font color="red">**shell**\n&lt;error/&gt;</font>'
-    )
+    cards = [call.args[0] for call in bridge.channel.create_card_instance.await_args_list]
+    assert cards[0]["body"]["elements"][0]["elements"][0]["content"] == "**shell**\n" + code[:19] + "…\n```"
+    assert cards[1]["body"]["elements"][0]["elements"][0]["content"] == "**shell**\n&lt;error/&gt;"
 
 
 @pytest.mark.asyncio
-async def test_shell_command_failure_reaches_feishu_as_red_result(tmp_path, monkeypatch):
+async def test_shell_command_failure_only_colors_its_card_title(tmp_path, monkeypatch):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
 
@@ -477,11 +500,14 @@ async def test_shell_command_failure_reaches_feishu_as_red_result(tmp_path, monk
     await bridge.consume([message()])
 
     assert results == {"failed": False, "succeeded": True}
-    content = bridge.channel.update_card_element_content.await_args.args[2]
-    assert content == (
-        '<font color="red">**测试命令退出状态**\nRuntimeError: STDERR:\nbash: line 1: aaaa: command not found\n\nExit code: 127</font>'
-        '\n\n**测试命令退出状态**\naaaa\n\nExit code: 0'
-    )
+    updates = {call.args[0]: call.args[2] for call in bridge.channel.update_card_element_content.await_args_list}
+    assert "RuntimeError: STDERR:" in updates["card-0"]
+    assert "Exit code: 127" in updates["card-0"]
+    assert "Exit code: 0" in updates["card-1"]
+    assert all('<font' not in content for content in updates.values())
+    patch = bridge.channel.patch_card_element.await_args
+    assert patch.args[:2] == ("card-0", "panel")
+    assert '<font color="red">' in patch.args[2]["header"]["title"]["content"]
 
 
 @pytest.mark.asyncio

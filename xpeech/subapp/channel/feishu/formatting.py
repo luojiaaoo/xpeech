@@ -68,20 +68,6 @@ def ensure_markdown(content: str, max_chars: int | None = None) -> str:
     return content
 
 
-def color_markdown(content: str, color: str) -> str:
-    """给已转义的正文着色，保持代码块及其围栏独占一行。"""
-    parts = []
-    for text, code in _markdown_parts(content):
-        if code:
-            parts.append(text)
-        else:
-            body = text.rstrip("\r\n")
-            if body:
-                parts.append(f'<font color="{color}">{body}</font>')
-            parts.append(text[len(body):])
-    return "".join(parts)
-
-
 class OutputEventType(TypedDict):
     content: str | None | type(Ellipsis)
     text_size: NotRequired[str | dict[str, Any]]
@@ -265,39 +251,23 @@ class FeishuEventFormatter:
             return text
         return text[: max(0, max_chars - 1)] + "…"
 
-    def _format_tool_event(self, event: ChatEvent, *, tool_call: dict[str, Any] | None = None) -> str:
-        """将工具事件转换为摘要或结果文本，样式统一使用 TOOL_CALL 配置。"""
-        output = OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL]
-        is_result = event.event == ChatEventType.TOOL_CALL_RESULT
-        limit = output.get("max_result_chars" if is_result else "max_argument_chars")
-        try:
-            payload = json.loads(event.context)
-            if is_result:
-                arguments = (tool_call or {}).get("arguments")
-                copy = arguments if isinstance(arguments, dict) else {}
-                name = self._truncate(
-                    copy.get("execution_title") or copy.get("execution_description") or payload["name"],
-                    output.get("max_argument_chars"),
-                )
-                description = copy.get("execution_description")
-                value = payload["result"]
-                text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-                text = "".join(part for part, _ in _markdown_parts(self._truncate(text, limit), close_unfinished=True))
-                if description and description != name:
-                    text = f"{description}\n\n{text}"
-                return f"**{name}**\n{text}"
+    def _format_tool_title(self, call: dict[str, Any]) -> str:
+        """生成单个工具调用的标题。"""
+        arguments = call["arguments"]
+        copy = arguments if isinstance(arguments, dict) else {}
+        title = copy.get("execution_title") or copy.get("execution_description") or call["name"]
+        return self._truncate(title, OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL].get("max_argument_chars"))
 
-            lines = []
-            for call in payload:
-                name = self._truncate(call["name"], output.get("max_argument_chars"))
-                value = call["arguments"]
-                if isinstance(value, dict):
-                    title = value.get("execution_title") or value.get("execution_description")
-                    if title:
-                        lines.append(self._truncate(title, limit))
-                        continue
-                text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-                lines.append(f"{name} {self._truncate(text, limit)}")
-            return " | ".join(lines)
-        except (json.JSONDecodeError, TypeError, KeyError):
-            return self._truncate(str(event.context), limit)
+    def _format_tool_result(self, call: dict[str, Any], result: Any) -> str:
+        """生成单个工具调用的结果文本。"""
+        output = OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL]
+        name = self._format_tool_title(call)
+        arguments = call["arguments"]
+        description = arguments.get("execution_description") if isinstance(arguments, dict) else None
+        text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        text = "".join(part for part, _ in _markdown_parts(
+            self._truncate(text, output.get("max_result_chars")), close_unfinished=True,
+        ))
+        if description and description != name:
+            text = f"{description}\n\n{text}"
+        return f"**{name}**\n{text}"

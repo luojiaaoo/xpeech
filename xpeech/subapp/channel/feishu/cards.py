@@ -8,20 +8,18 @@ from ....utils.question import validate_confirm_question_json, validate_question
 from .formatting import ensure_markdown, plain_text
 
 
-def build_feishu_tool_details(calls: list[dict[str, Any]]) -> dict[str, Any]:
+def build_feishu_tool_details(call: dict[str, Any]) -> dict[str, Any]:
     """把函数名和实际参数收进默认折叠的详情，排除展示文案字段。"""
-    details = []
-    for call in calls:
-        arguments = call["arguments"]
-        if isinstance(arguments, dict):
-            arguments = {key: value for key, value in arguments.items() if key not in EXECUTION_PARAMETERS}
-        text = json.dumps(arguments, ensure_ascii=False, indent=2)
-        details.append(f'**{call["name"]}**\n```json\n{text}\n```')
+    arguments = call["arguments"]
+    if isinstance(arguments, dict):
+        arguments = {key: value for key, value in arguments.items() if key not in EXECUTION_PARAMETERS}
+    text = json.dumps(arguments, ensure_ascii=False, indent=2)
+    details = f'**{call["name"]}**\n```json\n{text}\n```'
     return {
         "tag": "collapsible_panel",
         "expanded": False,
         "header": {"title": plain_text("工具与参数")},
-        "elements": [{"tag": "markdown", "content": ensure_markdown("\n\n".join(details), 6000)}],
+        "elements": [{"tag": "markdown", "content": ensure_markdown(details, 6000)}],
     }
 
 
@@ -230,9 +228,9 @@ def _build_feishu_confirm_card(
         )
 
     if question["tool_name"]:
-        elements.append(build_feishu_tool_details([{
+        elements.append(build_feishu_tool_details({
             "name": question["tool_name"], "arguments": question["arguments"],
-        }]))
+        }))
     if question["timeout_seconds"] is not None and not disabled and tool_result is None:
         elements.append({
             "tag": "markdown", "text_size": "notation",

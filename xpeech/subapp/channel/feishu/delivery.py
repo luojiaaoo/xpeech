@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from html import escape
 from typing import Any
 
 from lark_channel import SendResult
@@ -12,132 +13,110 @@ from loguru import logger
 from ..schema import ChatEvent, ChatEventType
 from .cards import build_feishu_tool_details
 from .config import FEISHU_STREAM_UPDATE_INTERVAL_SECONDS
-from .formatting import OUTPUT_EVENT_TYPES, color_markdown, ensure_markdown
+from .formatting import OUTPUT_EVENT_TYPES, ensure_markdown
+
+
+@dataclass
+class ToolCardProgress:
+    call: dict[str, Any]
+    title: str
+    card_id: str | None = None
+    sequence: int = 0
+    header: dict[str, Any] = field(default_factory=dict)
+    failed: bool = False
 
 
 @dataclass
 class ToolProgress:
-    card_id: str | None = None
-    sequence: int = 0
-    title: str = ""
-    text: str = ""
-    calls: dict[str, dict[str, Any]] = field(default_factory=dict)
-    results: dict[str, str] = field(default_factory=dict)
-    failures: set[str] = field(default_factory=set)
+    cards: dict[str, ToolCardProgress] = field(default_factory=dict)
 
 
 class FeishuDeliveryMixin:
     """发送普通卡片、流式卡片和可更新的飞书卡片。"""
 
     async def send_tool_progress(self, to: str, event: ChatEvent, progress: ToolProgress) -> None:
-        """将当前轮的工具调用和结果更新到同一张折叠卡片。"""
-        output = OUTPUT_EVENT_TYPES.get(ChatEventType.TOOL_CALL)
-        if output is None:
+        """每个工具调用使用独立卡片，按调用 ID 更新结果和标题。"""
+        if ChatEventType.TOOL_CALL not in OUTPUT_EVENT_TYPES:
             return
-        text = self._format_tool_event(event)
+        payload = json.loads(event.context)
         if event.event == ChatEventType.TOOL_CALL:
-            progress.title = self._truncate(
-                " | ".join(filter(None, (progress.title, text))),
-                output.get("max_title_chars"),
-            )
-            try:
-                for entry in json.loads(event.context):
-                    tool_call_id = entry["tool_call_id"]
-                    progress.calls[tool_call_id] = entry
-                    progress.results.setdefault(tool_call_id, "")
-                    arguments = entry.get("arguments")
-                    if isinstance(arguments, dict) and arguments.get("execution_description"):
-                        pending = {
-                            "name": entry["name"], "result": "执行中…",
-                        }
-                        progress.results[tool_call_id] = self._format_tool_event(
-                            ChatEvent(event=ChatEventType.TOOL_CALL_RESULT, context=json.dumps(pending)), tool_call=entry,
-                        )
-                progress.text = self._truncate(
-                    "\n\n".join(filter(None, progress.results.values())), output.get("max_chars"),
-                )
-            except (ValueError, TypeError, KeyError):
-                pass
-        else:
-            try:
-                payload = json.loads(event.context)
-                tool_call_id = payload["tool_call_id"]
-            except (ValueError, TypeError, KeyError):
-                tool_call_id = None
-                payload = {}
-            if isinstance(tool_call_id, str):
-                text = self._format_tool_event(event, tool_call=progress.calls.get(tool_call_id))
-                progress.results[tool_call_id] = text
-                if payload.get("success") is False:
-                    progress.failures.add(tool_call_id)
-                else:
-                    progress.failures.discard(tool_call_id)
-                progress.text = self._truncate(
-                    "\n\n".join(filter(None, progress.results.values())), output.get("max_chars"),
-                )
-            else:
-                progress.text = self._truncate(
-                    "\n\n".join(filter(None, (progress.text, text))), output.get("max_chars"),
-                )
+            for entry in payload:
+                call_id = entry["tool_call_id"]
+                if call_id not in progress.cards:
+                    await self._create_tool_progress(to, entry, progress)
+            return
+
+        call_id = payload["tool_call_id"]
+        state = progress.cards.get(call_id)
+        if state is None:
+            await self._create_tool_progress(to, {
+                "tool_call_id": call_id, "name": payload["name"], "arguments": {},
+            }, progress, result=payload)
+            return
+
+        text = self._format_tool_result(state.call, payload["result"])
         message, _ = self._format_chat_event(
-            ChatEvent(event=ChatEventType.TOOL_CALL, context=progress.text),
-            title=progress.title,
+            ChatEvent(event=ChatEventType.TOOL_CALL, context=text), title=state.title,
+        )
+        panel = message["card"]["body"]["elements"][0]
+        await asyncio.sleep(FEISHU_STREAM_UPDATE_INTERVAL_SECONDS)
+        state.sequence += 1
+        await self.channel.update_card_element_content(
+            state.card_id, "main", panel["elements"][0]["content"], sequence=state.sequence,
+        )
+        failed = payload.get("success") is False
+        if failed != state.failed:
+            state.sequence += 1
+            await self.channel.patch_card_element(
+                state.card_id, "panel", {"header": self._tool_progress_header(state.header, failed)},
+                sequence=state.sequence,
+            )
+            state.failed = failed
+
+    async def _create_tool_progress(
+        self, to: str, call: dict[str, Any], progress: ToolProgress, *, result: dict[str, Any] | None = None,
+    ) -> None:
+        state = ToolCardProgress(call=call, title=self._format_tool_title(call))
+        progress.cards[call["tool_call_id"]] = state
+        arguments = call.get("arguments")
+        has_description = isinstance(arguments, dict) and arguments.get("execution_description")
+        text = ""
+        if result is not None or has_description:
+            text = self._format_tool_result(call, result["result"] if result is not None else "执行中…")
+        message, _ = self._format_chat_event(
+            ChatEvent(event=ChatEventType.TOOL_CALL, context=text), title=state.title,
         )
         card = message["card"]
-        if progress.failures:
-            element = card["body"]["elements"][0]
-            body = element["elements"][0] if element["tag"] == "collapsible_panel" else element
-            content = body["content"]
-            parts = []
-            # 在统一转义、截断后按 ID 标色，避免截断标签或把工具输出当作标签解析。
-            for call_id, result_text in progress.results.items():
-                if not result_text or not content:
-                    continue
-                if parts:
-                    parts.append(content[:2])  # 结果之间的换行。
-                    content = content[2:]
-                length = len(ensure_markdown(result_text))
-                result_content, content = content[:length], content[length:]
-                if call_id in progress.failures and result_content:
-                    result_content = color_markdown(result_content, "red")
-                parts.append(result_content)
-            body["content"] = "".join(parts) + content
-        calls_with_copy = [
-            call for call in progress.calls.values()
-            if isinstance(call.get("arguments"), dict)
-            and (call["arguments"].get("execution_title") or call["arguments"].get("execution_description"))
-        ]
-        if calls_with_copy:
-            card["body"]["elements"].append(build_feishu_tool_details(calls_with_copy))
-        if progress.card_id is None:
-            progress.card_id = await self.channel.create_card_instance(card)
-            result = await self.channel.send_card_by_reference(to, progress.card_id)
-            self._ensure_send_success(result, operation="send tool card")
-        else:
-            await asyncio.sleep(FEISHU_STREAM_UPDATE_INTERVAL_SECONDS)
-            element = card["body"]["elements"][0]
-            if event.event == ChatEventType.TOOL_CALL and "header" in element:
-                progress.sequence += 1
-                await self.channel.patch_card_element(
-                    progress.card_id,
-                    "panel",
-                    {"header": element["header"]},
-                    sequence=progress.sequence,
-                )
-            body = element["elements"][0] if element["tag"] == "collapsible_panel" else element
-            progress.sequence += 1
-            await self.channel.update_card_element_content(
-                progress.card_id,
-                "main",
-                body["content"],
-                sequence=progress.sequence,
-            )
+        panel = card["body"]["elements"][0]
+        state.header = panel["header"]
+        state.failed = result is not None and result.get("success") is False
+        if state.failed:
+            panel["header"] = self._tool_progress_header(state.header, True)
+        card["body"]["elements"].append(build_feishu_tool_details(call))
+        state.card_id = await self.channel.create_card_instance(card)
+        send_result = await self.channel.send_card_by_reference(to, state.card_id)
+        self._ensure_send_success(send_result, operation="send tool card")
+
+    @staticmethod
+    def _tool_progress_header(header: dict[str, Any], failed: bool) -> dict[str, Any]:
+        if not failed:
+            return header
+        result = dict(header)
+        for name in ("title", "expanded_title"):
+            if name in header:
+                title = escape(header[name]["content"], quote=False)
+                result[name] = {"tag": "markdown", "content": f'<font color="red">{title}</font>'}
+        return result
 
     async def finish_tool_progress(self, progress: ToolProgress) -> None:
-        """结束当前轮工具调用的卡片流式更新。"""
-        if progress.card_id is not None:
-            progress.sequence += 1
-            await self.channel.finish_streaming_card(progress.card_id, sequence=progress.sequence)
+        """结束当前轮每张工具卡片的流式更新。"""
+        for state in progress.cards.values():
+            if state.card_id is not None:
+                state.sequence += 1
+                try:
+                    await self.channel.finish_streaming_card(state.card_id, sequence=state.sequence)
+                except Exception:
+                    logger.exception("Failed to finish Feishu tool card card_id={}", state.card_id)
 
     @staticmethod
     def _ensure_send_success(
