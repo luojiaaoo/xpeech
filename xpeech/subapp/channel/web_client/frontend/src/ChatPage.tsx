@@ -18,7 +18,7 @@ import {
 import { chatSync, downloadFile, getFile, historyApi, stopChat, streamChat } from './api';
 import { collectReplies, connectEmbedBridge, postToParent } from './embedBridge';
 import type { SyncOptions } from './embedBridge';
-import { appendChatEvent, chatMessagesFromEvents, finishChatTurn, startChatTurn } from './chatState';
+import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn, startChatTurn } from './chatState';
 import ToolCallCard from './ToolCallCard';
 import {
   readPendingUserPrefix,
@@ -42,6 +42,7 @@ const roles: ComponentProps<typeof Bubble.List>['role'] = {
     rootClassName: 'chat-assistant',
   },
   thinking: { placement: 'start', variant: 'borderless', rootClassName: 'chat-thinking' },
+  process: { placement: 'start', variant: 'borderless', rootClassName: 'chat-process' },
   tool: { placement: 'start', variant: 'borderless', rootClassName: 'chat-tool' },
   status: { placement: 'start', variant: 'borderless', rootClassName: 'chat-status' },
   file: { placement: 'start', variant: 'borderless' },
@@ -358,42 +359,60 @@ export default function ChatPage({
     }
   }
 
-  const items = useMemo(() => messages.map((item) => {
-    let content: React.ReactNode = item.content;
-    if (item.role === 'assistant' || item.role === 'thinking') {
-      content = renderStreamContent(item.role, item.content, !!item.streaming);
-    } else if (item.role === 'tool' && item.toolCall) {
-      content = <ToolCallCard tool={item.toolCall} />;
-    } else if (item.role === 'question') {
-      content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} readOnly={item.historical} /></Suspense>;
-    } else if (item.role === 'file') {
-      const name = item.content.split(/[\\/]/).pop() || '文件';
-      content = <Button className="chat-file-button" icon={<DownloadOutlined />} onClick={() => {
-        downloadFile(item.content).catch((error) => message.error(String(error)));
-      }}>{name}</Button>;
-    } else if (item.role === 'status') {
-      content = <div className="chat-status-text">{item.transient ? <LoadingOutlined spin /> : null}{item.content}</div>;
-    } else if (item.role === 'error') {
-      content = <Alert type="error" showIcon message="本次回复未能完成" description={item.content} />;
-    } else if (item.role === 'summary') {
-      content = (
-        <div className="bubble-footer">
-          {item.tokenUsage ? renderTokenUsage(item.tokenUsage) : null}
-          {item.content ? (
-            <Tooltip title="复制">
-              <Button type="text" size="small" className="bubble-copy-button" aria-label="复制消息"
-                icon={<CopyOutlined />} onClick={() => void copyMessage(item.content)} />
-            </Tooltip>
-          ) : null}
-        </div>
-      );
+  const items = useMemo(() => {
+    function renderMessage(item: ChatMessage) {
+      let content: React.ReactNode = item.content;
+      if (item.role === 'assistant' || item.role === 'thinking') {
+        content = renderStreamContent(item.role, item.content, !!item.streaming);
+      } else if (item.role === 'tool' && item.toolCall) {
+        content = <ToolCallCard tool={item.toolCall} />;
+      } else if (item.role === 'question') {
+        content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} readOnly={item.historical} /></Suspense>;
+      } else if (item.role === 'file') {
+        const name = item.content.split(/[\\/]/).pop() || '文件';
+        content = <Button className="chat-file-button" icon={<DownloadOutlined />} onClick={() => {
+          downloadFile(item.content).catch((error) => message.error(String(error)));
+        }}>{name}</Button>;
+      } else if (item.role === 'status') {
+        content = <div className="chat-status-text">{item.transient ? <LoadingOutlined spin /> : null}{item.content}</div>;
+      } else if (item.role === 'error') {
+        content = <Alert type="error" showIcon message="本次回复未能完成" description={item.content} />;
+      } else if (item.role === 'summary') {
+        content = (
+          <div className="bubble-footer">
+            {item.tokenUsage ? renderTokenUsage(item.tokenUsage) : null}
+            {item.content ? (
+              <Tooltip title="复制">
+                <Button type="text" size="small" className="bubble-copy-button" aria-label="复制消息"
+                  icon={<CopyOutlined />} onClick={() => void copyMessage(item.content)} />
+              </Tooltip>
+            ) : null}
+          </div>
+        );
+      }
+      return content;
     }
-    return {
+
+    return chatDisplayItems(messages, loading).map((item) => ({
       key: item.key,
       role: item.role,
-      content,
-    };
-  }), [messages, sessionId]);
+      content: item.role === 'process' ? (
+        <details className="process-panel">
+          <summary aria-label={item.running ? '正在处理，点击展开过程' : '查看处理过程'}>
+            {item.running ? <LoadingOutlined spin /> : <CheckCircleOutlined />}
+            <span className="process-line" aria-hidden="true" />
+          </summary>
+          <div className="process-content">
+            {item.messages.filter((entry) => !entry.transient).map((entry) => (
+              <div key={entry.key} className={`process-entry process-entry-${entry.role}`}>
+                {renderMessage(entry)}
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : renderMessage(item),
+    }));
+  }, [loading, messages, sessionId]);
 
   const attachmentItems: AttachmentsProps['items'] = files.map((file, index) => ({
     uid: `${index}-${file.name}-${file.lastModified}`,

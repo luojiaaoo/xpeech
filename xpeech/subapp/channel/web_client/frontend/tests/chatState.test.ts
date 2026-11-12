@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendChatEvent, chatMessagesFromEvents, finishChatTurn, startChatTurn } from '../src/chatState.ts';
+import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn, startChatTurn } from '../src/chatState.ts';
 import type { ChatEvent, ToolCallResult } from '../src/types.ts';
 
 function apply(events: ChatEvent[], initial = startChatTurn([], '帮我做个海报')) {
@@ -10,6 +10,65 @@ function apply(events: ChatEvent[], initial = startChatTurn([], '帮我做个海
 const event = (type: ChatEvent['event'], context = ''): ChatEvent => ({ event: type, context });
 const tools = (type: 'tool_call', rows: unknown[][]) => event(type, JSON.stringify(rows));
 const toolResult = (result: ToolCallResult) => event('tool_call_result', JSON.stringify(result));
+
+test('folds a running turn into one process item until its final reply is known', () => {
+  const initial = startChatTurn([], '读取文件');
+  const placeholder = chatDisplayItems(initial, true);
+  assert.deepEqual(placeholder.map(item => item.role), ['user', 'process']);
+  const messages = apply([
+    event('thinking', '先分析'), event('thinking_end'),
+    event('assistant', '我先读取文件'), event('assistant_end'),
+    tools('tool_call', [['a', 'read_file', {}]]),
+    toolResult({ id: 'a', name: 'read_file', result: 'ok', duration_seconds: 1 }),
+    event('assistant', '读取完成'),
+  ], initial);
+  const before = structuredClone(messages);
+  const items = chatDisplayItems(messages, true);
+  assert.deepEqual(items.map(item => item.role), ['user', 'process']);
+  const process = items[1];
+  assert.equal(process.key, placeholder[1].key);
+  assert.equal(process.role, 'process');
+  if (process.role !== 'process') throw new Error('Expected process item');
+  assert.equal(process.running, true);
+  assert.deepEqual(process.messages.map(item => item.role), ['thinking', 'assistant', 'tool', 'assistant']);
+
+  const finished = chatDisplayItems(finishChatTurn(messages));
+  assert.deepEqual(finished.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
+  assert.equal(finished[1].key, process.key);
+  assert.equal(finished[1].role === 'process' && finished[1].running, false);
+  assert.equal(finished[2].role === 'assistant' && finished[2].content, '读取完成');
+  assert.deepEqual(messages, before);
+});
+
+test('keeps each historical final reply and usage visible while folding earlier messages per turn', () => {
+  const history = chatMessagesFromEvents([
+    event('user', '第一问'), event('assistant', '中间回复'), event('assistant_end'),
+    event('thinking', '分析'), event('assistant', '第一答'), event('token_usage', '{"总 Token":100}'),
+    event('user', '第二问'), event('assistant', '第二答'), event('token_usage', '{"总 Token":200}'),
+  ]);
+  const items = chatDisplayItems(startChatTurn(history, '第三问'), true);
+  assert.deepEqual(items.map(item => item.role), [
+    'user', 'process', 'assistant', 'summary', 'user', 'assistant', 'summary', 'user', 'process',
+  ]);
+  assert.deepEqual(items.filter(item => item.role === 'assistant').map(item => item.content), ['第一答', '第二答']);
+  assert.deepEqual(items.filter(item => item.role === 'summary').map(item => item.tokenUsage), ['{"总 Token":100}', '{"总 Token":200}']);
+  assert.deepEqual(items.filter(item => item.role === 'process').map(item => item.running), [false, true]);
+});
+
+test('keeps interactive questions, files and errors visible even without an assistant reply', () => {
+  const messages = apply([
+    event('command', '压缩上下文'), tools('tool_call', [['a', 'read_file', {}]]),
+    event('question', '{"type":"confirm"}'), event('send_file', '/report.pdf'), event('error', '连接断开'),
+    event('token_usage', '{"总 Token":10}'),
+  ]);
+  const active = chatDisplayItems(messages, true);
+  assert.deepEqual(active.map(item => item.role), ['user', 'process', 'question', 'file', 'error', 'summary']);
+  const finished = chatDisplayItems(finishChatTurn(messages));
+  assert.deepEqual(finished.map(item => item.role), active.map(item => item.role));
+  const process = finished[1];
+  assert.ok(process.role === 'process' && !process.running);
+  assert.equal(process.messages.find(item => item.toolCall)?.toolCall?.status, 'interrupted');
+});
 
 test('preserves assistant, thinking and tool order across multiple model calls', () => {
   const messages = finishChatTurn(apply([

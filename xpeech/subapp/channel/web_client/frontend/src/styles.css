@@ -149,9 +149,11 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   overflow-wrap: anywhere;
 }
 .chat-assistant .ant-bubble-body,
+.chat-process .ant-bubble-body,
 .chat-thinking .ant-bubble-body,
 .chat-summary .ant-bubble-body { flex: 0 1 1080px; max-width: 100%; }
 .chat-assistant .ant-bubble-content,
+.chat-process .ant-bubble-content,
 .chat-thinking .ant-bubble-content,
 .chat-tool .ant-bubble-content,
 .chat-summary .ant-bubble-content { width: 100%; max-width: 100%; padding: 0; }
@@ -180,6 +182,23 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .markdown-content pre, .markdown-content table { max-width: 100%; overflow-x: auto; }
 .markdown-content table { display: block; }
 .markdown-content img { height: auto; }
+.process-panel { width: 100%; min-width: 0; }
+.process-panel > summary {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 10px;
+  color: #8993a1;
+  cursor: pointer;
+  list-style: none;
+}
+.process-panel > summary::-webkit-details-marker { display: none; }
+.process-panel > summary:focus-visible { outline: 2px solid #3370ff; outline-offset: 3px; border-radius: 5px; }
+.process-line { flex: 1; height: 1px; background: #e1e6ee; }
+.process-panel > summary:hover { color: #526782; }
+.process-panel > summary:hover .process-line { background: #bac6d6; }
+.process-content { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding: 8px 0 8px 16px; border-inline-start: 1px solid #e8ecf2; }
+.process-entry { min-width: 0; }
 .chat-thinking { padding-block: 3px !important; }
 .thinking-panel { width: 100%; color: #8993a1; font-size: 13px; }
 .thinking-panel summary {

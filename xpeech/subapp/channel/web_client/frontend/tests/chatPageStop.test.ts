@@ -78,27 +78,65 @@ async function chatPage(stopChat: (sessionId: string) => Promise<{ stopped: bool
     }, { context });
   });
   await component.evaluate();
-  function findSender(node: any): any {
+  function findElement(node: any, type: any): any {
     if (!node || typeof node !== 'object') return;
-    if (node?.type === Sender) return node.props;
+    if (node?.type === type) return node.props;
     const children = node?.props?.children;
     for (const child of Array.isArray(children) ? children : [children]) {
-      const match = findSender(child);
+      const match = findElement(child, type);
       if (match) return match;
     }
   }
-  function render() {
+  function render(type: any = Sender) {
     cursor = 0;
-    return findSender((component.namespace.default as Function)({
+    return findElement((component.namespace.default as Function)({
       systemName: '助手', sessionId: 'session-one', onRunningChange: (value: boolean) => running.push(value),
-    }));
+    }), type);
   }
   render();
   // Run only the history effect; it clears the initial loading state.
   const cleanupHistory = effects[2]();
   await tick();
-  return { render, streams, errors, running, messages: () => slots[0].value, cleanupHistory };
+  return { render, items: () => render('BubbleList').items, streams, errors, running, messages: () => slots[0].value, cleanupHistory };
 }
+
+test('the process is closed by default with only a spinner and line, then the final answer and usage appear outside', async () => {
+  const page = await chatPage(async () => ({ stopped: true }));
+  page.render().onSubmit('hello');
+  const initialProcess = page.items()[1];
+  assert.equal(initialProcess.role, 'process');
+  assert.equal(initialProcess.content.type, 'details');
+  assert.equal(initialProcess.content.props.open, undefined);
+  const summary = initialProcess.content.props.children[0];
+  assert.equal(summary.type, 'summary');
+  assert.equal(summary.props.children.length, 2);
+  assert.equal(summary.props.children[0].type, 'LoadingOutlined');
+  assert.equal(summary.props.children[0].props.spin, true);
+  assert.equal(summary.props.children[1].props.className, 'process-line');
+
+  const stream = page.streams[0];
+  for (const event of [
+    { event: 'thinking', context: '分析问题' },
+    { event: 'assistant', context: '正在读取' },
+    { event: 'tool_call', context: '[["tool-1","read_file",{}]]' },
+    { event: 'assistant', context: '最终回复' },
+    { event: 'token_usage', context: '{"总 Token":100}' },
+  ]) stream.receive(event);
+  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'process', 'summary']);
+  assert.equal(page.items()[1].key, initialProcess.key);
+  stream.finish();
+  await tick();
+
+  const items = page.items();
+  assert.deepEqual(Array.from(items, (item: any) => item.role), ['user', 'process', 'assistant', 'summary']);
+  assert.equal(items[1].key, initialProcess.key);
+  assert.equal(items[1].content.props.open, undefined);
+  assert.equal(items[1].content.props.children[0].props.children[0].type, 'CheckCircleOutlined');
+  assert.equal(items[2].content.props.children.props.content, '最终回复');
+  assert.equal(items[3].content.props.className, 'bubble-footer');
+  assert.equal(items[3].content.props.children[0].props['aria-label'], 'Token 使用情况');
+  page.cleanupHistory();
+});
 
 test('the composer stop action waits for server acknowledgement, closes its stream and preserves partial messages', async () => {
   const calls: string[] = [];

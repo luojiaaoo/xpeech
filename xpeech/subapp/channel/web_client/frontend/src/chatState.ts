@@ -110,6 +110,40 @@ export function chatMessagesFromEvents(events: ChatEvent[]): ChatMessage[] {
   return finishChatTurn(messages).map((item) => ({ ...item, historical: true }));
 }
 
+export type ChatDisplayItem = ChatMessage | {
+  key: string;
+  role: 'process';
+  messages: ChatMessage[];
+  running: boolean;
+};
+
+// Keep the event history intact; folding only changes how each turn is displayed.
+export function chatDisplayItems(messages: ChatMessage[], running = false): ChatDisplayItem[] {
+  const items: ChatDisplayItem[] = [];
+  let start = 0;
+  while (start < messages.length) {
+    let end = start + 1;
+    while (end < messages.length && messages[end].role !== 'user') end++;
+    const turn = messages.slice(start, end);
+    const active = running && end === messages.length;
+    // The last assistant message is only known when the request has ended.
+    const finalReply = active ? undefined : turn.findLast((item) => item.role === 'assistant');
+    const process = turn.filter((item) => item !== finalReply && (
+      item.role === 'assistant' || item.role === 'thinking' || item.role === 'tool' || item.role === 'status'
+    ));
+    const hidden = new Set(process);
+    const visible = turn.filter((item) => !hidden.has(item));
+    const user = visible[0]?.role === 'user' ? visible.shift() : undefined;
+    if (user) items.push(user);
+    if (process.length || active) {
+      items.push({ key: `process_${turn[0].key}`, role: 'process', messages: process, running: active });
+    }
+    items.push(...visible);
+    start = end;
+  }
+  return items;
+}
+
 export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[] {
   const next = messages.filter((item) => !item.transient);
   if (event.event === 'assistant' || event.event === 'thinking') {
