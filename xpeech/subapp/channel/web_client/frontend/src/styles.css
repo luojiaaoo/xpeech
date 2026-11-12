@@ -252,6 +252,13 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .tool-card-section-label { margin-bottom: 4px; color: #8b9aaf; font-size: 12px; font-weight: 600; }
 .tool-card-section pre { max-height: 260px; margin: 0; overflow: auto; color: #45505f; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tool-card-placeholder { color: #96a3b5; font-size: 12px; }
+.tool-card-failed { background: #fff2f0; border-color: #ffccc7; }
+.tool-card-failed .tool-status-dot { background: #cf1322; }
+.tool-card-failed .tool-card-name,
+.tool-card-failed .tool-card-status,
+.tool-card-failed .tool-card-chevron,
+.tool-card-failed .tool-card-section-label,
+.tool-card-failed .tool-card-section pre { color: #cf1322; }
 .chat-status-text { display: flex; align-items: center; gap: 7px; color: #8a94a3; font-size: 13px; overflow-wrap: anywhere; }
 .chat-file-button { max-width: 100%; height: auto; min-height: 32px; white-space: normal; overflow-wrap: anywhere; text-align: start; }
 .chat-summary { padding-block: 2px 8px !important; }
@@ -1291,3 +1298,13 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
     animation: none !important;
   }
 }
+
+.question-confirm { border: 1px solid #dce5f0; }
+.question-confirm-description { font-size: 15px; line-height: 1.7; }
+.question-execution-details { margin-bottom: 16px; color: #667085; }
+.question-execution-details summary { cursor: pointer; font-size: 12px; }
+.question-tool-name { margin-top: 10px; font-family: monospace; }
+.question-execution-details pre, .question-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; }
+.question-confirm-hint { font-size: 12px; }
+.question-confirm-failed { background: #fff2f0; border-color: #ffccc7; }
+.question-confirm-failed .ant-typography, .question-result-error { color: #cf1322; }

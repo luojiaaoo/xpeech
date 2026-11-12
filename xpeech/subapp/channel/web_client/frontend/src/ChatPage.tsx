@@ -368,7 +368,10 @@ export default function ChatPage({
       } else if (item.role === 'tool' && item.toolCall) {
         content = <ToolCallCard tool={item.toolCall} />;
       } else if (item.role === 'question') {
-        content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} readOnly={item.historical} /></Suspense>;
+        const previous = messages.slice(0, messages.indexOf(item));
+        const turn = previous.slice(previous.findLastIndex(entry => entry.role === 'user') + 1);
+        const tool = turn.find(entry => entry.toolCall?.id === item.questionToolId)?.toolCall;
+        content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} readOnly={item.historical} tool={tool} /></Suspense>;
       } else if (item.role === 'file') {
         const name = item.content.split(/[\\/]/).pop() || '文件';
         content = <Button className="chat-file-button" icon={<DownloadOutlined />} onClick={() => {

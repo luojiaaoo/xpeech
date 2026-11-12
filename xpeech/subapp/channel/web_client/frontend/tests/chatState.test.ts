@@ -211,3 +211,25 @@ test('continues a restored conversation without merging its final turn into the 
   assert.ok(next.slice(0, 3).every((item) => item.historical));
   assert.equal(next.at(-1)?.historical, undefined);
 });
+
+test('associates execution questions with pending calls and preserves success flags', () => {
+  const messages = apply([
+    tools('tool_call', [['a', 'shell', {}], ['b', 'shell', {}]]),
+    toolResult({ id: 'a', name: 'shell', result: 'ok', duration_seconds: 0, success: true }),
+    event('question', '{"type":"confirm","title":"执行确认：shell"}'),
+    toolResult({ id: 'b', name: 'shell', result: 'RuntimeError: failed', duration_seconds: 0, success: false }),
+  ]);
+  assert.equal(messages.find(item => item.role === 'question')?.questionToolId, 'b');
+  assert.equal(messages.find(item => item.toolCall?.id === 'a')?.toolCall?.success, true);
+  assert.equal(messages.find(item => item.toolCall?.id === 'b')?.toolCall?.success, false);
+});
+
+
+test('custom confirmation titles associate results using the tool name', () => {
+  const messages = apply([
+    tools('tool_call', [['a', 'shell', {}]]),
+    event('question', '{"type":"confirm","title":"运行测试命令","tool_name":"shell"}'),
+    toolResult({ id: 'a', name: 'shell', result: 'hello', duration_seconds: 0, success: true }),
+  ]);
+  assert.equal(messages.find(item => item.role === 'question')?.questionToolId, 'a');
+});

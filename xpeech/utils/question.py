@@ -75,6 +75,9 @@ class ConfirmQuestion(StrictBaseModel):
     type: Literal["confirm"] = "confirm"
     title: str = "请确认"
     description: str | None = None
+    tool_name: str | None = None
+    confirm_label: str = "确认"
+    view_label: str = "查看"
 
 
 def validate_question_form_json(data: str | dict[str, Any]) -> dict[str, Any]:
@@ -99,10 +102,16 @@ def validate_confirm_question_json(data: str | dict[str, Any]) -> dict[str, Any]
         raise ValueError(f"确认问题 JSON 校验失败: {str(e)}") from e
 
 
-def build_execution_question(tool_name: str, arguments: dict[str, Any], description: str) -> str:
+def build_execution_question(
+    tool_name: str, arguments: dict[str, Any], description: str, *,
+    title: str | None = None, confirm_label: str = "确认", view_label: str = "查看",
+) -> str:
     """通过确认问题展示执行说明、参数和确认 / 取消按钮。"""
     return ConfirmQuestion(
-        title=f"执行确认：{tool_name}",
+        title=title or "执行确认",
+        tool_name=tool_name,
+        confirm_label=confirm_label,
+        view_label=view_label,
         description=(
             f"执行说明：{description}\n\n"
             f"执行参数：\n{json.dumps(arguments, ensure_ascii=False, indent=2)}\n\n"

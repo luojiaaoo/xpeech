@@ -15,6 +15,12 @@ EXECUTION_DESCRIPTION = "execution_description"
 # 需要用户确认时返回的标记，Agent 主循环识别后询问用户再执行原函数。
 EXECUTION_REQUEST = ExecutionRequest()
 _DESCRIPTION = "说明本次执行具体要做什么以及目的。"
+_EXECUTION_LABELS = {
+    "execution_title": ("执行确认", "根据本次操作生成简短的确认卡片标题。"),
+    "execution_confirm_label": ("确认", "根据本次操作生成简短的确认按钮文案，例如：发送、删除、运行。"),
+    "execution_view_label": ("查看", "根据本次操作生成查看执行结果的简短按钮文案，例如：查看结果、查看详情。"),
+}
+EXECUTION_PARAMETERS = {EXECUTION_DESCRIPTION, *_EXECUTION_LABELS}
 
 
 class ExecutionDecision(StrEnum):
@@ -33,7 +39,7 @@ def build_execution_request_tool(
 ) -> Callable:
     """创建同名工具，默认返回标记，交由 Agent 询问用户后执行。
 
-    requires_confirmation 接收包含 execution_description 和原工具参数的 JSON
+    requires_confirmation 接收包含执行说明、确认文案和原工具参数的 JSON
     字符串（仅包含调用时提供的字段），支持同步或异步函数。必须返回 ExecutionDecision：
     CONFIRM 时询问用户，ALLOW 时直接执行，DENY 时直接拒绝高危命令，不询问用户。
     异常或其他返回值按工具错误处理，不执行原函数。
@@ -45,12 +51,17 @@ def build_execution_request_tool(
             "not_interactive=True 时必须提供 requires_confirmation；请在注册的时候就屏蔽掉，而不是在运行时屏蔽"
         )
     model_info = get_tool_model_cls(function)
-    if EXECUTION_DESCRIPTION in model_info.model_cls.model_fields:
-        raise ValueError(f"Tool already defines reserved parameter: {EXECUTION_DESCRIPTION}")
+    for name in EXECUTION_PARAMETERS:
+        if name in model_info.model_cls.model_fields:
+            raise ValueError(f"Tool already defines reserved parameter: {name}")
     model_cls = create_model(
         f"{function.__name__}ExecutionArgs",
         __base__=model_info.model_cls,
         execution_description=(str, Field(description=_DESCRIPTION, min_length=1, pattern=r"\S")),
+        **{
+            name: (str, Field(default=default, description=description, min_length=1, pattern=r"\S"))
+            for name, (default, description) in _EXECUTION_LABELS.items()
+        },
     )
 
     execution_function = ensure_async(function)
@@ -70,7 +81,7 @@ def build_execution_request_tool(
                 raise PermissionError("非交互模式下无法获取用户确认，拒绝执行该工具。")
             return EXECUTION_REQUEST
         elif decision is ExecutionDecision.ALLOW:
-            arguments = args.model_dump(exclude={EXECUTION_DESCRIPTION}, exclude_unset=True)
+            arguments = args.model_dump(exclude=EXECUTION_PARAMETERS, exclude_unset=True)
             original_args = (model_info.model_cls(**arguments),) if model_info.has_pydantic_param else ()
             return await execution_function(*original_args)
 
@@ -82,19 +93,25 @@ def build_execution_request_tool(
 
 
 def execution_request_schema(tool_json: dict[str, Any]) -> dict[str, Any]:
-    """给 MCP 原始 schema 增加说明字段，保留其余约束且不修改服务器缓存。"""
+    """给 MCP 原始 schema 增加执行说明和确认文案字段，保留其余约束且不修改服务器缓存。"""
     schema = deepcopy(tool_json)
     function = schema["function"]
     parameters = function.setdefault("parameters", {"type": "object", "properties": {}})
     properties = parameters.setdefault("properties", {})
-    if EXECUTION_DESCRIPTION in properties:
-        raise ValueError(f"Tool already defines reserved parameter: {EXECUTION_DESCRIPTION}")
+    for name in EXECUTION_PARAMETERS:
+        if name in properties:
+            raise ValueError(f"Tool already defines reserved parameter: {name}")
     properties[EXECUTION_DESCRIPTION] = {
         "type": "string",
         "description": _DESCRIPTION,
         "minLength": 1,
         "pattern": r"\S",
     }
+    for name, (default, description) in _EXECUTION_LABELS.items():
+        properties[name] = {
+            "type": "string", "description": description, "default": default,
+            "minLength": 1, "pattern": r"\S",
+        }
     parameters.setdefault("required", []).append(EXECUTION_DESCRIPTION)
     function["description"] = f"{function.get('description', '')}\n\n{_DESCRIPTION}".strip()
     return schema

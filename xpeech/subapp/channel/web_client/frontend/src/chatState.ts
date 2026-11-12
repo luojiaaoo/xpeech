@@ -78,6 +78,7 @@ function applyToolEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[
       updateToolCall(next, {
         id: payload.id, name: payload.name, output: payload.result,
         status: 'completed', durationSeconds: payload.duration_seconds,
+        ...(typeof payload.success === 'boolean' ? { success: payload.success } : {}),
       });
       return next;
     }
@@ -167,5 +168,20 @@ export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): Chat
   const role = event.event === 'send_file' ? 'file'
     : event.event === 'command' ? 'status' : event.event;
   if (role !== 'file' && role !== 'status' && role !== 'question' && role !== 'error') return next;
-  return [...finishStreams(next), { key: key(role), role, content: event.context }];
+  let questionToolId: string | undefined;
+  if (role === 'question') {
+    try {
+      const question = JSON.parse(event.context);
+      const toolName = question.tool_name || (question.title?.startsWith('执行确认：') ? question.title.slice('执行确认：'.length) : undefined);
+      if (question.type === 'confirm' && toolName) {
+        const turn = next.slice(turnStart(next));
+        questionToolId = turn.find(item => item.toolCall?.status === 'running'
+          && item.toolCall.name === toolName
+          && !turn.some(question => question.questionToolId === item.toolCall?.id))?.toolCall?.id;
+      }
+    } catch { /* Free-text questions have no associated tool. */ }
+  }
+  return [...finishStreams(next), { key: key(role), role, content: event.context,
+    ...(questionToolId ? { questionToolId } : {}),
+  }];
 }

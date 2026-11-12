@@ -31,7 +31,7 @@ from .record import ConversationRecord, ConversationRecordRepository
 from .server.context import get_request_id
 from .server.schema import InboundMessage
 from .tool_executor import ToolExecutor
-from .tools.execution_request import EXECUTION_DESCRIPTION
+from .tools.execution_request import EXECUTION_DESCRIPTION, EXECUTION_PARAMETERS
 from .tools.interactions import (
     ExecutionRequest,
     InteractionRequest,
@@ -205,9 +205,12 @@ class AgentLoop:
             if isinstance(execution.value, InteractionRequest) and success:
                 if isinstance(execution.value, ExecutionRequest):
                     execution_function = self.mapping_tool_call_funcs[tool_call.name].execution_function
-                    arguments = {key: value for key, value in tool_call.arguments.items() if key != EXECUTION_DESCRIPTION}
+                    arguments = {key: value for key, value in tool_call.arguments.items() if key not in EXECUTION_PARAMETERS}
                     question = build_execution_question(
-                        tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION]
+                        tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION],
+                        title=tool_call.arguments.get("execution_title"),
+                        confirm_label=tool_call.arguments.get("execution_confirm_label", "确认"),
+                        view_label=tool_call.arguments.get("execution_view_label", "查看"),
                     )
                     # 等待用户确认本次执行。
                     logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
@@ -294,6 +297,7 @@ class AgentLoop:
                 "name": tool_call.name,
                 "result": tool_result_content,
                 "duration_seconds": duration_seconds,
+                "success": success,
             }
             yield {"event": "tool_call_result", "context": json.dumps(tool_call_result)}
 

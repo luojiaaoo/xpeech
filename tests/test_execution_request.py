@@ -17,6 +17,7 @@ from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.ask_user_question import QuestionArgs, ask_user_question
 from xpeech.agent.tools.execution_request import (
     EXECUTION_REQUEST,
+    EXECUTION_PARAMETERS,
     ExecutionDecision,
     build_execution_request_tool,
     execution_request_schema,
@@ -498,7 +499,9 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(
         if event["event"] == "question":
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
-            result = json.loads(event["context"])["result"]
+            payload = json.loads(event["context"])
+            result = payload["result"]
+            assert payload["success"] is (behavior == "large_result")
             assert history[-1]["content"] == result
             if behavior == "error":
                 assert result == "RuntimeError: test failure"
@@ -598,6 +601,9 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
             "text": "hello",
             "extra": 1,
             "execution_description": "测试 MCP 调用",
+            "execution_title": "发送测试消息",
+            "execution_confirm_label": "发送",
+            "execution_view_label": "查看回复",
         },
     )
     denied = not_interactive and needs_confirmation is not False
@@ -606,6 +612,11 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
         events.append(event)
         if event["event"] == "question":
             assert not not_interactive
+            question = validate_confirm_question_json(event["context"])
+            assert question["title"] == "发送测试消息"
+            assert question["confirm_label"] == "发送"
+            assert question["view_label"] == "查看回复"
+            assert "execution_title" not in question["description"]
             assert remote_calls == []
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
@@ -659,6 +670,53 @@ def test_placeholder_schema_keeps_original_constraints_and_hides_injected_contex
     placeholder = build_execution_request_tool(shell)
     schema = as_tool(placeholder)["function"]["parameters"]
     assert placeholder.__name__ == "shell"
-    assert set(schema["properties"]) == {"command", "timeout_ms", "execution_description"}
+    assert set(schema["properties"]) == {"command", "timeout_ms", *EXECUTION_PARAMETERS}
     assert "execution_description" in schema["required"]
     assert schema["properties"]["timeout_ms"]["exclusiveMinimum"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("needs_confirmation", [False, True])
+async def test_custom_confirmation_copy_is_not_passed_to_original_tool(tmp_path, needs_confirmation):
+    executions = []
+
+    async def shell(args: CommandArgs):
+        """Run a command."""
+        executions.append(args.model_dump(exclude_unset=True))
+        return "hello"
+
+    current_provider = provider()
+    current_provider.register_function_tool(build_execution_request_tool(
+        shell, lambda _: ExecutionDecision.CONFIRM if needs_confirmation else ExecutionDecision.ALLOW,
+    ))
+    call = ToolCallRequest(id="custom-copy", name="shell", arguments={
+        "command": "echo hello", "execution_description": "输出 hello",
+        "execution_title": "测试命令", "execution_confirm_label": "运行", "execution_view_label": "查看输出",
+    })
+    async for event in stream_for(tmp_path, current_provider, [call], []):
+        if event["event"] == "question":
+            question = validate_confirm_question_json(event["context"])
+            assert question["title"] == "测试命令"
+            assert question["confirm_label"] == "运行"
+            assert question["view_label"] == "查看输出"
+            assert "execution_title" not in question["description"]
+            card = build_feishu_question_card(event["context"])
+            assert card["body"]["elements"][-1]["columns"][0]["elements"][0]["text"]["content"] == "运行"
+            await answer({"decision": "confirm"})
+        elif event["event"] == "tool_call_result":
+            assert json.loads(event["context"])["result"] == "hello"
+    assert executions == [{"command": "echo hello"}]
+
+
+@pytest.mark.parametrize("parameter", ["execution_title", "execution_confirm_label", "execution_view_label"])
+def test_confirmation_copy_is_in_schema_and_rejects_blank_values(parameter):
+    async def ping():
+        """Ping."""
+
+    from xpeech.agent.tools.helper import get_tool_model_cls
+
+    wrapped = build_execution_request_tool(ping)
+    model = get_tool_model_cls(wrapped).model_cls
+    assert parameter in as_tool(wrapped)["function"]["parameters"]["properties"]
+    with pytest.raises(ValueError):
+        model(execution_description="测试", **{parameter: "  "})

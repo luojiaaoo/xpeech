@@ -217,7 +217,7 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
                 "width": "default",
                 "behaviors": [{"type": "callback", "value": {"decision": decision}}],
             }
-            for label, decision in (("确认", "confirm"), ("取消", "cancel"))
+            for label, decision in ((form["confirm_label"], "confirm"), ("取消", "cancel"))
         ]
     else:
         buttons = [{

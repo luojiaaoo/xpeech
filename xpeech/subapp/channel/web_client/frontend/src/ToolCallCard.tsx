@@ -13,12 +13,13 @@ function formatValue(value: unknown): string {
 }
 
 export default function ToolCallCard({ tool }: { tool: ToolCallInfo }) {
-  const status = tool.status === 'running' ? '执行中'
+  const failed = tool.status === 'completed' && tool.success === false;
+  const status = failed ? '执行失败' : tool.status === 'running' ? '执行中'
     : tool.status === 'completed' ? '已完成' : '状态未确认';
   return (
     <section className="tool-execution" aria-label={`工具 ${tool.name}`}>
       <div className="tool-execution-label">执行过程</div>
-      <details className={`tool-card tool-card-${tool.status}`}>
+      <details className={`tool-card tool-card-${tool.status}${failed ? ' tool-card-failed' : ''}`}>
         <summary>
           {tool.status === 'running'
             ? <LoadingOutlined spin className="tool-status-icon" />

@@ -178,6 +178,7 @@ export interface ToolCallResult {
   name: string;
   result: unknown;
   duration_seconds: number;
+  success?: boolean;
 }
 
 export interface ToolCallInfo {
@@ -186,6 +187,7 @@ export interface ToolCallInfo {
   input?: unknown;
   output?: unknown;
   status: 'running' | 'completed' | 'interrupted';
+  success?: boolean;
   durationSeconds?: number;
 }
 
@@ -198,4 +200,5 @@ export interface ChatMessage {
   tokenUsage?: string;
   toolCall?: ToolCallInfo;
   historical?: boolean;
+  questionToolId?: string;
 }
