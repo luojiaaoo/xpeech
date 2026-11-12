@@ -310,7 +310,7 @@ async def test_web_search_timeout(monkeypatch, mock_http, engine, label):
     async def hang(*_args, **_kwargs):
         await asyncio.Event().wait()
 
-    monkeypatch.setattr(web.asyncio, "to_thread", hang)
+    monkeypatch.setattr(web, "asyncify", lambda _function: hang)
     clients = mock_http(hang)
     monkeypatch.setattr(web, "_SEARCH_TIMEOUT_SECONDS", 0.01)
     tool = getattr(web, f"{engine}_search")

@@ -21,7 +21,7 @@ ToolExecutorCallable = Callable[
 
 async def build_memo_tree(root: Path) -> str:
     """Render category/Markdown-file levels, with 必读.md first in each category."""
-    if root.is_symlink():
+    if await anyio.Path(root).is_symlink():
         return ""
     try:
         entries = sorted(

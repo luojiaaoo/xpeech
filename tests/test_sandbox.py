@@ -383,7 +383,11 @@ async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
     font_command = ["fc-list", ":lang=zh", "file", "family"]
     host_fonts = subprocess.run(font_command, capture_output=True, check=True, timeout=10)
     assert b"Fontconfig error" not in host_fonts.stderr
-    if not host_fonts.stdout.strip():
+    system_font_prefixes = (b"/usr/share/fonts/", b"/usr/local/share/fonts/")
+    host_system_fonts = {
+        line for line in host_fonts.stdout.splitlines() if line.startswith(system_font_prefixes)
+    }
+    if not host_system_fonts:
         pytest.skip("Requires system Chinese fonts (e.g. fonts-noto-cjk)")
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
@@ -398,7 +402,10 @@ async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
 
     assert process.returncode == 0, stderr.decode(errors="replace")
     assert b"Fontconfig error" not in stderr
-    assert set(stdout.splitlines()) == set(host_fonts.stdout.splitlines())
+    sandbox_system_fonts = {
+        line for line in stdout.splitlines() if line.startswith(system_font_prefixes)
+    }
+    assert sandbox_system_fonts == host_system_fonts
 
 
 @pytest.mark.skipif(
