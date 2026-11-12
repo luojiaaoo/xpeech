@@ -49,6 +49,8 @@ max_history_days = 30
 
 普通登录页可通过 `?channel=crm` 选择 `jwt.channels.web_client.allow_extra_channels`
 白名单中的自定义通道，系统名和推荐问题的配置见[主文档](../../../../README.md)。
+每项可配置 `organization_filter = ["公司/销售/", "公司/客服/"]`，仅允许服务端查询到的
+组织匹配任一前缀的用户登录和使用；省略或空列表表示不限组织，查询失败则拒绝受限通道访问。
 页面登录后保留 `channel` 参数，OAuth2 链接登录回跳也会恢复该参数；未指定时始终进入
 默认 `web_client`，不根据登录 Cookie 推断通道。该选择绑定到登录会话，不能在登录后的
 API 上通过 channel 参数覆盖；会话通道与页面 URL 不一致时，需要重新登录。

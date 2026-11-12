@@ -33,7 +33,7 @@ from ..models import (
     WebConfig,
     public_user,
 )
-from ..session import session_token, web_channel
+from ..session import authorize_web_channel, session_token, web_channel
 
 SESSION_DAYS = 7
 OAUTH2_LOGIN_MINUTES = 5
@@ -202,7 +202,7 @@ def create_auth_router(
         )
 
     async def create_login_session(user: User, response: Response, channel: str = "web_client") -> None:
-        channel = web_channel(channel)
+        channel = await authorize_web_channel(channel, user.user_id)
         if user.id is None:
             raise RuntimeError("数据库用户缺少主键")
         token = secrets.token_urlsafe(32)
@@ -433,10 +433,19 @@ def create_auth_router(
                 url=str(target_url),
                 status_code=status.HTTP_303_SEE_OTHER,
             )
-            await create_login_session(user, callback_response, attempt.channel)
+            try:
+                await create_login_session(user, callback_response, attempt.channel)
+            except HTTPException as error:
+                attempt.error = str(error.detail)
+                return _oauth2_result_page(False, attempt.error)
             discard_oauth2_attempt(login_id or "")
             return callback_response
 
+        try:
+            await authorize_web_channel(attempt.channel, user.user_id)
+        except HTTPException as error:
+            attempt.error = str(error.detail)
+            return _oauth2_result_page(False, attempt.error)
         attempt.user_id = user.user_id
         return _oauth2_result_page(True, "请返回原设备，登录页将自动进入系统。")
 

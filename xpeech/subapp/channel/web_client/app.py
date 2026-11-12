@@ -25,7 +25,7 @@ from .routes.admin import create_admin_router
 from .routes.auth import create_auth_router
 from .routes.embed import create_embed_router
 from .routes.proxy import create_proxy_router
-from .session import require_embedded_jwt, web_channel, web_channel_config
+from .session import authorize_web_channel, require_embedded_jwt, web_channel, web_channel_config
 
 PBKDF2_ITERATIONS = 600_000
 XPEECH_FAVICON = Path(__file__).resolve().parents[4] / "assets" / "favicon.ico"
@@ -172,7 +172,7 @@ def create_app(config: WebConfig) -> FastAPI:
         user = await dao.get_user_for_session(token_hash)
         if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效")
-        web_channel(user.channel)
+        await authorize_web_channel(user.channel, user.user_id)
         return user
 
     def current_user(identity: Annotated[User | UserJWTAuth, Depends(current_identity)]) -> User:

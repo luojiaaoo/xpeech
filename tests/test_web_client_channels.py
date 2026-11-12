@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, WebExtraChannelConfig, settings
 from xpeech.subapp.channel.helper import ChatStream, _backend_headers
+from xpeech.subapp.channel.web_client.dao import User
+from xpeech.subapp.channel.web_client.session import authorize_web_channel
 from xpeech.utils.channel_jwt import UserJWTAuth
 
 web = import_module("xpeech.subapp.channel.web_client.app")
@@ -52,6 +54,105 @@ def test_extra_channels_require_unique_configured_custom_channels(configured_cha
     configured_channels["crm"].allow_extra_channels = [WebExtraChannelConfig(channel="private", system_name="私有")]
     with pytest.raises(ValueError, match="only be configured"):
         validate()
+
+
+@pytest.mark.parametrize("prefix", ["", " ", "\t\n"])
+def test_organization_filter_rejects_empty_prefixes(prefix):
+    with pytest.raises(ValueError):
+        WebExtraChannelConfig(channel="crm", system_name="CRM", organization_filter=[prefix])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["web_client", "crm"])
+async def test_unrestricted_channels_skip_organization_lookup(configured_channels, monkeypatch, channel):
+    lookup = AsyncMock()
+    monkeypatch.setattr(type(settings.organization), "resolve_user_organization", lookup)
+    assert await authorize_web_channel(channel, "admin") == channel
+    lookup.assert_not_awaited()
+
+
+@pytest.fixture
+def organization_client(configured_channels, monkeypatch, tmp_path, oauth_display_type):
+    user = User(id=1, user_id="admin", username="Admin", password_hash="unused", is_admin=True)
+    dao = SimpleNamespace(
+        initialize=AsyncMock(), close=AsyncMock(), create_session=AsyncMock(),
+        get_user_by_user_id=AsyncMock(return_value=user),
+        get_user_for_session=AsyncMock(return_value=user),
+    )
+    monkeypatch.setattr(web, "WebClientDAO", lambda engine: dao)
+    monkeypatch.setattr(web, "_password_matches", lambda *args: True)
+    configured_channels["web_client"].allow_extra_channels[0].organization_filter = ["公司/销售/", "公司/客服/"]
+    lookup = AsyncMock(return_value="公司/客服/支持")
+    monkeypatch.setattr(type(settings.organization), "resolve_user_organization", lookup)
+    app = web.create_app(web.WebConfig(
+        backend_url="http://backend.test", static_dir=tmp_path / "static", system_name="默认助手",
+        session_history_path=tmp_path / "history",
+        oauth2=(web.OAuth2WebConfig(
+            provider_name="test", display_type=oauth_display_type, client_id="client", client_secret="secret",
+            authorization_url="https://oauth.test/authorize", token_url="https://oauth.test/token",
+            userinfo_url="https://oauth.test/user", redirect_uri=None, scopes=(),
+            user_id_claim=".sub", username_claim=".name", use_pkce=True,
+            token_auth_method="client_secret_post", extra_authorization_params={},
+        ),),
+    ))
+    with TestClient(app) as client:
+        yield client, dao, lookup
+
+
+@pytest.mark.parametrize("organization", ["公司/销售/客户", "公司/客服/支持", "公司/研发/", None])
+def test_organization_filter_checks_login_and_existing_sessions(organization_client, organization):
+    client, dao, lookup = organization_client
+    lookup.return_value = organization
+    allowed = organization is not None and organization.startswith(("公司/销售/", "公司/客服/"))
+    # Branding remains available before the user's identity is known.
+    assert client.get("/api/config?channel=crm").status_code == 200
+    response = client.post("/api/auth/login", json={"user_id": "admin", "password": "password", "channel": "crm"})
+    assert response.status_code == (200 if allowed else 403)
+    if not allowed:
+        assert "set-cookie" not in response.headers
+        dao.create_session.assert_not_awaited()
+        return
+    lookup.assert_awaited_with("admin")
+    assert client.get("/api/auth/me").status_code == 200
+    lookup.return_value = "公司/研发/"
+    assert client.get("/api/auth/me").status_code == 403
+    with client.websocket_connect("/api/chat/ws") as socket:
+        socket.send_json({"type": "start", "session_id": SESSION_ID, "content": "[]"})
+        error = socket.receive_json()
+        assert (error["type"], error["status"]) == ("error", 403)
+    login(client, "web_client")
+    assert client.get("/api/auth/me").status_code == 200
+
+
+@pytest.mark.parametrize("oauth_display_type", ["qrcode", "link"], indirect=True)
+@pytest.mark.parametrize("allowed", [True, False])
+def test_organization_filter_checks_oauth_callback_and_poll(organization_client, monkeypatch, oauth_display_type, allowed):
+    client, dao, lookup = organization_client
+    lookup.return_value = "公司/客服/支持" if allowed else None
+    provider = AsyncMock()
+    provider.__aenter__.return_value = provider
+    provider.post.return_value = httpx.Response(200, json={"access_token": "token"})
+    provider.get.return_value = httpx.Response(200, json={"sub": "admin", "name": "Admin"})
+    monkeypatch.setattr(oauth.httpx, "AsyncClient", lambda **kwargs: provider)
+    qr = client.post("/api/auth/oauth2/qr", json={"provider_name": "test", "channel": "crm"}).json()
+    state = parse_qs(urlsplit(qr["authorization_url"]).query)["state"][0]
+    response = client.get("/api/auth/oauth2/callback", params={"state": state, "code": "ok"}, follow_redirects=False)
+    if not allowed:
+        assert response.status_code == 400
+        assert "所属组织无权访问" in response.text
+        assert "set-cookie" not in response.headers
+        dao.create_session.assert_not_awaited()
+    elif oauth_display_type == "link":
+        assert response.status_code == 303
+        assert client.get("/api/auth/me").status_code == 200
+    else:
+        assert response.status_code == 200
+        # Organization can change between authorization and session creation.
+        lookup.return_value = "公司/研发/"
+        response = client.post("/api/auth/oauth2/poll", json={"login_id": qr["login_id"], "poll_token": qr["poll_token"]})
+        assert response.status_code == 403
+        assert "set-cookie" not in response.headers
+        dao.create_session.assert_not_awaited()
 
 
 @pytest.fixture

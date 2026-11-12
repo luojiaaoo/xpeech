@@ -47,6 +47,9 @@ custom_system_prompt = ""
 # channel = "crm"
 # system_name = "客户服务助手"
 # recommended_questions = ["如何查询客户资料？", "帮我整理本周的跟进计划"]
+# 可选：组织字符串匹配任一前缀才允许登录和使用；省略或 [] 不限制。
+# 通过 [organization].command_template 查询组织；查询失败或未配置则拒绝受限通道访问。
+# organization_filter = ["公司/销售/", "公司/客服/"]
 
 [jwt.channels.feishu]
 secret_key = "replace-with-a-different-feishu-channel-secret"
@@ -59,7 +62,7 @@ custom_system_prompt = ""
 # system_identity_prompt = ""
 # custom_system_prompt = ""
 
-# 加载技能和 MCP 前按用户查询所属组织，此配置不绑定渠道。
+# 加载技能、MCP 和校验 Web 通道组织权限时按用户查询所属组织，此配置不绑定渠道。
 # 命令的 stdout 为 UTF-8 组织字符串，例如 company/engineering/platform。
 # [organization]
 # command_template = "curl --fail --silent 'https://directory.example/organization?user_id=${user_id}'"

@@ -32,6 +32,16 @@ def web_channel_config(channel_name: str) -> WebExtraChannelConfig | None:
     ) if web else None
 
 
+async def authorize_web_channel(channel_name: str, user_id: str) -> str:
+    """Check local web access against server-resolved organization prefixes."""
+    custom = web_channel_config(channel_name)
+    if custom and custom.organization_filter:
+        organization = await settings.organization.resolve_user_organization(user_id)
+        if not organization or not organization.startswith(tuple(custom.organization_filter)):
+            raise HTTPException(403, "所属组织无权访问该 channel")
+    return channel_name
+
+
 def embedded_channel(channel_name: str | None) -> str:
     """Resolve an embedded channel using server-side signing keys only."""
     if not channel_name or channel_name in {"internal", "feishu", "web_client"}:

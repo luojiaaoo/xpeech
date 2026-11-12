@@ -1025,6 +1025,7 @@ Web 登录入口支持按 channel 定制系统名和推荐问题列表。在 `co
 channel = "crm"
 system_name = "客户服务助手"
 recommended_questions = ["如何查询客户资料？", "帮我整理本周的跟进计划"]
+organization_filter = ["公司/销售/", "公司/客服/"] # 可选，省略或 [] 不限制组织
 
 [jwt.channels.crm]
 secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
@@ -1035,6 +1036,11 @@ secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
 推荐问题列表为空时不显示推荐问题；未指定 channel 时始终使用默认系统和推荐问题。
 仅允许白名单中已配置独立 JWT 密钥的自定义 channel，不能指定 `internal`、`feishu`
 或未配置的通道。每个 channel 只能出现一次。
+
+`organization_filter` 按组织字符串前缀匹配，命中任意一项即可访问，前缀不能为空或纯空白。
+组织通过 `[organization].command_template` 按用户 ID 在服务端查询；配置了组织限制时，
+查询未启用、失败、结果为空或不匹配都会拒绝访问。账号密码登录、OAuth2 登录和已有 Web
+会话请求均执行校验，管理员也需匹配组织。该配置不限制使用业务 JWT 的嵌入模式。
 
 channel 通过页面 URL 选择，账号密码、OAuth2 扫码和 OAuth2 链接登录都会将选择绑定到
 服务端登录会话。登录成功后地址保留 `channel`，刷新页面按 URL 加载系统名和推荐问题；

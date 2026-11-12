@@ -210,6 +210,7 @@ class WebExtraChannelConfig(BaseModel):
     channel: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
     system_name: str = Field(min_length=1, pattern=r"\S")
     recommended_questions: list[str] = Field(default_factory=list)
+    organization_filter: list[Annotated[str, Field(min_length=1, pattern=r"\S")]] = Field(default_factory=list)
 
 
 class JWTChannelConfig(BaseModel):
@@ -404,7 +405,7 @@ class WebClientConfig(BaseModel):
 
 
 class OrganizationConfig(BaseModel):
-    """在加载技能和 MCP 服务前查询用户所属组织的配置。"""
+    """查询用户所属组织，用于技能、MCP 服务筛选和 Web 通道权限校验。"""
 
     model_config = ConfigDict(extra="forbid")
 
