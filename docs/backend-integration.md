@@ -1,11 +1,12 @@
 # Xpeech API 对接文档
 
-面向需要通过 HTTP 接口直接对接 Xpeech Agent 的外部系统。读完本文可以完成：JWT 认证、发起对话并消费 SSE 事件流、处理 `ask_user_question` 表单追问、处理 `send_file` 文件下载，以及使用同步接口和 JSON 输出模式。
+面向需要通过 HTTP 接口直接对接 Xpeech Agent 的外部系统。读完本文可以完成：JWT 认证、发起对话并消费 SSE 事件流、处理表单追问与工具执行确认、处理 `send_file` 文件下载，以及使用同步接口和 JSON 输出模式。
 
 - 默认地址：`http://<host>:7878`，下文以 `http://localhost:7878` 举例；实际地址以部署配置为准。
 - 健康检查：`GET /health`，无需认证，返回纯文本 `ok`。
 - OpenAPI 文档：`GET /docs`（Swagger UI），也可使用 `/redoc`、`/openapi.json`。
-- 本文接口面向服务到服务调用。Web 客户端的 `/api/chat`、`/api/answer_question`、`/api/files` 是基于登录 Cookie 的代理接口，不能混用认证方式。
+- 本文接口面向服务到服务调用。Web 客户端的 `/api/chat`、`/api/answer_question`、`/api/files` 等是独立的代理接口：普通页面使用登录 Cookie，嵌入页面使用业务系统签发的用户 JWT；不能直接按本文的 backend 地址调用这些代理路径。
+- 网站嵌入、前端文件预览和窗口控制请参阅 [Web 客户端集成文档](../xpeech/subapp/channel/web_client/README.md)。嵌入模式使用自定义通道（例如 `crm`），不使用保留通道 `internal`、`web_client`、`feishu`。
 
 ---
 
@@ -346,10 +347,10 @@ data: {"event":"token_usage","context":"{\"上下文使用率\":\"1.56% (2k / 12
 | `thinking_end` | `""` | 当前思考段结束 |
 | `assistant` | 纯文本增量片段 | 回复正文，按顺序拼接到当前正文段 |
 | `assistant_end` | `""` | 当前正文段结束；工具调用前后可能有多个正文段 |
-| `tool_call` | JSON 字符串：`[["<id>","<tool_name>",{参数对象}], ...]` | 一批工具调用 |
-| `tool_call_result` | JSON 字符串：`{"id":"<id>","name":"<tool_name>","result":结果,"duration_seconds":耗时秒数}` | 单次工具调用的结果；`result` 可能为文本或结构化内容 |
-| `question` | 问题表单的 JSON 字符串 | Agent 等待用户回答，原流保持打开，见第 5 节 |
-| `send_file` | 用户工作区相对路径 | 例如 `outputs/report.pdf`，通过 `/files` 下载，见第 6 节 |
+| `tool_call` | JSON 字符串：`[{"tool_call_id":"<id>","name":"<tool_name>","arguments":{参数对象}}, ...]` | 一批工具调用；按对象字段读取 |
+| `tool_call_result` | JSON 字符串：`{"tool_call_id":"<id>","name":"<tool_name>","result":结果,"duration_seconds":耗时秒数,"success":布尔值}` | 单次工具调用的结果；`result` 可能为文本或结构化内容，`success` 表示执行是否成功 |
+| `question` | JSON 字符串，`type` 为 `form` 或 `confirm` | 表单追问或执行确认；Agent 等待用户回答，原流保持打开，见第 5 节 |
+| `send_file` | 用户工作区内的文件路径 | 例如 `outputs/report.pdf`，将原值传给 `/files` 下载，见第 6 节 |
 | `command` | 纯文本 | 内置命令回显或系统提示 |
 | `token_usage` | 指标的 JSON 字符串 | 含 `上下文使用率`、`输入 Token`、`输出 Token`、`总 Token`、`会话时长`、`大模型请求次数`；常规对话的末尾统计 |
 
@@ -359,15 +360,27 @@ Token 消耗按本次请求内所有模型调用汇总，包括工具调用前�
 1000 为 `1k`，100 万为 `1m`，最多保留两位小数并去除末尾的 0，例如 `1.23k`、`1.5m`。
 `上下文使用率` 是当前上下文大小的估算，Token 消耗是本轮累计用量，两者统计口径不同。
 
-`tool_call` 一次包含一批调用，`tool_call_result` 每个事件包含一个结果对象。例如，解析结果事件的 `context` 后得到：
+`tool_call` 一次包含一批调用，例如解析其 `context` 后得到：
 
 ```json
-{"id": "call-1", "name": "shell", "result": "hello", "duration_seconds": 0.12}
+[
+  {"tool_call_id": "call-1", "name": "shell", "arguments": {"command": "echo hello"}}
+]
 ```
 
-`id` 为工具调用 ID，`name` 为工具名，`result` 为执行结果，`duration_seconds` 为耗时秒数。并行调用的结果按完成顺序逐条发送，可能与调用顺序不同；请使用 `id` 匹配对应调用并更新状态。
+`tool_call_result` 每个事件包含一个结果对象，例如：
 
-**`send_file`、`ask_user_question` 的成功调用也会出现在 `tool_call_result` 中**：文件结果为 `已发送：<路径>`，追问结果为用户回答或超时默认答案。展示文件和问题表单时请使用专属事件，避免重复处理。
+```json
+{"tool_call_id": "call-1", "name": "shell", "result": "hello", "duration_seconds": 0.12, "success": true}
+```
+
+`tool_call_id` 为工具调用 ID，`name` 为工具名，`arguments` 为原始调用参数，`result` 为执行结果，`duration_seconds` 为耗时秒数。并行调用的结果按完成顺序逐条发送，可能与调用顺序不同；请使用 `tool_call_id` 匹配对应调用并更新状态。不要再按旧版数组位置解包调用，或读取结果对象的 `id`。
+
+`success` 为 `false` 时应显示失败状态，不要根据结果是否包含某个单词判断成败。执行确认被取消、超时或回复格式异常时，也会返回 `success: false`。需要用户确认的工具，其耗时包含等待回答的时间和确认后的执行时间；普通表单追问的耗时包含等待用户回答的时间。
+
+普通工具调用的参数统一按原始字段处理，包括可能出现的 `execution_title`、`execution_description`；不要把这两个字段单独提取成工具执行卡片的标题或说明。是否需要显示确认界面，以收到 `question` 且 `type="confirm"` 为准，不能仅凭参数名称判断。
+
+**`send_file`、`ask_user_question` 的成功调用也会出现在 `tool_call_result` 中**：文件结果为 `文件已发送：<路径>`，追问结果为用户回答或超时默认答案。展示文件和问题表单时请使用专属事件，避免重复处理。
 
 ### 4.3 典型事件时序与结束判断
 
@@ -389,13 +402,15 @@ EOF                                  （本轮连接关闭）
 
 ---
 
-## 5. `ask_user_question`：表单追问交互
+## 5. `question`：表单追问与执行确认
 
-当 Agent 缺少关键信息时，可能调用 `ask_user_question`。API 表现为 `/chat` 流上出现 `question` 事件，随后等待回答；**不要关闭原 SSE 或重新发送聊天请求**。
+当 Agent 缺少关键信息时，可能调用 `ask_user_question`；某些工具执行前也可能需要用户确认。两者都会在 `/chat` 流上产生 `question` 事件，随后等待回答；**不要关闭原 SSE 或重新发送聊天请求**。
 
 ### 5.1 `question.context` 结构
 
-`context` 是 JSON 字符串，解析后为通用表单对象：
+`context` 是 JSON 字符串，解析后根据 `type` 区分 `form` 和 `confirm`；普通表单省略 `type` 时按 `form` 处理。
+
+#### 表单追问 `type="form"`
 
 ```json
 {
@@ -439,7 +454,7 @@ EOF                                  （本轮连接关闭）
 | --- | --- |
 | `type` | 固定为 `"form"` |
 | `title` | 表单标题，默认 `"需要补充信息"` |
-| `subtitle` | 副标题，当前服务端写入 `"您有300秒时间填写表单"`，不是实时倒计时 |
+| `subtitle` | 副标题，服务端在原副标题后追加 `"您有300秒时间填写表单"`，不是实时倒计时 |
 | `submit_label` | 提交按钮文案，默认 `"提交"` |
 | `fields[].type` | `input` 文本 / `select` 单选 / `multi_select` 多选 / `date` 日期 / `datetime` 日期时间 |
 | `fields[].name` | 字段名，匹配 `^[a-z][a-z0-9_]*$`，表单内唯一；提交时作为 key |
@@ -448,7 +463,44 @@ EOF                                  （本轮连接关闭）
 | `fields[].default_value` | 仅文本字段具有，默认 `""` |
 | `fields[].options` | 单选或多选字段的 `{label, value}` 列表；提交时使用 `value` |
 
-`fields` 可能为空数组，此时可收集自由文本。
+`ask_user_question` 会在模型给出的字段后追加一个可选的“补充说明”文本框，默认名为
+`user_customization_input`；发生字段名冲突时自动添加数字后缀。应使用实际收到的 `fields[].name` 提交答案。
+自行处理空 `fields` 的通用表单时，可收集自由文本。
+
+#### 执行确认 `type="confirm"`
+
+```json
+{
+  "type": "confirm",
+  "title": "删除 test 文件夹",
+  "description": "删除前请确认 test 中没有需要保留的文件。",
+  "tool_call_id": "call-1",
+  "tool_name": "shell",
+  "arguments": {"command": "rm -rf test"},
+  "timeout_seconds": 300
+}
+```
+
+| 键 | 说明 |
+| --- | --- |
+| `title` | 确认标题，执行确认默认 `"执行确认"` |
+| `description` | 本次待执行操作的说明 |
+| `tool_call_id` | 对应 `tool_call` 的调用 ID，用于关联后续结果 |
+| `tool_name`、`arguments` | 待执行的工具名和实际参数；确认文案字段不放在这里 |
+| `timeout_seconds` | 等待确认的秒数，当前执行确认是 300 秒 |
+
+客户端显示“确认”和“取消”两个操作，通过第 5.2 节的 `answer` 表单字段提交以下 JSON 字符串之一：
+
+```json
+{"decision":"confirm"}
+```
+
+```json
+{"decision":"cancel"}
+```
+
+确认卡片使用本事件的 `title`、`description` 展示确认文案；普通工具调用仍按原始参数展示。
+确认后工具才会执行，取消后不会执行。后续通过具有相同 `tool_call_id` 的 `tool_call_result` 更新完成或失败状态。
 
 ### 5.2 提交回答 `POST /answer_question`
 
@@ -467,9 +519,9 @@ answer=<回答内容>
 | --- | --- |
 | JWT `sub` | 必须与原 `/chat` 相同，答题时使用新 Token |
 | `x-session-id` | 必须与正在等待的 `/chat` 相同 |
-| `answer` | 必填表单字符串；推荐为以字段 `name` 为键的 JSON 文本，也接受自由文本 |
+| `answer` | 必填表单字符串；`form` 推荐为以字段 `name` 为键的 JSON 文本，也接受自由文本；`confirm` 使用上述 `decision` JSON |
 
-推荐答案格式：
+表单追问的推荐答案格式：
 
 ```json
 {
@@ -500,7 +552,12 @@ Agent 被唤醒，原 `/chat` SSE 继续推送。找不到等待事件时同样�
 
 ### 5.3 超时行为与前后端协作
 
-等待时间为 **300 秒**。超时后以 `User timeout answering the question` 作为默认答案继续执行，流不会因此中断。接入方应在 5 分钟内提交，并及时关闭过期表单。
+等待时间为 **300 秒**，接入方应在 5 分钟内提交，并及时关闭过期表单：
+
+- `form` 超时后以 `User timeout answering the question` 作为默认答案继续执行。
+- `confirm` 取消、超时或回复格式异常时，待确认工具不会执行，随后返回 `success: false` 的工具结果；结果分别说明用户取消、确认超时或回复格式异常。
+
+这些情况不会自行关闭原 SSE 流，Agent 可以继续处理后续任务。`Answer received` 仅表示答案已送达，不代表工具执行成功；执行状态以 `tool_call_result.success` 为准。
 
 生产接入中，后端收到 `question` 后，可将表单和业务会话标识通过 WebSocket/SSE 转发给前端；前端向接入后端提交答案，再由后端使用相同的 `sub + session_id` 调用 `/answer_question`。负责消费原 `/chat` 的任务必须保持存活。
 
@@ -515,7 +572,7 @@ data: {"event":"send_file","context":"outputs/report.pdf"}
 
 ```
 
-`context` 是**用户工作区内的相对路径**，不是 URL，不包含用户工作区的绝对目录。
+`context` 是**用户工作区内的文件路径字符串**，不是 URL。通常是相对路径，也可能是工作区内的合法绝对路径；下载时原样传给查询参数 `path`，无需自行拼接用户目录。
 
 ### 6.2 下载接口 `GET /files`
 
@@ -542,6 +599,12 @@ curl --fail-with-body --get "http://localhost:7878/files" \
 - 文件不存在或目标不是文件时返回 `404`，`detail` 为 `File not found`。
 
 同一用户的多个会话共享工作区；切换 `session_id` 不会改变文件可见范围。
+
+Web 客户端会将文件显示为带下载按钮的卡片，`.docx`、`.xls/.xlsx`、`.pptx`、`.md/.markdown`
+额外提供预览；旧版 `.doc/.ppt` 及其他格式仍可下载。预览读取同一文件下载接口，没有新增 backend
+预览接口，也没有改变 `send_file` 事件结构。嵌入窗口由用户手动控制大小，打开或关闭预览不会
+自动最大化或还原。前端接入方法和 `getFile()`、`downloadFile()` 等接口见
+[Web 客户端集成文档](../xpeech/subapp/channel/web_client/README.md)。
 
 ### 6.3 给 Agent 上传文件
 
@@ -708,8 +771,22 @@ async def async_input(prompt: str) -> str:
 
 
 async def collect_question_answer(question: dict[str, Any]) -> dict[str, Any]:
-    """在终端展示问题，并按字段类型组装答案对象。"""
+    """区分执行确认与表单追问，并组装答案对象。"""
     print(f"\n[{question.get('title', '需要补充信息')}]")
+    question_type = question.get("type", "form")
+    if question_type == "confirm":
+        if description := question.get("description"):
+            print(description)
+        if tool_name := question.get("tool_name"):
+            print(f"工具：{tool_name}")
+            print(json.dumps(question.get("arguments"), ensure_ascii=False, indent=2))
+        while True:
+            decision = (await async_input("确认执行？输入 confirm 或 cancel: ")).lower()
+            if decision in {"confirm", "cancel"}:
+                return {"decision": decision}
+            print("请输入 confirm 或 cancel。")
+    if question_type != "form":
+        raise ValueError(f"不支持的问题类型：{question_type}")
     if subtitle := question.get("subtitle"):
         print(subtitle)
 
@@ -834,12 +911,13 @@ async def run_chat(text: str) -> str:
                 elif event_type == "token_usage":
                     print(f"\n[统计] {json.loads(context)}")
                 elif event_type == "tool_call":
-                    for call_id, tool_name, arguments in json.loads(context):
-                        print(f"\n[工具调用] {call_id} {tool_name}: {arguments}")
+                    for call in json.loads(context):
+                        print(f"\n[工具调用] {call['tool_call_id']} {call['name']}: {call['arguments']}")
                 elif event_type == "tool_call_result":
                     tool_result = json.loads(context)
                     print(
-                        f"\n[工具结果] {tool_result['id']} {tool_result['name']} "
+                        f"\n[工具结果] {tool_result['tool_call_id']} {tool_result['name']} "
+                        f"success={tool_result['success']} "
                         f"({tool_result['duration_seconds']:.2f}s): {tool_result['result']}"
                     )
 
