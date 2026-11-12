@@ -170,7 +170,7 @@ claims = {
 | --- | --- | --- |
 | `Authorization` | 是 | `Bearer <token>`，见第 2 节 |
 | JWT `sub` | 是 | 用户 ID，长度 1–128，只允许 ASCII 字母、数字、空格、连字符 `-` 和下划线 `_` |
-| `x-session-id` | `/chat`、`/chat/stop`、`/answer_question` 必填；`/chat_sync` 不需要 | 规范的小写连字符 UUIDv7，例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
+| `x-session-id` | `/chat`、`/chat/status`、`/chat/stop`、`/answer_question` 必填；`/chat_sync` 不需要 | 规范的小写连字符 UUIDv7，例如 `018f0000-0000-7000-8000-000000000001`；所有通道均遵循此规则 |
 | `x-sender-name` | 是 | 展示用用户名，不能为空或纯空白；非 ASCII 字符使用 UTF-8 URL 编码 |
 | `Accept` | 建议 | `text/event-stream` |
 
@@ -293,6 +293,14 @@ Agent 通过 `finally` 保存已经加入上下文的消息，停止请求会等
 多实例部署须让 `/chat/stop` 和 `/chat` 按 JWT `sub` 落到同一 backend 进程。
 
 Web 客户端提供 `POST /api/chat/stop` 代理，复用现有登录 Cookie 或嵌入 JWT 认证及会话校验。
+
+### 3.7 会话占用状态 `GET /chat/status`
+
+携带用户 JWT 和 `x-session-id`，返回 `{"active": true}` 或 `{"active": false}`，响应禁止缓存。
+状态取自会话并发锁，覆盖生成、排队及响应清理阶段。多实例部署须与 `/chat` 按 JWT `sub` 路由到同一进程。
+
+Web 客户端通过 `GET /api/chat/status` 代理查询。聊天连接意外断开或收到 `409` 后，保持本轮等待状态，
+轮询至 `active` 为 `false` 再恢复发送按钮。状态暂时查询失败时继续等待；不会自动重新发送原消息。
 
 ---
 
@@ -563,7 +571,7 @@ curl -N --fail-with-body -X POST "http://localhost:7878/chat" \
 | 同一通道的上一轮 `/chat` 结束后发下一条消息 | 正常，沿用该用户、会话的流式历史 |
 | 同一用户换新会话 ID 或换通道 | 隔离流式历史，文件工作区与记忆仍共享 |
 | 不同用户使用相同会话 ID | 按用户隔离 |
-| `x-session-id` 缺失、空值或非规范 UUIDv7 | 返回 `422`（仅 `/chat`、`/chat/stop`、`/answer_question`；`/chat_sync` 不需要该头） |
+| `x-session-id` 缺失、空值或非规范 UUIDv7 | 返回 `422`（仅 `/chat`、`/chat/status`、`/chat/stop`、`/answer_question`；`/chat_sync` 不需要该头） |
 
 请以响应结束作为释放本地会话队列的时机；收到 `token_usage` 后继续读取至 EOF，再发送下一轮。
 
@@ -896,6 +904,7 @@ Authorization: Bearer <feishu-channel-token>
 | POST | `/chat_sync` | 通道 JWT，含用户 `sub` | 非交互执行，一次性返回合并后的事件列表；服务端生成独立会话，不需要 `x-session-id`，不占会话并发锁 |
 | POST | `/answer_question` | 通道 JWT，含同一用户 `sub` | 提交当前会话的追问答案 |
 | POST | `/chat/stop` | 通道 JWT，含同一用户 `sub` | 停止指定会话的 SSE 生成，回收大模型并发名额 |
+| GET | `/chat/status` | 通道 JWT，含同一用户 `sub` | 查询指定会话是否仍被请求占用 |
 | GET | `/files?path=...` | 通道 JWT，含同一用户 `sub` | 下载用户工作区文件 |
 | GET | `/background_message` | Feishu 通道 JWT，无需 `sub` | 领取后台任务消息，长轮询 |
 

@@ -7,14 +7,30 @@ import ts from 'typescript';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
-async function chatPage(stopChat: (sessionId: string) => Promise<{ stopped: boolean }>) {
+async function chatPage(
+  stopChat: (sessionId: string) => Promise<{ stopped: boolean }>,
+  transport?: { WebSocket: any; fetch: Function },
+) {
   const slots: any[] = [];
   const effects: Function[] = [];
   let cursor = 0;
   const errors: string[] = [];
   const running: boolean[] = [];
   const streams: { signal: AbortSignal; receive: Function; finish: () => void }[] = [];
-  const context = vm.createContext({ AbortController });
+  const context = vm.createContext({
+    AbortController, Headers, FormData, File, DOMException, btoa, setTimeout, clearTimeout,
+    window: { location: { protocol: 'https:', host: 'assistant.test' } },
+    ...transport,
+  });
+  let realStreamChat: any;
+  if (transport) {
+    const api = new vm.SourceTextModule(stripTypeScriptTypes(
+      readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'),
+    ), { context });
+    await api.link(() => { throw new Error('Only type imports expected'); });
+    await api.evaluate();
+    realStreamChat = api.namespace.streamChat;
+  }
   const state = new vm.SourceTextModule(stripTypeScriptTypes(
     readFileSync(new URL('../src/chatState.ts', import.meta.url), 'utf8'),
   ), { context });
@@ -53,6 +69,7 @@ async function chatPage(stopChat: (sessionId: string) => Promise<{ stopped: bool
       getFile() {}, downloadFile() {}, chatSync() {}, stopChat,
       historyApi: { async get() { return { events: [] }; } },
       streamChat(_text: string, _files: File[], receive: Function, options: { signal: AbortSignal }) {
+        if (realStreamChat) return realStreamChat(_text, _files, receive, options);
         return new Promise<void>((resolve, reject) => {
           streams.push({ signal: options.signal, receive, finish: resolve });
           options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
@@ -100,6 +117,45 @@ async function chatPage(stopChat: (sessionId: string) => Promise<{ stopped: bool
   await tick();
   return { render, items: () => render('BubbleList').items, streams, errors, running, messages: () => slots[0].value, cleanupHistory };
 }
+
+test('a disconnected socket keeps the composer busy until backend status confirms idle', async () => {
+  const sockets: FakeWebSocket[] = [];
+  const starts: any[] = [];
+  class FakeWebSocket {
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+    onclose: (() => void) | null = null;
+    constructor() { sockets.push(this); queueMicrotask(() => this.onopen?.()); }
+    send(raw: string) { starts.push(JSON.parse(raw)); }
+    close() { this.onclose?.(); }
+  }
+  let confirmIdle!: (response: Response) => void;
+  const page = await chatPage(async () => ({ stopped: true }), {
+    WebSocket: FakeWebSocket,
+    fetch(url: string) {
+      assert.equal(url, '/api/chat/status');
+      return new Promise<Response>(resolve => { confirmIdle = resolve; });
+    },
+  });
+  page.render().onSubmit('hello');
+  await tick();
+  sockets[0].close();
+  await tick();
+  assert.equal(page.render().loading, true);
+  page.render().onSubmit('must wait');
+  assert.equal(starts.length, 1);
+  assert.deepEqual(page.running, [true]);
+  confirmIdle(Response.json({ active: false }));
+  await tick();
+  assert.equal(page.render().loading, false);
+  assert.deepEqual(page.running, [true, false]);
+  page.render().onSubmit('next');
+  await tick();
+  assert.equal(starts.length, 2);
+  sockets[1].onmessage?.({ data: JSON.stringify({ type: 'done', session_id: 'session-one' }) });
+  await tick();
+  page.cleanupHistory();
+});
 
 test('the process receives its running state and usage while the final answer and usage appear outside', async () => {
   const page = await chatPage(async () => ({ stopped: true }));

@@ -307,6 +307,49 @@ function abortError() {
   return new DOMException('The chat request was aborted', 'AbortError');
 }
 
+function recoveryDelay(signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, 1000);
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+async function waitForChatIdle(sessionId: string, signal?: AbortSignal) {
+  while (true) {
+    signal?.throwIfAborted();
+    let response: Response | undefined;
+    try {
+      response = await fetch('/api/chat/status', {
+        headers: chatHeaders(sessionId), signal, cache: 'no-store',
+        credentials: memoryJWT ? 'omit' : 'same-origin',
+      });
+    } catch {
+      signal?.throwIfAborted();
+    }
+    if (response?.status === 401) {
+      if (memoryJWT) jwtExpired();
+      else window.location.reload();
+      throw new Error('登录已失效，请重新登录后继续');
+    }
+    if (response?.ok) {
+      try {
+        if ((await response.json()).active === false) return;
+      } catch {
+        // An unavailable status must not be treated as an idle session.
+      }
+    }
+    await recoveryDelay(signal);
+  }
+}
+
 async function encodeChatFile(file: File) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = '';
@@ -329,7 +372,8 @@ export async function streamChat(
   const sessionMetadata = memorySessionMetadata;
   const encodedFiles = await Promise.all(files.map(encodeChatFile));
   signal?.throwIfAborted();
-  await new Promise<void>((resolve, reject) => {
+  let needsRecovery = false;
+  const streaming = new Promise<void>((resolve, reject) => {
     const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${scheme}//${window.location.host}/api/chat/ws`);
     let settled = false;
@@ -372,6 +416,7 @@ export async function streamChat(
         finish();
         socket.close();
       } else if (message.type === 'error') {
+        needsRecovery = message.status === 409;
         if (message.status === 401) {
           if (token) jwtExpired();
           else window.location.reload();
@@ -380,8 +425,22 @@ export async function streamChat(
         socket.close();
       }
     };
-    socket.onclose = () => finish(new Error('聊天连接已中断，请重新发送'));
+    socket.onclose = () => {
+      if (!settled) needsRecovery = true;
+      finish(new Error('聊天连接已中断，请重新发送'));
+    };
   });
+  try {
+    await streaming;
+  } catch (error) {
+    if (needsRecovery && !signal?.aborted) {
+      onEvent({ event: 'command', context: '正在确认上一条请求是否结束，请稍候…' });
+      // Keep ChatPage's request and loading state until the backend releases its lease.
+      await waitForChatIdle(sessionId, signal);
+      throw new Error('上一条请求已结束，可以重新发送消息');
+    }
+    throw error;
+  }
 }
 
 export async function answerQuestion(answer: unknown, sessionId: string) {

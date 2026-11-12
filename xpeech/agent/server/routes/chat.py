@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
 from ....utils.channel_jwt import UserJWTAuth
@@ -11,6 +11,7 @@ from ...loop import AgentLoop, QuestionEvent
 from ..auth import require_user_jwt
 from ..chat_streams import CHAT_STREAMS
 from ..dependencies import (
+    CHAT_GUARD,
     acquire_chat_session,
     authenticated_user_id,
     content,
@@ -25,6 +26,17 @@ from ..schema import (
 )
 
 router = APIRouter()
+
+
+@router.get("/chat/status")
+async def chat_status(
+    response: Response,
+    user_id: Annotated[str, Depends(authenticated_user_id)],
+    session_id: Annotated[str, Depends(session_id_header)],
+) -> dict[str, bool]:
+    """查询会话是否仍被请求占用，包括生成结束后的响应清理阶段。"""
+    response.headers["Cache-Control"] = "no-store"
+    return {"active": await CHAT_GUARD.is_active(user_id, session_id)}
 
 
 @router.post("/chat/stop")

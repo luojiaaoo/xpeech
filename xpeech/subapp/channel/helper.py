@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from asyncer import asyncify
 import anyio
 import httpx
+from asyncer import asyncify
 from httpx_sse import EventSource
 from yarl import URL
 
@@ -31,8 +31,11 @@ class ChatStream:
     _client: httpx.AsyncClient
 
     async def aclose(self) -> None:
-        await self.response.aclose()
-        await self._client.aclose()
+        with anyio.CancelScope(shield=True):
+            try:
+                await self.response.aclose()
+            finally:
+                await self._client.aclose()
 
 
 @dataclass(frozen=True)

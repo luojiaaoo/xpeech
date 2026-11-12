@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+import anyio
 import httpx
 from yarl import URL
 
@@ -40,7 +41,8 @@ async def open_chat(
             stream=True,
         )
     except BaseException:
-        await client.aclose()
+        with anyio.CancelScope(shield=True):
+            await client.aclose()
         raise
     return ChatStream(response=response, _client=client)
 
@@ -70,6 +72,18 @@ async def open_chat_sync(
             data=_chat_form(content, session_metadata),
             files=files,
         )
+
+
+async def chat_status(
+    auth: BackendAuthParams,
+    chat_url: str,
+    *,
+    session_id: str,
+) -> httpx.Response:
+    headers = _backend_headers(auth)
+    headers["x-session-id"] = session_id
+    async with httpx.AsyncClient(timeout=30) as client:
+        return await client.get(str(URL(chat_url) / "chat" / "status"), headers=headers)
 
 
 async def stop_chat(

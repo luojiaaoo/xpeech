@@ -375,6 +375,7 @@ async def test_sse_disconnect_under_backpressure_returns_permit(streaming_chat):
     await asyncio.wait_for(app(scope, receive, send), timeout=3)
 
     assert disconnect.is_set()
+    assert not await CHAT_GUARD.is_active(state.auth.user_id, "00000000-0000-7000-8000-000000000000")
     await asyncio.wait_for(state.semaphore.acquire(), timeout=1)
     assert state.semaphore.locked()
     state.semaphore.release()
