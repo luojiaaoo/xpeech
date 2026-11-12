@@ -772,6 +772,10 @@ stdio MCP、内置文件工具和 Shell 的相对路径基准保持一致。远�
 传入目录时返回该 UUID 目录的 URL 前缀；传入单个 HTML 时保留源文件名，
 并返回完整的文件 URL。
 
+内置 [share-session 技能](xpeech/agent/skills/buildin/share-session/SKILL.md) 可将当前会话生成 HTML 分享链接。
+用户说“分享当前会话”后，先选择详细分享（含工具调用与结果）、对话分享（仅用户和助手回复）或摘要分享（仅归纳内容），
+再通过 `create_browser_preview` 发布单个 HTML 文件。分享基于当前可见上下文；早期内容已被压缩时会注明缺失范围。
+
 字段说明：
 
 - `description`：可选的服务用途说明，默认空字符串。供模型在连接完成前判断当前任务是否需要等待此服务。
