@@ -6,6 +6,12 @@ from unittest.mock import AsyncMock
 import pytest
 from lark_channel import SendResult
 
+from xpeech.agent.loop import AgentLoop
+from xpeech.agent.skills.skill import SkillsLoader
+from xpeech.agent.tool_executor import ToolExecutor
+from xpeech.agent.tools import shell as shell_module
+from xpeech.agent.tools.execution_request import ExecutionDecision, build_execution_request_tool
+from xpeech.provider.schema import ToolCallRequest
 from xpeech.subapp.channel.feishu import bridge as bridge_module
 from xpeech.subapp.channel.feishu import delivery
 from xpeech.subapp.channel.feishu.bridge import FeishuBridge
@@ -13,6 +19,7 @@ from xpeech.subapp.channel.feishu.channel import XpeechFeishuChannel
 from xpeech.subapp.channel.feishu.delivery import ToolProgress
 from xpeech.subapp.channel.feishu.formatting import OUTPUT_EVENT_TYPES
 from xpeech.subapp.channel.schema import ChatEvent, ChatEventType, Message, TextData
+from xpeech.utils.security.sandbox.schema import CommandResult
 
 
 def tool_event(event_type, entries):
@@ -430,3 +437,79 @@ async def test_truncated_tool_code_block_does_not_swallow_the_next_result(monkey
         "**shell**\n" + code[:19] + "…\n```\n\n"
         + '<font color="red">**shell**\n&lt;error/&gt;</font>'
     )
+
+
+@pytest.mark.asyncio
+async def test_shell_command_failure_reaches_feishu_as_red_result(tmp_path, monkeypatch):
+    bridge = bridge_with_channel()
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+
+    async def run(command, **_kwargs):
+        return (
+            CommandResult(b"", b"bash: line 1: aaaa: command not found\n", 127)
+            if command == "aaaa" else CommandResult(b"aaaa\n", b"", 0)
+        )
+
+    sandbox = SimpleNamespace(idle_timeout=60, run=run)
+    monkeypatch.setattr(shell_module.sandbox, "SandboxExecutor", lambda *_args, **_kwargs: sandbox)
+    shell = build_execution_request_tool(
+        shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)),
+        lambda _: ExecutionDecision.ALLOW,
+    )
+    calls = [
+        ToolCallRequest(id=call_id, name="shell", arguments={
+            "command": command, "execution_description": "测试命令退出状态",
+        })
+        for call_id, command in [("failed", "aaaa"), ("succeeded", "echo aaaa")]
+    ]
+    agent = AgentLoop.__new__(AgentLoop)
+    agent.tool_executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={"shell": shell})
+    results = {}
+
+    async def events(*_args, **_kwargs):
+        async for event in agent.tool_call(SimpleNamespace(tool_calls=calls, content=""), [], 0, "alice", "session", "Alice"):
+            if event["event"] == "tool_call_result":
+                result = json.loads(event["context"])
+                results[result["tool_call_id"]] = result["success"]
+            yield ChatEvent(**event)
+
+    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    await bridge.consume([message()])
+
+    assert results == {"failed": False, "succeeded": True}
+    content = bridge.channel.update_card_element_content.await_args.args[2]
+    assert content == (
+        '<font color="red">**测试命令退出状态**\nRuntimeError: STDERR:\nbash: line 1: aaaa: command not found\n\nExit code: 127</font>'
+        '\n\n**测试命令退出状态**\naaaa\n\nExit code: 0'
+    )
+
+
+@pytest.mark.asyncio
+async def test_custom_tool_copy_is_visible_and_function_arguments_are_folded(monkeypatch):
+    bridge = bridge_with_channel()
+    monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    progress = ToolProgress()
+    arguments = {
+        "command": "mkdir -p test", "timeout_ms": 10000,
+        "execution_title": "创建 test 文件夹", "execution_description": "创建名为 test 的文件夹。",
+        "execution_confirm_label": "创建", "execution_view_label": "查看结果",
+    }
+    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+        {"tool_call_id": "create-test", "name": "shell", "arguments": arguments},
+    ]), progress)
+    card = bridge.channel.create_card_instance.await_args.args[0]
+    summary, details = card["body"]["elements"]
+    assert summary["header"]["title"]["content"] == "工具调用 · 创建 test 文件夹"
+    assert "创建名为 test 的文件夹。" in summary["elements"][0]["content"]
+    assert "shell" not in json.dumps(summary) and "mkdir" not in json.dumps(summary)
+    assert details["tag"] == "collapsible_panel" and details["expanded"] is False
+    assert details["header"]["title"]["content"] == "工具与参数"
+    params = details["elements"][0]["content"]
+    assert "shell" in params and "mkdir -p test" in params and "10000" in params
+    assert "execution_" not in params
+
+    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+        "tool_call_id": "create-test", "name": "shell", "result": "Exit code: 0", "success": True,
+    }), progress)
+    content = bridge.channel.update_card_element_content.await_args.args[2]
+    assert content == "**创建 test 文件夹**\n创建名为 test 的文件夹。\n\nExit code: 0"

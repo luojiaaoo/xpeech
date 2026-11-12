@@ -265,7 +265,7 @@ class FeishuEventFormatter:
             return text
         return text[: max(0, max_chars - 1)] + "…"
 
-    def _format_tool_event(self, event: ChatEvent) -> str:
+    def _format_tool_event(self, event: ChatEvent, *, tool_call: dict[str, Any] | None = None) -> str:
         """将工具事件转换为摘要或结果文本，样式统一使用 TOOL_CALL 配置。"""
         output = OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL]
         is_result = event.event == ChatEventType.TOOL_CALL_RESULT
@@ -273,16 +273,29 @@ class FeishuEventFormatter:
         try:
             payload = json.loads(event.context)
             if is_result:
-                name = self._truncate(payload["name"], output.get("max_argument_chars"))
+                arguments = (tool_call or {}).get("arguments")
+                copy = arguments if isinstance(arguments, dict) else {}
+                name = self._truncate(
+                    copy.get("execution_title") or copy.get("execution_description") or payload["name"],
+                    output.get("max_argument_chars"),
+                )
+                description = copy.get("execution_description")
                 value = payload["result"]
                 text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
                 text = "".join(part for part, _ in _markdown_parts(self._truncate(text, limit), close_unfinished=True))
+                if description and description != name:
+                    text = f"{description}\n\n{text}"
                 return f"**{name}**\n{text}"
 
             lines = []
             for call in payload:
                 name = self._truncate(call["name"], output.get("max_argument_chars"))
                 value = call["arguments"]
+                if isinstance(value, dict):
+                    title = value.get("execution_title") or value.get("execution_description")
+                    if title:
+                        lines.append(self._truncate(title, limit))
+                        continue
                 text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
                 lines.append(f"{name} {self._truncate(text, limit)}")
             return " | ".join(lines)

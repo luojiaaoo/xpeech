@@ -4,11 +4,13 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from typing import Any
 
 from lark_channel import SendResult
 from loguru import logger
 
 from ..schema import ChatEvent, ChatEventType
+from .cards import build_feishu_tool_details
 from .config import FEISHU_STREAM_UPDATE_INTERVAL_SECONDS
 from .formatting import OUTPUT_EVENT_TYPES, color_markdown, ensure_markdown
 
@@ -19,6 +21,7 @@ class ToolProgress:
     sequence: int = 0
     title: str = ""
     text: str = ""
+    calls: dict[str, dict[str, Any]] = field(default_factory=dict)
     results: dict[str, str] = field(default_factory=dict)
     failures: set[str] = field(default_factory=set)
 
@@ -40,7 +43,19 @@ class FeishuDeliveryMixin:
             try:
                 for entry in json.loads(event.context):
                     tool_call_id = entry["tool_call_id"]
+                    progress.calls[tool_call_id] = entry
                     progress.results.setdefault(tool_call_id, "")
+                    arguments = entry.get("arguments")
+                    if isinstance(arguments, dict) and arguments.get("execution_description"):
+                        pending = {
+                            "name": entry["name"], "result": "执行中…",
+                        }
+                        progress.results[tool_call_id] = self._format_tool_event(
+                            ChatEvent(event=ChatEventType.TOOL_CALL_RESULT, context=json.dumps(pending)), tool_call=entry,
+                        )
+                progress.text = self._truncate(
+                    "\n\n".join(filter(None, progress.results.values())), output.get("max_chars"),
+                )
             except (ValueError, TypeError, KeyError):
                 pass
         else:
@@ -51,6 +66,7 @@ class FeishuDeliveryMixin:
                 tool_call_id = None
                 payload = {}
             if isinstance(tool_call_id, str):
+                text = self._format_tool_event(event, tool_call=progress.calls.get(tool_call_id))
                 progress.results[tool_call_id] = text
                 if payload.get("success") is False:
                     progress.failures.add(tool_call_id)
@@ -86,6 +102,13 @@ class FeishuDeliveryMixin:
                     result_content = color_markdown(result_content, "red")
                 parts.append(result_content)
             body["content"] = "".join(parts) + content
+        calls_with_copy = [
+            call for call in progress.calls.values()
+            if isinstance(call.get("arguments"), dict)
+            and (call["arguments"].get("execution_title") or call["arguments"].get("execution_description"))
+        ]
+        if calls_with_copy:
+            card["body"]["elements"].append(build_feishu_tool_details(calls_with_copy))
         if progress.card_id is None:
             progress.card_id = await self.channel.create_card_instance(card)
             result = await self.channel.send_card_by_reference(to, progress.card_id)

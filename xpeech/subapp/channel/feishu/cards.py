@@ -1,10 +1,34 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
+from ....agent.tools.execution_request import EXECUTION_PARAMETERS
 from ....utils.question import validate_confirm_question_json, validate_question_form_json
 from .formatting import ensure_markdown, plain_text
+
+
+def build_feishu_tool_details(calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """把函数名和实际参数收进默认折叠的详情，排除展示文案字段。"""
+    details = []
+    for call in calls:
+        arguments = call["arguments"]
+        if isinstance(arguments, dict):
+            arguments = {key: value for key, value in arguments.items() if key not in EXECUTION_PARAMETERS}
+        text = json.dumps(arguments, ensure_ascii=False, indent=2)
+        details.append(f'**{call["name"]}**\n```json\n{text}\n```')
+    return {
+        "tag": "collapsible_panel",
+        "expanded": False,
+        "header": {"title": plain_text("工具与参数")},
+        "elements": [{"tag": "markdown", "content": ensure_markdown("\n\n".join(details), 6000)}],
+    }
+
+
+_EXECUTION_DESCRIPTION = re.compile(
+    r"^执行说明：([\s\S]*?)\n\n执行参数：\n([\s\S]*)\n\n(请在 \d+ 秒内确认；取消或超时均不会执行。)$"
+)
 
 def build_feishu_background_task_card(
     content: str,
@@ -194,13 +218,26 @@ def _build_feishu_confirm_card(
     question: dict[str, Any], tool_result: dict[str, Any] | None, *, disabled: bool = False,
 ) -> dict[str, Any]:
     elements: list[dict[str, Any]] = []
-    if question["description"]:
+    description = question["description"]
+    details = None
+    hint = None
+    match = _EXECUTION_DESCRIPTION.fullmatch(description or "") if question["tool_name"] else None
+    if match:
+        try:
+            arguments = json.loads(match[2])
+        except ValueError:
+            pass  # 未识别的旧内容保持完整展示，避免丢失参数。
+        else:
+            description = match[1]
+            hint = match[3]
+            details = build_feishu_tool_details([{"name": question["tool_name"], "arguments": arguments}])
+    if description:
         elements.append(
             {
                 "tag": "div",
                 "text": {
                     "tag": "plain_text",
-                    "content": question["description"],
+                    "content": description,
                     "text_size": "normal",
                     "text_align": "left",
                     "text_color": "default",
@@ -208,6 +245,11 @@ def _build_feishu_confirm_card(
                 "margin": "0px 0px 0px 0px",
             }
         )
+
+    if details:
+        elements.append(details)
+    if hint and not disabled and tool_result is None:
+        elements.append({"tag": "markdown", "content": hint, "text_size": "notation"})
 
     failed = tool_result is not None and tool_result.get("success") is False
     if tool_result is not None:

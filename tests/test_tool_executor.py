@@ -3,7 +3,9 @@ import platform
 import shutil
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Annotated
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -13,6 +15,7 @@ from pydantic import BaseModel, Field, ValidationError, create_model
 
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
+from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.helper import EmptyToolArgs, as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import _render_mcp_result
 from xpeech.agent.tools.shell import MAX_EXEC_TIMEOUT_MS, ShellArgs, _format_command_output, build_shell_tools
@@ -270,7 +273,7 @@ class TestToolExecutor:
         assert result.timed_out is False
 
     @pytest.mark.asyncio
-    async def test_shell_timeout_result_is_limited_normally(self, tmp_path: Path, monkeypatch):
+    async def test_shell_timeout_is_reported_as_error_with_partial_output(self, tmp_path: Path, monkeypatch):
         async def skip_venv(_executor, **_kwargs) -> None:
             return None
 
@@ -297,14 +300,39 @@ class TestToolExecutor:
             )
         ]
 
-        assert result.succeeded is True
-        assert result.value.startswith("ERROR: Command timed out after 0")
-        assert "Full result saved to:" in result.value
-        full_result = self._saved_result_path(tmp_path, result.value).read_text(encoding="utf-8")
-        assert full_result.startswith("ERROR: Command timed out after 0.5s")
-        assert "partial output" in full_result
-        assert "STDERR:\nstill running" in full_result
-        assert "Command timed out after 0.5s" in full_result
+        assert result.succeeded is False
+        assert result.value.startswith("TimeoutError: ERROR: Command timed out after 0.5s")
+        assert "partial output" in result.value
+        assert "STDERR:\nstill running" in result.value
+        assert "Exit code: -9" in result.value
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("confirmed", [False, True])
+    @pytest.mark.parametrize("returncode,timed_out,succeeded", [
+        (0, False, True), (127, False, False), (-9, False, False),
+        (None, False, False), (0, True, False),
+    ])
+    async def test_shell_reports_process_status_and_preserves_output(
+        self, tmp_path, monkeypatch, confirmed, returncode, timed_out, succeeded,
+    ):
+        sandbox = SimpleNamespace(
+            idle_timeout=60,
+            run=AsyncMock(return_value=CommandResult(b"partial output", b"diagnostic", returncode, timed_out)),
+        )
+        monkeypatch.setattr(shell_module.sandbox, "SandboxExecutor", lambda *_args, **_kwargs: sandbox)
+        shell = build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
+        executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={"shell": shell})
+        call = ToolCallRequest(id="shell-status", name="shell", arguments={"command": "example"})
+        result = (
+            await executor.execute_function(call, shell, call.arguments)
+            if confirmed else await executor.execute_one(call)
+        )
+
+        assert result.succeeded is succeeded
+        output = _format_command_output(b"partial output", b"diagnostic", returncode, timed_out=timed_out)
+        prefix = "" if succeeded else "TimeoutError: " if timed_out else "RuntimeError: "
+        assert result.value == prefix + output
+        sandbox.run.assert_awaited_once()
 
     def test_mcp_output_is_not_truncated_before_executor(self):
         full_result = "x" * 50_001

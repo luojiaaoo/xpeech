@@ -36,6 +36,7 @@ from xpeech.subapp.channel.feishu.cards import (
 from xpeech.subapp.channel.feishu.channel import XpeechFeishuChannel
 from xpeech.subapp.channel.feishu.config import DEFAULT_SESSION_ID
 from xpeech.subapp.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
+from xpeech.utils.question import build_execution_question
 
 
 def _inbound_message(
@@ -699,6 +700,37 @@ async def test_confirmation_button_callback_submits_decision(monkeypatch, decisi
     assert all(column["elements"][0]["disabled"] for column in card["body"]["elements"][-1]["columns"])
     await bridge._on_card_action(event)
     assert notify_question.await_count == 1
+
+
+@pytest.mark.parametrize("state", ["pending", "submitted", "finished"])
+def test_execution_confirmation_uses_custom_copy_and_folds_function_and_arguments(state):
+    context = build_execution_question(
+        "shell", {"command": "rm -rf test", "timeout_ms": 10000},
+        "先确认 test 文件夹存在，然后删除并验证。", tool_call_id="delete-test",
+        title="删除 test 文件夹", confirm_label="删除", view_label="查看删除结果",
+    )
+    result = {"success": True, "result": "已删除"} if state == "finished" else None
+    card = build_feishu_question_card(context, disabled=state == "submitted", tool_result=result)
+    assert card["header"]["title"]["content"] == "删除 test 文件夹"
+    elements = card["body"]["elements"]
+    assert elements[0]["text"]["content"] == "先确认 test 文件夹存在，然后删除并验证。"
+    details = elements[1]
+    assert details["tag"] == "collapsible_panel" and details["expanded"] is False
+    assert details["header"]["title"]["content"] == "工具与参数"
+    assert "shell" in details["elements"][0]["content"]
+    assert "rm -rf test" in details["elements"][0]["content"]
+    buttons = [column["elements"][0] for column in elements[-1]["columns"]]
+    assert [button["text"]["content"] for button in buttons] == ["删除", "取消"]
+    assert all(button["disabled"] == (state != "pending") for button in buttons)
+    assert ("请在 300 秒内确认" in json.dumps(elements, ensure_ascii=False)) == (state == "pending")
+    if result:
+        assert elements[-2]["header"]["title"]["content"] == "查看删除结果"
+
+
+def test_unrecognized_execution_description_stays_visible_in_full():
+    description = "执行说明：测试\n\n执行参数：\n这不是 JSON\n\n请在 300 秒内确认；取消或超时均不会执行。"
+    card = build_feishu_question_card(json.dumps({"type": "confirm", "tool_name": "shell", "description": description}))
+    assert card["body"]["elements"][0]["text"]["content"] == description
 
 
 @pytest.mark.asyncio

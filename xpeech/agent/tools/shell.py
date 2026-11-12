@@ -54,13 +54,18 @@ def build_shell_tools(workspace: Path, *, skills_loader: SkillsLoader):
 
     async def shell(args: ShellArgs) -> str:
         result = await executor.run(args.command, timeout_ms=args.timeout_ms)
-        return _format_command_output(
+        output = _format_command_output(
             result.stdout,
             result.stderr,
             result.returncode,
             timed_out=result.timed_out,
             timeout_ms=args.timeout_ms,
         )
+        if result.timed_out:
+            raise TimeoutError(output)
+        if result.returncode != 0:
+            raise RuntimeError(output)
+        return output
 
     shell.__doc__ = dedent(
         f"""

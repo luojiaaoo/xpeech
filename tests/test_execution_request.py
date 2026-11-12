@@ -327,18 +327,22 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
             assert "fields" not in form
             card = build_feishu_question_card(event["context"])
             assert card["header"]["subtitle"] == {"tag": "plain_text", "content": ""}
-            [description, actions] = card["body"]["elements"]
+            [description, details, hint, actions] = card["body"]["elements"]
             assert description == {
                 "tag": "div",
                 "text": {
                     "tag": "plain_text",
-                    "content": form["description"],
+                    "content": "输出 hello",
                     "text_size": "normal",
                     "text_align": "left",
                     "text_color": "default",
                 },
                 "margin": "0px 0px 0px 0px",
             }
+            assert details["tag"] == "collapsible_panel" and details["expanded"] is False
+            assert "echo hello" in details["elements"][0]["content"]
+            assert "shell" in details["elements"][0]["content"]
+            assert "请在" in hint["content"]
             buttons = [column["elements"][0] for column in actions["columns"]]
             assert [button["text"]["content"] for button in buttons] == ["确认", "取消"]
             assert [button["behaviors"][0]["value"] for button in buttons] == [
