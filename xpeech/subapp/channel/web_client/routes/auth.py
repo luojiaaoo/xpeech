@@ -424,11 +424,13 @@ def create_auth_router(
             return _oauth2_result_page(False, attempt.error)
 
         if oauth2.display_type == "link":
-            target_url = (
-                str(URL("/").update_query(state=attempt.inject_prompt_state)) if attempt.inject_prompt_state else "/"
-            )
+            target_url = URL("/")
+            if attempt.channel != "web_client":
+                target_url = target_url.update_query(channel=attempt.channel)
+            if attempt.inject_prompt_state:
+                target_url = target_url.update_query(state=attempt.inject_prompt_state)
             callback_response = RedirectResponse(
-                url=target_url,
+                url=str(target_url),
                 status_code=status.HTTP_303_SEE_OTHER,
             )
             await create_login_session(user, callback_response, attempt.channel)

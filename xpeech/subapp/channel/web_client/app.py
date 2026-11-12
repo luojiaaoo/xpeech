@@ -141,12 +141,7 @@ def create_app(config: WebConfig) -> FastAPI:
     async def public_config(
         response: Response,
         channel: str | None = None,
-        token: Annotated[str | None, Cookie(alias=config.cookie_name)] = None,
     ):
-        if channel is None and token:
-            user = await dao.get_user_for_session(hashlib.sha256(token.encode()).hexdigest())
-            if user is not None:
-                channel = user.channel
         channel = web_channel(channel)
         custom = web_channel_config(channel)
         response.headers["Cache-Control"] = "no-store"

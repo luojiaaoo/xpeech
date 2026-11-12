@@ -12,7 +12,8 @@ async function appHarness(search: string, currentUser: any = null, configError?:
   let cursor = 0;
   let effects: Function[] = [];
   let lazyIndex = 0;
-  const config = { system_name: '客户服务助手', channel: 'crm', recommended_questions: ['查询客户'], oauth2: [], inject_prompt: { enabled: false } };
+  const channel = initialURL.searchParams.get('channel') ?? 'web_client';
+  const config = { system_name: channel === 'crm' ? '客户服务助手' : '默认助手', channel, recommended_questions: channel === 'crm' ? ['查询客户'] : null, oauth2: [], inject_prompt: { enabled: false } };
   const user = { id: 1, user_id: 'admin', username: 'Admin', channel: 'crm', is_admin: false };
   const document = { title: '' };
   const context = vm.createContext({
@@ -98,7 +99,7 @@ function find(tree: any, type: string): any {
   return Object.values(tree.props ?? {}).flat().map(child => find(child, type)).find(Boolean);
 }
 
-test('custom login updates the title, passes channel and questions, and keeps channel only on the login URL', async () => {
+test('custom login updates the title, passes channel and questions, and preserves the channel URL through login and logout', async () => {
   const app = await appHarness('?channel=crm&state=preserved#chat');
   app.render();
   await app.flush();
@@ -111,7 +112,7 @@ test('custom login updates the title, passes channel and questions, and keeps ch
   login.props.onLogin(app.user);
   tree = app.render();
   await app.flush();
-  assert.equal(new URL(app.location.href).searchParams.has('channel'), false);
+  assert.equal(new URL(app.location.href).searchParams.get('channel'), 'crm');
   assert.equal(new URL(app.location.href).searchParams.get('state'), 'preserved');
   assert.equal(new URL(app.location.href).hash, '#chat');
   const workspace = find(tree, 'ChatWorkspace');
@@ -123,14 +124,20 @@ test('custom login updates the title, passes channel and questions, and keeps ch
   assert.equal(new URL(app.location.href).searchParams.get('channel'), 'crm');
 });
 
-test('refresh restores the session channel while selecting another channel requires login again', async () => {
-  for (const channel of ['crm', 'web_client']) {
-    const app = await appHarness(channel === 'crm' ? '' : '?channel=crm', { id: 1, username: 'Admin', channel, is_admin: false });
-    app.render();
-    await app.flush();
-    const tree = app.render();
-    assert.ok(find(tree, channel === 'crm' ? 'ChatWorkspace' : 'LoginPage'));
-    assert.equal(app.calls[0][1], channel === 'crm' ? undefined : 'crm');
+test('the URL selects the channel and only a matching login session opens the workspace', async () => {
+  for (const query of ['', '?channel=crm', '?channel=web_client']) {
+    for (const channel of ['crm', 'web_client']) {
+      const app = await appHarness(query, { id: 1, username: 'Admin', channel, is_admin: false });
+      app.render();
+      await app.flush();
+      const tree = app.render();
+      const requestedChannel = new URLSearchParams(query).get('channel');
+      const selectedChannel = requestedChannel ?? 'web_client';
+      assert.ok(find(tree, channel === selectedChannel ? 'ChatWorkspace' : 'LoginPage'));
+      assert.equal(app.calls[0][1], requestedChannel ?? undefined);
+      assert.equal(app.document.title, selectedChannel === 'crm' ? '客户服务助手' : '默认助手');
+      assert.equal(app.location.search, query);
+    }
   }
 });
 

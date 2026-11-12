@@ -2,13 +2,14 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import { Attachments, Bubble, Prompts, Sender, Welcome } from '@ant-design/x';
 import type { AttachmentsProps } from '@ant-design/x';
-import { Alert, Button, Flex, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Flex, Popover, Tooltip, Typography, message } from 'antd';
 import {
   CheckCircleOutlined,
   CloudUploadOutlined,
   CopyOutlined,
   DashboardOutlined,
   DownloadOutlined,
+  EllipsisOutlined,
   LoadingOutlined,
   PaperClipOutlined,
   DownOutlined,
@@ -52,8 +53,8 @@ const roles: ComponentProps<typeof Bubble.List>['role'] = {
 const tokenUsageLabels: Record<string, string> = {
   上下文使用率: '上下文',
   会话时长: '耗时',
-  大模型请求次数: '次数',
 };
+const tokenUsageSummaryKeys = ['上下文使用率', '总 Token', '会话时长'];
 
 async function copyText(text: string) {
   if (navigator.clipboard && window.isSecureContext) {
@@ -83,29 +84,53 @@ async function copyMessage(text: string) {
 }
 
 function renderTokenUsage(tokenUsage: string) {
-  let metrics: { label: string; value: string }[];
+  let metrics: { key: string; label: string; value: string }[];
   try {
     const data = JSON.parse(tokenUsage) as unknown;
     if (!data || Array.isArray(data) || typeof data !== 'object') throw new Error('Invalid token usage');
     metrics = Object.entries(data).map(([label, value]) => ({
+      key: label,
       label: tokenUsageLabels[label] || label,
-      value: label === '大模型请求次数' && /^\d+$/.test(String(value))
+      value: ['大模型请求次数', '大模型交互次数'].includes(label) && /^\d+$/.test(String(value))
         ? `${String(value)} 次`
         : String(value),
     }));
   } catch {
-    metrics = [{ label: '详情', value: tokenUsage }];
+    metrics = [{ key: '详情', label: '详情', value: tokenUsage }];
   }
 
+  if (!metrics.length) return null;
+  const summary = tokenUsageSummaryKeys.flatMap(key => metrics.filter(metric => metric.key === key));
+  const details = metrics.filter(metric => !tokenUsageSummaryKeys.includes(metric.key));
+  const renderMetric = (metric: typeof metrics[number]) => (
+    <span className="token-usage-metric" key={metric.key}>
+      <span className="token-usage-label">{metric.label}</span>
+      <span className="token-usage-value">{metric.value}</span>
+    </span>
+  );
   return (
     <div className="token-usage" role="group" aria-label="Token 使用情况">
       <DashboardOutlined className="token-usage-icon" />
-      {metrics.map((metric, index) => (
-        <span className="token-usage-metric" key={`${metric.label}_${index}`}>
-          <span className="token-usage-label">{metric.label}</span>
-          <span className="token-usage-value">{metric.value}</span>
-        </span>
-      ))}
+      {summary.map(renderMetric)}
+      {details.length ? (
+        <Popover
+          trigger="click"
+          placement="topLeft"
+          content={(
+            <dl className="token-usage-details">
+              {details.map(metric => (
+                <div className="token-usage-detail" key={metric.key}>
+                  <dt>{metric.label}</dt>
+                  <dd>{metric.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        >
+          <Button type="text" size="small" className="token-usage-more"
+            icon={<EllipsisOutlined />} aria-label="查看更多统计" />
+        </Popover>
+      ) : null}
     </div>
   );
 }

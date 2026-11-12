@@ -36,9 +36,9 @@ test('dialog files notify the parent while sync files stay in the result, and no
     },
     'react/jsx-runtime': { jsx: (type: any, props: any) => ({ type, props }), jsxs: (type: any, props: any) => ({ type, props }) },
     '@ant-design/x': { Attachments: 'Attachments', Bubble: { List: 'BubbleList' }, Prompts: 'Prompts', Sender, Welcome: 'Welcome' },
-    antd: { Alert: 'Alert', Button: 'Button', Flex: 'Flex', Tooltip: 'Tooltip', Typography: { Text: 'Text' }, message: { error() {} } },
+    antd: { Alert: 'Alert', Button: 'Button', Flex: 'Flex', Popover: 'Popover', Tooltip: 'Tooltip', Typography: { Text: 'Text' }, message: { error() {} } },
     '@ant-design/icons': Object.fromEntries([
-      'CheckCircleOutlined', 'CloudUploadOutlined', 'CopyOutlined', 'DashboardOutlined', 'DownloadOutlined',
+      'CheckCircleOutlined', 'CloudUploadOutlined', 'CopyOutlined', 'DashboardOutlined', 'DownloadOutlined', 'EllipsisOutlined',
       'LoadingOutlined', 'PaperClipOutlined', 'DownOutlined', 'RobotOutlined',
     ].map(name => [name, name])),
     './api': {

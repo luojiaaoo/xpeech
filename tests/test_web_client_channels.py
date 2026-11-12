@@ -68,6 +68,7 @@ def channel_client(postgres_database, configured_channels, monkeypatch, tmp_path
     app = web.create_app(web.WebConfig(
         backend_url="http://backend.test", static_dir=static, system_name="默认助手",
         session_history_path=tmp_path / "history",
+        inject_prompt=web.InjectPromptWebConfig(enabled=True, command_template="printf ${state}"),
         oauth2=(web.OAuth2WebConfig(
             provider_name="test", display_type=oauth_display_type, client_id="client", client_secret="secret",
             authorization_url="https://oauth.test/authorize", token_url="https://oauth.test/token",
@@ -88,7 +89,27 @@ def login(client, channel="crm"):
     assert response.json()["channel"] == channel
 
 
-def test_login_branding_persists_and_apis_cannot_override_the_channel(channel_client):
+def test_config_channel_comes_from_url_even_with_a_custom_channel_cookie(configured_channels, monkeypatch, tmp_path):
+    dao = SimpleNamespace(
+        initialize=AsyncMock(), close=AsyncMock(),
+        get_user_for_session=AsyncMock(return_value=SimpleNamespace(channel="crm")),
+    )
+    monkeypatch.setattr(web, "WebClientDAO", lambda engine: dao)
+    app = web.create_app(web.WebConfig(
+        backend_url="http://backend.test", static_dir=tmp_path / "static", system_name="默认助手",
+        session_history_path=tmp_path / "history",
+    ))
+    with TestClient(app) as client:
+        client.cookies.set("xpeech_session", "crm-login-token")
+        default = client.get("/api/config").json()
+        assert (default["channel"], default["system_name"]) == ("web_client", "默认助手")
+        custom = client.get("/api/config?channel=crm").json()
+        assert (custom["channel"], custom["system_name"]) == ("crm", "客户服务助手")
+        assert custom["recommended_questions"] == ["如何查询客户资料？", "整理跟进计划"]
+    dao.get_user_for_session.assert_not_awaited()
+
+
+def test_url_selects_branding_independently_of_login_and_apis_cannot_override_the_channel(channel_client):
     client = channel_client
     config = client.get("/api/config?channel=crm")
     assert config.status_code == 200
@@ -96,9 +117,12 @@ def test_login_branding_persists_and_apis_cannot_override_the_channel(channel_cl
     assert config.json()["system_name"] == "客户服务助手"
     assert config.json()["recommended_questions"] == ["如何查询客户资料？", "整理跟进计划"]
     assert "secret" not in config.text
-    assert client.get("/api/config").json()["channel"] == "web_client"
+    default_config = client.get("/api/config").json()
+    assert default_config["channel"] == "web_client"
+    assert default_config["system_name"] == "默认助手"
     login(client)
-    assert client.get("/api/config").json() == config.json()
+    assert client.get("/api/config").json() == default_config
+    assert client.get("/api/config?channel=crm").json() == config.json()
     assert client.get("/api/auth/me").json()["channel"] == "crm"
     assert client.get("/api/history/sessions?channel=private").status_code == 400
     assert client.get("/api/auth/me?channel=web_client").status_code == 400
@@ -112,7 +136,8 @@ def test_removing_an_allowed_channel_disables_its_existing_web_sessions(channel_
     login(channel_client)
     configured_channels["web_client"].allow_extra_channels.clear()
     assert channel_client.get("/api/auth/me").status_code == 422
-    assert channel_client.get("/api/config").status_code == 422
+    assert channel_client.get("/api/config?channel=crm").status_code == 422
+    assert channel_client.get("/api/config").json()["channel"] == "web_client"
 
 
 @pytest.mark.parametrize("channel", ["", "unknown", "private", "internal", "feishu"])
@@ -165,7 +190,8 @@ def test_custom_channel_is_used_for_http_websocket_jwt_and_isolated_history(chan
 
 
 @pytest.mark.parametrize("oauth_display_type", ["qrcode", "link"], indirect=True)
-def test_oauth2_binds_channel_to_attempt_and_preserves_it_after_callback(channel_client, monkeypatch, oauth_display_type):
+@pytest.mark.parametrize("entry_state", [None, "state-token-1234567890"])
+def test_oauth2_binds_channel_to_attempt_and_preserves_it_after_callback(channel_client, monkeypatch, oauth_display_type, entry_state):
     class OAuthClient:
         def __init__(self, **kwargs):
             pass
@@ -183,14 +209,28 @@ def test_oauth2_binds_channel_to_attempt_and_preserves_it_after_callback(channel
             return httpx.Response(200, json={"sub": "admin", "name": "Admin"})
 
     monkeypatch.setattr(oauth.httpx, "AsyncClient", OAuthClient)
-    qr = channel_client.post("/api/auth/oauth2/qr", json={"provider_name": "test", "channel": "crm"}).json()
+    body = {"provider_name": "test", "channel": "crm"}
+    if entry_state is not None:
+        body["state"] = entry_state
+    qr_response = channel_client.post("/api/auth/oauth2/qr", json=body)
+    assert qr_response.status_code == 200
+    qr = qr_response.json()
     state = parse_qs(urlsplit(qr["authorization_url"]).query)["state"][0]
     callback = channel_client.get("/api/auth/oauth2/callback", params={"state": state, "code": "ok"}, follow_redirects=False)
     assert callback.status_code == (303 if oauth_display_type == "link" else 200)
+    if oauth_display_type == "link":
+        location = urlsplit(callback.headers["location"])
+        expected = {"channel": ["crm"]}
+        if entry_state is not None:
+            expected["state"] = [entry_state]
+        assert location.path == "/"
+        assert parse_qs(location.query) == expected
+        assert channel_client.get(callback.headers["location"]).status_code == 200
     if oauth_display_type == "qrcode":
         polled = channel_client.post("/api/auth/oauth2/poll", json={
             "login_id": qr["login_id"], "poll_token": qr["poll_token"], "channel": "web_client",
         })
         assert polled.json()["user"]["channel"] == "crm"
-    assert channel_client.get("/api/config").json()["system_name"] == "客户服务助手"
+    assert channel_client.get("/api/config?channel=crm").json()["system_name"] == "客户服务助手"
+    assert channel_client.get("/api/config").json()["channel"] == "web_client"
     assert channel_client.get("/api/auth/me").json()["channel"] == "crm"

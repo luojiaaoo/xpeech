@@ -49,7 +49,9 @@ max_history_days = 30
 
 普通登录页可通过 `?channel=crm` 选择 `jwt.channels.web_client.allow_extra_channels`
 白名单中的自定义通道，系统名和推荐问题的配置见[主文档](../../../../README.md)。
-该选择绑定到登录会话，不能在登录后的 API 上通过 channel 参数覆盖。
+页面登录后保留 `channel` 参数，OAuth2 链接登录回跳也会恢复该参数；未指定时始终进入
+默认 `web_client`，不根据登录 Cookie 推断通道。该选择绑定到登录会话，不能在登录后的
+API 上通过 channel 参数覆盖；会话通道与页面 URL 不一致时，需要重新登录。
 `channel` 与 `embed` 参数互斥，嵌入模式必须使用本文的 JS/JWT 认证流程。
 
 嵌入功能默认可用，允许任意业务网站接入，无需启用开关或配置来源白名单。

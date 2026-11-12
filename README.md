@@ -1032,12 +1032,13 @@ secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
 
 访问 `http://localhost:7939/?channel=crm` 后，登录页、登录后的系统名称和浏览器标签页
 都显示「客户服务助手」，新会话欢迎区使用对应的推荐问题，点击问题可填入输入框。
-推荐问题列表为空时不显示推荐问题；未指定 channel 时使用默认系统和推荐问题。
+推荐问题列表为空时不显示推荐问题；未指定 channel 时始终使用默认系统和推荐问题。
 仅允许白名单中已配置独立 JWT 密钥的自定义 channel，不能指定 `internal`、`feishu`
 或未配置的通道。每个 channel 只能出现一次。
 
-channel 只在登录入口选择，账号密码、OAuth2 扫码和 OAuth2 链接登录都会将选择绑定到
-服务端登录会话。登录成功后从地址中移除 `channel`；刷新页面仍保留系统名和推荐问题。
+channel 通过页面 URL 选择，账号密码、OAuth2 扫码和 OAuth2 链接登录都会将选择绑定到
+服务端登录会话。登录成功后地址保留 `channel`，刷新页面按 URL 加载系统名和推荐问题；
+OAuth2 链接登录通过授权 `state` 找回服务端保存的 channel，回跳时恢复对应 URL 参数。
 转发给后端的 JWT 使用该 channel 的 `kid` 和密钥，聊天、文件、问答与历史记录均跟随
 会话 channel。已有其他 channel 的登录状态时，需要在目标登录页重新登录。
 `channel` 与 `embed` 参数互斥；嵌入模式必须通过 `embed.js` 的 JS/JWT 认证流程接入，

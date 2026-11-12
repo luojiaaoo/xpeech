@@ -61,13 +61,6 @@ function StandaloneApp() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
-    const url = new URL(window.location.href);
-    url.searchParams.delete('channel');
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
-  }, [user]);
-
-  useEffect(() => {
     if (!user || !appConfig?.inject_prompt.enabled) return;
 
     const url = new URL(window.location.href);
@@ -117,9 +110,6 @@ function StandaloneApp() {
     setStatisticsOpen(false);
     setPasswordOpen(false);
     await authApi.logout();
-    const url = new URL(window.location.href);
-    if (channel !== 'web_client') url.searchParams.set('channel', channel);
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
     setUser(null);
   }
 

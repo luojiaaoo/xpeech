@@ -42,11 +42,11 @@ async function chatPage(stopChat: (sessionId: string) => Promise<{ stopped: bool
     'react/jsx-runtime': { jsx: (type: any, props: any) => ({ type, props }), jsxs: (type: any, props: any) => ({ type, props }) },
     '@ant-design/x': { Attachments: 'Attachments', Bubble: { List: 'BubbleList' }, Prompts: 'Prompts', Sender, Welcome: 'Welcome' },
     antd: {
-      Alert: 'Alert', Button: 'Button', Flex: 'Flex', Tooltip: 'Tooltip', Typography: { Text: 'Text' },
+      Alert: 'Alert', Button: 'Button', Flex: 'Flex', Popover: 'Popover', Tooltip: 'Tooltip', Typography: { Text: 'Text' },
       message: { error(text: string) { errors.push(text); } },
     },
     '@ant-design/icons': Object.fromEntries([
-      'CheckCircleOutlined', 'CloudUploadOutlined', 'CopyOutlined', 'DashboardOutlined', 'DownloadOutlined',
+      'CheckCircleOutlined', 'CloudUploadOutlined', 'CopyOutlined', 'DashboardOutlined', 'DownloadOutlined', 'EllipsisOutlined',
       'LoadingOutlined', 'PaperClipOutlined', 'DownOutlined', 'RobotOutlined',
     ].map(name => [name, name])),
     './api': {

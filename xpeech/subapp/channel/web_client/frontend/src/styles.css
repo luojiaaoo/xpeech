@@ -231,12 +231,19 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .chat-summary { padding-block: 2px 8px !important; }
 .bubble-footer { display: flex; width: 100%; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px; }
 .bubble-copy-button { margin-inline-start: auto; flex: 0 0 auto; }
-.token-usage { display: inline-flex; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px 6px; color: #646b78; }
+.token-usage { display: flex; min-width: 0; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px 6px; color: #646b78; }
+.token-usage-more.ant-btn { width: 22px; min-width: 22px; height: 22px; padding: 0; color: #8a919f; }
+.token-usage-details { display: flex; width: max-content; min-width: 180px; max-width: min(320px, calc(100vw - 48px)); max-height: 260px; flex-direction: column; gap: 10px; margin: 0; overflow: auto; font-size: 12px; }
+.token-usage-detail { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; }
+.token-usage-detail dt { color: #8a919f; overflow-wrap: anywhere; }
+.token-usage-detail dd { min-width: 0; margin: 0; color: #4b5260; font-weight: 500; text-align: end; overflow-wrap: anywhere; }
 .token-usage-icon { margin-inline: 2px; color: #8a919f; }
 .token-usage-metric {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 22px;
   padding: 1px 7px;
   border: 1px solid #e5e7eb;
@@ -244,9 +251,9 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   background: #f7f8fa;
   font-size: 11px;
   line-height: 18px;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
-.token-usage-label { color: #8a919f; }
+.token-usage-label { flex-shrink: 0; color: #8a919f; }
 .token-usage-value { color: #4b5260; font-weight: 500; }
 .sender-wrap { flex-shrink: 0; min-width: 0; width: min(1328px, calc(100% - 48px)); margin: 0 auto 10px; padding-bottom: env(safe-area-inset-bottom, 0px); text-align: center; }
 .pending-user-prefix { margin-bottom: 10px; text-align: left; }
