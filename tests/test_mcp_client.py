@@ -366,7 +366,7 @@ def test_tls_verification_can_be_disabled_from_config(tmp_path):
                 "test": {
                     "description": "查询客户资料和订单",
                     "url": "https://example.test/mcp",
-                    "command_authorization_token": "token-helper --user $user_id",
+                    "command_authorization_token_template": "token-helper --user $user_id",
                     "headers": {"Authorization": "Bearer ${authorization_token}"},
                     "verify_tls": False,
                     "connect_timeout": 45,
@@ -384,7 +384,7 @@ def test_tls_verification_can_be_disabled_from_config(tmp_path):
     assert registration.config.verify_tls is False
     assert registration.config.description == "查询客户资料和订单"
     assert registration.config.connect_timeout == 45
-    assert registration.config.command_authorization_token == "token-helper --user $user_id"
+    assert registration.config.command_authorization_token_template == "token-helper --user $user_id"
     assert registration.config.headers == {"Authorization": "Bearer ${authorization_token}"}
     assert registration.config.user_scoped is False
 
@@ -471,7 +471,7 @@ async def test_resolves_per_user_authorization_headers_without_a_shell(
 
 @pytest.mark.asyncio
 async def test_authorization_token_header_requires_token_command():
-    with pytest.raises(ValueError, match="require command_authorization_token"):
+    with pytest.raises(ValueError, match="require command_authorization_token_template"):
         await mcp_client._resolve_http_headers(
             {"Authorization": "Bearer $authorization_token"},
             None,
@@ -502,7 +502,7 @@ def test_authorization_token_command_requires_remote_mcp(tmp_path):
         mcp_client.create_mcp_registration(
             server_name="test",
             command="fake-server",
-            command_authorization_token="token-helper $user_id",
+            command_authorization_token_template="token-helper $user_id",
             workspace=tmp_path,
             skills_loader=SkillsLoader(tmp_path),
         )
@@ -1018,9 +1018,9 @@ async def test_connections_are_reused_and_expire(tmp_path, monkeypatch: pytest.M
     ({}, False),
     ({"user_scoped": False}, False),
     ({"user_scoped": True}, True),
-    ({"command_authorization_token": "token-helper $user_id"}, True),
-    ({"command_authorization_token": "token-helper $user_id", "user_scoped": False}, True),
-    ({"command_authorization_token": "token-helper $user_id", "user_scoped": True}, True),
+    ({"command_authorization_token_template": "token-helper $user_id"}, True),
+    ({"command_authorization_token_template": "token-helper $user_id", "user_scoped": False}, True),
+    ({"command_authorization_token_template": "token-helper $user_id", "user_scoped": True}, True),
     ({"command": "demo"}, True),
     ({"command": "demo", "user_scoped": False}, True),
     ({"command": "demo", "user_scoped": True}, True),
@@ -1111,7 +1111,7 @@ async def test_shared_connections_ignore_user_workspaces_but_separate_configs(tm
 @pytest.mark.asyncio
 @pytest.mark.parametrize("options", [
     {"user_scoped": True},
-    {"command_authorization_token": "token-helper $user_id"},
+    {"command_authorization_token_template": "token-helper $user_id"},
     {"command": "demo", "user_scoped": False},
     {"command": "demo", "transport": "stdio"},
 ])

@@ -148,7 +148,7 @@ def _normalize_transport(
 
 async def _resolve_http_headers(
     headers: Mapping[str, str] | None,
-    command_authorization_token: str | None,
+    command_authorization_token_template: str | None,
     user_id: str | None,
 ) -> dict[str, str]:
     def replace_placeholder(
@@ -162,7 +162,7 @@ async def _resolve_http_headers(
         token = await execute_command_template(
             command_template,
             {"user_id": current_user_id},
-            operation="MCP command_authorization_token",
+            operation="MCP command_authorization_token_template",
             timeout=MCP_AUTHORIZATION_TOKEN_TIMEOUT_SECONDS,
         )
         if not token:
@@ -184,16 +184,16 @@ async def _resolve_http_headers(
         _AUTHORIZATION_TOKEN_PLACEHOLDER_RE.search(value) for value in resolved.values()
     )
     if has_authorization_token_placeholder:
-        if command_authorization_token is None:
+        if command_authorization_token_template is None:
             raise ValueError(
-                "MCP header authorization_token placeholders require command_authorization_token"
+                "MCP header authorization_token placeholders require command_authorization_token_template"
             )
         if user_id is None:
             raise ValueError(
-                "MCP command_authorization_token requires a user-scoped registration"
+                "MCP command_authorization_token_template requires a user-scoped registration"
             )
         authorization_token = await resolve_authorization_token(
-            command_authorization_token,
+            command_authorization_token_template,
             user_id,
         )
         resolved = {
@@ -375,7 +375,7 @@ class MCPServerConfig:
     env: Mapping[str, str] | None = None
     url: str | None = None
     transport: MCPTransport = "stdio"
-    command_authorization_token: str | None = None
+    command_authorization_token_template: str | None = None
     user_scoped: bool = False
     headers: Mapping[str, str] | None = None
     verify_tls: bool = True
@@ -396,10 +396,10 @@ class MCPServerConfig:
             for name in ("PATH", "HOME"):
                 if name in self.env:
                     raise ValueError(f"MCP env cannot configure {name}; it is managed by the sandbox")
-        if self.command_authorization_token is not None and not self.url:
-            raise ValueError("MCP command_authorization_token requires a remote URL")
-        if self.command_authorization_token is not None and not self.command_authorization_token.strip():
-            raise ValueError("MCP command_authorization_token cannot be empty")
+        if self.command_authorization_token_template is not None and not self.url:
+            raise ValueError("MCP command_authorization_token_template requires a remote URL")
+        if self.command_authorization_token_template is not None and not self.command_authorization_token_template.strip():
+            raise ValueError("MCP command_authorization_token_template cannot be empty")
         if self.filter is not None:
             parse_filter(self.filter)
 
@@ -720,7 +720,7 @@ class MCPServerRegistration:
                 else:
                     headers = await _resolve_http_headers(
                         cfg.headers,
-                        cfg.command_authorization_token,
+                        cfg.command_authorization_token_template,
                         self.user_id,
                     )
                     if cfg.transport == "sse":
@@ -875,7 +875,7 @@ def create_mcp_registration(
     env: Mapping[str, str] | None = None,
     url: str | None = None,
     transport: str | None = None,
-    command_authorization_token: str | None = None,
+    command_authorization_token_template: str | None = None,
     user_scoped: bool = False,
     headers: Mapping[str, str] | None = None,
     verify_tls: bool = True,
@@ -900,7 +900,7 @@ def create_mcp_registration(
             env=dict(env) if env is not None else None,
             url=url,
             transport=normalized_transport,
-            command_authorization_token=command_authorization_token,
+            command_authorization_token_template=command_authorization_token_template,
             user_scoped=user_scoped,
             headers=dict(headers) if headers is not None else None,
             verify_tls=verify_tls,
@@ -931,7 +931,7 @@ def create_mcp_registration_from_config(
         env=config.env,
         url=config.url,
         transport=config.transport,
-        command_authorization_token=config.command_authorization_token,
+        command_authorization_token_template=config.command_authorization_token_template,
         user_scoped=config.user_scoped,
         headers=config.headers,
         verify_tls=config.verify_tls,
@@ -960,7 +960,7 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         _hashable_mapping(config.env),
         config.url,
         config.transport,
-        config.command_authorization_token,
+        config.command_authorization_token_template,
         config.user_scoped,
         _hashable_mapping(config.headers),
         config.verify_tls,
@@ -988,7 +988,7 @@ async def get_session_mcp_registration_from_config(
     transport = _normalize_transport(config.command, config.url, config.transport)
     user_scoped = (
         transport == "stdio"
-        or config.command_authorization_token is not None
+        or config.command_authorization_token_template is not None
         or config.user_scoped
     )
     if not user_scoped:

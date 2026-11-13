@@ -750,7 +750,7 @@ tool_timeout = 30
 description = "查询 CRM 客户资料和订单；客户、订单相关任务可等待此服务就绪"
 url = "https://mcp.example.com/sse"
 transport = "sse"
-command_authorization_token = "curl --fail --silent 'https://auth.example.com/token?user_id=${user_id}'"
+command_authorization_token_template = "curl --fail --silent 'https://auth.example.com/token?user_id=${user_id}'"
 headers = { Authorization = "Bearer ${authorization_token}", X-User-ID = "$user_id" }
 verify_tls = true
 enabled_tools = ["search", "read_record"]
@@ -787,8 +787,8 @@ stdio MCP、内置文件工具和 Shell 的相对路径基准保持一致。远�
 - `url`：连接远程 MCP Server。`/sse` 结尾的地址使用 SSE transport，其他地址默认使用 streamable HTTP。
 - `transport`：可选，显式指定 `stdio`、`sse` 或 `streamable-http`。省略时按 `command` 或 URL 自动判断。
 - `env`：仅用于 stdio Server 的环境变量，例如 `env = { API_KEY = "your-key" }`；HTTP/SSE 不允许配置。禁止设置 `PATH` 和 `HOME`，两者统一由沙盒管理。
-- `command_authorization_token`：连接远程 MCP Server 前执行的取 token 命令，stdout 作为 `authorization_token`。
-- `user_scoped`：是否按用户隔离远程 MCP 连接，默认 `false`；stdio 始终按用户隔离，远程 MCP 配置 `command_authorization_token` 时也强制隔离。
+- `command_authorization_token_template`：连接远程 MCP Server 前执行的取 token 命令，stdout 作为 `authorization_token`。
+- `user_scoped`：是否按用户隔离远程 MCP 连接，默认 `false`；stdio 始终按用户隔离，远程 MCP 配置 `command_authorization_token_template` 时也强制隔离。
 - `headers`：远程 MCP Server 的请求头，支持按用户替换占位符。
 - `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
 - `enabled_tools`：允许注册的 MCP 原始工具名或通配模式，默认 `["*"]` 表示全部注册；`[]` 表示全部禁用。
@@ -796,15 +796,15 @@ stdio MCP、内置文件工具和 Shell 的相对路径基准保持一致。远�
 - `filter`：资源过滤表达式，省略表示公共 MCP；表达式求值为真才连接并注册，语法和内置短名函数见上文「过滤表达式」。
 - `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
 
-`command` 和 `url` 只能二选一。`command_authorization_token` 仅适用于远程 MCP，每次
+`command` 和 `url` 只能二选一。`command_authorization_token_template` 仅适用于远程 MCP，每次
 建立或重建用户连接时执行；命令中的 `$user_id` 和 `${user_id}` 会替换为当前用户 ID，
 但命令不经过 shell。命令必须在 10 秒内成功退出，并在 stdout 输出非空 UTF-8 token。
 
 `headers` 的值支持 `$user_id` / `${user_id}` 和 `$authorization_token` /
-`${authorization_token}`。后两者由 `command_authorization_token` 的 stdout 提供。其他 MCP 配置不做
+`${authorization_token}`。后两者由 `command_authorization_token_template` 的 stdout 提供。其他 MCP 配置不做
 运行时字符串替换。仅使用用户 ID 请求头而不配置取 token 命令时，需设置 `user_scoped = true`。
 
-stdio MCP 始终按 `(user_id, workspace)` 缓存和隔离；远程 MCP 配置 `command_authorization_token` 或 `user_scoped = true` 时同样隔离，
+stdio MCP 始终按 `(user_id, workspace)` 缓存和隔离；远程 MCP 配置 `command_authorization_token_template` 或 `user_scoped = true` 时同样隔离，
 各工作区独立续期和回收。其余远程 MCP 由不同用户共享配置相同的连接，使用 `<cache_path>/mcp/<server_name>` 作为 MCP roots。
 需要访问用户工作区的远程 MCP 应设置 `user_scoped = true`。两种模式均在最后一次成功连接、工具发现或
 MCP 工具调用后续期 20 分钟，空闲超时后自动关闭。
@@ -1163,19 +1163,6 @@ token_auth_method = "client_secret_post"
 `user_id_claim` / `username_claim` 是对 userinfo JSON求值的
 [jq](https://jqlang.github.io/jq/manual/) 查询，例如 `".data.employee_no"` 或
 `".data.items[0].id"`。
-
-可选的 `userinfo_filter` 提供二次访问校验：登录前对 userinfo JSON 求值该 jq
-表达式，**有输出即放行，无输出则拒绝**，可作为认证之外的补充限制，例如只允许
-某个部门的人登录：
-
-```toml
-userinfo_filter = 'select(.data.department == "R&D")'
-```
-
-注意应使用 `select()` 这类"条件不满足时无输出"的写法来表达拒绝条件；单纯的
-布尔比较（如 `.data.department == "R&D"`）无论是否命中都会产生输出，起不到
-限制作用。表达式在启动时校验合法性，配置无效会直接启动失败；求值过程中出现
-运行时错误（如对 null 迭代）也会拒绝登录。
 
 需要配置多个服务商时，重复整个 `[[web_client.oauth2]]` 数组表。各服务商的
 `provider_name` 必须唯一（忽略首尾空格和大小写），前端和创建授权请求时用它选择对应配置。

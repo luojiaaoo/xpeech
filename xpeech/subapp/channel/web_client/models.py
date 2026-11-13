@@ -26,7 +26,6 @@ class OAuth2WebConfig:
     use_pkce: bool
     token_auth_method: str
     extra_authorization_params: dict[str, str]
-    userinfo_filter: str | None = None
     auto_create_users: bool = False
     display_type: str = "qrcode"
 

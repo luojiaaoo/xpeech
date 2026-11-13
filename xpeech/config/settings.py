@@ -135,8 +135,8 @@ class MCPServerSettings(BaseModel):
     env: dict[str, str] | None = Field(default=None, description="stdio MCP 环境变量；PATH 和 HOME 由沙盒管理，不允许配置")
     url: str | None = None
     transport: Literal["stdio", "sse", "streamable-http"] | None = None
-    command_authorization_token: str | None = None
-    user_scoped: bool = Field(default=False, description="按用户隔离远程 MCP 连接；stdio 或配置 command_authorization_token 时强制隔离")
+    command_authorization_token_template: str | None = None
+    user_scoped: bool = Field(default=False, description="按用户隔离远程 MCP 连接；stdio 或配置 command_authorization_token_template 时强制隔离")
     headers: dict[str, str] | None = None
     verify_tls: bool = Field(default=True, validation_alias="verify_tls")
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")
@@ -300,13 +300,10 @@ class OAuth2Config(BaseModel):
         "client_secret_post"
     )
     extra_authorization_params: dict[str, str] = Field(default_factory=dict)
-    userinfo_filter: str | None = Field(default=None, min_length=1)
 
-    @field_validator("user_id_claim", "username_claim", "userinfo_filter")
+    @field_validator("user_id_claim", "username_claim")
     @classmethod
-    def validate_jq_expressions(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
+    def validate_jq_expressions(cls, value: str) -> str:
         try:
             jq.compile(value)
         except ValueError as error:

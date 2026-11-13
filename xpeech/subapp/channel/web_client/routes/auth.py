@@ -73,15 +73,6 @@ def oauth2_claim(payload: dict[str, object], path: str) -> str:
     return outputs[0]
 
 
-def oauth2_filter(payload: dict[str, object], query: str) -> bool:
-    """Evaluate an OAuth2 login filter; any jq output allows login, none denies."""
-    try:
-        outputs = jq.compile(query).input_value(payload).all()
-    except ValueError as error:
-        raise OAuth2ClaimError(f"OAuth2 userinfo_filter jq 表达式无效: {query}") from error
-    return bool(outputs)
-
-
 async def resolve_injected_prompt(
     config: InjectPromptWebConfig,
     state: str,
@@ -393,10 +384,6 @@ def create_auth_router(
                 )
         except (httpx.HTTPError, TypeError, ValueError):
             attempt.error = "OAuth2 服务请求失败，请返回登录页重试。"
-            return _oauth2_result_page(False, attempt.error)
-
-        if oauth2.userinfo_filter and not oauth2_filter(userinfo, oauth2.userinfo_filter):
-            attempt.error = "OAuth2 用户信息未通过登录校验"
             return _oauth2_result_page(False, attempt.error)
 
         user_id = oauth2_claim(userinfo, oauth2.user_id_claim)

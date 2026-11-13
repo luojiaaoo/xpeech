@@ -97,10 +97,6 @@ scopes = ["openid", "profile"]
 # Claim paths are jq queries against the userinfo JSON, e.g. ".data.items[0].id".
 user_id_claim = ".sub"
 username_claim = ".name"
-# Optional jq filter for extra access control: login is allowed only when the
-# expression yields at least one output, and denied when it yields none.
-# Use select() to reject users, e.g. only one department may log in:
-# userinfo_filter = 'select(.data.department == "R&D")'
 # Keep false to require administrators to pre-create matching local accounts.
 auto_create_users = false
 use_pkce = true
@@ -174,8 +170,8 @@ tool_timeout = 120
 # filter = 'tag("crm") or org("company/engineering/")' # 省略表示公共 MCP；表达式求值为真才连接并注册，语法见 README。
 # url = "https://mcp.example.com/sse"
 # transport = "sse" # stdio / sse / streamable-http
-# command_authorization_token = "curl --fail --silent 'https://auth.example.com/token?user_id=${user_id}'"
-# user_scoped = false # 远程 MCP 默认跨用户共享；true 或配置 command_authorization_token 时按用户隔离，均空闲 20 分钟回收。
+# command_authorization_token_template = "curl --fail --silent 'https://auth.example.com/token?user_id=${user_id}'"
+# user_scoped = false # 远程 MCP 默认跨用户共享；true 或配置 command_authorization_token_template 时按用户隔离，均空闲 20 分钟回收。
 # headers = { Authorization = "Bearer ${authorization_token}", X-User-ID = "$user_id" }
 # verify_tls = false # 仅用于自签名证书；生产环境优先安装并信任内部 CA
 # enabled_tools = ["*"]
