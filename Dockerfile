@@ -55,21 +55,47 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN go version
 
-RUN sed -i \
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    # 软件源与 CA 证书：供后续 apt、curl、Git 等工具校验 HTTPS 证书。
+    sed -i \
         -e 's|http://archive.ubuntu.com/ubuntu/|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
         -e 's|http://security.ubuntu.com/ubuntu/|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
         /etc/apt/sources.list && \
-    apt-get update && \
     apt-get -o Acquire::https::Verify-Peer=false update && \
     apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        bubblewrap slirp4netns cron curl ffmpeg git jq zip tzdata xz-utils \
-        build-essential cppcheck tshark libgl1 libglu1-mesa \
-        cmake ninja-build pkg-config gdb clang-format \
-        libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-draw \
-        poppler-utils pandoc tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
-        fontconfig fonts-dejavu-core fonts-noto-cjk && \
+    # 基础工具：定时清理、网络下载、Git 仓库操作、JSON 处理、归档和时区支持。
+    apt-get install -y --no-install-recommends \
+        cron curl git jq zip tzdata xz-utils && \
+    # Shell 沙盒：bubblewrap 隔离进程和文件系统，slirp4netns 提供出站网络。
+    apt-get install -y --no-install-recommends \
+        bubblewrap slirp4netns && \
+    # C/C++ 开发：编译、构建、依赖探测、静态检查、调试与代码格式化。
+    apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build pkg-config cppcheck gdb clang-format && \
+    # 音视频处理：转码、提取音轨及媒体文件分析。
+    apt-get install -y --no-install-recommends \
+        ffmpeg && \
+    # 图形与 CAD 运行库：为依赖 OpenGL/GLU 的图形处理工具提供动态库。
+    apt-get install -y --no-install-recommends \
+        libgl1 libglu1-mesa && \
+    # 网络报文分析：解析 PCAP/PCAPNG，导出协议字段和 JSON。
+    apt-get install -y --no-install-recommends \
+        tshark && \
+    # Office 文档：无界面处理和转换文字文档、演示文稿、表格及绘图文件。
+    apt-get install -y --no-install-recommends \
+        libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-draw && \
+    # PDF 与文档转换：PDF 文本提取、页面渲染，以及 Markdown/HTML 等格式转换。
+    apt-get install -y --no-install-recommends \
+        poppler-utils pandoc && \
+    # OCR：识别图片和扫描件中的英文、简体中文文字。
+    apt-get install -y --no-install-recommends \
+        tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim && \
+    # 系统字体：常用中西文字体、楷体和 Emoji，统一通过 apt 安装。
+    apt-get install -y --no-install-recommends \
+        fontconfig fonts-dejavu-core fonts-noto-cjk fonts-wqy-microhei \
+        fonts-arphic-ukai fonts-liberation2 fonts-noto-color-emoji && \
     fc-cache -f && \
+    test -n "$(fc-list :lang=zh file)" && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
