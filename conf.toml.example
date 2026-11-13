@@ -48,7 +48,7 @@ custom_system_prompt = ""
 # system_name = "客户服务助手"
 # recommended_questions = ["如何查询客户资料？", "帮我整理本周的跟进计划"]
 # 可选：组织字符串匹配任一前缀才允许登录和使用；省略或 [] 不限制。
-# 通过 [organization].command_template 查询组织；查询失败或未配置则拒绝受限通道访问。
+# 通过 [extra_user_info].command_extra_user_info_template 查询组织；查询失败或未配置则拒绝受限通道访问。
 # organization_filter = ["公司/销售/", "公司/客服/"]
 
 [jwt.channels.feishu]
@@ -63,10 +63,13 @@ custom_system_prompt = ""
 # custom_system_prompt = ""
 
 # 加载技能、MCP 和校验 Web 通道组织权限时按用户查询所属组织，此配置不绑定渠道。
-# 命令的 stdout 为 UTF-8 组织字符串，例如 company/engineering/platform。
-# 成功结果（含空组织）在后端按用户缓存 10 分钟。
-# [organization]
-# command_template = "curl --fail --silent 'https://directory.example/organization?user_id=${user_id}'"
+# stdout: UTF-8 JSON, e.g. {"organization":"company/engineering/platform","name":"Alice"}.
+# Successful JSON command results are cached per user for 10 minutes; all claims share this cache.
+# [extra_user_info]
+# command_extra_user_info_template = "curl --fail --silent 'https://directory.example/userinfo?user_id=${user_id}'"
+# user_organization_claim = ".organization"
+# session_metadata_claims = { department = ".department", employee_number = ".employee_number | tostring" }
+# 元数据值为字符串；渠道转发消息时提取并覆盖 session_metadata 中的同名字段。
 # timeout = 10.0
 
 [web_client]
@@ -96,9 +99,8 @@ redirect_uri = "http://127.0.0.1:7939/api/auth/oauth2/callback"
 scopes = ["openid", "profile"]
 # Claim paths are jq queries against the userinfo JSON, e.g. ".data.items[0].id".
 user_id_claim = ".sub"
-username_claim = ".name"
-# Keep false to require administrators to pre-create matching local accounts.
-auto_create_users = false
+username_source = "oauth2" # "oauth2" 或 "extra_user_info"，默认 "oauth2"。
+username_claim = ".name" # 必填；对所选来源的 JSON 执行 jq 提取名称。
 use_pkce = true
 token_auth_method = "client_secret_post"
 # extra_authorization_params = { prompt = "login" }

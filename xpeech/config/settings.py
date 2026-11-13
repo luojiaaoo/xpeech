@@ -1,4 +1,6 @@
+import json
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Literal
@@ -293,8 +295,8 @@ class OAuth2Config(BaseModel):
     redirect_uri: str | None = None
     scopes: list[str] = Field(default_factory=lambda: ["openid", "profile"])
     user_id_claim: str = Field(default=".sub", min_length=1)
-    username_claim: str = Field(default=".name", min_length=1)
-    auto_create_users: bool = False
+    username_claim: str = Field(min_length=1)
+    username_source: Literal["oauth2", "extra_user_info"] = "oauth2"
     use_pkce: bool = True
     token_auth_method: Literal["client_secret_post", "client_secret_basic"] = (
         "client_secret_post"
@@ -303,7 +305,9 @@ class OAuth2Config(BaseModel):
 
     @field_validator("user_id_claim", "username_claim")
     @classmethod
-    def validate_jq_expressions(cls, value: str) -> str:
+    def validate_jq_expressions(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         try:
             jq.compile(value)
         except ValueError as error:
@@ -402,45 +406,86 @@ class WebClientConfig(BaseModel):
         return self
 
 
-class OrganizationConfig(BaseModel):
-    """查询用户所属组织，用于技能、MCP 服务筛选和 Web 通道权限校验。"""
+class ExtraUserInfoConfig(BaseModel):
+    """Query shared user information and extract global claims with jq."""
 
     model_config = ConfigDict(extra="forbid")
 
-    command_template: str | None = None
+    command_extra_user_info_template: str | None = None
+    user_organization_claim: str | None = Field(default=None, min_length=1)
+    session_metadata_claims: dict[str, str] = Field(default_factory=dict)
     timeout: float = Field(default=10.0, gt=0, allow_inf_nan=False)
+    _query_extra_user_info: Callable[[str], Awaitable[object]] | None = PrivateAttr(default=None)
 
-    @staticmethod
-    @alru_cache(maxsize=4096, ttl=600)
-    async def _query_user_organization(command_template: str, timeout: float, user_id: str) -> str:
-        """按命令配置和用户缓存成功结果（含空组织）十分钟，并合并并发请求。"""
-        return await execute_command_template(
-            command_template,
-            {"user_id": user_id},
-            operation="organization.command_template",
-            timeout=timeout,
-            required_variables=("user_id",),
-        )
-
-    @field_validator("command_template")
+    @field_validator("command_extra_user_info_template")
     @classmethod
     def validate_command_template(cls, value: str | None) -> str | None:
         if value is not None:
             value = value.strip()
             if not value:
-                raise ValueError("organization.command_template cannot be empty")
+                raise ValueError("extra_user_info.command_extra_user_info_template cannot be empty")
         return value
 
+    @field_validator("user_organization_claim")
+    @classmethod
+    def validate_claim(cls, value: str | None) -> str | None:
+        return OAuth2Config.validate_jq_expressions(value)
+
+    @field_validator("session_metadata_claims")
+    @classmethod
+    def validate_session_metadata_claims(cls, value: dict[str, str]) -> dict[str, str]:
+        for claim in value.values():
+            OAuth2Config.validate_jq_expressions(claim)
+        return value
+
+    @model_validator(mode="after")
+    def validate_claim_command(self) -> "ExtraUserInfoConfig":
+        if (self.user_organization_claim or self.session_metadata_claims) and not self.command_extra_user_info_template:
+            raise ValueError("global claims require extra_user_info.command_extra_user_info_template")
+        return self
+
+    async def _resolve_claim(self, user_id: str, claim: str) -> str:
+        from ..subapp.channel.helper import extract_string_claim
+
+        if self.command_extra_user_info_template is None:
+            raise ValueError("extra_user_info.command_extra_user_info_template is not configured")
+        if self._query_extra_user_info is None:
+            @alru_cache(maxsize=4096, ttl=600)
+            async def _query_extra_user_info(user_id: str) -> object:
+                """Share cached JSON results across claims and concurrent queries."""
+                result = await execute_command_template(
+                    self.command_extra_user_info_template,
+                    {"user_id": user_id},
+                    operation="extra_user_info.command_extra_user_info_template",
+                    timeout=self.timeout,
+                    required_variables=("user_id",),
+                )
+                return json.loads(result)
+
+            self._query_extra_user_info = _query_extra_user_info
+        payload = await self._query_extra_user_info(user_id)
+        return extract_string_claim(payload, claim)
+
     async def resolve_user_organization(self, user_id: str) -> str | None:
-        """成功结果（含空组织）按用户缓存十分钟；失败和超时不缓存。"""
-        if self.command_template is None:
+        if self.user_organization_claim is None:
             return None
         try:
-            organization = await self._query_user_organization(self.command_template, self.timeout, user_id)
-        except CommandTemplateError as exc:
-            logger.warning("Organization lookup failed: {}", exc)
+            return (await self._resolve_claim(user_id, self.user_organization_claim)).strip() or None
+        except (CommandTemplateError, ValueError):
+            logger.warning("Extra user info organization lookup failed")
             return None
-        return organization or None
+
+    async def resolve_sender_name(self, user_id: str, claim: str) -> str:
+        value = (await self._resolve_claim(user_id, claim)).strip()
+        if not value:
+            raise ValueError("Extra user info claim must resolve to one non-empty string")
+        return value
+
+    async def resolve_session_metadata(self, user_id: str) -> dict[str, str]:
+        return {
+            name: await self._resolve_claim(user_id, claim)
+            for name, claim in self.session_metadata_claims.items()
+        }
 
 
 class Settings(BaseSettings):
@@ -453,8 +498,15 @@ class Settings(BaseSettings):
     feishu: FeishuConfig
     logging: LoggingConfig = LoggingConfig()
     jwt: JWTConfig
-    organization: OrganizationConfig = Field(default_factory=OrganizationConfig)
+    extra_user_info: ExtraUserInfoConfig = Field(default_factory=ExtraUserInfoConfig)
     web_client: WebClientConfig = Field(default_factory=WebClientConfig)
+
+    @model_validator(mode="after")
+    def validate_username_source(self) -> "Settings":
+        if any(oauth.enabled and oauth.username_source == "extra_user_info" for oauth in self.web_client.oauth2):
+            if self.extra_user_info.command_extra_user_info_template is None:
+                raise ValueError("extra_user_info sender name source requires command_extra_user_info_template")
+        return self
 
     @classmethod
     def settings_customise_sources(

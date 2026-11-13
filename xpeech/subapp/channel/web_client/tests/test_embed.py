@@ -227,8 +227,18 @@ def test_two_embedded_conversations_keep_distinct_ids(client, monkeypatch):
 
 
 @pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync"])
-@pytest.mark.parametrize("sender", [None, "", "%20", "%FF"])
-def test_embedded_sender_name_is_required_and_validated(client, monkeypatch, sender, path):
+def test_embedded_sender_name_is_required(client, monkeypatch, path):
+    stream = stream_mock(monkeypatch)
+    headers = bearer()
+    headers.pop("x-sender-name")
+    assert send(client, path, headers).status_code == 422
+    stream.chat.assert_not_awaited()
+    stream.sync.assert_not_awaited()
+
+
+@pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync"])
+@pytest.mark.parametrize("sender", ["", "%20", "%FF"])
+def test_embedded_sender_name_is_validated(client, monkeypatch, sender, path):
     stream = stream_mock(monkeypatch)
     headers = bearer()
     if sender is None:

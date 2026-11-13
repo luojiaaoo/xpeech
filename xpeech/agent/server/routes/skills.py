@@ -78,7 +78,7 @@ async def list_skills(
 ) -> list[SkillInfo]:
     """返回内置技能，以及 JWT 用户可用的 SKILL 列表。"""
     workspace = await anyio.to_thread.run_sync(_user_workspace, user_id)
-    user_organization = await settings.organization.resolve_user_organization(user_id)
+    user_organization = await settings.extra_user_info.resolve_user_organization(user_id)
     return await SkillsLoader(
         workspace, channel=auth.channel, user_organization=user_organization,
     ).list_skill_info()

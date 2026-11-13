@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from xpeech.config.settings import JWTChannelConfig, settings
+from xpeech.config.settings import ExtraUserInfoConfig, JWTChannelConfig, settings
 from xpeech.subapp.channel import helper
+from xpeech.subapp.channel.helper import ClaimExtractionError, extract_string_claim
 from xpeech.subapp.channel.schema import ChatEventType, Message, TextData
 from xpeech.utils.channel_jwt import UserJWTAuth
 
@@ -120,6 +121,8 @@ async def test_iter_chat_events_reads_streaming_error_response(monkeypatch: pyte
 
 @pytest.mark.asyncio
 async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: pytest.MonkeyPatch):
+    lookup = AsyncMock(return_value={"department": "server-team"})
+    monkeypatch.setattr(ExtraUserInfoConfig, "resolve_session_metadata", lookup)
     class FakeEventSource:
         def __init__(self, _response):
             pass
@@ -138,7 +141,8 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
     request = httpx.Request("POST", "http://backend.test/chat")
     response = httpx.Response(200, request=request)
     client = SimpleNamespace(aclose=AsyncMock())
-    monkeypatch.setattr(helper, "open_chat_stream", AsyncMock(return_value=helper.ChatStream(response, client)))
+    open_stream = AsyncMock(return_value=helper.ChatStream(response, client))
+    monkeypatch.setattr(helper, "open_chat_stream", open_stream)
     monkeypatch.setattr(helper, "EventSource", FakeEventSource)
     message = Message(
         message_id="om_message",
@@ -147,7 +151,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
         sender_name="Alice",
         content=[TextData(text="hello")],
         timestamp=0,
-        session_metadata={},
+        session_metadata={"department": "client-team", "trace": "original"},
     )
 
     events = helper.iter_chat_events(
@@ -157,6 +161,9 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
         session_id=SESSION_ID,
     )
     thinking = await anext(events)
+    lookup.assert_awaited_once_with("E1001")
+    assert json.loads(open_stream.await_args.args[3]) == {"department": "server-team", "trace": "original"}
+    assert message.session_metadata == {"department": "client-team", "trace": "original"}
     assert thinking.event == ChatEventType.THINKING
     assert not isinstance(thinking.context, str)
     assert [chunk async for chunk in thinking.context] == ["first ", "second"]
@@ -170,3 +177,29 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
     assert command.event == ChatEventType.COMMAND
     assert command.context == "/new"
     await events.aclose()
+
+
+def test_extract_string_claim_resolves_nested_feishu_userinfo():
+    userinfo = {
+        "code": 0,
+        "data": {
+            "employee_no": "oauth-user-42",
+            "name": "OAuth User",
+        },
+    }
+
+    assert extract_string_claim(userinfo, ".data.employee_no") == "oauth-user-42"
+    assert extract_string_claim(userinfo, ".data.name") == "OAuth User"
+    assert extract_string_claim(
+        {"data": {"items": [{"id": "oauth-user-42"}]}}, ".data.items[0].id"
+    ) == "oauth-user-42"
+    with pytest.raises(ClaimExtractionError):
+        extract_string_claim(userinfo, "data.employee_no")  # bare dotted path is not valid jq
+    with pytest.raises(ClaimExtractionError):
+        extract_string_claim(userinfo, ".data.employee_no.value")  # cannot index a string
+    with pytest.raises(ClaimExtractionError):
+        extract_string_claim(userinfo, ".data.missing")
+    with pytest.raises(ClaimExtractionError):
+        extract_string_claim({"sub": 42}, ".sub")  # non-string claim value
+    with pytest.raises(ClaimExtractionError):
+        extract_string_claim({"tags": ["a", "b"]}, ".tags[]")  # must yield exactly one value

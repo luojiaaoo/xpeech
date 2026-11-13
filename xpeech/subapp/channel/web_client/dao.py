@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pydantic import PrivateAttr
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import reconstructor, registry
 from sqlmodel import Field, SQLModel, delete, select
@@ -236,6 +237,7 @@ class WebClientDAO:
         user_id: str,
         password_hash: str,
         is_admin: bool,
+        overwrite_username: bool = False,
     ) -> User:
         user = User(
             username=username,
@@ -244,6 +246,15 @@ class WebClientDAO:
             is_admin=is_admin,
         )
         async with AsyncSession(self._engine) as session:
+            if overwrite_username:
+                statement = insert(User).values(**user.model_dump(exclude={"id"}))
+                statement = statement.on_conflict_do_update(
+                    index_elements=[User.user_id], set_={"username": username},
+                ).returning(User)
+                user = (await session.execute(statement)).scalar_one()
+                await session.commit()
+                await session.refresh(user)
+                return user
             session.add(user)
             try:
                 await session.commit()

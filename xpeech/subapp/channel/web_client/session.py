@@ -36,7 +36,7 @@ async def authorize_web_channel(channel_name: str, user_id: str) -> str:
     """Check local web access against server-resolved organization prefixes."""
     custom = web_channel_config(channel_name)
     if custom and custom.organization_filter:
-        organization = await settings.organization.resolve_user_organization(user_id)
+        organization = await settings.extra_user_info.resolve_user_organization(user_id)
         if not organization or not organization.startswith(tuple(custom.organization_filter)):
             raise HTTPException(403, "所属组织无权访问该 channel")
     return channel_name

@@ -84,6 +84,15 @@ def test_chat_sync_returns_collected_events(fake_runner, monkeypatch):
     assert message.content == [InputText(text="hello")]
 
 
+def test_backend_requires_sender_name(fake_runner):
+    headers = chat_headers()
+    headers.pop("x-sender-name")
+    response = TestClient(app).post("/chat_sync", headers=headers, data={"content": "[]"})
+    assert response.status_code == 422
+    assert fake_runner.messages == []
+    assert fake_runner.created == {}
+
+
 def test_channel_comes_only_from_jwt_kid_and_ignores_request_input(fake_runner):
     response = TestClient(app).post(
         "/chat_sync?channel=feishu",

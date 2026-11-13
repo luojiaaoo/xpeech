@@ -17,42 +17,34 @@ from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import mcp_client, registry
 import xpeech.config.settings as settings_module
-from xpeech.config.settings import MCPServerSettings, OrganizationConfig, ToolConfig, settings
+from xpeech.config.settings import MCPServerSettings, ExtraUserInfoConfig, ToolConfig, settings
 from xpeech.utils.command_template import CommandTemplateError
 
 
-@pytest.fixture
-def organization_cache():
-    cache = OrganizationConfig._query_user_organization
-    cache.cache_clear()
-    yield cache
-    cache.cache_clear()
-
-
 @pytest.mark.asyncio
-async def test_organization_cache_reuses_results_and_merges_concurrent_queries(monkeypatch, organization_cache):
+async def test_organization_cache_reuses_results_and_merges_concurrent_queries(monkeypatch):
     async def execute(command, variables, **kwargs):
         await asyncio.sleep(0)
-        return f"company/{variables['user_id']}"
+        return json.dumps({"organization": f"company/{variables['user_id']}"})
 
     execute = AsyncMock(side_effect=execute)
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
-    config = OrganizationConfig(command_template="lookup $user_id")
+    config = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup $user_id")
     results = await asyncio.gather(*(config.resolve_user_organization("alice") for _ in range(10)))
     assert results == ["company/alice"] * 10
     assert await config.resolve_user_organization("alice") == "company/alice"
     assert execute.await_count == 1
     assert await config.resolve_user_organization("bob") == "company/bob"
     assert execute.await_count == 2
-    changed = OrganizationConfig(command_template="other-lookup $user_id")
+    changed = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="other-lookup $user_id")
     assert await changed.resolve_user_organization("alice") == "company/alice"
     assert execute.await_count == 3
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_organization", ["company/old", ""])
-async def test_organization_cache_expires_after_ten_minutes(monkeypatch, organization_cache, first_organization):
-    execute = AsyncMock(side_effect=[first_organization, "company/new"])
+async def test_organization_cache_expires_after_ten_minutes(monkeypatch, first_organization):
+    execute = AsyncMock(side_effect=[json.dumps({"organization": first_organization}), json.dumps({"organization": "company/new"})])
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
     scheduled = []
     loop = asyncio.get_running_loop()
@@ -65,7 +57,7 @@ async def test_organization_cache_expires_after_ten_minutes(monkeypatch, organiz
         return handle
 
     monkeypatch.setattr(loop, "call_later", capture_expiry)
-    config = OrganizationConfig(command_template="lookup $user_id")
+    config = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup $user_id")
     assert await config.resolve_user_organization("alice") == (first_organization or None)
     assert len(scheduled) == 1
     assert await config.resolve_user_organization("alice") == (first_organization or None)
@@ -79,11 +71,11 @@ async def test_organization_cache_expires_after_ten_minutes(monkeypatch, organiz
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["timeout", "failed"])
-async def test_unsuccessful_organization_queries_are_not_cached(monkeypatch, organization_cache, failure):
+async def test_unsuccessful_organization_queries_are_not_cached(monkeypatch, failure):
     first = CommandTemplateError(failure, operation="organization.command_template")
-    execute = AsyncMock(side_effect=[first, "company/recovered"])
+    execute = AsyncMock(side_effect=[first, json.dumps({"organization": "company/recovered"})])
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
-    config = OrganizationConfig(command_template="lookup $user_id")
+    config = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup $user_id")
     assert await config.resolve_user_organization("alice") is None
     assert await config.resolve_user_organization("alice") == "company/recovered"
     assert execute.await_count == 2
@@ -92,9 +84,9 @@ async def test_unsuccessful_organization_queries_are_not_cached(monkeypatch, org
 @pytest.mark.asyncio
 async def test_lookup_uses_literal_user_argument_and_strips_stdout():
     user_id = "a user; $(touch should-not-exist)"
-    script = "import sys; print('  公司/研发/' + sys.argv[1] + '  ')"
+    script = "import sys, json; print(json.dumps({'organization': '  公司/研发/' + sys.argv[1] + '  '}))"
     command = shlex.join([sys.executable, "-c", script, "${user_id}"])
-    config = OrganizationConfig(command_template=command)
+    config = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template=command)
     assert await config.resolve_user_organization(user_id) == "公司/研发/" + user_id
 
 
@@ -110,20 +102,20 @@ async def test_lookup_uses_literal_user_argument_and_strips_stdout():
 )
 async def test_lookup_failures_grant_no_organization(script):
     command = shlex.join([sys.executable, "-c", script, "$user_id"])
-    config = OrganizationConfig(command_template=command, timeout=0.1)
+    config = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template=command, timeout=0.1)
     assert await config.resolve_user_organization("alice") is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", [None, "'", "/missing-command $user_id", "echo company/admin"])
+@pytest.mark.parametrize("command", ["'", "/missing-command $user_id", "echo company/admin"])
 async def test_disabled_or_invalid_lookup_grants_no_organization(command):
-    assert await OrganizationConfig(command_template=command).resolve_user_organization("alice") is None
+    assert await ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template=command).resolve_user_organization("alice") is None
 
 
 @pytest.mark.parametrize("command", ["", "   "])
 def test_empty_lookup_command_is_rejected(command):
     with pytest.raises(ValueError):
-        OrganizationConfig(command_template=command)
+        ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template=command)
 
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
@@ -222,7 +214,7 @@ def test_mcp_filter_is_preserved_in_cache_key(tmp_path):
 
 def test_skill_api_looks_up_authenticated_user_and_ignores_claims(monkeypatch, tmp_path):
     monkeypatch.setattr(settings.path, "workspace_base_path", tmp_path)
-    monkeypatch.setattr(settings, "organization", OrganizationConfig(command_template="lookup $user_id"))
+    monkeypatch.setattr(settings, "extra_user_info", ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup $user_id"))
     directories = []
     for name in ("engineering", "sales"):
         path = tmp_path / "builtin" / name / "SKILL.md"
@@ -234,7 +226,7 @@ def test_skill_api_looks_up_authenticated_user_and_ignores_claims(monkeypatch, t
 
     async def execute(command, variables, **kwargs):
         calls.append(variables["user_id"])
-        return "company/engineering/team" if variables["user_id"] == "alice" else "company/sales/team"
+        return json.dumps({"organization": "company/engineering/team" if variables["user_id"] == "alice" else "company/sales/team"})
 
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
     client = TestClient(app)

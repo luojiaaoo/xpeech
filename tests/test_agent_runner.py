@@ -7,7 +7,7 @@ import pytest
 from xpeech.agent import runner as runner_module
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.schema import InboundMessage, InputText
-from xpeech.config.settings import OrganizationConfig
+from xpeech.config.settings import ExtraUserInfoConfig
 
 
 class FakeProvider:
@@ -47,7 +47,7 @@ def make_config(workspace_base_path: Path):
             max_iterations=5,
         ),
         tool=object(),
-        organization=OrganizationConfig(),
+        extra_user_info=ExtraUserInfoConfig(),
     )
 
 
@@ -110,9 +110,9 @@ async def test_runner_resolves_organization_once_before_registering_tools(
     monkeypatch, tmp_path, runner_dependencies,
 ):
     config = make_config(tmp_path)
-    config.organization = OrganizationConfig(command_template="lookup ${user_id}", timeout=2.0)
+    config.extra_user_info = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup ${user_id}", timeout=2.0)
     lookup = AsyncMock(return_value="公司/研发/平台")
-    monkeypatch.setattr(OrganizationConfig, "resolve_user_organization", lookup)
+    monkeypatch.setattr(ExtraUserInfoConfig, "resolve_user_organization", lookup)
     register_tools = runner_dependencies[2]
 
     async def check_registration(**kwargs):

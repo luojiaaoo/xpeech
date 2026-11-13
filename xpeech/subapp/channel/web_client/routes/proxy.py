@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from loguru import logger
 from yarl import URL
 
+from .....config.settings import settings
 from .....exceptions import PathProtectionError
 from .....utils.channel_jwt import UserJWTAuth
 from .....utils.ids import validate_session_id
@@ -110,12 +111,13 @@ def _validated_chat_session_id(session_id: str) -> str:
 
 
 def _validated_sender_name(user: User | UserJWTAuth, sender_name: str | None) -> str:
-    if sender_name is None and isinstance(user, UserJWTAuth):
-        raise HTTPException(422, "嵌入聊天必须提供 x-sender-name")
-    try:
-        resolved = user.username if sender_name is None else unquote(sender_name, errors="strict").strip()
-    except UnicodeDecodeError:
-        raise HTTPException(422, "Invalid UTF-8 encoding in x-sender-name header") from None
+    if sender_name is None:
+        resolved = user.username.strip() if isinstance(user, User) else ""
+    else:
+        try:
+            resolved = unquote(sender_name, errors="strict").strip()
+        except UnicodeDecodeError:
+            raise HTTPException(422, "Invalid UTF-8 encoding in x-sender-name header") from None
     if not resolved:
         raise HTTPException(422, "x-sender-name header must not be blank")
     return resolved
@@ -249,6 +251,7 @@ def create_proxy_router(
                 detail="session_metadata must be a JSON object",
             )
 
+        metadata.update(await settings.extra_user_info.resolve_session_metadata(user.user_id))
         upload_data = []
         for file in files or ():
             upload_data.append(
@@ -382,6 +385,7 @@ def create_proxy_router(
                 metadata = payload.get("session_metadata", {})
                 if not isinstance(metadata, dict):
                     raise HTTPException(422, "session_metadata 必须是 JSON 对象")
+                metadata.update(await settings.extra_user_info.resolve_session_metadata(user.user_id))
                 file_payloads = payload.get("files", [])
                 if not isinstance(file_payloads, list):
                     raise HTTPException(422, "files 必须是数组")

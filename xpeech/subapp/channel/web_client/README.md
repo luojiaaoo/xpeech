@@ -326,7 +326,7 @@ HTTP 错误会拒绝 Promise；HTTP 200 返回的 `error` 事件保留在 `event
 
 Web Client 同时提供 `POST /api/chat_sync`，与 `/api/chat` 使用相同的 multipart 字段
 （`content`、`session_metadata`、`files`）和认证 / 会话请求头，
-成功时返回完整 JSON 事件数组；嵌入请求仍必须提供合法 UUIDv7 的 `x-session-id` 和 `x-sender-name`。
+成功时返回完整 JSON 事件数组；嵌入请求必须提供合法 UUIDv7 的 `x-session-id` 和非空的 `x-sender-name`。
 
 JWT 必须由业务后端先验证网站当前用户的登录身份，再为该用户签发，不能直接采用浏览器提交的
 任意用户 ID。Header 的 `kid` 必须与服务端 `jwt.channels` 的自定义通道名一致，例如 `crm`
@@ -366,7 +366,7 @@ assistant.init(loadAssistantJWT, "张三", "客服助手", { source: "portal", d
 ```
 
 组件发送聊天请求时通过 `x-sender-name` 请求头传递发送者名称，自动进行 UTF-8 URL 编码，
-支持中文。名称必须为字符串，去除首尾空白后不能为空；未传或无效时会同步抛出异常，不初始化组件。
+支持中文。名称必须为字符串，去除首尾空白后不能为空；缺失或无效值会同步抛出异常。
 名称直接使用请求中的值；自动续期保留初始化配置，`destroy()` 后清除。
 `title` 默认是「AI 助手」，去除首尾空白后不能为空，用于嵌入浮窗标题、iframe 标题和欢迎文案。
 普通网页顶部只显示系统名称，不再额外显示「AI 助手」。
@@ -406,7 +406,7 @@ HTTPS 加载组件。`/embed.js` 作为公开模块提供跨域加载响应头�
 
 嵌入会话独立于本地账号：不创建用户、不查找同名用户，也不读取本地账号的名称、
 角色或启用状态。聊天、表单回答和文件下载直接使用已验签 JWT 的 `sub` 作为用户 ID；
-聊天发送者名称直接取每次请求的 `x-sender-name`，嵌入聊天缺少此请求头会返回 422。
+聊天发送者名称取每次请求的必填请求头 `x-sender-name`，缺失或为空时返回 422。
 用户 ID 沿用后端 `UserJWTAuth` 的校验规则：1–128 个 ASCII 字母、数字、下划线、连字符
 或空格，不能全部为空格。
 

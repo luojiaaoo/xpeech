@@ -55,7 +55,7 @@ def test_skill_catalog_orders_filtered_builtins_then_workspace_then_public_built
         (directory / "SKILL.md").write_text(f"---\nname: {name}\n{filter_line}---\nBody")
         builtins.append(directory)
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtins))
-    monkeypatch.setattr(type(settings.organization), "resolve_user_organization", AsyncMock(return_value="公司/研发/平台"))
+    monkeypatch.setattr(type(settings.extra_user_info), "resolve_user_organization", AsyncMock(return_value="公司/研发/平台"))
     for name, expression in (("workspace-denied", "False"), ("workspace-match", "True"), ("workspace-public", None)):
         path = workspace / "skills" / name / "SKILL.md"
         path.parent.mkdir(parents=True)

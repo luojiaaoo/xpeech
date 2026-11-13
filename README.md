@@ -154,18 +154,24 @@ filter = 'channel("crm") and not org("公司/销售/")'
 等节点一律拒绝，无法执行任意代码或接触 Python 对象模型。旧的 `channel_tag`、`channel_tags`、
 `organization_prefixes` 概念已移除：通道一律按名称（`kid`）匹配，资源条件统一写 `filter`。
 
-`org()` 依赖 `[organization]` 配置的组织查询命令：
+`org()` 依赖 `[extra_user_info]` 配置的组织查询命令：
 
 ```toml
-[organization]
-command_template = "curl --fail --silent 'https://directory.example/organization?user_id=${user_id}'"
+[extra_user_info]
+command_extra_user_info_template = "curl --fail --silent 'https://directory.example/userinfo?user_id=${user_id}'"
+user_organization_claim = ".organization"
+session_metadata_claims = { department = ".department", employee_number = ".employee_number | tostring" }
 timeout = 10.0
 ```
 
-查询命令在服务端执行，必须包含 `${user_id}` 或 `$user_id`，使用已鉴权的用户 ID，
-不经过 shell；命令成功退出后的 UTF-8 stdout 去除首尾空白后作为组织字符串。
+查询命令在服务端执行，必须包含 `${user_id}` 或 `$user_id`，使用已鉴权的用户 ID，不经过 shell。
+命令输出 UTF-8 JSON，`user_organization_claim` 通过 jq 提取组织字符串。
+`session_metadata_claims` 是“元数据字段名 → jq 表达式”的字典，默认 `{}`。
+渠道转发消息时，按已鉴权用户 ID 提取这些字段并合并到 `session_metadata`，同名字段以渠道服务端提取值为准。
+飞书与 Web 渠道的 HTTP、WebSocket 聊天入口执行注入，查询结果与组织、OAuth2 用户名提取共用缓存。
+表达式必须返回唯一的字符串，数字可使用 `tostring` 转换，空字符串会保留。配置了映射时必须配置查询命令，查询或字段提取失败会终止本次执行。
 每次创建 Runner 时先获取组织，同一结果用于技能提示词和 MCP 注册；`GET /skills` 也先获取当前用户的组织。
-成功结果（含空组织）在后端进程中按命令配置和用户 ID 缓存 10 分钟（最多 4096 项），同一用户的并发查询合并，
+命令的成功 JSON 结果在后端进程中按命令配置和用户 ID 缓存 10 分钟（最多 4096 项），同一用户的并发查询合并，
 技能列表、Runner、MCP 和 Web 通道校验共用缓存；失败和超时不缓存。
 组织不从 JWT 额外字段、渠道配置或会话元数据读取，也不跨用户复用。
 未配置查询命令、命令失败、超时（默认 10 秒）或输出为空时，用户组织视为未知，`org()` 不匹配任何前缀，
@@ -455,7 +461,7 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 
 需要将现成聊天界面嵌入业务网站时，请参阅 [iframe 嵌入接入文档](docs/iframe-integration.md)。
 
-`/chat` 需要带用户 `sub` 的 Bearer JWT，并通过 `x-sender-name` 请求头传入发送者用户名。
+`/chat` 需要带用户 `sub` 的 Bearer JWT，并通过必填的 `x-sender-name` 请求头传入非空发送者名称。
 用户 ID 只取已验签 JWT 的 `sub`；用户名包含非 ASCII 字符时，可以使用 UTF-8 URL 编码。
 
 `user_id` 是用户的稳定标识（例如飞书工号），用于隔离工作区、技能和 MCP 连接；`session_id`
@@ -1049,7 +1055,7 @@ secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
 或未配置的通道。每个 channel 只能出现一次。
 
 `organization_filter` 按组织字符串前缀匹配，命中任意一项即可访问，前缀不能为空或纯空白。
-组织通过 `[organization].command_template` 按用户 ID 在服务端查询；配置了组织限制时，
+组织通过 `[extra_user_info].command_extra_user_info_template` 按用户 ID 在服务端查询；配置了组织限制时，
 查询未启用、失败、结果为空或不匹配都会拒绝访问。账号密码登录、OAuth2 登录和已有 Web
 会话请求均执行校验，管理员也需匹配组织。该配置不限制使用业务 JWT 的嵌入模式。
 
@@ -1154,23 +1160,34 @@ userinfo_url = "https://login.example.com/oauth2/userinfo"
 redirect_uri = "https://assistant.example.com/api/auth/oauth2/callback"
 scopes = ["openid", "profile"]
 user_id_claim = ".sub"
+username_source = "oauth2"
 username_claim = ".name"
-auto_create_users = false
 use_pkce = true
 token_auth_method = "client_secret_post"
 ```
 
-`user_id_claim` / `username_claim` 是对 userinfo JSON求值的
+OAuth2 的 `username_claim` 必填，名称提取成功并去除首尾空白后截取前 64 个字符，用于创建本地账号。提取失败或结果为空时报错。相同 `user_id` 已存在时原子更新用户名。用户名在创建和更新入口均须非空。
+
+`username_source` 默认 `"oauth2"`，表示对 OAuth2 userinfo JSON 执行 `username_claim`。设为 `"extra_user_info"` 时，先按已鉴权用户 ID 执行额外信息查询命令，再对返回的 JSON 执行该表达式，与组织提取共用按用户缓存 10 分钟的命令结果。该模式必须配置 `extra_user_info.command_extra_user_info_template`。
+
+从额外用户信息提取名称可配置为下面的形式。
+
+```toml
+username_source = "extra_user_info"
+username_claim = ".data.name"
+```
+
+`user_id_claim` 对 OAuth2 userinfo JSON 求值，`username_claim` 对所选来源的 JSON 求值，均使用
 [jq](https://jqlang.github.io/jq/manual/) 查询，例如 `".data.employee_no"` 或
 `".data.items[0].id"`。
 
 需要配置多个服务商时，重复整个 `[[web_client.oauth2]]` 数组表。各服务商的
 `provider_name` 必须唯一（忽略首尾空格和大小写），前端和创建授权请求时用它选择对应配置。
 
-需要在 OAuth2 服务商后台将 `redirect_uri` 注册为回调地址。服务端会用
-`user_id_claim` 指定的用户信息字段查找本地用户的 `user_id`。默认
-`auto_create_users = false`，管理员需要预先创建匹配的本地账号；设为 `true` 时会自动创建
-普通用户，并使用 `username_claim` 作为显示名称。若服务商要求 HTTP Basic 方式提交客户端
+需要在 OAuth2 服务商后台将 `redirect_uri` 注册为回调地址。OAuth2 鉴权成功后，服务端用
+`user_id_claim` 提取用户 ID，查找本地账号。账号不存在时自动创建普通用户，已有账号直接复用。
+登录时检查账号是否停用，并使用原有的数据库登录会话和有效期 7 天的 HttpOnly Cookie。
+若服务商要求 HTTP Basic 方式提交客户端
 密钥，可将 `token_auth_method` 改为 `client_secret_basic`。额外的授权参数可通过
 `extra_authorization_params = { prompt = "login" }` 配置。
 

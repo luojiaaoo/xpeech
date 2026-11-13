@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,7 +27,7 @@ class OAuth2WebConfig:
     use_pkce: bool
     token_auth_method: str
     extra_authorization_params: dict[str, str]
-    auto_create_users: bool = False
+    username_source: Literal["oauth2", "extra_user_info"] = "oauth2"
     display_type: str = "qrcode"
 
 

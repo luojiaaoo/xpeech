@@ -66,7 +66,7 @@ def test_organization_filter_rejects_empty_prefixes(prefix):
 @pytest.mark.parametrize("channel", ["web_client", "crm"])
 async def test_unrestricted_channels_skip_organization_lookup(configured_channels, monkeypatch, channel):
     lookup = AsyncMock()
-    monkeypatch.setattr(type(settings.organization), "resolve_user_organization", lookup)
+    monkeypatch.setattr(type(settings.extra_user_info), "resolve_user_organization", lookup)
     assert await authorize_web_channel(channel, "admin") == channel
     lookup.assert_not_awaited()
 
@@ -78,12 +78,13 @@ def organization_client(configured_channels, monkeypatch, tmp_path, oauth_displa
         initialize=AsyncMock(), close=AsyncMock(), create_session=AsyncMock(),
         get_user_by_user_id=AsyncMock(return_value=user),
         get_user_for_session=AsyncMock(return_value=user),
+        create_user=AsyncMock(return_value=user),
     )
     monkeypatch.setattr(web, "WebClientDAO", lambda engine: dao)
     monkeypatch.setattr(web, "_password_matches", lambda *args: True)
     configured_channels["web_client"].allow_extra_channels[0].organization_filter = ["公司/销售/", "公司/客服/"]
     lookup = AsyncMock(return_value="公司/客服/支持")
-    monkeypatch.setattr(type(settings.organization), "resolve_user_organization", lookup)
+    monkeypatch.setattr(type(settings.extra_user_info), "resolve_user_organization", lookup)
     app = web.create_app(web.WebConfig(
         backend_url="http://backend.test", static_dir=tmp_path / "static", system_name="默认助手",
         session_history_path=tmp_path / "history",
@@ -137,7 +138,7 @@ def test_organization_filter_checks_oauth_callback_and_poll(organization_client,
     qr = client.post("/api/auth/oauth2/qr", json={"provider_name": "test", "channel": "crm"}).json()
     state = parse_qs(urlsplit(qr["authorization_url"]).query)["state"][0]
     response = client.get("/api/auth/oauth2/callback", params={"state": state, "code": "ok"}, follow_redirects=False)
-    if not allowed:
+    if not allowed and oauth_display_type == "link":
         assert response.status_code == 400
         assert "所属组织无权访问" in response.text
         assert "set-cookie" not in response.headers

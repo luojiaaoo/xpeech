@@ -11,14 +11,15 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import httpx
-import jq
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from yarl import URL
 
+from .....config.settings import settings
 from .....utils.command_template import CommandTemplateError, execute_command_template
-from ..dao import DuplicateUserIdError, User, WebClientDAO
+from ...helper import extract_string_claim
+from ..dao import User, WebClientDAO
 from ..models import (
     INJECT_PROMPT_STATE_MAX_LENGTH,
     INJECT_PROMPT_STATE_MIN_LENGTH,
@@ -56,21 +57,6 @@ class OAuth2LoginAttempt:
     inject_prompt_state: str | None = None
     user_id: str | None = None
     error: str | None = None
-
-
-class OAuth2ClaimError(Exception):
-    """Raised when an OAuth2 claim jq query is invalid or does not resolve to a string."""
-
-
-def oauth2_claim(payload: dict[str, object], path: str) -> str:
-    """Resolve an OAuth2 claim with a jq query such as ``.data.employee_no``."""
-    try:
-        outputs = jq.compile(path).input_value(payload).all()
-    except ValueError as error:
-        raise OAuth2ClaimError(f"OAuth2 claim jq 表达式无效: {path}") from error
-    if len(outputs) != 1 or not isinstance(outputs[0], str):
-        raise OAuth2ClaimError(f"OAuth2 claim jq 表达式未解析到唯一的字符串: {path}")
-    return outputs[0]
 
 
 async def resolve_injected_prompt(
@@ -165,6 +151,7 @@ def create_auth_router(
     password_matches: PasswordMatches,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/auth")
+
     oauth2_attempts: dict[str, OAuth2LoginAttempt] = {}
     oauth2_state_index: dict[str, str] = {}
     CurrentUser = Annotated[User, Depends(current_user_dependency)]
@@ -193,6 +180,11 @@ def create_auth_router(
         )
 
     async def create_login_session(user: User, response: Response, channel: str = "web_client") -> None:
+        """创建登录会话，统一检查账号是否启用。"""
+        # 检查用户是否处于激活状态
+        if not user.is_active:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "账号已停用")
+        # 检查用户是否有权访问指定渠道
         channel = await authorize_web_channel(channel, user.user_id)
         if user.id is None:
             raise RuntimeError("数据库用户缺少主键")
@@ -218,7 +210,7 @@ def create_auth_router(
     async def login(body: LoginBody, response: Response):
         channel = web_channel(body.channel)
         user = await dao.get_user_by_user_id(body.user_id)
-        if user is None or not user.is_active or not password_matches(body.password, user.password_hash):
+        if user is None or not password_matches(body.password, user.password_hash):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户 ID 或密码错误")
         await create_login_session(user, response, channel)
         return public_user(user)
@@ -327,10 +319,10 @@ def create_auth_router(
         if attempt is None:
             return _oauth2_result_page(False, "登录请求已失效，请返回登录页重试。")
         oauth2 = attempt.oauth2
-        if attempt.user_id is not None:
-            return _oauth2_result_page(True, "授权已完成，请返回原设备。")
         if attempt.error is not None:
             return _oauth2_result_page(False, attempt.error)
+        if attempt.user_id is not None:
+            return _oauth2_result_page(True, "授权已完成，请返回原设备。")
         if error or not code:
             attempt.error = error_description or error or "OAuth2 授权未完成"
             return _oauth2_result_page(False, attempt.error)
@@ -386,29 +378,35 @@ def create_auth_router(
             attempt.error = "OAuth2 服务请求失败，请返回登录页重试。"
             return _oauth2_result_page(False, attempt.error)
 
-        user_id = oauth2_claim(userinfo, oauth2.user_id_claim)
+        # 获取 user_id (必须)
+        try:
+            user_id = extract_string_claim(userinfo, oauth2.user_id_claim)
+        except ValueError:
+            attempt.error = "OAuth2 user ID lookup failed"
+            return _oauth2_result_page(False, attempt.error)
         if re.fullmatch(USER_ID_PATTERN, user_id) is None:
             attempt.error = f"OAuth2 用户信息缺少有效的 {oauth2.user_id_claim}"
             return _oauth2_result_page(False, attempt.error)
 
-        user = await dao.get_user_by_user_id(user_id)
-        if user is None and oauth2.auto_create_users:
-            username = oauth2_claim(userinfo, oauth2.username_claim)[:64]
-            try:
-                user = await dao.create_user(
-                    username=username,
-                    user_id=user_id,
-                    password_hash=password_hash(secrets.token_urlsafe(32)),
-                    is_admin=False,
-                )
-            except DuplicateUserIdError:
-                user = await dao.get_user_by_user_id(user_id)
-        if user is None:
-            attempt.error = "OAuth2 账号未绑定本地账号"
+        try:
+            if oauth2.username_source == "oauth2":
+                username = extract_string_claim(userinfo, oauth2.username_claim)
+            else:
+                username = await settings.extra_user_info.resolve_sender_name(user_id, oauth2.username_claim)
+            username = username.strip()[:64]
+            if not username:
+                raise ValueError("Missing sender name")
+        except (CommandTemplateError, ValueError):
+            attempt.error = "Sender name lookup failed"
             return _oauth2_result_page(False, attempt.error)
-        if not user.is_active:
-            attempt.error = "账号已停用"
-            return _oauth2_result_page(False, attempt.error)
+        user = await dao.create_user(
+            username=username,
+            user_id=user_id,
+            password_hash=password_hash(secrets.token_urlsafe(32)),
+            is_admin=False,
+            overwrite_username=True,
+        )
+        attempt.user_id = user_id
 
         if oauth2.display_type == "link":
             target_url = URL("/")
@@ -428,12 +426,6 @@ def create_auth_router(
             discard_oauth2_attempt(login_id or "")
             return callback_response
 
-        try:
-            await authorize_web_channel(attempt.channel, user.user_id)
-        except HTTPException as error:
-            attempt.error = str(error.detail)
-            return _oauth2_result_page(False, attempt.error)
-        attempt.user_id = user.user_id
         return _oauth2_result_page(True, "请返回原设备，登录页将自动进入系统。")
 
     @router.post("/oauth2/poll")
@@ -456,12 +448,11 @@ def create_auth_router(
         if attempt.user_id is None:
             return {"status": "pending"}
 
-        user = await dao.get_user_by_user_id(attempt.user_id)
-        if user is None or not user.is_active:
-            discard_oauth2_attempt(body.login_id)
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "账号不存在或已停用")
-        await create_login_session(user, response, attempt.channel)
         discard_oauth2_attempt(body.login_id)
+        user = await dao.get_user_by_user_id(attempt.user_id)
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OAuth2 account no longer exists")
+        await create_login_session(user, response, attempt.channel)
         return {
             "status": "approved",
             "user": public_user(user),

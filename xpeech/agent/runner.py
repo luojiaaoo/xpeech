@@ -47,8 +47,7 @@ class AgentRunner:
     async def _initialize(self) -> None:
         """Initialize the user workspace, provider, tools, and agent loop."""
         await create_workspace_templates(await ensure_path_async(self.workspace))
-        organization = self.config.organization
-        self.user_organization = await organization.resolve_user_organization(self.user_id)
+        self.user_organization = await self.config.extra_user_info.resolve_user_organization(self.user_id)
 
         llm_config = self.config.llm
         api_key = llm_config.api_key

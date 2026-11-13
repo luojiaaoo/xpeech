@@ -19,7 +19,6 @@ WebConfig = web_client_app.WebConfig
 OAuth2SettingsConfig = settings_module.OAuth2Config
 WebClientSettingsConfig = settings_module.WebClientConfig
 create_app = web_client_app.create_app
-oauth2_claim = oauth_routes.oauth2_claim
 resolve_injected_prompt = oauth_routes.resolve_injected_prompt
 
 
@@ -30,32 +29,6 @@ class FakeOAuthResponse:
 
     def json(self):
         return self._payload
-
-
-def test_oauth2_claim_resolves_nested_feishu_userinfo():
-    userinfo = {
-        "code": 0,
-        "data": {
-            "employee_no": "oauth-user-42",
-            "name": "OAuth User",
-        },
-    }
-
-    assert oauth2_claim(userinfo, ".data.employee_no") == "oauth-user-42"
-    assert oauth2_claim(userinfo, ".data.name") == "OAuth User"
-    assert oauth2_claim(
-        {"data": {"items": [{"id": "oauth-user-42"}]}}, ".data.items[0].id"
-    ) == "oauth-user-42"
-    with pytest.raises(oauth_routes.OAuth2ClaimError):
-        oauth2_claim(userinfo, "data.employee_no")  # bare dotted path is not valid jq
-    with pytest.raises(oauth_routes.OAuth2ClaimError):
-        oauth2_claim(userinfo, ".data.employee_no.value")  # cannot index a string
-    with pytest.raises(oauth_routes.OAuth2ClaimError):
-        oauth2_claim(userinfo, ".data.missing")
-    with pytest.raises(oauth_routes.OAuth2ClaimError):
-        oauth2_claim({"sub": 42}, ".sub")  # non-string claim value
-    with pytest.raises(oauth_routes.OAuth2ClaimError):
-        oauth2_claim({"tags": ["a", "b"]}, ".tags[]")  # must yield exactly one value
 
 
 def test_oauth2_jq_expression_settings_are_validated_at_startup():
@@ -74,7 +47,7 @@ def test_oauth2_jq_expression_settings_are_validated_at_startup():
 
 def test_oauth2_ignores_removed_userinfo_filter_setting():
     config = OAuth2SettingsConfig(
-        provider_name="XX",
+        provider_name="XX", username_claim=".name",
         userinfo_filter="department == 1",
     )
     assert "userinfo_filter" not in config.model_dump()
@@ -90,8 +63,8 @@ def test_web_client_oauth2_settings_are_a_list_with_unique_provider_names(
     with pytest.raises(ValueError, match="provider_name must be unique"):
         WebClientSettingsConfig(
             oauth2=[
-                OAuth2SettingsConfig(provider_name="Provider"),
-                OAuth2SettingsConfig(provider_name=" provider "),
+                OAuth2SettingsConfig(provider_name="Provider", username_claim=".name"),
+                OAuth2SettingsConfig(provider_name=" provider ", username_claim=".name"),
             ],
         )
 
@@ -371,7 +344,6 @@ def test_oauth2_login_uses_the_selected_provider(tmp_path: Path, monkeypatch):
             use_pkce=True,
             token_auth_method="client_secret_post",
             extra_authorization_params={},
-            auto_create_users=True,
         )
 
     monkeypatch.setattr(web_client_app, "PBKDF2_ITERATIONS", 1)
