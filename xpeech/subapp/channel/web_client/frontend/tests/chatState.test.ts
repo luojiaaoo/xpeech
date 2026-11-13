@@ -49,27 +49,49 @@ test('keeps each historical final reply and usage visible while folding earlier 
   ]);
   const items = chatDisplayItems(startChatTurn(history, '第三问'), true);
   assert.deepEqual(items.map(item => item.role), [
-    'user', 'process', 'assistant', 'summary', 'user', 'assistant', 'summary', 'user', 'process',
+    'user', 'process', 'assistant', 'summary', 'user', 'process', 'assistant', 'summary', 'user', 'process',
   ]);
   assert.deepEqual(items.filter(item => item.role === 'assistant').map(item => item.content), ['第一答', '第二答']);
   assert.deepEqual(items.filter(item => item.role === 'summary').map(item => item.tokenUsage), ['{"总 Token":100,"会话时长":"2秒"}', '{"总 Token":200}']);
-  assert.deepEqual(items.filter(item => item.role === 'process').map(item => item.running), [false, true]);
+  assert.deepEqual(items.filter(item => item.role === 'process').map(item => item.running), [false, false, true]);
   assert.equal(items[1].role === 'process' && items[1].tokenUsage, '{"总 Token":100,"会话时长":"2秒"}');
 });
 
-test('keeps interactive questions, files and errors visible even without an assistant reply', () => {
+test('keeps commands, interactive questions, files and errors visible even without an assistant reply', () => {
   const messages = apply([
     event('command', '压缩上下文'), tools('tool_call', [['a', 'read_file', {}]]),
     event('question', '{"type":"confirm"}'), event('send_file', '/report.pdf'), event('error', '连接断开'),
     event('token_usage', '{"总 Token":10}'),
   ]);
   const active = chatDisplayItems(messages, true);
-  assert.deepEqual(active.map(item => item.role), ['user', 'process', 'question', 'file', 'error', 'summary']);
+  assert.deepEqual(active.map(item => item.role), ['user', 'process', 'command', 'question', 'file', 'error', 'summary']);
   const finished = chatDisplayItems(finishChatTurn(messages));
   assert.deepEqual(finished.map(item => item.role), active.map(item => item.role));
   const process = finished[1];
   assert.ok(process.role === 'process' && !process.running);
   assert.equal(process.messages.find(item => item.toolCall)?.toolCall?.status, 'interrupted');
+  assert.ok(process.messages.every(item => item.role !== 'command'));
+  assert.equal(finished.find(item => item.role === 'command')?.content, '压缩上下文');
+});
+
+test('all command replies keep their timing panel and remain visible outside it live and in history', () => {
+  for (const [command, response] of [
+    ['/help', '/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）'],
+    ['/new', '新会话'], ['/clear', '上下文已清空'], ['/unknown', '未知命令'],
+  ]) {
+    const events = [event('user', command), event('command', response)];
+    const live = appendChatEvent(startChatTurn([], command), events[1]);
+    const active = chatDisplayItems(live, true);
+    assert.deepEqual(active.map(item => item.role), ['user', 'process', 'command']);
+    for (const messages of [finishChatTurn(live), chatMessagesFromEvents(events)]) {
+      const items = chatDisplayItems(messages);
+      assert.deepEqual(items.map(item => item.role), ['user', 'process', 'command']);
+      assert.equal(items[2].role === 'command' && items[2].content, response);
+      assert.ok(items[1].role === 'process' && !items[1].running);
+      assert.deepEqual(items[1].messages, []);
+    }
+    assert.equal(chatDisplayItems(finishChatTurn(live))[1].key, active[1].key);
+  }
 });
 
 test('preserves assistant, thinking and tool order across multiple model calls', () => {

@@ -36,8 +36,8 @@ export default function FileCard({ path, active = true }: { path: string; active
           <Typography.Text type="secondary">文件附件</Typography.Text>
         </div>
         <div className="chat-file-actions">
-          {kind ? <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>预览</Button> : null}
-          <Button icon={<DownloadOutlined />} loading={downloading} onClick={() => void download()}>下载</Button>
+          {kind ? <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>预览</Button> : null}
+          <Button size="small" icon={<DownloadOutlined />} loading={downloading} onClick={() => void download()}>下载</Button>
         </div>
       </section>
       {previewOpen && active && kind ? (

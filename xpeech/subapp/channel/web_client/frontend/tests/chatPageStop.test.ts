@@ -62,7 +62,7 @@ async function chatPage(
       message: { error(text: string) { errors.push(text); } },
     },
     '@ant-design/icons': Object.fromEntries([
-      'CheckCircleOutlined', 'CloudUploadOutlined', 'CopyOutlined', 'DashboardOutlined', 'DownloadOutlined', 'EllipsisOutlined',
+      'CheckCircleOutlined', 'CloudUploadOutlined', 'CodeOutlined', 'CopyOutlined', 'DashboardOutlined', 'DownloadOutlined', 'EllipsisOutlined',
       'LoadingOutlined', 'PaperClipOutlined', 'DownOutlined', 'RobotOutlined',
     ].map(name => [name, name])),
     './api': {
@@ -189,6 +189,22 @@ test('the process receives its running state and usage while the final answer an
   assert.equal(items[2].content.props.children.props.content, '最终回复');
   assert.equal(items[3].content.props.className, 'bubble-footer');
   assert.equal(items[3].content.props.children[0].props['aria-label'], 'Token 使用情况');
+  page.cleanupHistory();
+});
+
+test('command replies render outside the collapsed process and preserve help line breaks', async () => {
+  const page = await chatPage(async () => ({ stopped: true }));
+  page.render().onSubmit('/help');
+  const help = '/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）';
+  page.streams[0].receive({ event: 'command', context: help });
+  const command = page.items().find((item: any) => item.role === 'command');
+  assert.equal(command.content.props.className, 'chat-command-text');
+  assert.equal(command.content.props.children[0].type, 'CodeOutlined');
+  assert.equal(command.content.props.children[1].props.children, help);
+  page.streams[0].finish();
+  await tick();
+  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'process', 'command']);
+  assert.equal(page.items()[1].content.props.running, false);
   page.cleanupHistory();
 });
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button, DatePicker, Form, Input, Drawer, Select, Space, Typography, message } from 'antd';
+import { ExclamationCircleOutlined, FormOutlined } from '@ant-design/icons';
 import { answerQuestion } from './api';
 import type { ToolCallInfo } from './types';
 
@@ -93,9 +94,12 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
   }
 
   return (
-    <Form layout="vertical" disabled={!confirmation && (settled || readOnly)} onFinish={submit}
+    <Form layout="vertical" size="small" disabled={!confirmation && (settled || readOnly)} onFinish={submit}
       className={`question-form${confirmation ? ' question-confirm' : ''}${failed ? ' question-confirm-failed' : succeeded ? ' question-confirm-succeeded' : ''}`}>
-      <Typography.Title level={5}>{question?.title || (execution ? '执行确认' : confirmation ? '请确认' : '需要补充信息')}</Typography.Title>
+      <Typography.Title level={5}>
+        {confirmation ? <ExclamationCircleOutlined className="question-title-icon" aria-hidden /> : <FormOutlined className="question-title-icon" aria-hidden />}
+        <span>{question?.title || (execution ? '执行确认' : confirmation ? '请确认' : '需要补充信息')}</span>
+      </Typography.Title>
       {description ? (
         <Typography.Paragraph type={confirmation ? undefined : 'secondary'} className={confirmation ? 'question-confirm-description' : undefined}
           style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
@@ -139,7 +143,7 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
       {confirmation ? (
         <>
           <div className="question-confirm-footer">
-            <Space wrap size={12} className="question-confirm-actions">
+            <Space wrap size={8} className="question-confirm-actions">
               <Button type="primary" onClick={() => submit({ decision: 'confirm' })} disabled={settled || readOnly || submitting}
                 loading={submitting}>
                 确认

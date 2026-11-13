@@ -146,7 +146,7 @@ export function chatDisplayItems(messages: ChatMessage[], running = false): Chat
     const visible = turn.filter((item) => !hidden.has(item));
     const user = visible[0]?.role === 'user' ? visible.shift() : undefined;
     if (user) items.push(user);
-    if (process.length || active) {
+    if (user || process.length || active) {
       items.push({
         key: `process_${turn[0].key}`, role: 'process', messages: process, running: active,
         tokenUsage: turn.findLast((item) => item.role === 'summary')?.tokenUsage,
@@ -174,9 +174,8 @@ export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): Chat
   }
   if (event.event === 'tool_call' || event.event === 'tool_call_result') return applyToolEvent(next, event);
   if (event.event === 'token_usage') return summarize(finishStreams(next), event.context);
-  const role = event.event === 'send_file' ? 'file'
-    : event.event === 'command' ? 'status' : event.event;
-  if (role !== 'file' && role !== 'status' && role !== 'question' && role !== 'error') return next;
+  const role = event.event === 'send_file' ? 'file' : event.event;
+  if (role !== 'file' && role !== 'command' && role !== 'question' && role !== 'error') return next;
   let questionToolId: string | undefined;
   if (role === 'question') {
     try {

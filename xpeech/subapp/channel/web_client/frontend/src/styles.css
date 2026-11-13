@@ -130,7 +130,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 @media (max-width: 360px) { .chat-loading-intro { min-height: 132px; } }
 @media (prefers-reduced-motion: reduce) { .chat-loading-placeholder { animation: none; } }
 .bubble-list { height: 100%; padding: 18px clamp(24px, 3vw, 56px) 14px; }
-.bubble-list .ant-bubble { width: 100%; padding-block: 6px; }
+.bubble-list .ant-bubble { width: 100%; padding-block: 4px; }
 .bubble-list .ant-bubble-avatar { flex-shrink: 0; }
 .bubble-list .ant-bubble-body { min-width: 0; }
 .bubble-list .ant-bubble.ant-bubble-start:not(.ant-bubble-divider):not(.ant-bubble-system) { padding-inline-end: 0; }
@@ -151,11 +151,13 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .chat-assistant .ant-bubble-body,
 .chat-process .ant-bubble-body,
 .chat-thinking .ant-bubble-body,
+.chat-command .ant-bubble-body,
 .chat-summary .ant-bubble-body { flex: 0 1 1080px; max-width: 100%; }
 .chat-assistant .ant-bubble-content,
 .chat-process .ant-bubble-content,
 .chat-thinking .ant-bubble-content,
 .chat-tool .ant-bubble-content,
+.chat-command .ant-bubble-content,
 .chat-summary .ant-bubble-content { width: 100%; max-width: 100%; padding: 0; }
 .markdown-content {
   --margin-block: 0 0 10px;
@@ -185,14 +187,14 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .process-panel { width: 100%; min-width: 0; }
 .process-panel > summary {
   display: flex;
-  min-height: 40px;
+  min-height: 30px;
   align-items: center;
   gap: 7px;
-  padding: 4px 0 14px;
+  padding: 3px 0 7px;
   border-bottom: 1px solid #dedede;
   color: #666;
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 13px;
+  line-height: 20px;
   cursor: pointer;
   list-style: none;
   user-select: none;
@@ -204,7 +206,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .process-chevron { color: #888; font-size: 9px; transition: transform .2s; }
 .process-panel[open] > summary .process-chevron { transform: rotate(90deg); }
 .process-panel > summary:hover { color: #333; }
-.process-content { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding: 8px 0 8px 16px; border-inline-start: 1px solid #e8ecf2; }
+.process-content { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding: 6px 0 6px 12px; border-inline-start: 1px solid #e8ecf2; }
 .process-entry { min-width: 0; }
 .chat-thinking { padding-block: 3px !important; }
 .thinking-panel { width: 100%; color: #8993a1; font-size: 13px; }
@@ -265,11 +267,17 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .tool-card-succeeded .tool-card-status,
 .tool-card-succeeded .tool-card-chevron { color: #389e0d; }
 .chat-status-text { display: flex; align-items: center; gap: 7px; color: #8a94a3; font-size: 13px; overflow-wrap: anywhere; }
-.chat-file-card { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; width: 480px; max-width: 100%; padding: 16px; border: 1px solid #dce5f0; border-radius: 12px; background: #fff; box-sizing: border-box; }
-.chat-file-icon { padding: 12px; border-radius: 10px; background: #eef4ff; color: #3370ff; font-size: 24px; }
-.chat-file-info { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 100px; }
+.chat-command-text { display: flex; align-items: flex-start; gap: 6px; color: #526075; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-command-icon { flex: 0 0 auto; margin-top: 4px; }
+.chat-command-text > span:last-child { min-width: 0; }
+.chat-file-card { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; width: 400px; max-width: 100%; padding: 10px 12px; border: 1px solid #dce5f0; border-radius: 8px; background: #fff; box-sizing: border-box; }
+.chat-file-icon { flex: 0 0 auto; padding: 8px; border-radius: 6px; background: #eef4ff; color: #3370ff; font-size: 18px; }
+.chat-file-info { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 100px; }
+.chat-file-info .ant-typography { font-size: 13px; line-height: 1.5; }
+.chat-file-info .ant-typography-secondary { font-size: 12px; }
 .chat-file-name { font-weight: 500; overflow-wrap: anywhere; }
-.chat-file-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-file-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-inline-start: auto; }
+.chat-file-actions .ant-btn { font-size: 12px; }
 .file-preview-modal .ant-modal-title { padding-inline-end: 24px; overflow-wrap: anywhere; }
 .file-preview-modal .ant-modal-body { height: min(72vh, 850px); overflow: auto; margin-top: 16px; }
 .file-preview-body { position: relative; height: 100%; }
@@ -339,7 +347,18 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .chat-command-suggestions-hint { padding: 7px 12px; border-top: 1px solid #f0f0f0; color: #8a8f9b; font-size: 11px; }
 .sender-footer { display: flex; min-height: 24px; margin-top: 4px; align-items: center; justify-content: center; gap: 8px; }
 .sender-footer .sender-tip { min-width: 0; font-size: 11px; text-align: left; }
-.question-form { width: 500px; max-width: 100%; padding: 16px; background: #f7f9fc; border-radius: 12px; }
+.question-form { width: 400px; max-width: 100%; padding: 12px; background: #f7f9fc; border-radius: 8px; }
+.question-form > h5.ant-typography { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 6px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.question-title-icon { flex: 0 0 auto; margin-top: 3px; }
+.question-form > h5.ant-typography > span:last-child { min-width: 0; }
+.question-form > .ant-typography { margin-bottom: 10px; font-size: 13px; line-height: 1.6; }
+.question-form .ant-form-item { margin-bottom: 12px; }
+.question-form .ant-form-item-label { padding-bottom: 4px; }
+.question-form .ant-form-item-label > label,
+.question-form .ant-input,
+.question-form .ant-select,
+.question-form .ant-picker-input > input,
+.question-form .ant-btn { font-size: 13px; }
 .full-width { width: 100%; }
 /* Popup viewports are relative to the iframe, including when portaled to body. */
 .question-date-picker-popup { max-width: calc(100vw - 16px); }
@@ -1336,21 +1355,18 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
   }
 }
 
-.question-confirm { display: flex; flex-direction: column; gap: 16px; padding: 24px; border: 1px solid #dce5f0; }
-.question-confirm > h5.ant-typography { margin: 0; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
-.question-confirm .question-confirm-description { margin: 0; font-size: 15px; line-height: 1.85; }
+.question-confirm { display: flex; flex-direction: column; gap: 10px; border: 1px solid #dce5f0; }
+.question-confirm > h5.ant-typography { margin: 0; }
+.question-confirm .question-confirm-description { margin: 0; font-size: 13px; line-height: 1.6; }
 .question-execution-details { color: #667085; }
-.question-execution-details summary { width: fit-content; cursor: pointer; font-size: 13px; line-height: 1.6; }
-.question-tool-name { margin-top: 12px; font-family: monospace; }
-.question-execution-details pre { margin: 8px 0 0; padding: 12px; border-radius: 8px; background: #eef2f7; font-size: 12px; line-height: 1.6; }
+.question-execution-details summary { width: fit-content; cursor: pointer; font-size: 12px; line-height: 1.6; }
+.question-tool-name { margin-top: 8px; font-family: monospace; font-size: 12px; }
+.question-execution-details pre { margin: 6px 0 0; padding: 8px; border-radius: 6px; background: #eef2f7; font-size: 12px; line-height: 1.6; }
 .question-execution-details pre, .question-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; }
 .question-confirm .question-confirm-hint { margin: 0; font-size: 12px; line-height: 1.7; }
-.question-confirm-footer { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding-top: 16px; border-top: 1px solid #dce5f0; }
-.question-confirm-actions .ant-btn { min-width: 80px; }
-.question-confirm-footer > .ant-typography { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
-@media (max-width: 600px) {
-  .question-confirm { padding: 20px 16px; }
-}
+.question-confirm-footer { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-top: 10px; border-top: 1px solid #dce5f0; }
+.question-confirm-actions .ant-btn { min-width: 56px; }
+.question-confirm-footer > .ant-typography { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .question-confirm-failed { background: #fff2f0; border-color: #ffccc7; }
 .question-confirm-failed .ant-typography, .question-result-error { color: #cf1322; }
 .question-confirm-succeeded { background: #f6ffed; border-color: #b7eb8f; }

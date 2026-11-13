@@ -6,6 +6,7 @@ import { Alert, Button, Flex, Popover, Tooltip, Typography, message } from 'antd
 import {
   CheckCircleOutlined,
   CloudUploadOutlined,
+  CodeOutlined,
   CopyOutlined,
   DashboardOutlined,
   EllipsisOutlined,
@@ -47,6 +48,7 @@ const roles: ComponentProps<typeof Bubble.List>['role'] = {
   process: { placement: 'start', variant: 'borderless', rootClassName: 'chat-process' },
   tool: { placement: 'start', variant: 'borderless', rootClassName: 'chat-tool' },
   status: { placement: 'start', variant: 'borderless', rootClassName: 'chat-status' },
+  command: { placement: 'start', variant: 'borderless', rootClassName: 'chat-command' },
   file: { placement: 'start', variant: 'borderless' },
   question: { placement: 'start', variant: 'borderless' },
   summary: { placement: 'start', variant: 'borderless', rootClassName: 'chat-summary' },
@@ -377,6 +379,8 @@ export default function ChatPage({
         content = <FileCard path={item.content} active={active} />;
       } else if (item.role === 'status') {
         content = <div className="chat-status-text">{item.transient ? <LoadingOutlined spin /> : null}{item.content}</div>;
+      } else if (item.role === 'command') {
+        content = <div className="chat-command-text"><CodeOutlined className="chat-command-icon" aria-hidden /><span>{item.content}</span></div>;
       } else if (item.role === 'error') {
         content = <Alert type="error" showIcon message="本次回复未能完成" description={item.content} />;
       } else if (item.role === 'summary') {

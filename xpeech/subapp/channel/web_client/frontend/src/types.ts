@@ -196,7 +196,7 @@ export interface ToolCallInfo {
 
 export interface ChatMessage {
   key: string;
-  role: 'user' | 'assistant' | 'thinking' | 'tool' | 'status' | 'file' | 'question' | 'summary' | 'error';
+  role: 'user' | 'assistant' | 'thinking' | 'tool' | 'status' | 'command' | 'file' | 'question' | 'summary' | 'error';
   content: string;
   streaming?: boolean;
   transient?: boolean;
