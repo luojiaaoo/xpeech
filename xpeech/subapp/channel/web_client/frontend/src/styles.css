@@ -286,6 +286,11 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .file-preview-office[hidden] { display: none; }
 .file-preview-docx, .file-preview-pptx { overflow: auto; background: #f5f7fa; }
 .file-preview-body > .markdown-content { padding: 16px; }
+.file-preview-pdf { display: block; width: 100%; height: 100%; min-height: 300px; border: 0; }
+.file-preview-image { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; padding: 12px; background: #f5f7fa; }
+.file-preview-image img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.file-preview-csv .ant-table-cell { max-width: 360px; vertical-align: top; }
+.csv-preview-cell { white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-summary { padding-block: 2px 8px !important; }
 .bubble-footer { display: flex; width: 100%; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px; }
 .bubble-copy-button { margin-inline-start: auto; flex: 0 0 auto; }

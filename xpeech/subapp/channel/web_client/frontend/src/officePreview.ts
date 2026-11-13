@@ -1,4 +1,4 @@
-import type { FilePreviewKind } from './filePreviewKind';
+import type { OfficePreviewKind } from './filePreviewKind';
 
 export interface OfficePreview {
   preview: (data: ArrayBuffer) => Promise<unknown>;
@@ -6,7 +6,7 @@ export interface OfficePreview {
 }
 
 export async function createOfficePreview(
-  kind: Exclude<FilePreviewKind, 'markdown'>, container: HTMLElement, path: string,
+  kind: OfficePreviewKind, container: HTMLElement, path: string,
 ): Promise<OfficePreview> {
   switch (kind) {
     case 'docx': {

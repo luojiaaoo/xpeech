@@ -51,13 +51,14 @@ PC 宽度下历史会话显示在左侧，窄屏下通过抽屉打开；点击�
 `rg -n 'TODO\(remove-legacy-tool-events\)' xpeech/subapp/channel/web_client` 查找，后续清理时一并删除或收紧。
 
 `send_file` 返回的文件以附件卡片显示，提供下载按钮。`.docx`、`.xls`、`.xlsx`、`.pptx`、
-`.md` 和 `.markdown` 文件额外提供预览按钮，在弹窗中查看；Markdown 复用 Ant Design X Markdown，
+`.md`、`.markdown`、`.pdf`、`.csv`、`.jpg`、`.jpeg`、`.png` 和 `.svg` 文件额外提供预览按钮，在弹窗中查看；Markdown 复用 Ant Design X Markdown，
 Word 和 Excel 分别使用 `@js-preview/docx`、`@js-preview/excel`，PowerPoint 使用 `@aiden0z/pptx-renderer`。
 预览库按需加载，文件通过现有鉴权下载接口读取，不依赖外部 Office 在线服务。
+PDF 使用浏览器内置阅读器，图片按可用空间缩放，SVG 作为图片显示；CSV 使用分页表格，支持带引号的逗号、换行和转义双引号。
 旧版 `.doc`、`.ppt` 及其他格式仍可下载，不提供浏览器预览。
 
 本地演示：在 `frontend` 目录运行 `npm run demo:preview`，打开
-`http://127.0.0.1:5175/preview-demo.html`。演示页直接读取当前用户下载目录中的上述文件，
+`http://127.0.0.1:5175/preview-demo.html`。演示页直接读取当前用户下载目录中的 Office 和 Markdown 文件，
 无需后端或登录；也可通过 `npm run demo:preview -- "其他目录"` 指定目录。
 演示文件接口仅在此命令启动的本机服务器上启用，不接入正式应用。
 
