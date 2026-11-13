@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock
 
 import httpx
+import anyio
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -139,12 +140,13 @@ def test_file_search_returns_only_recursive_glob_matches(chat_command_client, tm
     outside.mkdir()
     (outside / "report-secret.txt").touch()
     (workspace / "report-escape").symlink_to(outside, target_is_directory=True)
-    response = client.get("/files/search", headers=headers, params={"query": "rep*", "user_id": "bob"})
+    response = client.get("/files/search", headers=headers, params={"query": "**/rep*", "user_id": "bob"})
     assert response.status_code == 200
     assert {item["path"] for item in response.json()["entries"]} == {"Report.txt", "docs/nested/report-final.txt"}
     nested = client.get("/files/search", headers=headers, params={"query": "docs/**/rep*"}).json()
     assert [item["path"] for item in nested["entries"]] == ["docs/nested/report-final.txt"]
-    assert client.get("/files/search", headers=headers, params={"query": "docs/"}).json() == {"entries": [], "truncated": False}
+    folders = client.get("/files/search", headers=headers, params={"query": "docs/"}).json()["entries"]
+    assert [(item["path"], item["is_directory"]) for item in folders] == [("docs", True)]
     assert client.get("/files/search", headers=headers, params={"query": "../bob/rep"}).status_code == 403
     assert client.get("/files/search", headers=headers, params={"query": ""}).status_code == 422
     assert client.get("/files/search", headers=headers).status_code == 422
@@ -152,12 +154,14 @@ def test_file_search_returns_only_recursive_glob_matches(chat_command_client, tm
 
 
 @pytest.mark.parametrize(("query", "expected"), [
-    ("*.PY", {"main.py", "src/a.py", "src/nested/b.py"}),
+    ("*.PY", {"main.py"}),
     ("src/*.py", {"src/a.py"}),
+    ("./src//*.py", {"src/a.py"}),
     ("src/**/*.py", {"src/a.py", "src/nested/b.py"}),
     ("**/*.py", {"main.py", "src/a.py", "src/nested/b.py"}),
     ("src/*/*.py", {"src/nested/b.py"}),
-    ("[ab].py", {"src/a.py", "src/nested/b.py"}),
+    ("[ab].py", set()),
+    ("**/[ab].py", {"src/a.py", "src/nested/b.py"}),
     ("report?.txt", {"report1.txt"}),
     ("main.py", {"main.py"}),
     ("main", set()),
@@ -171,6 +175,84 @@ def test_file_search_glob_patterns(chat_command_client, query, expected):
     response = client.get("/files/search", headers=headers, params={"query": query})
     assert response.status_code == 200
     assert {item["path"] for item in response.json()["entries"]} == expected
+
+
+def test_search_filters_internal_paths_but_tree_can_browse_them(chat_command_client):
+    client, workspace, headers = chat_command_client
+    excluded = {".git", ".venv", ".local_lib", "node_modules", "__pycache__", ".cache"}
+    for directory in sorted(excluded):
+        path = workspace / directory / "internal.txt"
+        path.parent.mkdir(parents=True)
+        path.touch()
+    for name in ("docs/report.md", "docs/node_modules/internal.txt", ".notes/readme.md", "build/result.pdf", "dist/report.html"):
+        path = workspace / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    (workspace / "git-alias").symlink_to(workspace / ".git", target_is_directory=True)
+    response = client.get("/files/search", headers=headers, params={"query": "**/*"})
+    assert response.status_code == 200
+    paths = {item["path"] for item in response.json()["entries"]}
+    assert {"docs/report.md", ".notes/readme.md", "build/result.pdf", "dist/report.html"} <= paths
+    assert all(not excluded.intersection(path.split("/")) for path in paths)
+    assert "git-alias" not in paths
+    for query in (".git/*", "docs/node_modules/*", "git-alias/*"):
+        assert client.get("/files/search", headers=headers, params={"query": query}).json() == {
+            "entries": [], "truncated": False,
+        }
+    listed = client.get("/files/list", headers=headers).json()["entries"]
+    assert excluded <= {item["name"] for item in listed}
+    for directory in sorted(excluded):
+        entries = client.get("/files/list", headers=headers, params={"path": directory}).json()["entries"]
+        assert [item["name"] for item in entries] == ["internal.txt"]
+
+
+def test_glob_search_stays_in_scope_and_stops_after_enough_matches(chat_command_client, monkeypatch):
+    client, workspace, headers = chat_command_client
+    (workspace / "unrelated" / "nested").mkdir(parents=True)
+    glob = anyio.Path.glob
+    yielded = []
+
+    async def bounded_glob(path, pattern, **kwargs):
+        assert path == anyio.Path(workspace), "A nonrecursive query must not scan subdirectories"
+        if pattern == "*.txt":
+            for index in range(120):
+                assert len(yielded) < 101, "Search must stop consuming results at its limit"
+                child = path / f"file-{index}.txt"
+                await child.touch()
+                yielded.append(child)
+                yield child
+        else:
+            async for child in glob(path, pattern, **kwargs):
+                yield child
+
+    monkeypatch.setattr(anyio.Path, "glob", bounded_glob)
+    result = client.get("/files/search", headers=headers, params={"query": "*.txt"}).json()
+    assert len(result["entries"]) == 100
+    assert result["truncated"] is True
+    assert len(yielded) == 101
+    assert client.get("/files/search", headers=headers, params={"query": "missing*"}).json() == {
+        "entries": [], "truncated": False,
+    }
+    assert client.get("/files/search", headers=headers, params={"query": "foo**bar"}).status_code == 422
+
+
+def test_search_delegates_the_complete_pattern_to_native_glob(chat_command_client, monkeypatch):
+    client, workspace, headers = chat_command_client
+    file = workspace / "docs" / "nested" / "report.md"
+    file.parent.mkdir(parents=True)
+    file.touch()
+    glob = anyio.Path.glob
+    calls = []
+
+    def capture_glob(path, pattern, **kwargs):
+        calls.append((path, pattern))
+        return glob(path, pattern, **kwargs)
+
+    monkeypatch.setattr(anyio.Path, "glob", capture_glob)
+    response = client.get("/files/search", headers=headers, params={"query": "docs/**/*.md"})
+    assert response.status_code == 200
+    assert [item["path"] for item in response.json()["entries"]] == ["docs/nested/report.md"]
+    assert calls == [(anyio.Path(workspace), "docs/**/*.md")]
 
 
 @pytest.mark.parametrize("identity", ["cookie", "jwt"])

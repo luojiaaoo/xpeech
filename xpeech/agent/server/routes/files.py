@@ -1,8 +1,5 @@
 from typing import Annotated
 from pathlib import Path
-from fnmatch import fnmatchcase
-from functools import cache
-from glob import has_magic
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -15,6 +12,16 @@ from ..dependencies import authenticated_user_id
 
 router = APIRouter()
 
+SEARCH_EXCLUDED_NAMES = frozenset({
+    ".git", ".hg", ".svn", ".venv", "venv", ".local_lib", "node_modules", "__pycache__",
+    ".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox", ".npm", ".yarn",
+    ".pnpm-store", ".ds_store", "thumbs.db",
+})
+
+
+def _excluded_from_search(path: anyio.Path, workspace: anyio.Path) -> bool:
+    return any(part.casefold() in SEARCH_EXCLUDED_NAMES for part in path.relative_to(workspace).parts)
+
 
 async def _user_workspace(user_id: str) -> anyio.Path:
     root = await anyio.Path(settings.path.workspace_base_path).resolve()
@@ -25,22 +32,14 @@ async def _user_workspace(user_id: str) -> anyio.Path:
     return resolved
 
 
-def _matches_path_glob(path: tuple[str, ...], pattern: tuple[str, ...]) -> bool:
-    @cache
-    def matches(path_index: int, pattern_index: int) -> bool:
-        if pattern_index == len(pattern):
-            return path_index == len(path)
-        if pattern[pattern_index] == "**":
-            return matches(path_index, pattern_index + 1) or (
-                path_index < len(path) and matches(path_index + 1, pattern_index)
-            )
-        return (
-            path_index < len(path)
-            and fnmatchcase(path[path_index], pattern[pattern_index])
-            and matches(path_index + 1, pattern_index + 1)
-        )
-
-    return matches(0, 0)
+async def _search_path_allowed(path: anyio.Path, workspace: anyio.Path) -> bool:
+    if _excluded_from_search(path, workspace):
+        return False
+    try:
+        resolved = await path.resolve()
+        return resolved.is_relative_to(workspace) and not _excluded_from_search(resolved, workspace)
+    except (OSError, RuntimeError):
+        return False
 
 
 @router.get("/files/search")
@@ -48,56 +47,31 @@ async def search_workspace_files(
     user_id: Annotated[str, Depends(authenticated_user_id)],
     query: Annotated[str, Query(min_length=1, max_length=512)],
 ):
-    """Search filename or relative-path globs, returning at most 100 matching references."""
+    """Return up to 100 native glob matches inside the authenticated user's workspace."""
     workspace = await _user_workspace(user_id)
-    pattern = tuple(query.casefold().split("/"))
-    if not pattern[-1].strip():
+    if not query.strip():
         return {"entries": [], "truncated": False}
-    if query.startswith("/") or ".." in pattern:
+    relative = Path(query)
+    if relative.is_absolute() or ".." in relative.parts:
         raise HTTPException(403, "Search path is outside the workspace")
-    parent_parts = []
-    for part in query.split("/")[:-1]:
-        if has_magic(part):
-            break
-        parent_parts.append(part)
-    try:
-        directory = await workspace.joinpath(*parent_parts).resolve()
-    except (OSError, RuntimeError, ValueError):
-        raise HTTPException(422, "Invalid search path") from None
-    if not directory.is_relative_to(workspace):
-        raise HTTPException(403, "Directory is outside the workspace")
+    if any(part.casefold() in SEARCH_EXCLUDED_NAMES for part in relative.parts):
+        return {"entries": [], "truncated": False}
 
     entries = []
-    pending = [directory]
-    while pending:
-        current = pending.pop()
-        try:
-            children = sorted([child async for child in current.iterdir()], key=lambda child: child.name.casefold())
-        except OSError:
-            continue
-        subdirectories = []
-        for child in children:
-            try:
-                if not (await child.resolve()).is_relative_to(workspace):
-                    continue
-                is_directory = await child.is_dir()
-                if is_directory:
-                    if not await child.is_symlink():
-                        subdirectories.append(child)
-                elif not await child.is_file():
-                    continue
-            except (OSError, RuntimeError):
+    seen = set()
+    try:
+        async for path in workspace.glob(query, case_sensitive=False):
+            if path == workspace or path in seen or not await _search_path_allowed(path, workspace):
                 continue
-            relative = child.relative_to(workspace)
-            if not (
-                fnmatchcase(child.name.casefold(), pattern[0]) if len(pattern) == 1
-                else _matches_path_glob(tuple(part.casefold() for part in relative.parts), pattern)
-            ):
+            is_directory = await path.is_dir()
+            if not is_directory and not await path.is_file():
                 continue
-            entries.append({"name": child.name, "path": relative.as_posix(), "is_directory": is_directory})
+            seen.add(path)
+            entries.append({"name": path.name, "path": path.relative_to(workspace).as_posix(), "is_directory": is_directory})
             if len(entries) > 100:
                 return {"entries": entries[:100], "truncated": True}
-        pending.extend(reversed(subdirectories))
+    except ValueError:
+        raise HTTPException(422, "Invalid glob pattern") from None
     return {"entries": entries, "truncated": False}
 
 

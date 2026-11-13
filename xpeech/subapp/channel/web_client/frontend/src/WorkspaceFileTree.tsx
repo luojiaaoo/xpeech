@@ -7,6 +7,7 @@ import { chatCommandApi } from './api';
 type FileNode = {
   key: string; path: string; title: ReactNode; icon?: ReactNode;
   isLeaf: boolean; selectable: boolean; children?: FileNode[];
+  isDirectory?: boolean;
   isMore?: boolean;
 };
 
@@ -40,7 +41,7 @@ export default function WorkspaceFileTree({ onSelect }: { onSelect: (path: strin
         const children: FileNode[] = result.entries.map(entry => ({
           key: `file:${entry.path}`, path: entry.path, title: entry.name,
           icon: entry.is_directory ? <FolderOutlined /> : <FileOutlined />,
-          isLeaf: !entry.is_directory, selectable: !entry.is_directory,
+          isLeaf: !entry.is_directory, selectable: true, isDirectory: entry.is_directory,
         }));
         if (result.truncated) {
           const nextOffset = offset + result.entries.length;
@@ -92,9 +93,11 @@ export default function WorkspaceFileTree({ onSelect }: { onSelect: (path: strin
       )} /> : null}
       {rootLoading ? <div className="workspace-file-tree-status"><Spin size="small" /> 正在加载文件…</div> : (
         nodes.length ? <Tree.DirectoryTree<FileNode>
-          aria-label="工作区文件" treeData={nodes} showIcon blockNode expandAction="click" selectedKeys={[]}
+          aria-label="工作区文件和文件夹" treeData={nodes} showIcon blockNode expandAction={false} selectedKeys={[]}
           loadData={node => node.isLeaf || node.children ? Promise.resolve() : load(node.path)}
-          onSelect={(_, info) => { if (info.node.selectable) onSelect(info.node.path); }}
+          onSelect={(_, info) => {
+            if (info.node.selectable) onSelect(info.node.isDirectory ? `${info.node.path}/` : info.node.path);
+          }}
         /> : !failure ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="工作区暂无文件" /> : null
       )}
       {!rootLoading && loadingPages.length ? <div className="workspace-file-tree-status" role="status"><Spin size="small" /> 正在加载…</div> : null}

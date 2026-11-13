@@ -10,6 +10,7 @@ import type { ChatCommandCatalog } from './types';
 import WorkspaceFileTree from './WorkspaceFileTree';
 
 const icons = { command: <CodeOutlined />, skill: <ThunderboltOutlined />, file: <FileOutlined />, directory: <FolderOutlined /> };
+const SEARCH_DEBOUNCE_MS = 500;
 
 const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<typeof Sender>>(function ChatCommandInput(props, ref) {
   const senderRef = useRef<ComponentRef<typeof Sender>>(null);
@@ -18,6 +19,7 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
   const [focused, setFocused] = useState(false);
   const [composing, setComposing] = useState(false);
   const [fileSearchEdit, setFileSearchEdit] = useState('');
+  const [fileSearchVisible, setFileSearchVisible] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const treeInsertion = useRef({ start: 0, end: 0 });
@@ -33,9 +35,10 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
   const listId = useId();
   const value = props.value ?? '';
   const signature = `${caret}:${value}`;
-  const candidate = focused && !composing && !treeOpen && dismissed !== signature ? chatCommandTrigger(value, caret) : null;
-  const trigger = candidate?.kind === 'file' && fileSearchEdit !== signature ? null : candidate;
-  const triggerKey = trigger ? JSON.stringify(trigger) : '';
+  const candidate = !composing && !treeOpen && dismissed !== signature ? chatCommandTrigger(value, caret) : null;
+  const lookup = candidate?.kind === 'file' && fileSearchEdit !== signature ? null : candidate;
+  const trigger = focused && (lookup?.kind !== 'file' || fileSearchVisible) ? lookup : null;
+  const triggerKey = lookup ? JSON.stringify(lookup) : '';
   const busy = !!trigger && resolvedKey !== `${triggerKey}:${retry}`;
   const visibleChoices = busy ? [] : choices;
 
@@ -45,21 +48,21 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
     setSelected(0);
     setError('');
     setTruncated(false);
-    if (!trigger) { catalog.current = null; return; }
-    if (trigger.kind === 'file' && !trigger.query.trim()) {
+    if (!lookup) { catalog.current = null; return; }
+    if (lookup.kind === 'file' && !lookup.query.trim()) {
       setResolvedKey(`${triggerKey}:${retry}`);
       return;
     }
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        if (trigger.kind === 'slash') {
+        if (lookup.kind === 'slash') {
           const data = catalog.current ?? await chatCommandApi.catalog(controller.signal);
           if (controller.signal.aborted) return;
           catalog.current = data;
-          setChoices(slashSuggestions(trigger, data));
+          setChoices(slashSuggestions(lookup, data));
         } else {
-          const data = await chatCommandApi.searchFiles(trigger.query, controller.signal);
+          const data = await chatCommandApi.searchFiles(lookup.query, controller.signal);
           if (controller.signal.aborted) return;
           setChoices(fileSuggestions(data));
           setTruncated(data.truncated);
@@ -69,9 +72,9 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
       } finally {
         if (!controller.signal.aborted) setResolvedKey(`${triggerKey}:${retry}`);
       }
-    }, trigger.kind === 'file' ? 120 : 0);
+    }, SEARCH_DEBOUNCE_MS);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  // The serialized trigger includes the query and replacement range.
+  // Query changes and unmount cancel requests; hiding the popup on blur does not.
   }, [triggerKey, retry]);
 
   useEffect(() => {
@@ -159,9 +162,9 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
         if (event.target instanceof HTMLTextAreaElement) setCaret(event.target.selectionStart);
       }}>
       {treeOpen ? (
-        <div className="chat-command-file-picker" role="dialog" aria-label="选择工作区文件" id={`${listId}-files`}>
+        <div className="chat-command-file-picker" role="dialog" aria-label="选择工作区文件或文件夹" id={`${listId}-files`}>
           <div className="chat-command-file-picker-heading">
-            <span>选择工作区文件</span>
+            <span>选择工作区文件或文件夹</span>
             <Button type="text" size="small" icon={<CloseOutlined />} aria-label="关闭文件选择" onClick={() => {
               setTreeOpen(false); focusAt(treeInsertion.current.start);
             }} />
@@ -191,7 +194,7 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
             {busy ? <div className="chat-command-suggestions-status" role="status">正在加载…</div> : null}
             {error ? <div className="chat-command-suggestions-status" role="status">{error} <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => setRetry(count => count + 1)}>重试</button></div> : null}
             {!busy && !error && !choices.length ? <div className="chat-command-suggestions-status">{
-              trigger.kind === 'file' && !trigger.query.trim() ? '输入通配符搜索，如 *.py、report*' : `没有匹配的${trigger.kind === 'file' ? '文件或文件夹' : '候选项'}`
+              trigger.kind === 'file' && !trigger.query.trim() ? '输入通配符搜索，如 *.py；**/report* 搜索各级目录' : `没有匹配的${trigger.kind === 'file' ? '文件或文件夹' : '候选项'}`
             }</div> : null}
             {truncated ? <div className="chat-command-suggestions-status">仅显示前 100 项，请继续输入筛选</div> : null}
           </div>
@@ -202,7 +205,7 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
         prefix={(node, info) => (
           <div className="chat-command-input-prefix">
             {typeof props.prefix === 'function' ? props.prefix(node, info) : props.prefix}
-            <Button type="text" aria-label="选择工作区文件" title="选择工作区文件" aria-expanded={treeOpen}
+            <Button type="text" aria-label="选择工作区文件或文件夹" title="选择工作区文件或文件夹" aria-expanded={treeOpen}
               aria-controls={treeOpen ? `${listId}-files` : undefined}
               onMouseDown={event => event.preventDefault()} onClick={() => {
                 const input = senderRef.current?.inputElement;
@@ -218,11 +221,12 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
           const position = event?.target instanceof HTMLTextAreaElement ? event.target.selectionStart : next.length;
           setCaret(position);
           setFileSearchEdit(event?.target instanceof HTMLTextAreaElement ? `${position}:${next}` : '');
+          setFileSearchVisible(event?.target instanceof HTMLTextAreaElement);
           setTreeOpen(false);
           props.onChange?.(next, event, slots, skill);
         }}
         onFocus={event => { setFocused(true); props.onFocus?.(event); }}
-        onBlur={event => { setFocused(false); setFileSearchEdit(''); props.onBlur?.(event); }}
+        onBlur={event => { setFocused(false); setFileSearchVisible(false); props.onBlur?.(event); }}
         aria-autocomplete="list" aria-expanded={!!trigger} aria-controls={trigger ? listId : undefined}
         aria-activedescendant={trigger && visibleChoices[selected] ? `${listId}-${selected}` : undefined}
       />

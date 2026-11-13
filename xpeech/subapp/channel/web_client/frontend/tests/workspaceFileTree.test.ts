@@ -65,7 +65,7 @@ async function mountTree(files: Function) {
   return { render, selected, dispose };
 }
 
-test('the file tree requests only expanded folders, reuses loaded children and selects files', async () => {
+test('folders and files can be selected while expansion alone lazily loads children', async () => {
   const calls: string[] = [];
   const tree = await mountTree(async (path: string) => {
     calls.push(path);
@@ -74,15 +74,17 @@ test('the file tree requests only expanded folders, reuses loaded children and s
     ], truncated: false };
   });
   assert.deepEqual(calls, ['']);
+  assert.equal(tree.render().expandAction, false);
+  tree.render().onSelect([], { node: tree.render().treeData[0] });
+  assert.deepEqual(tree.selected, ['docs/']);
+  assert.deepEqual(calls, ['']);
   await tree.render().loadData(tree.render().treeData[0]);
   assert.deepEqual(calls, ['', 'docs']);
   const folder = tree.render().treeData[0];
   await tree.render().loadData(folder);
   assert.deepEqual(calls, ['', 'docs']);
-  tree.render().onSelect([], { node: folder });
-  assert.deepEqual(tree.selected, []);
   tree.render().onSelect([], { node: folder.children[0] });
-  assert.deepEqual(tree.selected, ['docs/a.txt']);
+  assert.deepEqual(tree.selected, ['docs/', 'docs/a.txt']);
   tree.dispose();
 });
 
@@ -103,6 +105,8 @@ test('pagination preserves empty folders and retry recovers failed root loads', 
   await tick();
   await tree.render().loadData(tree.render().treeData[0]);
   assert.equal(tree.render().treeData[0].isLeaf, true);
+  tree.render().onSelect([], { node: tree.render().treeData[0] });
+  assert.deepEqual(tree.selected, ['empty/']);
   tree.render().treeData[1].title.props.onClick({ stopPropagation() {} });
   await tick();
   assert.deepEqual(offsets, [0, 1]);
