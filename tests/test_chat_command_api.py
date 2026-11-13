@@ -40,6 +40,31 @@ def test_catalog_returns_public_skills_and_real_commands(chat_command_client):
     assert client.get("/chat_command").status_code == 401
 
 
+def test_skill_catalog_orders_filtered_builtins_then_workspace_then_public_builtins(chat_command_client, tmp_path, monkeypatch):
+    client, workspace, headers = chat_command_client
+    builtins = []
+    for name, expression in (
+        ("z-public", None), ("channel-match", 'channel("web_client")'),
+        ("a-public", None), ("org-match", 'org("公司/研发/")'),
+        ("denied", 'channel("crm")'),
+    ):
+        directory = tmp_path / "builtins" / name
+        directory.mkdir(parents=True)
+        filter_line = f"filter: {expression}\n" if expression else ""
+        (directory / "SKILL.md").write_text(f"---\nname: {name}\n{filter_line}---\nBody")
+        builtins.append(directory)
+    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtins))
+    monkeypatch.setattr(type(settings.organization), "resolve_user_organization", AsyncMock(return_value="公司/研发/平台"))
+    for name, expression in (("workspace-denied", "False"), ("workspace-match", "True"), ("workspace-public", None)):
+        path = workspace / "skills" / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        filter_line = f"filter: '{expression}'\n" if expression else ""
+        path.write_text(f"---\nname: {name}\n{filter_line}---\nBody")
+    expected = ["channel-match", "org-match", "workspace-denied", "workspace-match", "workspace-public", "z-public", "a-public"]
+    assert [item["metadata"]["name"] for item in client.get("/skills", headers=headers).json()] == expected
+    assert [item["name"] for item in client.get("/chat_command", headers=headers).json()["skills"]] == expected
+
+
 def test_file_choices_use_name_prefixes_and_stay_in_the_users_workspace(chat_command_client, tmp_path):
     client, workspace, headers = chat_command_client
     (workspace / "Report.txt").write_text("report")
@@ -75,7 +100,7 @@ def test_file_choices_limit_results_and_handle_new_workspaces(chat_command_clien
     result = client.get("/files/list", headers=headers).json()
     assert len(result["entries"]) == 100
     assert result["truncated"] is True
-    matches = client.get("/files/search", headers=headers, params={"query": "file-"}).json()
+    matches = client.get("/files/search", headers=headers, params={"query": "file-*"}).json()
     assert len(matches["entries"]) == 100
     assert matches["truncated"] is True
     second_page = client.get("/files/list", headers=headers, params={"offset": 100}).json()
@@ -89,7 +114,22 @@ def test_file_choices_limit_results_and_handle_new_workspaces(chat_command_clien
     }
 
 
-def test_file_search_returns_only_recursive_prefix_matches(chat_command_client, tmp_path):
+def test_file_routes_reject_workspace_roots_linked_to_another_user(chat_command_client, tmp_path):
+    client, _, _ = chat_command_client
+    other = tmp_path / "bob"
+    other.mkdir()
+    (other / "private.txt").write_text("private")
+    (tmp_path / "alias").symlink_to(other, target_is_directory=True)
+    token = create_token(UserTokenParams("web_client", user_id="alias"))
+    headers = {"Authorization": f"Bearer {token}"}
+    for endpoint, params in (
+        ("/files/list", {}), ("/files/search", {"query": "*"}), ("/files", {"path": "private.txt"}),
+        ("/skills", {}), ("/chat_command", {}),
+    ):
+        assert client.get(endpoint, headers=headers, params=params).status_code == 403
+
+
+def test_file_search_returns_only_recursive_glob_matches(chat_command_client, tmp_path):
     client, workspace, headers = chat_command_client
     (workspace / "docs" / "nested").mkdir(parents=True)
     (workspace / "Report.txt").touch()
@@ -99,16 +139,38 @@ def test_file_search_returns_only_recursive_prefix_matches(chat_command_client, 
     outside.mkdir()
     (outside / "report-secret.txt").touch()
     (workspace / "report-escape").symlink_to(outside, target_is_directory=True)
-    response = client.get("/files/search", headers=headers, params={"query": "rep", "user_id": "bob"})
+    response = client.get("/files/search", headers=headers, params={"query": "rep*", "user_id": "bob"})
     assert response.status_code == 200
     assert {item["path"] for item in response.json()["entries"]} == {"Report.txt", "docs/nested/report-final.txt"}
-    nested = client.get("/files/search", headers=headers, params={"query": "docs/rep"}).json()
+    nested = client.get("/files/search", headers=headers, params={"query": "docs/**/rep*"}).json()
     assert [item["path"] for item in nested["entries"]] == ["docs/nested/report-final.txt"]
     assert client.get("/files/search", headers=headers, params={"query": "docs/"}).json() == {"entries": [], "truncated": False}
     assert client.get("/files/search", headers=headers, params={"query": "../bob/rep"}).status_code == 403
     assert client.get("/files/search", headers=headers, params={"query": ""}).status_code == 422
     assert client.get("/files/search", headers=headers).status_code == 422
     assert client.get("/files/search", params={"query": "rep"}).status_code == 401
+
+
+@pytest.mark.parametrize(("query", "expected"), [
+    ("*.PY", {"main.py", "src/a.py", "src/nested/b.py"}),
+    ("src/*.py", {"src/a.py"}),
+    ("src/**/*.py", {"src/a.py", "src/nested/b.py"}),
+    ("**/*.py", {"main.py", "src/a.py", "src/nested/b.py"}),
+    ("src/*/*.py", {"src/nested/b.py"}),
+    ("[ab].py", {"src/a.py", "src/nested/b.py"}),
+    ("report?.txt", {"report1.txt"}),
+    ("main.py", {"main.py"}),
+    ("main", set()),
+])
+def test_file_search_glob_patterns(chat_command_client, query, expected):
+    client, workspace, headers = chat_command_client
+    for name in ("main.py", "main.py.bak", "src/a.py", "src/nested/b.py", "report1.txt", "report12.txt"):
+        path = workspace / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    response = client.get("/files/search", headers=headers, params={"query": query})
+    assert response.status_code == 200
+    assert {item["path"] for item in response.json()["entries"]} == expected
 
 
 @pytest.mark.parametrize("identity", ["cookie", "jwt"])

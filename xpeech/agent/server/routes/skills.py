@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Annotated
 
+import anyio
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from ....config.settings import settings
@@ -29,6 +30,8 @@ def _user_workspace(user_id: str) -> Path:
 
     workspace_root = settings.path.workspace_base_path.resolve()
     workspace = (workspace_root / validated_user_id).resolve()
+    if workspace != workspace_root / validated_user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "User workspace must not redirect to another directory")
     if not is_relative_path(workspace, workspace_root):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -74,7 +77,7 @@ async def list_skills(
     user_id: Annotated[str, Depends(authenticated_user_id)],
 ) -> list[SkillInfo]:
     """返回内置技能，以及 JWT 用户可用的 SKILL 列表。"""
-    workspace = _user_workspace(user_id)
+    workspace = await anyio.to_thread.run_sync(_user_workspace, user_id)
     user_organization = await settings.organization.resolve_user_organization(user_id)
     return await SkillsLoader(
         workspace, channel=auth.channel, user_organization=user_organization,

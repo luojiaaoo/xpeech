@@ -206,13 +206,19 @@ class SkillsLoader:
         )
 
     async def list_skill_info(self) -> list[SkillInfo]:
-        """Merge available built-in and workspace skills, preferring built-ins."""
+        """List filtered built-ins, workspace skills, then public built-ins."""
         builtin_skills = await self.list_builtin_skill_info()
         workspace_skills = await self._load_skill_info(
             await self._workspace_skill_files(),
             {skill.metadata.name for skill in builtin_skills},
         )
-        return [*builtin_skills, *workspace_skills]
+        # 内置技能已完成 filter 筛选：匹配的内置技能 → 用户技能 → 公共内置技能。
+        # 各组保持原有顺序；用户技能的 filter 不参与筛选或排序。
+        return [
+            *[skill for skill in builtin_skills if skill.metadata.filter is not None],
+            *workspace_skills,
+            *[skill for skill in builtin_skills if skill.metadata.filter is None],
+        ]
 
     async def build_skills_prompt(self) -> str:
         """Build the complete skills section for the system prompt."""
