@@ -712,6 +712,7 @@ def test_execution_confirmation_uses_custom_copy_and_folds_function_and_argument
     result = {"success": True, "result": "已删除"} if state == "finished" else None
     card = build_feishu_question_card(context, disabled=state == "submitted", tool_result=result)
     assert card["header"]["title"]["content"] == "删除 test 文件夹"
+    assert card["header"]["template"] == ("green" if state == "finished" else "blue")
     elements = card["body"]["elements"]
     assert elements[0]["text"]["content"] == "先确认 test 文件夹存在，然后删除并验证。"
     details = elements[1]

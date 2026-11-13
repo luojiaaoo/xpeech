@@ -311,7 +311,7 @@ async def test_confirmation_cards_are_updated_by_tool_call_id_with_out_of_order_
     assert len(updates) == 2
     assert [call.args[0] for call in updates] == ["question-b", "question-a"]
     assert updates[0].args[1]["header"]["template"] == "red"
-    assert updates[1].args[1]["header"]["template"] == "blue"
+    assert updates[1].args[1]["header"]["template"] == "green"
     assert "RuntimeError: B failed" in json.dumps(updates[0].args[1])
     assert "A done" in json.dumps(updates[1].args[1])
     assert "RuntimeError" not in json.dumps(updates[1].args[1])

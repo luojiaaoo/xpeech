@@ -59,6 +59,7 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
   const completed = tool?.status === 'completed';
   const skipped = completed && /^(?:用户取消执行，工具未执行。|用户确认超时，工具未执行。|执行确认回复格式异常，工具未执行。)$/.test(resultText);
   const failed = completed && tool.success === false;
+  const succeeded = completed && tool.success === true;
   const settled = answered || completed || tool?.status === 'interrupted';
   const canView = !skipped && (decision === 'confirm' || completed);
   const status = skipped ? resultText : failed ? '执行失败' : completed ? '执行完成'
@@ -92,7 +93,7 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
 
   return (
     <Form layout="vertical" disabled={!confirmation && (settled || readOnly)} onFinish={submit}
-      className={`question-form${confirmation ? ' question-confirm' : ''}${failed ? ' question-confirm-failed' : ''}`}>
+      className={`question-form${confirmation ? ' question-confirm' : ''}${failed ? ' question-confirm-failed' : succeeded ? ' question-confirm-succeeded' : ''}`}>
       <Typography.Title level={5}>{question?.title || (execution ? '执行确认' : confirmation ? '请确认' : '需要补充信息')}</Typography.Title>
       {description ? (
         <Typography.Paragraph type={confirmation ? undefined : 'secondary'} className={confirmation ? 'question-confirm-description' : undefined}
@@ -147,12 +148,12 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
               </Button>
               {canView ? <Button danger={failed} onClick={() => setViewing(true)}>查看结果</Button> : null}
             </Space>
-            {status ? <Typography.Text type={failed ? 'danger' : 'secondary'} role="status">{status}</Typography.Text> : null}
+            {status ? <Typography.Text type={failed ? 'danger' : succeeded ? 'success' : 'secondary'} role="status">{status}</Typography.Text> : null}
             {readOnly && !status ? <Typography.Text type="secondary">历史提问仅供查看</Typography.Text> : null}
           </div>
           <Drawer placement="right" size="large" title={failed ? '执行异常' : execution ? '执行结果' : '确认详情'} open={viewing}
             onClose={() => setViewing(false)}>
-            <pre className={`question-result${failed ? ' question-result-error' : ''}`}>{resultText}</pre>
+            <pre className={`question-result${failed ? ' question-result-error' : succeeded ? ' question-result-success' : ''}`}>{resultText}</pre>
           </Drawer>
         </>
       ) : readOnly ? <Typography.Text type="secondary">历史提问仅供查看</Typography.Text> : (

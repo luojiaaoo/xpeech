@@ -237,13 +237,13 @@ def _build_feishu_confirm_card(
             "content": f"请在 {question['timeout_seconds']} 秒内确认；取消或超时均不会执行。",
         })
 
-    failed = tool_result is not None and tool_result.get("success") is False
+    success = tool_result["success"] if tool_result is not None else None
     if tool_result is not None:
         value = tool_result.get("result")
         result_text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
         elements.append({
             "tag": "markdown",
-            "content": ensure_markdown("执行失败" if failed else "执行完成"),
+            "content": ensure_markdown("执行失败" if success is False else "执行完成"),
         })
         elements.append({
             "tag": "collapsible_panel", "expanded": False,
@@ -267,7 +267,7 @@ def _build_feishu_confirm_card(
     ]
     elements.append(_feishu_question_actions(buttons))
 
-    return _feishu_question_card(question["title"], "", elements, failed=failed)
+    return _feishu_question_card(question["title"], "", elements, success=success)
 
 
 def _build_feishu_form_card(
@@ -312,7 +312,7 @@ def _feishu_question_actions(buttons: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _feishu_question_card(
-    title: str, subtitle: str, elements: list[dict[str, Any]], *, failed: bool = False,
+    title: str, subtitle: str, elements: list[dict[str, Any]], *, success: bool | None = None,
 ) -> dict[str, Any]:
     return {
         "schema": "2.0",
@@ -336,7 +336,7 @@ def _feishu_question_card(
         "header": {
             "title": plain_text(title),
             "subtitle": plain_text(subtitle),
-            "template": "red" if failed else "blue",
+            "template": "green" if success is True else "red" if success is False else "blue",
             "padding": "12px 12px 12px 12px",
         },
     }

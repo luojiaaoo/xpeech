@@ -88,6 +88,7 @@ test('completed confirmations allow viewing results even in read-only history', 
     assert.equal((html.match(/<button\b/g) || []).length, 3);
     assert.ok(html.replace(/<[^>]+>/g, '').replace(/\s+/g, '').includes('查看'));
     assert.equal(html.includes('question-confirm-failed'), !success);
+    assert.equal(html.includes('question-confirm-succeeded'), success);
     assert.ok(html.includes(success ? '执行完成' : '执行失败'));
   }
 });
