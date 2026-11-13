@@ -174,11 +174,13 @@ export interface ChatEvent {
 }
 
 export interface ToolCallResult {
+  // TODO(remove-legacy-tool-events): 旧历史仅有 id；清理时将 tool_call_id 改为必填并删除 id。
   tool_call_id?: string;
-  id?: string; // Legacy event history.
+  id?: string;
   name: string;
   result: unknown;
   duration_seconds: number;
+  // TODO(remove-legacy-tool-events): 旧结果缺少 success；清理时改为必填。
   success?: boolean;
 }
 

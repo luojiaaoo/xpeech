@@ -24,6 +24,11 @@ PC 宽度下历史会话显示在左侧，窄屏下通过抽屉打开；点击�
 最后一条助手回复和 Token 使用情况直接显示。
 历史会话使用相同的折叠方式，文件下载、提问表单和错误提示保持可见。
 
+新工具结果携带 `tool_call_id` 和布尔值 `success`，执行确认卡片通过 `tool_call_id` 关联。
+实时消息和历史回放暂时保留旧元组、`id` 别名、缺少 `success`、孤立结果、原文兜底展示及无 ID 确认卡片按工具名关联的兼容。
+兼容代码与对应测试统一使用 `TODO(remove-legacy-tool-events)` 标记；可用
+`rg -n 'TODO\(remove-legacy-tool-events\)' xpeech/subapp/channel/web_client` 查找，后续清理时一并删除或收紧。
+
 `send_file` 返回的文件以附件卡片显示，提供下载按钮。`.docx`、`.xls`、`.xlsx`、`.pptx`、
 `.md` 和 `.markdown` 文件额外提供预览按钮，在弹窗中查看；Markdown 复用 Ant Design X Markdown，
 Word 和 Excel 分别使用 `@js-preview/docx`、`@js-preview/excel`，PowerPoint 使用 `@aiden0z/pptx-renderer`。

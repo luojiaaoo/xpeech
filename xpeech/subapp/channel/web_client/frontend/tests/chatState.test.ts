@@ -8,6 +8,7 @@ function apply(events: ChatEvent[], initial = startChatTurn([], '帮我做个海
 }
 
 const event = (type: ChatEvent['event'], context = ''): ChatEvent => ({ event: type, context });
+// TODO(remove-legacy-tool-events): 多数测试沿用旧元组及 id/无 success 结果；清理时将这些夹具改为新协议。
 const tools = (type: 'tool_call', rows: unknown[][]) => event(type, JSON.stringify(rows));
 const toolResult = (result: ToolCallResult) => event('tool_call_result', JSON.stringify(result));
 
@@ -132,6 +133,7 @@ test('keeps per-turn usage and copy text separate when tool IDs are reused', () 
   ]);
 });
 
+// TODO(remove-legacy-tool-events): 清理孤立结果展示后，改为仅接受已有调用的结果。
 test('handles a result without a call and preserves null and structured results', () => {
   const messages = apply([
     toolResult({ id: 'a', name: 'read_file', result: null, duration_seconds: 0 }),
@@ -143,6 +145,7 @@ test('handles a result without a call and preserves null and structured results'
   assert.deepEqual(messages[3].toolCall?.output, ['item']);
 });
 
+// TODO(remove-legacy-tool-events): 原文兜底展示的兼容测试，随兜底分支删除或调整。
 test('preserves malformed tool payloads instead of crashing or silently dropping them', () => {
   for (const context of ['not json', '{}', '[[1,"bad",{}]]']) {
     const messages = apply([event('tool_call', context)]);
@@ -212,6 +215,7 @@ test('continues a restored conversation without merging its final turn into the 
   assert.equal(next.at(-1)?.historical, undefined);
 });
 
+// TODO(remove-legacy-tool-events): 以下两个测试依赖无 ID 确认卡片按工具名关联，清理时改用 tool_call_id。
 test('associates execution questions with pending calls and preserves success flags', () => {
   const messages = apply([
     tools('tool_call', [['a', 'shell', {}], ['b', 'shell', {}]]),

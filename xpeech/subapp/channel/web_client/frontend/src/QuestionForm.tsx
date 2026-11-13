@@ -59,6 +59,7 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
   const completed = tool?.status === 'completed';
   const skipped = completed && /^(?:用户取消执行，工具未执行。|用户确认超时，工具未执行。|执行确认回复格式异常，工具未执行。)$/.test(resultText);
   const failed = completed && tool.success === false;
+  // TODO(remove-legacy-tool-events): 旧结果缺少 success 时保留默认样式；清理后已完成的调用必须有 success。
   const succeeded = completed && tool.success === true;
   const settled = answered || completed || tool?.status === 'interrupted';
   const canView = !skipped && (decision === 'confirm' || completed);

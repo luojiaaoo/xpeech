@@ -170,6 +170,7 @@ test('the process receives its running state and usage while the final answer an
   for (const event of [
     { event: 'thinking', context: '分析问题' },
     { event: 'assistant', context: '正在读取' },
+    // TODO(remove-legacy-tool-events): 清理时将旧元组夹具改为带 tool_call_id 的对象数组。
     { event: 'tool_call', context: '[["tool-1","read_file",{}]]' },
     { event: 'assistant', context: '最终回复' },
     { event: 'token_usage', context: '{"总 Token":100,"会话时长":"2秒"}' },
@@ -200,6 +201,7 @@ test('the composer stop action waits for server acknowledgement, closes its stre
   page.render().onSubmit('hello');
   const stream = page.streams[0];
   stream.receive({ event: 'assistant', context: '保留的部分回复' });
+  // TODO(remove-legacy-tool-events): 清理时将旧元组夹具改为带 tool_call_id 的对象数组。
   stream.receive({ event: 'tool_call', context: '[["tool-1","read_file",{}]]' });
   assert.equal(page.render().loading, true);
   page.render().onCancel();

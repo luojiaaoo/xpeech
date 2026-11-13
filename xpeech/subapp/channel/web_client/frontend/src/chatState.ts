@@ -46,6 +46,7 @@ export function finishChatTurn(messages: ChatMessage[]): ChatMessage[] {
 }
 
 function isToolCallResult(payload: unknown): payload is ToolCallResult {
+  // TODO(remove-legacy-tool-events): 旧历史使用 id 且可能缺少 success；清理时仅接受 tool_call_id 和布尔 success。
   return typeof payload === 'object' && payload !== null && !Array.isArray(payload)
     && (('tool_call_id' in payload && typeof payload.tool_call_id === 'string')
       || ('id' in payload && typeof payload.id === 'string'))
@@ -76,6 +77,8 @@ function applyToolEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[
   }
   if (isResult) {
     if (isToolCallResult(payload)) {
+      // TODO(remove-legacy-tool-events): 旧结果使用 id 别名、缺少 success，且允许没有调用记录的结果独立展示。
+      // 清理时直接读取 tool_call_id/success，并仅更新当前轮次中 ID 匹配的已有调用。
       updateToolCall(next, {
         id: (payload.tool_call_id ?? payload.id)!, name: payload.name, output: payload.result,
         status: 'completed', durationSeconds: payload.duration_seconds,
@@ -84,7 +87,7 @@ function applyToolEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[
       return next;
     }
   } else if (Array.isArray(payload)) {
-    // Read older tuple events as well as the explicit ID payload.
+    // TODO(remove-legacy-tool-events): 兼容旧 [id, name, arguments] 元组；清理时直接使用对象数组。
     const calls = payload.map(entry => Array.isArray(entry)
       ? { tool_call_id: entry[0], name: entry[1], arguments: entry[2] } : entry);
     if (calls.every(call => call && typeof call.tool_call_id === 'string'
@@ -95,6 +98,7 @@ function applyToolEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[
       return next;
     }
   }
+  // TODO(remove-legacy-tool-events): 无法解析的旧事件用临时 ID 展示原文；清理时移除整个兜底分支。
   return [...next, {
     key: key('tool'), role: 'tool', content: '',
     toolCall: {
@@ -181,6 +185,7 @@ export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): Chat
       if (question.type === 'confirm' && typeof question.tool_call_id === 'string') {
         questionToolId = question.tool_call_id;
       } else if (question.type === 'confirm' && toolName) {
+        // TODO(remove-legacy-tool-events): 旧确认卡片缺少 tool_call_id，按工具名匹配；清理时移除此分支。
         const turn = next.slice(turnStart(next));
         questionToolId = turn.find(item => item.toolCall?.status === 'running'
           && item.toolCall.name === toolName
