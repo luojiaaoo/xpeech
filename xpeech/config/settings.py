@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import jq
+from async_lru import alru_cache
 from loguru import logger
 from pydantic import (
     AfterValidator,
@@ -412,6 +413,18 @@ class OrganizationConfig(BaseModel):
     command_template: str | None = None
     timeout: float = Field(default=10.0, gt=0, allow_inf_nan=False)
 
+    @staticmethod
+    @alru_cache(maxsize=4096, ttl=600)
+    async def _query_user_organization(command_template: str, timeout: float, user_id: str) -> str:
+        """按命令配置和用户缓存成功结果（含空组织）十分钟，并合并并发请求。"""
+        return await execute_command_template(
+            command_template,
+            {"user_id": user_id},
+            operation="organization.command_template",
+            timeout=timeout,
+            required_variables=("user_id",),
+        )
+
     @field_validator("command_template")
     @classmethod
     def validate_command_template(cls, value: str | None) -> str | None:
@@ -422,17 +435,11 @@ class OrganizationConfig(BaseModel):
         return value
 
     async def resolve_user_organization(self, user_id: str) -> str | None:
-        """通过服务端命令查询用户组织；查询失败返回 None，对应 org() 不匹配任何前缀。"""
+        """成功结果（含空组织）按用户缓存十分钟；失败和超时不缓存。"""
         if self.command_template is None:
             return None
         try:
-            organization = await execute_command_template(
-                self.command_template,
-                {"user_id": user_id},
-                operation="organization.command_template",
-                timeout=self.timeout,
-                required_variables=("user_id",),
-            )
+            organization = await self._query_user_organization(self.command_template, self.timeout, user_id)
         except CommandTemplateError as exc:
             logger.warning("Organization lookup failed: {}", exc)
             return None

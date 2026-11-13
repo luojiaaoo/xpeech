@@ -64,6 +64,7 @@ custom_system_prompt = ""
 
 # 加载技能、MCP 和校验 Web 通道组织权限时按用户查询所属组织，此配置不绑定渠道。
 # 命令的 stdout 为 UTF-8 组织字符串，例如 company/engineering/platform。
+# 成功结果（含空组织）在后端按用户缓存 10 分钟。
 # [organization]
 # command_template = "curl --fail --silent 'https://directory.example/organization?user_id=${user_id}'"
 # timeout = 10.0

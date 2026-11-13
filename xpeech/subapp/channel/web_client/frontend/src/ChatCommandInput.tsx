@@ -30,17 +30,37 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
   const [error, setError] = useState('');
   const [truncated, setTruncated] = useState(false);
   const [retry, setRetry] = useState(0);
-  const catalog = useRef<ChatCommandCatalog | null>(null);
+  const [catalog, setCatalog] = useState<ChatCommandCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const value = props.value ?? '';
   const signature = `${caret}:${value}`;
-  const candidate = !composing && !treeOpen && dismissed !== signature ? chatCommandTrigger(value, caret) : null;
-  const lookup = candidate?.kind === 'file' && fileSearchEdit !== signature ? null : candidate;
+  const candidate = !treeOpen && dismissed !== signature ? chatCommandTrigger(value, caret) : null;
+  const lookup = composing || (candidate?.kind === 'file' && fileSearchEdit !== signature) ? null : candidate;
   const trigger = focused && (lookup?.kind !== 'file' || fileSearchVisible) ? lookup : null;
   const triggerKey = lookup ? JSON.stringify(lookup) : '';
+  const slashActive = candidate?.kind === 'slash';
   const busy = !!trigger && resolvedKey !== `${triggerKey}:${retry}`;
   const visibleChoices = busy ? [] : choices;
+
+  useEffect(() => {
+    setCatalog(null);
+    setCatalogError('');
+    if (!slashActive) return;
+    const controller = new AbortController();
+    // The full catalog is independent of the search text, so typing keeps this request alive.
+    async function loadCatalog() {
+      try {
+        const data = await chatCommandApi.catalog(controller.signal);
+        if (!controller.signal.aborted) setCatalog(data);
+      } catch (reason) {
+        if (!controller.signal.aborted) setCatalogError(`加载失败：${reason instanceof Error ? reason.message : String(reason)}`);
+      }
+    }
+    void loadCatalog();
+    return () => controller.abort();
+  }, [slashActive, retry]);
 
   useEffect(() => {
     setChoices([]);
@@ -48,32 +68,34 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
     setSelected(0);
     setError('');
     setTruncated(false);
-    if (!lookup) { catalog.current = null; return; }
+    if (!lookup) return;
+    if (lookup.kind === 'slash') {
+      if (catalog) setChoices(slashSuggestions(lookup, catalog));
+      if (catalogError) setError(catalogError);
+      if (catalog || catalogError) setResolvedKey(`${triggerKey}:${retry}`);
+      return;
+    }
     const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
+    const query = lookup.query;
+    async function loadFiles() {
       try {
-        if (lookup.kind === 'slash') {
-          const data = catalog.current ?? await chatCommandApi.catalog(controller.signal);
-          if (controller.signal.aborted) return;
-          catalog.current = data;
-          setChoices(slashSuggestions(lookup, data));
-        } else {
-          const data = lookup.query.trim()
-            ? await chatCommandApi.searchFiles(fileSearchPattern(lookup.query), controller.signal)
-            : await chatCommandApi.files('', '', controller.signal);
-          if (controller.signal.aborted) return;
-          setChoices(fileSuggestions(data));
-          setTruncated(data.truncated);
-        }
+        const data = query.trim()
+          ? await chatCommandApi.searchFiles(fileSearchPattern(query), controller.signal)
+          : await chatCommandApi.files('', '', controller.signal);
+        if (controller.signal.aborted) return;
+        setChoices(fileSuggestions(data));
+        setTruncated(data.truncated);
       } catch (reason) {
         if (!controller.signal.aborted) setError(`加载失败：${reason instanceof Error ? reason.message : String(reason)}`);
       } finally {
         if (!controller.signal.aborted) setResolvedKey(`${triggerKey}:${retry}`);
       }
-    }, lookup.kind === 'file' && !lookup.query.trim() ? 0 : SEARCH_DEBOUNCE_MS);
+    }
+    const timer = query.trim() ? window.setTimeout(loadFiles, SEARCH_DEBOUNCE_MS) : undefined;
+    if (timer === undefined) void loadFiles();
     return () => { window.clearTimeout(timer); controller.abort(); };
   // Query changes and unmount cancel requests; hiding the popup on blur does not.
-  }, [triggerKey, retry]);
+  }, [triggerKey, retry, catalog, catalogError]);
 
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });

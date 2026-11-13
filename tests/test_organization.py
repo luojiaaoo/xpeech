@@ -18,6 +18,75 @@ from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import mcp_client, registry
 import xpeech.config.settings as settings_module
 from xpeech.config.settings import MCPServerSettings, OrganizationConfig, ToolConfig, settings
+from xpeech.utils.command_template import CommandTemplateError
+
+
+@pytest.fixture
+def organization_cache():
+    cache = OrganizationConfig._query_user_organization
+    cache.cache_clear()
+    yield cache
+    cache.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_organization_cache_reuses_results_and_merges_concurrent_queries(monkeypatch, organization_cache):
+    async def execute(command, variables, **kwargs):
+        await asyncio.sleep(0)
+        return f"company/{variables['user_id']}"
+
+    execute = AsyncMock(side_effect=execute)
+    monkeypatch.setattr(settings_module, "execute_command_template", execute)
+    config = OrganizationConfig(command_template="lookup $user_id")
+    results = await asyncio.gather(*(config.resolve_user_organization("alice") for _ in range(10)))
+    assert results == ["company/alice"] * 10
+    assert await config.resolve_user_organization("alice") == "company/alice"
+    assert execute.await_count == 1
+    assert await config.resolve_user_organization("bob") == "company/bob"
+    assert execute.await_count == 2
+    changed = OrganizationConfig(command_template="other-lookup $user_id")
+    assert await changed.resolve_user_organization("alice") == "company/alice"
+    assert execute.await_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_organization", ["company/old", ""])
+async def test_organization_cache_expires_after_ten_minutes(monkeypatch, organization_cache, first_organization):
+    execute = AsyncMock(side_effect=[first_organization, "company/new"])
+    monkeypatch.setattr(settings_module, "execute_command_template", execute)
+    scheduled = []
+    loop = asyncio.get_running_loop()
+    call_later = loop.call_later
+
+    def capture_expiry(delay, callback, *args, **kwargs):
+        handle = call_later(delay, callback, *args, **kwargs)
+        if delay == 600:
+            scheduled.append((callback, args, handle))
+        return handle
+
+    monkeypatch.setattr(loop, "call_later", capture_expiry)
+    config = OrganizationConfig(command_template="lookup $user_id")
+    assert await config.resolve_user_organization("alice") == (first_organization or None)
+    assert len(scheduled) == 1
+    assert await config.resolve_user_organization("alice") == (first_organization or None)
+    assert execute.await_count == 1
+    callback, args, handle = scheduled.pop()
+    handle.cancel()
+    callback(*args)
+    assert await config.resolve_user_organization("alice") == "company/new"
+    assert execute.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["timeout", "failed"])
+async def test_unsuccessful_organization_queries_are_not_cached(monkeypatch, organization_cache, failure):
+    first = CommandTemplateError(failure, operation="organization.command_template")
+    execute = AsyncMock(side_effect=[first, "company/recovered"])
+    monkeypatch.setattr(settings_module, "execute_command_template", execute)
+    config = OrganizationConfig(command_template="lookup $user_id")
+    assert await config.resolve_user_organization("alice") is None
+    assert await config.resolve_user_organization("alice") == "company/recovered"
+    assert execute.await_count == 2
 
 
 @pytest.mark.asyncio

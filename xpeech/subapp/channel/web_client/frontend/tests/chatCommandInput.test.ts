@@ -126,6 +126,11 @@ async function inputHarness(manualTimers = false) {
   render();
   return {
     requests, type, sender, advance,
+    composition(active: boolean) {
+      const node = render();
+      node.props[active ? 'onCompositionStartCapture' : 'onCompositionEndCapture']();
+      render();
+    },
     popup: () => find(render(), node => node.props?.role === 'listbox'),
     dispose: () => slots.forEach(slot => slot.cleanup?.()),
   };
@@ -136,7 +141,6 @@ const catalog = { commands: [{ name: 'help', description: '帮助' }], skills: [
 test('typing @ immediately lists first-level entries and allows selecting a folder', async () => {
   const input = await inputHarness(true);
   await input.type('@');
-  input.advance(0);
   assert.equal(input.requests.length, 1);
   assert.equal(input.requests[0].path, '');
   assert.equal(input.requests[0].query, '');
@@ -151,22 +155,62 @@ test('typing @ immediately lists first-level entries and allows selecting a fold
   input.dispose();
 });
 
-for (const prefix of ['@', '/']) {
-  test(`${prefix} lookup waits 500ms after the final keystroke`, async () => {
-    const input = await inputHarness(true);
-    await input.type(`${prefix}a`);
-    input.advance(300);
-    await input.type(`${prefix}ab`);
-    input.advance(300);
-    await input.type(`${prefix}abc`);
-    input.advance(499);
-    assert.equal(input.requests.length, 0);
-    input.advance(1);
-    assert.equal(input.requests.length, 1);
-    if (prefix === '@') assert.equal(input.requests[0].query, '*abc*');
-    input.dispose();
-  });
-}
+test('file lookup waits 500ms after the final keystroke', async () => {
+  const input = await inputHarness(true);
+  await input.type('@a');
+  input.advance(300);
+  await input.type('@ab');
+  input.advance(300);
+  await input.type('@abc');
+  input.advance(499);
+  assert.equal(input.requests.length, 0);
+  input.advance(1);
+  assert.equal(input.requests.length, 1);
+  assert.equal(input.requests[0].query, '*abc*');
+  input.dispose();
+});
+
+test('slash loads the full catalog immediately and filters locally while typing', async () => {
+  const input = await inputHarness(true);
+  await input.type('/');
+  assert.equal(input.requests.length, 1);
+  await input.type('/de');
+  input.advance(1000);
+  await input.type('/demo');
+  assert.equal(input.requests.length, 1);
+  assert.equal(input.requests[0].signal.aborted, false);
+  input.requests[0].resolve(catalog);
+  await tick();
+  input.popup();
+  assert.equal(input.popup()['aria-busy'], false);
+  assert.equal(input.popup().children[0].length, 1);
+  await input.type('/missing');
+  assert.equal(input.popup()['aria-busy'], false);
+  assert.equal(input.popup().children[0].length, 0);
+  await input.type('/he');
+  assert.equal(input.popup()['aria-busy'], false);
+  assert.equal(input.popup().children[0].length, 1);
+  assert.equal(input.requests.length, 1);
+  input.dispose();
+});
+
+test('Chinese composition keeps the slash catalog request alive and reuses its result', async () => {
+  const input = await inputHarness(true);
+  await input.type('/');
+  input.composition(true);
+  await input.type('/示例');
+  assert.equal(input.popup(), undefined);
+  assert.equal(input.requests.length, 1);
+  assert.equal(input.requests[0].signal.aborted, false);
+  input.requests[0].resolve(catalog);
+  await tick();
+  input.composition(false);
+  input.popup();
+  assert.equal(input.popup()['aria-busy'], false);
+  assert.equal(input.popup().children[0].length, 1);
+  assert.equal(input.requests.length, 1);
+  input.dispose();
+});
 
 test('unmounting during the debounce period prevents the request', async () => {
   const input = await inputHarness(true);
@@ -210,10 +254,22 @@ test('file search finishes after blur and does not reopen until the user types',
   input.dispose();
 });
 
-test('changing the query and unmounting still cancel pending requests', async () => {
+test('closing slash suggestions cancels their request and reopening fetches a fresh catalog', async () => {
   const input = await inputHarness();
   await input.type('/');
+  await input.type('普通消息');
+  assert.equal(input.requests[0].signal.aborted, true);
   await input.type('/demo');
+  assert.equal(input.requests.length, 2);
+  assert.equal(input.requests[1].signal.aborted, false);
+  input.dispose();
+  assert.equal(input.requests[1].signal.aborted, true);
+});
+
+test('changing the file query and unmounting still cancel pending requests', async () => {
+  const input = await inputHarness();
+  await input.type('@a');
+  await input.type('@ab');
   assert.equal(input.requests[0].signal.aborted, true);
   assert.equal(input.requests[1].signal.aborted, false);
   input.dispose();
