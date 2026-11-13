@@ -49,6 +49,11 @@ export function fileSuggestions(result: WorkspaceEntries): ChatCommandSuggestion
   }));
 }
 
+export function fileSearchPattern(query: string): string {
+  if (!query.trim() || ['*', '?', '[', '/'].some(character => query.includes(character))) return query;
+  return `*${query}*`;
+}
+
 export function applySuggestion(text: string, trigger: ChatCommandTrigger, item: ChatCommandSuggestion) {
   const replacement = item.value;
   return {

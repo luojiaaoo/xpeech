@@ -4,6 +4,37 @@ import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
 
+test('file search treats invalid patterns as empty results and preserves other request errors', async () => {
+  let response = Response.json({ detail: 'Invalid glob pattern' }, { status: 422 });
+  let expired = 0;
+  let cancel = false;
+  const context = vm.createContext({
+    Headers, FormData, URLSearchParams, Event,
+    window: { dispatchEvent() { expired++; } },
+    fetch: async () => {
+      if (cancel) throw new DOMException('Aborted', 'AbortError');
+      return response;
+    },
+  });
+  const module = new vm.SourceTextModule(stripTypeScriptTypes(
+    readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'),
+  ), { context });
+  await module.link(() => { throw new Error('Only type imports expected'); });
+  await module.evaluate();
+  const api = module.namespace as { setEmbeddedJWT: Function; chatCommandApi: { searchFiles: Function } };
+  api.setEmbeddedJWT('business.jwt.signature');
+  const result = await api.chatCommandApi.searchFiles('foo**bar');
+  assert.equal(result.entries.length, 0);
+  assert.equal(result.truncated, false);
+  for (const status of [401, 403, 422, 500]) {
+    response = Response.json({ detail: 'Request failed' }, { status });
+    await assert.rejects(api.chatCommandApi.searchFiles('report'), /Request failed/);
+  }
+  assert.equal(expired, 1);
+  cancel = true;
+  await assert.rejects(api.chatCommandApi.searchFiles('report'), { name: 'AbortError' });
+});
+
 test('each session chat uses its own WebSocket while HTTP APIs retain their authentication', async () => {
   const calls: { url: string; init: RequestInit }[] = [];
   const sockets: FakeWebSocket[] = [];

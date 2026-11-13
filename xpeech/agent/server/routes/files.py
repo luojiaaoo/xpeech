@@ -1,5 +1,6 @@
-from typing import Annotated
+from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import Annotated
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -47,31 +48,30 @@ async def search_workspace_files(
     user_id: Annotated[str, Depends(authenticated_user_id)],
     query: Annotated[str, Query(min_length=1, max_length=512)],
 ):
-    """Return up to 100 native glob matches inside the authenticated user's workspace."""
+    """Match entry names in the user's workspace, pruning internal directories before descent."""
     workspace = await _user_workspace(user_id)
     if not query.strip():
         return {"entries": [], "truncated": False}
     relative = Path(query)
     if relative.is_absolute() or ".." in relative.parts:
         raise HTTPException(403, "Search path is outside the workspace")
-    if any(part.casefold() in SEARCH_EXCLUDED_NAMES for part in relative.parts):
-        return {"entries": [], "truncated": False}
-
+    pattern = query.casefold()
     entries = []
-    seen = set()
-    try:
-        async for path in workspace.glob(query, case_sensitive=False):
-            if path == workspace or path in seen or not await _search_path_allowed(path, workspace):
+    async for directory, dirs, files in workspace.walk(top_down=True, follow_symlinks=False):
+        # 原地修改 dirs，让 walk 跳过这些目录及其全部子项。
+        dirs[:] = [name for name in dirs if name.casefold() not in SEARCH_EXCLUDED_NAMES]
+        for name in dirs + files:
+            if name.casefold() in SEARCH_EXCLUDED_NAMES or not fnmatchcase(name.casefold(), pattern):
+                continue
+            path = directory / name
+            if not await _search_path_allowed(path, workspace):
                 continue
             is_directory = await path.is_dir()
             if not is_directory and not await path.is_file():
                 continue
-            seen.add(path)
             entries.append({"name": path.name, "path": path.relative_to(workspace).as_posix(), "is_directory": is_directory})
             if len(entries) > 100:
                 return {"entries": entries[:100], "truncated": True}
-    except ValueError:
-        raise HTTPException(422, "Invalid glob pattern") from None
     return {"entries": entries, "truncated": False}
 
 

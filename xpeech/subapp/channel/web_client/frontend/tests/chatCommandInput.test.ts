@@ -37,10 +37,10 @@ async function inputHarness(manualTimers = false) {
   let cursor = 0;
   let value = '';
   let pendingEffects: Function[] = [];
-  const requests: { query?: string; signal: AbortSignal; resolve: Function }[] = [];
-  function pending(signal: AbortSignal, query?: string) {
+  const requests: { query?: string; path?: string; signal: AbortSignal; resolve: Function }[] = [];
+  function pending(signal: AbortSignal, query?: string, path?: string) {
     return new Promise((resolve, reject) => {
-      requests.push({ query, signal, resolve });
+      requests.push({ query, path, signal, resolve });
       signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
     });
   }
@@ -80,6 +80,7 @@ async function inputHarness(manualTimers = false) {
     './api': { chatCommandApi: {
       catalog: (signal: AbortSignal) => pending(signal),
       searchFiles: (query: string, signal: AbortSignal) => pending(signal, query),
+      files: (path: string, query: string, signal: AbortSignal) => pending(signal, query, path),
     } },
     './WorkspaceFileTree': { default: 'FileTree' },
   };
@@ -132,6 +133,24 @@ async function inputHarness(manualTimers = false) {
 
 const catalog = { commands: [{ name: 'help', description: '帮助' }], skills: [{ name: 'demo', description: '示例' }] };
 
+test('typing @ immediately lists first-level entries and allows selecting a folder', async () => {
+  const input = await inputHarness(true);
+  await input.type('@');
+  input.advance(0);
+  assert.equal(input.requests.length, 1);
+  assert.equal(input.requests[0].path, '');
+  assert.equal(input.requests[0].query, '');
+  input.requests[0].resolve({ entries: [
+    { name: 'docs', path: 'docs', is_directory: true },
+    { name: 'README.md', path: 'README.md', is_directory: false },
+  ], truncated: false });
+  await tick();
+  assert.equal(input.popup()['aria-busy'], false);
+  input.sender().onKeyDown({ key: 'Enter', nativeEvent: {}, preventDefault() {} });
+  assert.equal(input.sender().value, '@"docs/" ');
+  input.dispose();
+});
+
 for (const prefix of ['@', '/']) {
   test(`${prefix} lookup waits 500ms after the final keystroke`, async () => {
     const input = await inputHarness(true);
@@ -144,7 +163,7 @@ for (const prefix of ['@', '/']) {
     assert.equal(input.requests.length, 0);
     input.advance(1);
     assert.equal(input.requests.length, 1);
-    if (prefix === '@') assert.equal(input.requests[0].query, 'abc');
+    if (prefix === '@') assert.equal(input.requests[0].query, '*abc*');
     input.dispose();
   });
 }

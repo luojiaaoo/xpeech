@@ -318,7 +318,8 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .sender-wrap .ant-sender { text-align: left; box-shadow: 0 8px 32px #1f23291a; border-color: #d9dce3; }
 .sender-wrap .ant-sender-content { padding: 8px 10px; }
 .chat-command-input { position: relative; text-align: left; }
-.chat-command-input-prefix { display: flex; align-items: center; gap: 2px; }
+.chat-command-input-prefix { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.chat-command-input-prefix > .ant-btn { width: 28px; height: 24px; padding: 0; }
 .chat-command-file-picker { position: absolute; z-index: 21; bottom: calc(100% + 8px); left: 0; width: min(420px, 100%); border: 1px solid #e1e3e8; border-radius: 10px; background: #fff; box-shadow: 0 6px 24px #1f232926; overflow: hidden; }
 .chat-command-file-picker-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; color: #646b78; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
 .workspace-file-tree { max-height: min(360px, 45dvh); padding: 8px; overflow: auto; overscroll-behavior: contain; }

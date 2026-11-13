@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applySuggestion, chatCommandTrigger, fileSuggestions, insertFileReference, slashSuggestions } from '../src/chatCommandSuggestions.ts';
+import { applySuggestion, chatCommandTrigger, fileSearchPattern, fileSuggestions, insertFileReference, slashSuggestions } from '../src/chatCommandSuggestions.ts';
 
 const catalog = {
   commands: [{ name: 'help', description: '查看指令' }, { name: 'clear', description: '清空上下文' }],
   skills: [{ name: 'code-review', description: '检查代码' }, { name: '中文 技能', description: '中文描述' }],
 };
+
+test('plain filename keywords become contains patterns while explicit patterns stay intact', () => {
+  assert.equal(fileSearchPattern('report'), '*report*');
+  assert.equal(fileSearchPattern('工作 文档'), '*工作 文档*');
+  assert.equal(fileSearchPattern('README.md'), '*README.md*');
+  assert.equal(fileSearchPattern('bb'), '*bb*');
+  for (const query of ['', ' ', '*.py', '**/report*', 'docs/*.md', 'report?.txt', '[ab].py', 'docs/report', '/etc/passwd', '../other']) {
+    assert.equal(fileSearchPattern(query), query);
+  }
+});
 
 test('commands appear only for a slash at the very beginning; body slashes offer skills', () => {
   for (const [text, expected] of [

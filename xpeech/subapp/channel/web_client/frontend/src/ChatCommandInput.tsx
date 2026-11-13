@@ -4,7 +4,7 @@ import { Sender } from '@ant-design/x';
 import { Button } from 'antd';
 import { CloseOutlined, CodeOutlined, FileOutlined, FolderOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { chatCommandApi } from './api';
-import { applySuggestion, chatCommandTrigger, fileSuggestions, insertFileReference, slashSuggestions } from './chatCommandSuggestions';
+import { applySuggestion, chatCommandTrigger, fileSearchPattern, fileSuggestions, insertFileReference, slashSuggestions } from './chatCommandSuggestions';
 import type { ChatCommandSuggestion } from './chatCommandSuggestions';
 import type { ChatCommandCatalog } from './types';
 import WorkspaceFileTree from './WorkspaceFileTree';
@@ -49,10 +49,6 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
     setError('');
     setTruncated(false);
     if (!lookup) { catalog.current = null; return; }
-    if (lookup.kind === 'file' && !lookup.query.trim()) {
-      setResolvedKey(`${triggerKey}:${retry}`);
-      return;
-    }
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
@@ -62,7 +58,9 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
           catalog.current = data;
           setChoices(slashSuggestions(lookup, data));
         } else {
-          const data = await chatCommandApi.searchFiles(lookup.query, controller.signal);
+          const data = lookup.query.trim()
+            ? await chatCommandApi.searchFiles(fileSearchPattern(lookup.query), controller.signal)
+            : await chatCommandApi.files('', '', controller.signal);
           if (controller.signal.aborted) return;
           setChoices(fileSuggestions(data));
           setTruncated(data.truncated);
@@ -72,7 +70,7 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
       } finally {
         if (!controller.signal.aborted) setResolvedKey(`${triggerKey}:${retry}`);
       }
-    }, SEARCH_DEBOUNCE_MS);
+    }, lookup.kind === 'file' && !lookup.query.trim() ? 0 : SEARCH_DEBOUNCE_MS);
     return () => { window.clearTimeout(timer); controller.abort(); };
   // Query changes and unmount cancel requests; hiding the popup on blur does not.
   }, [triggerKey, retry]);
@@ -194,7 +192,7 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
             {busy ? <div className="chat-command-suggestions-status" role="status">正在加载…</div> : null}
             {error ? <div className="chat-command-suggestions-status" role="status">{error} <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => setRetry(count => count + 1)}>重试</button></div> : null}
             {!busy && !error && !choices.length ? <div className="chat-command-suggestions-status">{
-              trigger.kind === 'file' && !trigger.query.trim() ? '输入通配符搜索，如 *.py；**/report* 搜索各级目录' : `没有匹配的${trigger.kind === 'file' ? '文件或文件夹' : '候选项'}`
+              trigger.kind === 'file' && !trigger.query.trim() ? '输入文件名搜索' : `没有匹配的${trigger.kind === 'file' ? '文件或文件夹' : '候选项'}`
             }</div> : null}
             {truncated ? <div className="chat-command-suggestions-status">仅显示前 100 项，请继续输入筛选</div> : null}
           </div>

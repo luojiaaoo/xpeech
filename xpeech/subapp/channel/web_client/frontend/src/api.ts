@@ -129,9 +129,14 @@ export const historyApi = {
 
 export const chatCommandApi = {
   catalog: (signal?: AbortSignal) => request<ChatCommandCatalog>('/api/chat_command', { signal }),
-  searchFiles: (query: string, signal?: AbortSignal) => request<WorkspaceEntries>(
-    `/api/files/search?${new URLSearchParams({ query })}`, { signal },
-  ),
+  searchFiles: async (query: string, signal?: AbortSignal): Promise<WorkspaceEntries> => {
+    try {
+      return await request<WorkspaceEntries>(`/api/files/search?${new URLSearchParams({ query })}`, { signal });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Invalid glob pattern') return { entries: [], truncated: false };
+      throw error;
+    }
+  },
   files: (path: string, query: string, signal?: AbortSignal, offset = 0) => request<WorkspaceEntries>(
     `/api/files/list?${new URLSearchParams({ path, query, ...(offset ? { offset: String(offset) } : {}) })}`, { signal },
   ),
