@@ -320,8 +320,8 @@ def build_file_tools(workspace: Path, max_result_chars: int = 10_000):
         if match is None:
             raise ValueError(_not_found_msg(old_text, content, path))
         if count > 1 and not replace_all:
-            return (
-                f"Warning: old_text appears {count} times. "
+            raise ValueError(
+                f"old_text appears {count} times. "
                 "Provide more context to make it unique, or set replace_all=true."
             )
 

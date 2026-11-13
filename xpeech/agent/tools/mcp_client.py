@@ -73,6 +73,10 @@ class _MCPRegistrationRetiredError(RuntimeError):
     pass
 
 
+class MCPToolError(RuntimeError):
+    """MCP 调用失败，供统一执行器记录失败状态。"""
+
+
 def _sanitize_name(name: str) -> str:
     return _SANITIZE_RE.sub("_", re.sub(r"[^a-zA-Z0-9_-]", "_", name)).strip("_")
 
@@ -354,6 +358,7 @@ def _render_mcp_result(result: Any) -> str | list[dict[str, Any]]:
 
     if is_error:
         messages.insert(0, {"type": "text", "text": "(MCP tool returned an error)"})
+        raise MCPToolError("\n".join(message["text"] for message in messages if message["type"] == "text"))
 
     if all(message["type"] == "text" for message in messages):
         return "\n".join(message["text"] for message in messages)
@@ -520,12 +525,12 @@ class MCPServerRegistration:
                 await self._ensure_session_locked()
                 session = self._session
                 if session is None or self._retired:
-                    return "(MCP server is temporarily unavailable)"
+                    raise MCPToolError("MCP server is temporarily unavailable")
                 # Reserve this session under the lifecycle lock so a rebuild
                 # cannot close it between validation and the actual tool call.
                 self._active_calls += 1
         except _MCPRegistrationRetiredError:
-            return "(MCP server is temporarily unavailable)"
+            raise MCPToolError("MCP server is temporarily unavailable") from None
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -534,7 +539,7 @@ class MCPServerRegistration:
                 self.config.server_name,
                 exc,
             )
-            return "(MCP server is temporarily unavailable)"
+            raise MCPToolError("MCP server is temporarily unavailable") from None
 
         try:
             result = await asyncio.wait_for(
@@ -543,6 +548,8 @@ class MCPServerRegistration:
             )
             await _refresh_session_expiry(self)
             return _render_mcp_result(result)
+        except MCPToolError:
+            raise
         except TimeoutError:
             logger.warning(
                 "MCP tool '{}.{}' timed out after {}s",
@@ -550,7 +557,7 @@ class MCPServerRegistration:
                 tool_name,
                 self.config.tool_timeout,
             )
-            return f"(MCP tool call timed out after {self.config.tool_timeout}s)"
+            raise TimeoutError(f"MCP tool call timed out after {self.config.tool_timeout}s") from None
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if task is not None and task.cancelling() > 0:
@@ -560,7 +567,7 @@ class MCPServerRegistration:
                 self.config.server_name,
                 tool_name,
             )
-            return "(MCP tool call was cancelled)"
+            raise MCPToolError("MCP tool call was cancelled") from None
         except Exception as exc:
             if _is_session_terminated(exc):
                 logger.warning(
@@ -572,7 +579,7 @@ class MCPServerRegistration:
                     if self._session is session:
                         self._mark_unavailable(exc)
                         await self._close_connection()
-                return "(MCP server is temporarily unavailable)"
+                raise MCPToolError("MCP server is temporarily unavailable") from None
             logger.exception(
                 "MCP tool '{}.{}' failed: {}: {}",
                 self.config.server_name,
@@ -580,7 +587,7 @@ class MCPServerRegistration:
                 type(exc).__name__,
                 exc,
             )
-            return f"(MCP tool call failed: {type(exc).__name__})"
+            raise MCPToolError(f"MCP tool call failed: {type(exc).__name__}") from None
         finally:
             async with self._lock:
                 self._active_calls -= 1

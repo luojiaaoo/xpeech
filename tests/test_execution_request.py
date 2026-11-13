@@ -16,8 +16,8 @@ from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.ask_user_question import QuestionArgs, ask_user_question
 from xpeech.agent.tools.execution_request import (
-    EXECUTION_REQUEST,
     EXECUTION_PARAMETERS,
+    EXECUTION_REQUEST,
     ExecutionDecision,
     build_execution_request_tool,
     execution_request_schema,
@@ -668,6 +668,22 @@ async def test_existing_ask_user_question_still_returns_user_answer(tmp_path, ex
             await answer(reply)
         elif event["event"] == "tool_call_result":
             assert json.loads(json.loads(event["context"])["result"]) == reply
+            assert json.loads(event["context"])["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_timeout_is_failed_and_cleans_up_waiter(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop_module, "USER_TIMEOUT", 0.01)
+    current_provider = provider()
+    current_provider.register_function_tool(ask_user_question)
+    call = ToolCallRequest(id="ask-timeout", name="ask_user_question", arguments={"question": '{"fields":[]}'})
+    events = [event async for event in stream_for(tmp_path, current_provider, [call], [])]
+    payload = json.loads(events[-1]["context"])
+    assert events[-1]["event"] == "tool_call_result"
+    assert payload["tool_call_id"] == "ask-timeout"
+    assert payload["success"] is False
+    assert "timeout" in payload["result"]
+    assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
 
 
 def test_placeholder_schema_keeps_original_constraints_and_hides_injected_context():

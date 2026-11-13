@@ -270,6 +270,20 @@ async def test_web_search_empty_results(engine, monkeypatch, mock_http):
 
 
 @pytest.mark.asyncio
+async def test_baidu_library_swallowed_error_and_empty_result_count_as_success(tmp_path, monkeypatch):
+    from baidusearch import baidusearch
+
+    def offline(*_args, **_kwargs):
+        raise OSError("offline")
+
+    monkeypatch.setattr(baidusearch.session, "get", offline)
+    executor = ToolExecutor(tmp_path, 10000, {"baidu_search": web.baidu_search})
+    result = await executor.execute_one(ToolCallRequest(id="baidu-empty", name="baidu_search", arguments={"query": "test"}))
+    assert result.succeeded is True
+    assert "未找到" in result.value
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("content", [
     b"<!doctype html><html><body>Bing homepage</body></html>",
     b"<html><body>Verify you are human</body></html>",

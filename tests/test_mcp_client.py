@@ -1,4 +1,3 @@
-from unittest.mock import AsyncMock
 import asyncio
 import json
 import os
@@ -8,14 +7,92 @@ import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from xpeech.agent.server.context import lark_user_access_token_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
+from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import mcp_client
 from xpeech.config.settings import MCPServerSettings, ToolConfig, settings
+from xpeech.provider.schema import ToolCallRequest
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("behavior,expected", [
+    ("isError", "remote failure"),
+    ("is_error", "remote failure"),
+    ("timeout", "timed out"),
+    ("server_cancel", "was cancelled"),
+    ("transport", "ValueError"),
+    ("connect", "temporarily unavailable"),
+    ("retired", "temporarily unavailable"),
+])
+async def test_mcp_failures_reach_executor_as_failed_results(tmp_path, monkeypatch, behavior, expected):
+    registration = mcp_client.create_mcp_registration(
+        server_name="errors", url="https://example.test/mcp", workspace=tmp_path,
+        skills_loader=SkillsLoader(tmp_path), tool_timeout=0.01,
+    )
+
+    async def remote_call(_name, arguments):
+        if behavior in {"isError", "is_error"}:
+            return {behavior: True, "content": [{"type": "text", "text": "remote failure"}],
+                    "structuredContent": {"detail": "bad arguments"}}
+        if behavior == "timeout":
+            await asyncio.Event().wait()
+        if behavior == "server_cancel":
+            raise asyncio.CancelledError()
+        raise ValueError("secret-authorization-token")
+
+    if behavior == "connect":
+        monkeypatch.setattr(registration, "_connect", AsyncMock(side_effect=ConnectionError("secret-authorization-token")))
+    else:
+        registration._session = SimpleNamespace(call_tool=remote_call)
+    registration._retired = behavior == "retired"
+
+    async def call_mcp() -> str:
+        """Call the remote MCP tool."""
+        return await registration.call_tool("echo", {})
+
+    try:
+        executor = ToolExecutor(tmp_path, 10000, {"call_mcp": call_mcp})
+        result = await executor.execute_one(ToolCallRequest(id="mcp-error", name="call_mcp", arguments={}))
+        assert result.succeeded is False
+        assert result.call.id == "mcp-error"
+        assert expected in result.value
+        assert "secret-authorization-token" not in result.value
+        if behavior in {"isError", "is_error"}:
+            assert "bad arguments" in result.value
+        assert registration._active_calls == 0
+    finally:
+        await registration.aclose()
+
+
+@pytest.mark.asyncio
+async def test_mcp_caller_cancellation_still_propagates_and_releases_call(tmp_path):
+    started = asyncio.Event()
+
+    async def remote_call(_name, arguments):
+        started.set()
+        await asyncio.Event().wait()
+
+    registration = mcp_client.create_mcp_registration(
+        server_name="cancel", url="https://example.test/mcp", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
+    )
+    registration._session = SimpleNamespace(call_tool=remote_call)
+    task = asyncio.create_task(registration.call_tool("echo", {}))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert registration._active_calls == 0
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await registration.aclose()
 
 
 @pytest.fixture
@@ -1158,7 +1235,8 @@ async def test_terminated_connection_reconnects_on_next_call_without_replaying_f
 
     monkeypatch.setattr(registration, "_connect", fake_connect)
 
-    assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
+    with pytest.raises(mcp_client.MCPToolError, match="temporarily unavailable"):
+        await registration.call_tool("echo", {})
     assert reconnect_attempts == 0
     assert failed_calls == [{}]
     assert await registration.call_tool("echo", {}) == "reconnected"
@@ -1257,7 +1335,8 @@ async def test_new_discovery_waits_for_failed_connection_cleanup_without_being_c
         await asyncio.sleep(0)
         assert not discovery.done()
         release_cleanup.set()
-        assert await asyncio.wait_for(call, 1) == "(MCP server is temporarily unavailable)"
+        with pytest.raises(mcp_client.MCPToolError, match="temporarily unavailable"):
+            await asyncio.wait_for(call, 1)
         bindings = await asyncio.wait_for(discovery, 1)
         assert [binding.func.__name__ for binding in bindings] == ["mcp_demo_echo"]
         assert registration.get_status()["status"] == "ready"
@@ -1365,7 +1444,8 @@ async def test_closing_session_cancels_background_discovery(tmp_path, monkeypatc
     assert registration.get_status()["status"] == "disconnected"
     assert registration.connection_scope not in mcp_client.MCP_CONNECTIONS
     assert await asyncio.wait_for(registration.start_tool_discovery(), timeout=0.2) == []
-    assert await registration.call_tool("echo", {}) == "(MCP server is temporarily unavailable)"
+    with pytest.raises(mcp_client.MCPToolError, match="temporarily unavailable"):
+        await registration.call_tool("echo", {})
     assert registration._owner_task is None
 
 
@@ -1387,7 +1467,8 @@ async def test_late_failure_from_old_session_does_not_close_new_session(tmp_path
     new_session = object()
     registration._session = new_session
     fail.set()
-    assert await call == "(MCP server is temporarily unavailable)"
+    with pytest.raises(mcp_client.MCPToolError, match="temporarily unavailable"):
+        await call
     assert registration._session is new_session
     assert registration._last_error is None
     await registration.aclose()

@@ -3,9 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import filesystem
 from xpeech.agent.tools.filesystem import EditFileArgs, ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import get_mime_type
+from xpeech.provider.schema import ToolCallRequest
 
 
 @pytest.mark.parametrize(
@@ -129,6 +131,23 @@ async def test_edit_file_preserves_line_endings_and_symlink(tmp_path):
 
     assert path.read_bytes() == b"first=new\r\nsecond=old\r\n"
     assert (tmp_path / "alias.txt").is_symlink()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replace_all", [False, True])
+async def test_edit_file_ambiguous_match_reports_failure_unless_replace_all(tmp_path, replace_all):
+    path = tmp_path / "notes.txt"
+    path.write_text("old\nold\n")
+    *_, edit = build_file_tools(tmp_path)
+    executor = ToolExecutor(tmp_path, 10000, {"edit_file": edit})
+    result = await executor.execute_one(ToolCallRequest(
+        id="edit", name="edit_file",
+        arguments={"path": path.name, "old_text": "old", "new_text": "new", "replace_all": replace_all},
+    ))
+    assert result.succeeded is replace_all
+    assert path.read_text() == ("new\nnew\n" if replace_all else "old\nold\n")
+    if not replace_all:
+        assert "old_text appears 2 times" in result.value
 
 
 @pytest.mark.asyncio

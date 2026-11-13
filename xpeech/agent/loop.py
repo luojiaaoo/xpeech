@@ -278,6 +278,7 @@ class AgentLoop:
                         await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
                         logger.info("User answered the question {}", question_event.answer)
                     except TimeoutError:
+                        success = False
                         logger.warning("User timeout answering the question")
                     finally:
                         self.SESSION_QUESTION_EVENT.pop(session_key, None)
