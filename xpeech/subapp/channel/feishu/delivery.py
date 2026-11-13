@@ -21,7 +21,7 @@ class ToolCardProgress:
     card_id: str | None = None
     sequence: int = 0
     header: dict[str, Any] = field(default_factory=dict)
-    failed: bool = False
+    success: bool | None = None
 
 
 @dataclass
@@ -47,11 +47,9 @@ class FeishuDeliveryMixin:
         call_id = payload["tool_call_id"]
         state = progress.cards.get(call_id)
         if state is None:
-            await self._create_tool_progress(to, {
-                "tool_call_id": call_id, "name": payload["name"], "arguments": {},
-            }, progress, result=payload)
             return
 
+        success = payload["success"]
         text = self._format_tool_result(payload["result"])
         message, _ = self._format_chat_event(
             ChatEvent(event=ChatEventType.TOOL_CALL, context=text), title=state.title,
@@ -62,43 +60,37 @@ class FeishuDeliveryMixin:
         await self.channel.update_card_element_content(
             state.card_id, "main", panel["elements"][0]["content"], sequence=state.sequence,
         )
-        failed = payload.get("success") is False
-        if failed != state.failed:
+        if success != state.success:
             state.sequence += 1
             await self.channel.patch_card_element(
-                state.card_id, "panel", {"header": self._tool_progress_header(state.header, failed)},
+                state.card_id, "panel", {"header": self._tool_progress_header(state.header, success)},
                 sequence=state.sequence,
             )
-            state.failed = failed
+            state.success = success
 
     async def _create_tool_progress(
-        self, to: str, call: dict[str, Any], progress: ToolProgress, *, result: dict[str, Any] | None = None,
+        self, to: str, call: dict[str, Any], progress: ToolProgress,
     ) -> None:
         state = ToolCardProgress(title=self._format_tool_title(call))
         progress.cards[call["tool_call_id"]] = state
-        text = self._format_tool_result(result["result"]) if result is not None else "执行中…"
         message, _ = self._format_chat_event(
-            ChatEvent(event=ChatEventType.TOOL_CALL, context=text), title=state.title,
+            ChatEvent(event=ChatEventType.TOOL_CALL, context="执行中…"), title=state.title,
         )
         card = message["card"]
         panel = card["body"]["elements"][0]
         state.header = panel["header"]
-        state.failed = result is not None and result.get("success") is False
-        if state.failed:
-            panel["header"] = self._tool_progress_header(state.header, True)
         state.card_id = await self.channel.create_card_instance(card)
         send_result = await self.channel.send_card_by_reference(to, state.card_id)
         self._ensure_send_success(send_result, operation="send tool card")
 
     @staticmethod
-    def _tool_progress_header(header: dict[str, Any], failed: bool) -> dict[str, Any]:
-        if not failed:
-            return header
+    def _tool_progress_header(header: dict[str, Any], success: bool) -> dict[str, Any]:
+        color = "green" if success else "red"
         result = dict(header)
         for name in ("title", "expanded_title"):
             if name in header:
                 title = escape(header[name]["content"], quote=False)
-                result[name] = {"tag": "markdown", "content": f'<font color="red">{title}</font>'}
+                result[name] = {"tag": "markdown", "content": f'<font color="{color}">{title}</font>'}
         return result
 
     async def finish_tool_progress(self, progress: ToolProgress) -> None:

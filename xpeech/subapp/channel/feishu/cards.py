@@ -239,7 +239,7 @@ def _build_feishu_confirm_card(
 
     success = tool_result["success"] if tool_result is not None else None
     if tool_result is not None:
-        value = tool_result.get("result")
+        value = tool_result["result"]
         result_text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
         elements.append({
             "tag": "markdown",

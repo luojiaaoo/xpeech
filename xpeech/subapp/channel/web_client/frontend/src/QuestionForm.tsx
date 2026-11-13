@@ -154,7 +154,7 @@ export default function QuestionForm({ context, sessionId, readOnly = false, too
           </div>
           <Drawer placement="right" size="large" title={failed ? '执行异常' : execution ? '执行结果' : '确认详情'} open={viewing}
             onClose={() => setViewing(false)}>
-            <pre className={`question-result${failed ? ' question-result-error' : succeeded ? ' question-result-success' : ''}`}>{resultText}</pre>
+            <pre className={`question-result${failed ? ' question-result-error' : ''}`}>{resultText}</pre>
           </Drawer>
         </>
       ) : readOnly ? <Typography.Text type="secondary">历史提问仅供查看</Typography.Text> : (

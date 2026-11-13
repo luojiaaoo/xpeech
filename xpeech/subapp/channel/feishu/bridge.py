@@ -178,11 +178,8 @@ class FeishuBridge(
                         tool_progress = ToolProgress()
                     await self.send_tool_progress(chat_id, event, tool_progress)
                     if event.event == ChatEventType.TOOL_CALL_RESULT:
-                        try:
-                            payload = json.loads(event.context)
-                            tool_call_id = payload["tool_call_id"]
-                        except (ValueError, TypeError, KeyError):
-                            tool_call_id = None
+                        payload = json.loads(event.context)
+                        tool_call_id = payload["tool_call_id"]
                         if tool_call_id in tool_question_cards:
                             await self._finish_confirmation_card(tool_question_cards.pop(tool_call_id), payload)
                     continue

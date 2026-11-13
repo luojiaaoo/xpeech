@@ -259,6 +259,11 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .tool-card-failed .tool-card-chevron,
 .tool-card-failed .tool-card-section-label,
 .tool-card-failed .tool-card-section pre { color: #cf1322; }
+.tool-card-succeeded { background: #f6ffed; border-color: #b7eb8f; }
+.tool-card-succeeded .tool-status-dot { background: #389e0d; }
+.tool-card-succeeded .tool-card-name,
+.tool-card-succeeded .tool-card-status,
+.tool-card-succeeded .tool-card-chevron { color: #389e0d; }
 .chat-status-text { display: flex; align-items: center; gap: 7px; color: #8a94a3; font-size: 13px; overflow-wrap: anywhere; }
 .chat-file-card { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; width: 480px; max-width: 100%; padding: 16px; border: 1px solid #dce5f0; border-radius: 12px; background: #fff; box-sizing: border-box; }
 .chat-file-icon { padding: 12px; border-radius: 10px; background: #eef4ff; color: #3370ff; font-size: 24px; }
@@ -1329,4 +1334,4 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .question-confirm-failed { background: #fff2f0; border-color: #ffccc7; }
 .question-confirm-failed .ant-typography, .question-result-error { color: #cf1322; }
 .question-confirm-succeeded { background: #f6ffed; border-color: #b7eb8f; }
-.question-confirm-succeeded .ant-typography, .question-result-success { color: #389e0d; }
+.question-confirm-succeeded .ant-typography { color: #389e0d; }

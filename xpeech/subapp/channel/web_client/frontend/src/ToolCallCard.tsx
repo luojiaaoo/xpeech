@@ -14,13 +14,14 @@ function formatValue(value: unknown): string {
 
 export default function ToolCallCard({ tool }: { tool: ToolCallInfo }) {
   // TODO(remove-legacy-tool-events): 旧结果缺少 success 时保持默认完成样式；清理后已完成的调用必须有 success。
-  const failed = tool.status === 'completed' && tool.success === false;
+  const success = tool.status === 'completed' ? tool.success : undefined;
+  const failed = success === false;
   const status = failed ? '执行失败' : tool.status === 'running' ? '执行中'
     : tool.status === 'completed' ? '已完成' : '状态未确认';
   return (
     <section className="tool-execution" aria-label={`工具 ${tool.name}`}>
       <div className="tool-execution-label">执行过程</div>
-      <details className={`tool-card tool-card-${tool.status}${failed ? ' tool-card-failed' : ''}`}>
+      <details className={`tool-card tool-card-${tool.status}${failed ? ' tool-card-failed' : success === true ? ' tool-card-succeeded' : ''}`}>
         <summary>
           {tool.status === 'running'
             ? <LoadingOutlined spin className="tool-status-icon" />
