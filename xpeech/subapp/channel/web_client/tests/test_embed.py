@@ -209,7 +209,7 @@ def test_business_jwt_is_forwarded_unchanged_for_chat_answers_and_files(client, 
 @pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync", "/api/answer_question"])
 @pytest.mark.parametrize("session_id", [None, "", "default", "invalid", "018f0000-0000-4000-8000-000000000001", SESSION_ID.upper()])
 def test_embedded_requests_require_canonical_uuidv7(client, monkeypatch, path, session_id):
-    monkeypatch.setattr(proxy.httpx, "AsyncClient", Mock(side_effect=AssertionError("Must not contact backend")))
+    monkeypatch.setattr(httpx, "AsyncClient", Mock(side_effect=AssertionError("Must not contact backend")))
     headers = bearer()
     if session_id is None:
         headers.pop("x-session-id")
@@ -254,7 +254,7 @@ def test_jwt_must_use_a_configured_custom_channel(client, channel):
     {"sub": "alice", "exp": 9999999999, "nbf": 9999999998},
 ])
 def test_invalid_claims_are_rejected_on_every_request(client, monkeypatch, path, claims):
-    monkeypatch.setattr(proxy.httpx, "AsyncClient", Mock(side_effect=AssertionError("Must not contact backend")))
+    monkeypatch.setattr(httpx, "AsyncClient", Mock(side_effect=AssertionError("Must not contact backend")))
     assert send(client, path, bearer(signed_identity(claims=claims))).status_code == 401
 
 

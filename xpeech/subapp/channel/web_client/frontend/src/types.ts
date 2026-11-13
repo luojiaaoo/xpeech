@@ -205,3 +205,7 @@ export interface ChatMessage {
   historical?: boolean;
   questionToolId?: string;
 }
+export type ChatCommandChoice = { name: string; description: string; path?: string };
+export type ChatCommandCatalog = { commands: ChatCommandChoice[]; skills: ChatCommandChoice[] };
+export type WorkspaceEntry = { name: string; path: string; is_directory: boolean };
+export type WorkspaceEntries = { entries: WorkspaceEntry[]; truncated: boolean };

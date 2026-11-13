@@ -1,5 +1,7 @@
 import type {
   AppConfig,
+  ChatCommandCatalog,
+  WorkspaceEntries,
   ChatEvent,
   ChatHistory,
   ChatHistorySession,
@@ -122,6 +124,16 @@ export const historyApi = {
   get: (sessionId: string, signal?: AbortSignal) => request<ChatHistory>(
     `/api/history/sessions/${encodeURIComponent(sessionId)}`,
     { signal },
+  ),
+};
+
+export const chatCommandApi = {
+  catalog: (signal?: AbortSignal) => request<ChatCommandCatalog>('/api/chat_command', { signal }),
+  searchFiles: (query: string, signal?: AbortSignal) => request<WorkspaceEntries>(
+    `/api/files/search?${new URLSearchParams({ query })}`, { signal },
+  ),
+  files: (path: string, query: string, signal?: AbortSignal, offset = 0) => request<WorkspaceEntries>(
+    `/api/files/list?${new URLSearchParams({ path, query, ...(offset ? { offset: String(offset) } : {}) })}`, { signal },
   ),
 };
 

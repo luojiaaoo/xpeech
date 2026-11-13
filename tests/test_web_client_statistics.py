@@ -62,7 +62,7 @@ class FakeAsyncClient:
 
 def test_web_client_proxies_authenticated_statistics_requests(tmp_path: Path, monkeypatch):
     FakeAsyncClient.requests = []
-    monkeypatch.setattr(proxy_routes.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",

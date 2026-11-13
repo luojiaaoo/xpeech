@@ -88,6 +88,17 @@ def _passthrough_headers(jwt_token: str, sender_name: str | None = None) -> dict
     return headers
 
 
+async def proxy_get(
+    auth: BackendAuthParams,
+    url: str,
+    *,
+    params: list[tuple[str, str]],
+) -> httpx.Response:
+    """Send a buffered GET and return the backend response without changing its status."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        return await client.get(url, headers=_backend_headers(auth), params=params)
+
+
 async def open_chat_stream(
     user_id: str,
     sender_name: str,

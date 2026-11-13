@@ -58,6 +58,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
     './ToolCallCard': { default: 'ToolCallCard' },
     './ProcessPanel': { default: 'ProcessPanel' },
     './FileCard': { default: 'FileCard' },
+    './ChatCommandInput': { default: Sender },
     './pendingUserPrefix': { readPendingUserPrefix: () => null, subscribePendingUserPrefix() {}, takePendingUserPrefix: () => null },
   };
   const { outputText } = ts.transpileModule(readFileSync(new URL('../src/ChatPage.tsx', import.meta.url), 'utf8'), {

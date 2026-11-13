@@ -21,6 +21,7 @@ import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTu
 import ToolCallCard from './ToolCallCard';
 import ProcessPanel from './ProcessPanel';
 import FileCard from './FileCard';
+import ChatCommandInput from './ChatCommandInput';
 import {
   readPendingUserPrefix,
   subscribePendingUserPrefix,
@@ -480,7 +481,7 @@ export default function ChatPage({
             )}
           />
         ) : null}
-        <Sender
+        <ChatCommandInput
           ref={senderRef}
           value={value}
           onChange={setValue}
@@ -488,7 +489,7 @@ export default function ChatPage({
           onCancel={() => { void stop(); }}
           loading={loading || historyLoading || stopping}
           header={header}
-          placeholder={embedded ? '输入消息…' : '输入消息，Enter 发送，Shift + Enter 换行'}
+          placeholder="输入消息，Enter 发送，Shift + Enter 换行；输入 / 搜索技能或指令，@ 搜索文件"
           autoSize={{ minRows: 1, maxRows: 6 }}
           prefix={<Button type="text" icon={<PaperClipOutlined />} onClick={() => setAttachmentsOpen((open) => !open)} />}
           onPasteFile={(pasted) => { setFiles((current) => [...current, ...Array.from(pasted)]); setAttachmentsOpen(true); }}

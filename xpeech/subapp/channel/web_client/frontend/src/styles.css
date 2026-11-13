@@ -317,6 +317,25 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .pending-user-prefix-toggle { height: auto; margin-top: 4px; padding: 0; }
 .sender-wrap .ant-sender { text-align: left; box-shadow: 0 8px 32px #1f23291a; border-color: #d9dce3; }
 .sender-wrap .ant-sender-content { padding: 8px 10px; }
+.chat-command-input { position: relative; text-align: left; }
+.chat-command-input-prefix { display: flex; align-items: center; gap: 2px; }
+.chat-command-file-picker { position: absolute; z-index: 21; bottom: calc(100% + 8px); left: 0; width: min(420px, 100%); border: 1px solid #e1e3e8; border-radius: 10px; background: #fff; box-shadow: 0 6px 24px #1f232926; overflow: hidden; }
+.chat-command-file-picker-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; color: #646b78; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
+.workspace-file-tree { max-height: min(360px, 45dvh); padding: 8px; overflow: auto; overscroll-behavior: contain; }
+.workspace-file-tree .ant-tree-title { overflow-wrap: anywhere; }
+.workspace-file-tree-status { display: flex; align-items: center; gap: 8px; padding: 12px 6px; color: #8a8f9b; font-size: 12px; }
+.chat-command-suggestions { position: absolute; z-index: 20; bottom: calc(100% + 8px); left: 0; width: 100%; border: 1px solid #e1e3e8; border-radius: 10px; background: #fff; box-shadow: 0 6px 24px #1f232926; overflow: hidden; }
+.chat-command-suggestions-title, .chat-command-suggestions-group { padding: 10px 12px 6px; color: #8a8f9b; font-size: 12px; }
+.chat-command-suggestions-list { max-height: min(300px, 40dvh); overflow-y: auto; padding: 0 6px 6px; overscroll-behavior: contain; }
+.chat-command-suggestions-group { padding: 8px 6px 4px; }
+.chat-command-suggestion { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 7px 8px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+.chat-command-suggestion.selected { background: #f3f4f6; }
+.chat-command-suggestion-icon { flex-shrink: 0; color: #8a8f9b; }
+.chat-command-suggestion-icon.skill, .chat-command-suggestion-icon.directory { color: #1677ff; }
+.chat-command-suggestion-name { flex-shrink: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.chat-command-suggestion-description { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8a8f9b; }
+.chat-command-suggestions-status { padding: 14px 8px; color: #8a8f9b; font-size: 12px; overflow-wrap: anywhere; }
+.chat-command-suggestions-hint { padding: 7px 12px; border-top: 1px solid #f0f0f0; color: #8a8f9b; font-size: 11px; }
 .sender-footer { display: flex; min-height: 24px; margin-top: 4px; align-items: center; justify-content: center; gap: 8px; }
 .sender-footer .sender-tip { min-width: 0; font-size: 11px; text-align: left; }
 .question-form { width: 500px; max-width: 100%; padding: 16px; background: #f7f9fc; border-radius: 12px; }

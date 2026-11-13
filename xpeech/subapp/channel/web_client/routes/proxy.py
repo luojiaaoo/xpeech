@@ -3,7 +3,7 @@ import binascii
 import codecs
 import json
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from types import SimpleNamespace
 from typing import Annotated, Any
 from urllib.parse import unquote, urlsplit
@@ -31,12 +31,32 @@ from .....exceptions import PathProtectionError
 from .....utils.channel_jwt import UserJWTAuth
 from .....utils.ids import validate_session_id
 from .....utils.internal_jwt import create_internal_access_token
-from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file
+from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file, proxy_get
 from ..backend import chat_status, open_chat, open_chat_sync, stop_chat, submit_question
 from ..dao import User
 from ..history import JsonlEventHistoryRepository
 
 UserDependency = Callable[..., Awaitable[User | UserJWTAuth] | User | UserJWTAuth]
+
+
+def _proxy_response(
+    upstream: httpx.Response,
+    response_headers: Mapping[str, str] | None = None,
+) -> Response:
+    """Convert a buffered backend response at the web route boundary."""
+    headers = {
+        name: upstream.headers[name]
+        for name in ("cache-control", "content-disposition")
+        if name in upstream.headers
+    }
+    if response_headers:
+        headers.update({name.lower(): value for name, value in response_headers.items()})
+    return Response(
+        upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type"),
+        headers=headers,
+    )
 
 
 class _SSEEventCollector:
@@ -502,6 +522,18 @@ def create_proxy_router(
             media_type=upstream.headers.get("content-type"),
         )
 
+    @router.get("/chat_command")
+    @router.get("/files/list")
+    @router.get("/files/search")
+    async def proxy_chat_command_choices(request: Request, backend_auth: RequestBackendAuth):
+        endpoint = request.url.path.removeprefix("/api/")
+        upstream = await proxy_get(
+            backend_auth,
+            f"{backend_url.rstrip('/')}/{endpoint}",
+            params=request.query_params.multi_items(),
+        )
+        return _proxy_response(upstream, {"Cache-Control": "no-store"})
+
     @router.get("/files")
     async def proxy_file(
         path: str,
@@ -533,25 +565,11 @@ def create_proxy_router(
         upstream_url = str(URL(backend_url) / "statistics")
         if statistics_path:
             upstream_url = f"{upstream_url}/{statistics_path}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            upstream = await client.get(
-                upstream_url,
-                headers={
-                    "authorization": f"Bearer {create_internal_access_token()}",
-                },
-                params=request.query_params.multi_items(),
-            )
-
-        headers = {}
-        if cache_control := upstream.headers.get("cache-control"):
-            headers["Cache-Control"] = cache_control
-        if content_disposition := upstream.headers.get("content-disposition"):
-            headers["Content-Disposition"] = content_disposition
-        return Response(
-            upstream.content,
-            status_code=upstream.status_code,
-            media_type=upstream.headers.get("content-type"),
-            headers=headers,
+        upstream = await proxy_get(
+            BackendJWTParams(jwt_token=create_internal_access_token()),
+            upstream_url,
+            params=request.query_params.multi_items(),
         )
+        return _proxy_response(upstream)
 
     return router
