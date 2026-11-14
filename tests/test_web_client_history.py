@@ -110,21 +110,22 @@ def login(client):
     ).status_code == 200
 
 
-def send_local_chat(client, text="你好"):
-    return client.post(
-        "/api/chat",
-        headers={"x-session-id": SESSION_ID},
-        data={"content": json.dumps([{"text": text}])},
-        files={"files": ("报告.txt", b"attachment", "text/plain")},
-    )
+def send_local_chat(client, text="你好", **extra):
+    payload = websocket_message(SESSION_ID, text, files=[{
+        "name": "报告.txt", "type": "text/plain", "data": base64.b64encode(b"attachment").decode(),
+    }])
+    payload.update(extra)
+    with client.websocket_connect("/api/chat/ws") as socket:
+        socket.send_json(payload)
+        return receive_websocket_turn(socket)
 
 
 def test_logged_in_user_can_load_and_continue_the_same_session(history_client):
     client, history_path, opener = history_client
     login(client)
 
-    assert send_local_chat(client).status_code == 200
-    assert send_local_chat(client, "继续").status_code == 200
+    assert send_local_chat(client)[-1]["type"] == "done"
+    assert send_local_chat(client, "继续")[-1]["type"] == "done"
     assert [call.kwargs["session_id"] for call in opener.await_args_list] == [SESSION_ID, SESSION_ID]
 
     sessions = client.get("/api/history/sessions")
@@ -152,7 +153,7 @@ def test_logged_in_user_can_load_and_continue_the_same_session(history_client):
 def test_embedded_and_login_history_use_their_verified_channels(history_client):
     client, history_path, _ = history_client
     login(client)
-    assert send_local_chat(client).status_code == 200
+    assert send_local_chat(client)[-1]["type"] == "done"
     token = jwt.encode(
         {"sub": "admin", "exp": datetime.now(UTC) + timedelta(minutes=1)},
         SECRET,
@@ -170,11 +171,7 @@ def test_embedded_and_login_history_use_their_verified_channels(history_client):
     assert embedded_sessions.json() == []
     assert client.get(f"/api/history/sessions/{SESSION_ID}", headers=headers).json()["events"] == []
 
-    assert client.post(
-        "/api/chat",
-        headers=headers,
-        data={"content": json.dumps([{"text": "嵌入消息"}])},
-    ).status_code == 200
+    assert send_local_chat(client, "嵌入消息", token=token, sender_name="embedded-user", files=[])[-1]["type"] == "done"
     assert client.get("/api/history/sessions", headers=headers).json()[0]["preview"] == "嵌入消息"
     assert client.get(f"/api/history/sessions/{SESSION_ID}", headers=headers).json()["events"][0] == {
         "event": "user", "context": "嵌入消息",

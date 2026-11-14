@@ -27,7 +27,7 @@ ORIGIN = "https://portal.example.test"
 SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 NEXT_SESSION_ID = "018f0000-0000-7000-8000-000000000002"
 EMBED_PATHS = [
-    "/api/auth/embed", "/api/chat", "/api/chat_sync", "/api/answer_question", "/api/files",
+    "/api/auth/embed", "/api/chat_sync", "/api/answer_question", "/api/files",
     "/api/history/sessions", f"/api/history/sessions/{SESSION_ID}",
 ]
 
@@ -65,7 +65,7 @@ def bearer(token=None, **extra):
 
 
 def send(client, path, headers):
-    if path in ("/api/chat", "/api/chat_sync"):
+    if path == "/api/chat_sync":
         return client.post(path, headers=headers, data={"content": "[]"})
     if path == "/api/answer_question":
         return client.post(path, headers=headers, data={"answer": "yes"})
@@ -101,8 +101,8 @@ def test_embed_validation_is_stateless_and_does_not_create_users_or_sessions(cli
     assert identity.headers["cache-control"] == "no-store"
     assert "set-cookie" not in identity.headers
     for sender in ("张三", "李四"):
-        assert send(client, "/api/chat", {**headers, "x-sender-name": quote(sender, safe="")}).status_code == 200
-        assert stream.chat.await_args.args[:2] == (BackendJWTParams(token), sender)
+        assert send(client, "/api/chat_sync", {**headers, "x-sender-name": quote(sender, safe="")}).status_code == 200
+        assert stream.sync.await_args.args[:2] == (BackendJWTParams(token), sender)
     assert send(client, "/api/answer_question", headers).status_code == 200
     assert send(client, "/api/files", headers).status_code == 200
     for mocked in (answer, file):
@@ -145,7 +145,7 @@ def test_explicit_jwt_does_not_reuse_local_account_or_admin_cookie(client):
 
 @pytest.mark.parametrize("origin", [ORIGIN, "https://other.test", "https://unconfigured.test", "http://localhost:3000"])
 def test_cors_and_embedding_work_without_origin_configuration(client, origin):
-    for path, method in (("/api/auth/embed", "GET"), ("/api/chat", "POST"), ("/api/admin/users/1", "PATCH")):
+    for path, method in (("/api/auth/embed", "GET"), ("/api/chat_sync", "POST"), ("/api/admin/users/1", "PATCH")):
         response = client.options(path, headers={
             "Origin": origin, "Access-Control-Request-Method": method,
             "Access-Control-Request-Headers": "content-type,authorization,x-session-id,x-sender-name",
@@ -201,12 +201,11 @@ def test_business_jwt_is_forwarded_unchanged_for_chat_answers_and_files(client, 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: async_client(**kwargs, transport=httpx.MockTransport(backend)))
     for path in EMBED_PATHS[1:]:
         assert send(client, path, headers).status_code == 200
-    assert [request.url.path for request in calls] == ["/chat", "/chat_sync", "/answer_question", "/files"]
+    assert [request.url.path for request in calls] == ["/chat_sync", "/answer_question", "/files"]
     assert unquote(calls[0].headers["x-sender-name"]) == "张三"
-    assert calls[0].headers["x-session-id"] == SESSION_ID
 
 
-@pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync", "/api/answer_question"])
+@pytest.mark.parametrize("path", ["/api/chat_sync", "/api/answer_question"])
 @pytest.mark.parametrize("session_id", [None, "", "default", "invalid", "018f0000-0000-4000-8000-000000000001", SESSION_ID.upper()])
 def test_embedded_requests_require_canonical_uuidv7(client, monkeypatch, path, session_id):
     monkeypatch.setattr(httpx, "AsyncClient", Mock(side_effect=AssertionError("Must not contact backend")))
@@ -222,30 +221,32 @@ def test_two_embedded_conversations_keep_distinct_ids(client, monkeypatch):
     stream = stream_mock(monkeypatch)
     headers = bearer()
     for session_id in (SESSION_ID, SESSION_ID, NEXT_SESSION_ID):
-        assert send(client, "/api/chat", {**headers, "x-session-id": session_id}).status_code == 200
+        with client.websocket_connect("/api/chat/ws") as socket:
+            socket.send_json({
+                "type": "start", "session_id": session_id, "content": "[]",
+                "token": headers["Authorization"].removeprefix("Bearer "),
+                "sender_name": headers["x-sender-name"],
+            })
+            assert socket.receive_json()["type"] == "event"
+            assert socket.receive_json()["type"] == "done"
     assert [call.kwargs["session_id"] for call in stream.chat.await_args_list] == [SESSION_ID, SESSION_ID, NEXT_SESSION_ID]
 
 
-@pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync"])
-def test_embedded_sender_name_is_required(client, monkeypatch, path):
+def test_embedded_sender_name_is_required(client, monkeypatch):
     stream = stream_mock(monkeypatch)
     headers = bearer()
     headers.pop("x-sender-name")
-    assert send(client, path, headers).status_code == 422
+    assert send(client, "/api/chat_sync", headers).status_code == 422
     stream.chat.assert_not_awaited()
     stream.sync.assert_not_awaited()
 
 
-@pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync"])
 @pytest.mark.parametrize("sender", ["", "%20", "%FF"])
-def test_embedded_sender_name_is_validated(client, monkeypatch, sender, path):
+def test_embedded_sender_name_is_validated(client, monkeypatch, sender):
     stream = stream_mock(monkeypatch)
     headers = bearer()
-    if sender is None:
-        headers.pop("x-sender-name")
-    else:
-        headers["x-sender-name"] = sender
-    assert send(client, path, headers).status_code == 422
+    headers["x-sender-name"] = sender
+    assert send(client, "/api/chat_sync", headers).status_code == 422
     stream.chat.assert_not_awaited()
     stream.sync.assert_not_awaited()
 
@@ -288,13 +289,13 @@ def test_jwt_expiration_is_checked_again_for_each_request(client, monkeypatch):
     expires_at = int((datetime.now(UTC) + timedelta(seconds=60)).timestamp())
     headers = bearer(signed_identity(claims={"sub": "alice", "exp": expires_at}))
     assert client.get("/api/auth/embed", headers=headers).status_code == 200
-    assert send(client, "/api/chat", headers).status_code == 200
+    assert send(client, "/api/chat_sync", headers).status_code == 200
     after_expiration = datetime.fromtimestamp(expires_at + 1, UTC)
     monkeypatch.setattr(jwt.api_jwt, "datetime", SimpleNamespace(now=lambda tz: after_expiration))
     for path in EMBED_PATHS:
         assert send(client, path, headers).status_code == 401
-    assert stream.chat.await_count == 1
-    assert stream.sync.await_count == 0
+    assert stream.chat.await_count == 0
+    assert stream.sync.await_count == 1
 
 
 def test_global_algorithm_is_used_but_no_new_lifetime_or_token_is_issued(client, monkeypatch):
@@ -337,14 +338,14 @@ def test_local_cookie_login_signs_backend_jwt_with_explicit_session(client, monk
     async_client = httpx.AsyncClient
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: async_client(**kwargs, transport=httpx.MockTransport(backend)))
     headers = {"x-channel-name": "crm", "x-session-id": session_id}
-    for path in ("/api/chat", "/api/chat_sync", "/api/answer_question"):
+    for path in ("/api/chat_sync", "/api/answer_question"):
         assert send(client, path, headers).status_code == 200
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert client.post("/api/auth/logout").status_code == 204
     assert client.get("/api/auth/me").status_code == 401
 
 
-@pytest.mark.parametrize("path", ["/api/chat", "/api/chat_sync", "/api/answer_question"])
+@pytest.mark.parametrize("path", ["/api/chat_sync", "/api/answer_question"])
 @pytest.mark.parametrize("session_id", [SESSION_ID, None, "", "not-a-uuid"])
 def test_local_cookie_requests_accept_uuidv7_sessions(client, monkeypatch, path, session_id):
     monkeypatch.setitem(

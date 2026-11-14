@@ -62,7 +62,7 @@ PDF 使用浏览器内置阅读器，图片按可用空间缩放，SVG 作为图
 无需后端或登录；也可通过 `npm run demo:preview -- "其他目录"` 指定目录。
 演示文件接口仅在此命令启动的本机服务器上启用，不接入正式应用。
 
-普通页面和嵌入页面的 `/api/chat`、`/api/chat_sync`、`/api/chat/stop` 和 `/api/answer_question`
+普通页面和嵌入页面的 `/api/chat_sync`、`/api/chat/stop` 和 `/api/answer_question`
 都必须显式提供规范的小写 UUIDv7 `x-session-id`，省略、空值或格式非法均返回 422。
 WebSocket `/api/chat/ws` 的启动消息必须提供同样格式的 `session_id`。
 Web 客户端不设置默认会话；新会话由前端生成 UUIDv7，同一对话内 ID 保持不变，
@@ -324,7 +324,7 @@ HTTP 错误会拒绝 Promise；HTTP 200 返回的 `error` 事件保留在 `event
 未初始化、认证失败、会话切换、页面重载或销毁时，相应 Promise 会拒绝；JWT 自动续期不切换会话。
 双方都校验 `postMessage` 的 origin 和窗口来源，请求和响应还使用 `request_id`、`session_id` 关联。
 
-Web Client 同时提供 `POST /api/chat_sync`，与 `/api/chat` 使用相同的 multipart 字段
+Web Client 提供 `POST /api/chat_sync`，使用 multipart 字段
 （`content`、`session_metadata`、`files`）和认证 / 会话请求头，
 成功时返回完整 JSON 事件数组；嵌入请求必须提供合法 UUIDv7 的 `x-session-id` 和非空的 `x-sender-name`。
 

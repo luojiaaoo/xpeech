@@ -257,11 +257,6 @@ def test_oauth_login_creates_local_account_by_default(monkeypatch, tmp_path, loc
         assert response.status_code == 200
         assert chat.await_args.args[1] == expected
         assert json.loads(chat.await_args.args[3]) == {"employee_name": "Backend Alice", "trace": "sync"}
-        response = client.post("/api/chat", data={"content": "[]", "session_metadata": '{"trace":"http"}'}, headers={
-            "x-session-id": "018f0000-0000-7000-8000-000000000001",
-        })
-        assert response.status_code == 200
-        assert json.loads(stream.await_args.args[3]) == {"employee_name": "Backend Alice", "trace": "http"}
         with client.websocket_connect("/api/chat/ws") as socket:
             socket.send_json({
                 "type": "start", "session_id": "018f0000-0000-7000-8000-000000000002", "content": "[]",

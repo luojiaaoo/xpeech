@@ -275,8 +275,6 @@ def test_custom_channel_is_used_for_http_websocket_jwt_and_isolated_history(chan
     login(client)
     assert client.get("/api/files", params={"path": "report.txt"}).content == b"report"
     assert client.post("/api/answer_question", data={"answer": "yes"}, headers={"x-session-id": SESSION_ID}).status_code == 200
-    assert client.post("/api/chat", data={"content": "[]"}, headers={"x-session-id": SESSION_ID}).status_code == 200
-    assert client.get("/api/history/sessions").json()[0]["channel"] == "crm"
     with client.websocket_connect("/api/chat/ws") as socket:
         socket.send_json({"type": "start", "session_id": SESSION_ID, "content": "[]"})
         assert socket.receive_json()["type"] == "event"
@@ -288,7 +286,7 @@ def test_custom_channel_is_used_for_http_websocket_jwt_and_isolated_history(chan
     login(client, "web_client")
     assert client.get("/api/history/sessions").json() == []
     login(client)
-    assert len(client.get(f"/api/history/sessions/{SESSION_ID}").json()["events"]) == 4
+    assert len(client.get(f"/api/history/sessions/{SESSION_ID}").json()["events"]) == 2
 
 
 @pytest.mark.parametrize("oauth_display_type", ["qrcode", "link"], indirect=True)

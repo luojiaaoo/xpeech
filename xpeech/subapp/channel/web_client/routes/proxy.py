@@ -3,7 +3,7 @@ import binascii
 import codecs
 import json
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from types import SimpleNamespace
 from typing import Annotated, Any
 from urllib.parse import unquote, urlsplit
@@ -23,7 +23,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response
 from loguru import logger
 from yarl import URL
 
@@ -218,10 +218,8 @@ def create_proxy_router(
             media_type=upstream.headers.get("content-type"),
         )
 
-    @router.post("/chat")
     @router.post("/chat_sync")
-    async def proxy_chat(
-        request: Request,
+    async def proxy_chat_sync(
         content: Annotated[
             str,
             Form(
@@ -264,80 +262,18 @@ def create_proxy_router(
                     ),
                 )
             )
-        synchronous = request.url.path.endswith("/chat_sync")
-        if synchronous:
-            # 同步执行：后端为每次调用生成独立会话，不传 x-session-id，返回完整 JSON 事件数组。
-            upstream = await open_chat_sync(
-                backend_auth,
-                sender_name,
-                content,
-                json.dumps(metadata, ensure_ascii=False),
-                str(URL(backend_url) / "chat_sync"),
-                files=upload_data,
-            )
-            return Response(
-                upstream.content,
-                status_code=upstream.status_code,
-                media_type=upstream.headers.get("content-type"),
-            )
-
-        chat_stream = await open_chat(
+        upstream = await open_chat_sync(
             backend_auth,
             sender_name,
             content,
             json.dumps(metadata, ensure_ascii=False),
-            str(URL(backend_url) / "chat"),
+            str(URL(backend_url) / "chat_sync"),
             files=upload_data,
-            session_id=session_id,
         )
-        upstream = chat_stream.response
-        if upstream.status_code >= 400:
-            try:
-                body = await upstream.aread()
-            finally:
-                await chat_stream.aclose()
-            return Response(
-                body,
-                status_code=upstream.status_code,
-                media_type=upstream.headers.get("content-type"),
-            )
-
-        history_user_id, history_channel = _history_identity(user)
-        user_event = _user_history_event(content, files)
-        collector = _SSEEventCollector()
-
-        async def stream() -> AsyncIterator[bytes]:
-            try:
-                async for chunk in upstream.aiter_bytes():
-                    try:
-                        collector.feed(chunk)
-                    except (UnicodeDecodeError, ValueError):
-                        logger.exception("Web event history could not parse an SSE chunk")
-                    if await request.is_disconnected():
-                        break
-                    yield chunk
-            finally:
-                try:
-                    collector.finish()
-                except (UnicodeDecodeError, ValueError):
-                    logger.exception("Web event history could not finish SSE parsing")
-                try:
-                    await chat_stream.aclose()
-                finally:
-                    try:
-                        await history.append(
-                            history_user_id,
-                            session_id,
-                            [user_event, *collector.events],
-                            channel=history_channel,
-                        )
-                    except Exception:  # noqa: BLE001 - 历史写入失败不能中断已成功的聊天响应
-                        logger.exception("Web event history could not be saved")
-
-        return StreamingResponse(
-            stream(),
-            media_type=upstream.headers.get("content-type", "text/event-stream"),
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        return Response(
+            upstream.content,
+            status_code=upstream.status_code,
+            media_type=upstream.headers.get("content-type"),
         )
 
     @router.websocket("/chat/ws")

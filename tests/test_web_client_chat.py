@@ -1,14 +1,12 @@
 import json
 from importlib import import_module
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from xpeech.subapp.channel.helper import ChatStream
 
 pytestmark = pytest.mark.usefixtures("postgres_database")
 
@@ -19,28 +17,19 @@ create_app = web_client_app.create_app
 
 
 @pytest.mark.parametrize("text", ["hello", "hello::请严格以JSON格式回复::"])
-@pytest.mark.parametrize("endpoint", ["chat", "chat_sync"])
 @pytest.mark.parametrize("status_code", [200, 400, 409])
 def test_web_client_forwards_chat_metadata_without_channel_injection(
-    tmp_path: Path, monkeypatch, text, endpoint, status_code,
+    tmp_path: Path, monkeypatch, text, status_code,
 ):
-    body = (
-        b'[{"event":"assistant","context":"hello"}]' if endpoint == "chat_sync"
-        else b'data: {"event":"command","context":"/new"}\n\n'
-    )
-    media_type = "application/json" if endpoint == "chat_sync" else "text/event-stream"
+    body = b'[{"event":"assistant","context":"hello"}]'
+    media_type = "application/json"
     response = httpx.Response(
         status_code,
         content=body,
         headers={"Content-Type": media_type},
     )
-    backend_client = SimpleNamespace(aclose=AsyncMock())
-    if endpoint == "chat_sync":
-        opener = AsyncMock(return_value=response)
-        monkeypatch.setattr(proxy_routes, "open_chat_sync", opener)
-    else:
-        opener = AsyncMock(return_value=ChatStream(response, backend_client))
-        monkeypatch.setattr(proxy_routes, "open_chat", opener)
+    opener = AsyncMock(return_value=response)
+    monkeypatch.setattr(proxy_routes, "open_chat_sync", opener)
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
@@ -49,7 +38,7 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
         )
     )
     schema = app.openapi()
-    form = schema["paths"][f"/api/{endpoint}"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+    form = schema["paths"]["/api/chat_sync"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
     form_fields = schema["components"]["schemas"][form["$ref"].rsplit("/", 1)[1]]["properties"]
     assert "json_output" not in form_fields
 
@@ -59,7 +48,7 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
             json={"user_id": "admin", "password": "admin123456"},
         ).status_code == 200
         proxied = client.post(
-            f"/api/{endpoint}",
+            "/api/chat_sync",
             headers={"x-session-id": "018f0000-0000-7000-8000-000000000001"},
             data={
                 "content": json.dumps([{"text": text}], ensure_ascii=False),
@@ -72,15 +61,11 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
     assert proxied.status_code == status_code
     assert proxied.content == body
     assert proxied.headers["content-type"].startswith(media_type)
-    assert opener.await_args.args[4] == f"http://backend.test/{endpoint}"
+    assert opener.await_args.args[4] == "http://backend.test/chat_sync"
     assert "json_output" not in opener.await_args.kwargs
     assert json.loads(opener.await_args.args[2]) == [{"text": text}]
     assert json.loads(opener.await_args.args[3]) == {
         "channel": "spoofed",
         "source": "browser",
     }
-    if endpoint == "chat_sync":
-        # 同步执行由后端生成独立会话，不透传会话 ID。
-        assert "session_id" not in opener.await_args.kwargs
-    else:
-        backend_client.aclose.assert_awaited_once()
+    assert "session_id" not in opener.await_args.kwargs

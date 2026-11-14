@@ -34,6 +34,8 @@ def test_chat_control_proxy_forwards_verified_identity_session_and_response(
         "http://backend.test", current_user, current_user,
         JsonlEventHistoryRepository(tmp_path), "test_cookie",
     ))
+    assert "/api/chat" not in app.openapi()["paths"]
+    assert TestClient(app).post("/api/chat").status_code == 404
     requests = []
     method = "POST" if action == "stop" else "GET"
     payload = {"stopped" if action == "stop" else "active": True} if upstream_status == 200 else {"detail": "Expired token"}
@@ -65,7 +67,7 @@ def test_chat_control_proxy_forwards_verified_identity_session_and_response(
             invalid_headers = {} if invalid_id is None else {"x-session-id": invalid_id}
             assert client.get("/api/chat/status", headers=invalid_headers).status_code == 422
     assert len(requests) == 1
-    for path in ("/api/chat", "/api/chat_sync", "/api/chat/stop", "/api/answer_question"):
+    for path in ("/api/chat_sync", "/api/chat/stop", "/api/answer_question"):
         parameters = app.openapi()["paths"][path]["post"]["parameters"]
         session_header = next(parameter for parameter in parameters if parameter["name"] == "x-session-id")
         assert session_header["required"] is True

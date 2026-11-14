@@ -5,7 +5,7 @@
 - 默认地址：`http://<host>:7878`，下文以 `http://localhost:7878` 举例；实际地址以部署配置为准。
 - 健康检查：`GET /health`，无需认证，返回纯文本 `ok`。
 - OpenAPI 文档：`GET /docs`（Swagger UI），也可使用 `/redoc`、`/openapi.json`。
-- 本文接口面向服务到服务调用。Web 客户端的 `/api/chat`、`/api/answer_question`、`/api/files` 等是独立的代理接口：普通页面使用登录 Cookie，嵌入页面使用业务系统签发的用户 JWT；不能直接按本文的 backend 地址调用这些代理路径。
+- 本文接口面向服务到服务调用。Web 客户端的 `/api/chat_sync`、`/api/answer_question`、`/api/files` 等是独立的代理接口：普通页面使用登录 Cookie，嵌入页面使用业务系统签发的用户 JWT；不能直接按本文的 backend 地址调用这些代理路径。
 - 网站嵌入、前端文件预览和窗口控制请参阅 [Web 客户端集成文档](../xpeech/subapp/channel/web_client/README.md)。嵌入模式使用自定义通道（例如 `crm`），不使用保留通道 `internal`、`web_client`、`feishu`。
 
 ---
