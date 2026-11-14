@@ -3,7 +3,7 @@ import json
 from copy import deepcopy
 from itertools import count
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from lark_channel import SendResult
@@ -14,12 +14,12 @@ from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.execution_request import ExecutionDecision, build_execution_request_tool
 from xpeech.provider.schema import ToolCallRequest
-from xpeech.subapp.channel.feishu import bridge as bridge_module
-from xpeech.subapp.channel.feishu import delivery
+from xpeech.subapp.channel.feishu import conversation as conversation_module
+from xpeech.subapp.channel.feishu import delivery, tools
 from xpeech.subapp.channel.feishu.bridge import FeishuBridge
 from xpeech.subapp.channel.feishu.channel import XpeechFeishuChannel
-from xpeech.subapp.channel.feishu.delivery import ToolProgress
 from xpeech.subapp.channel.feishu.formatting import OUTPUT_EVENT_TYPES
+from xpeech.subapp.channel.feishu.tools import ToolProgress
 from xpeech.subapp.channel.schema import ChatEvent, ChatEventType, Message, TextData
 from xpeech.utils.security.sandbox.schema import CommandResult
 
@@ -29,19 +29,17 @@ def tool_event(event_type, entries):
 
 
 def bridge_with_channel():
-    bridge = object.__new__(FeishuBridge)
-    bridge.chat_url = "http://backend.test"
-    bridge.session_update_message_id = {}
-    bridge.question_cards = {}
-    bridge.add_reaction = AsyncMock()
     card_ids = count()
-    bridge.channel = SimpleNamespace(
+    channel = SimpleNamespace(
+        on=MagicMock(),
         create_card_instance=AsyncMock(side_effect=lambda _card: f"card-{next(card_ids)}"),
         send_card_by_reference=AsyncMock(return_value=SendResult(success=True, message_id="message")),
         update_card_element_content=AsyncMock(),
         patch_card_element=AsyncMock(),
         finish_streaming_card=AsyncMock(),
     )
+    bridge = FeishuBridge("http://backend.test", "cli_test", "secret", channel=channel)
+    bridge.conversation.add_reaction = AsyncMock()
     return bridge
 
 
@@ -63,6 +61,7 @@ async def test_each_tool_has_its_own_card_and_result_updates_by_id(monkeypatch, 
     bridge = bridge_with_channel()
     channel = bridge.channel
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
 
     async def assistant_text():
         yield "continuing"
@@ -92,7 +91,7 @@ async def test_each_tool_has_its_own_card_and_result_updates_by_id(monkeypatch, 
             "tool_call_id": "fast", "name": "echo", "result": "second result", "success": True,
         })
 
-    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    monkeypatch.setattr(conversation_module, "iter_chat_events", events)
     await bridge.consume([message()])
     assert channel.create_card_instance.await_count == (4 if with_assistant else 3)
     for index, command in enumerate(["slow", "fast"]):
@@ -128,10 +127,11 @@ async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(mon
     }
     monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, output)
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     bridge = bridge_with_channel()
     progress = ToolProgress()
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [{"tool_call_id": "id", "name": "echo", "arguments": "a" * 30}]), progress)
-    await bridge.send_tool_progress(
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [{"tool_call_id": "id", "name": "echo", "arguments": "a" * 30}]), progress)
+    await bridge.tools.send_tool_progress(
         "chat",
         tool_event(
             ChatEventType.TOOL_CALL_RESULT,
@@ -162,6 +162,7 @@ async def test_rss_batch_results_are_escaped_before_card_updates(monkeypatch):
     bridge = bridge_with_channel()
     channel = bridge.channel
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     rss = '<?xml version="1.0"?><rss><channel><title>A &amp; B</title></channel></rss>'
 
     async def reject_raw_markup(_card_id, _element_id, content, *, sequence):
@@ -184,7 +185,7 @@ async def test_rss_batch_results_are_escaped_before_card_updates(monkeypatch):
             )
         yield ChatEvent(event=ChatEventType.ASSISTANT, context=assistant_text())
 
-    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    monkeypatch.setattr(conversation_module, "iter_chat_events", events)
     await bridge.consume([message()])
 
     updates = [call for call in channel.update_card_element_content.await_args_list if call.args[0] in {f"card-{i}" for i in range(10)}]
@@ -221,7 +222,7 @@ async def test_tool_card_stream_is_finished_when_consumption_fails_or_is_cancell
             await asyncio.Event().wait()
         raise RuntimeError("backend disconnected")
 
-    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    monkeypatch.setattr(conversation_module, "iter_chat_events", events)
     task = asyncio.create_task(bridge.consume([message()]))
     try:
         await asyncio.wait_for(waiting.wait(), timeout=1)
@@ -251,7 +252,7 @@ async def test_tool_card_finish_failure_does_not_interrupt_the_next_batch(monkey
             {"tool_call_id": "c", "name": "echo", "arguments": {}},
         ])
 
-    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    monkeypatch.setattr(conversation_module, "iter_chat_events", events)
     await bridge.consume([message()])
 
     assert bridge.channel.create_card_instance.await_count == 3
@@ -289,6 +290,7 @@ async def test_confirmation_cards_are_updated_by_tool_call_id_with_out_of_order_
     ])
     channel.update_card = AsyncMock(return_value=SendResult(success=True))
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
 
     async def events(*_args, **_kwargs):
         yield tool_event(ChatEventType.TOOL_CALL, [
@@ -307,7 +309,7 @@ async def test_confirmation_cards_are_updated_by_tool_call_id_with_out_of_order_
             "tool_call_id": "a", "name": "shell", "result": "A done", "success": True, "duration_seconds": 1,
         })
 
-    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    monkeypatch.setattr(conversation_module, "iter_chat_events", events)
     await bridge.consume([message()])
     updates = channel.update_card.await_args_list
     assert len(updates) == 2
@@ -320,7 +322,7 @@ async def test_confirmation_cards_are_updated_by_tool_call_id_with_out_of_order_
     for update in updates:
         buttons = update.args[1]["body"]["elements"][-1]["columns"]
         assert all(column["elements"][0]["disabled"] for column in buttons)
-    assert bridge.question_cards == {}
+    assert bridge.questions.question_cards == {}
     for call, call_id in zip(channel.send.await_args_list, ["b", "a"], strict=True):
         card = call.args[1]["card"]
         button = card["body"]["elements"][-1]["columns"][0]["elements"][0]
@@ -332,7 +334,7 @@ async def test_confirmation_cards_are_updated_by_tool_call_id_with_out_of_order_
 async def test_result_without_matching_call_does_not_create_a_card():
     bridge = bridge_with_channel()
     progress = ToolProgress()
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
         "tool_call_id": "unknown", "name": "shell", "result": "done", "success": True,
     }), progress)
     assert progress.cards == {}
@@ -347,13 +349,13 @@ async def test_result_without_matching_call_does_not_create_a_card():
 async def test_tool_results_require_current_protocol_fields(missing_field):
     bridge = bridge_with_channel()
     progress = ToolProgress()
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
         {"tool_call_id": "a", "name": "shell", "arguments": {}},
     ]), progress)
     result = {"tool_call_id": "a", "name": "shell", "result": "done", "success": True}
     del result[missing_field]
     with pytest.raises(KeyError, match=missing_field):
-        await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, result), progress)
+        await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, result), progress)
     bridge.channel.update_card_element_content.assert_not_awaited()
     bridge.channel.patch_card_element.assert_not_awaited()
 
@@ -362,13 +364,14 @@ async def test_tool_results_require_current_protocol_fields(missing_field):
 async def test_repeated_tool_result_replaces_matching_id_instead_of_appending(monkeypatch):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     progress = ToolProgress()
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
         {"tool_call_id": "a", "name": "shell", "arguments": {}},
         {"tool_call_id": "b", "name": "shell", "arguments": {}},
     ]), progress)
     for call_id, result in [("b", "old B"), ("a", "A"), ("b", "new B")]:
-        await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+        await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
             "tool_call_id": call_id, "name": "shell", "result": result, "duration_seconds": 0, "success": True,
         }), progress)
     content = bridge.channel.update_card_element_content.await_args.args[2]
@@ -383,18 +386,19 @@ async def test_repeated_tool_result_replaces_matching_id_instead_of_appending(mo
 async def test_result_colors_matching_title_and_preserves_folded_values(monkeypatch, expanded):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, {
         **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL], "expanded": expanded, "expanded_title": "收起工具结果",
     })
     progress = ToolProgress()
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
         {"tool_call_id": call_id, "name": "shell", "arguments": {
             "command": "<same>&", "execution_title": "相同标题", "execution_description": "相同说明",
         }} for call_id in ["a", "b"]
     ]), progress)
     original_cards = deepcopy([call.args[0] for call in bridge.channel.create_card_instance.await_args_list])
     for call_id, success in [("b", False), ("a", True)]:
-        await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+        await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
             "tool_call_id": call_id, "name": "shell", "result": "<output>&", "success": success,
         }), progress)
     updates = bridge.channel.update_card_element_content.await_args_list
@@ -416,7 +420,7 @@ async def test_result_colors_matching_title_and_preserves_folded_values(monkeypa
                     for name, heading in patch.args[2]["header"].items()}
     assert patches[1].args[2] == {"header": green_header}
     # 成功重试将对应标题改为绿色，不重建卡片或设置展开状态。
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
         "tool_call_id": "b", "name": "shell", "result": "recovered", "success": True,
     }), progress)
     assert bridge.channel.patch_card_element.await_args.args == (
@@ -430,14 +434,15 @@ async def test_result_colors_matching_title_and_preserves_folded_values(monkeypa
 async def test_failed_result_truncation_does_not_add_color_tags(monkeypatch):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, {
         **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL], "max_chars": 15,
     })
     progress = ToolProgress()
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
         {"tool_call_id": "a", "name": "shell", "arguments": {}},
     ]), progress)
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
         "tool_call_id": "a", "name": "shell", "result": "<&" * 20, "success": False,
     }), progress)
     assert bridge.channel.update_card_element_content.await_args.args[2] == "&lt;&amp;&lt;…"
@@ -449,13 +454,14 @@ async def test_failed_result_truncation_does_not_add_color_tags(monkeypatch):
 async def test_failed_tool_xml_code_keeps_fences_and_only_colors_its_title(monkeypatch):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     progress = ToolProgress()
     code = '```xml\n<root>&amp; <at id="all" /></root>\n```\n'
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
         {"tool_call_id": call_id, "name": "shell", "arguments": {}} for call_id in ["a", "b"]
     ]), progress)
     for call_id, success in [("a", False), ("b", True)]:
-        await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+        await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
             "tool_call_id": call_id, "name": "shell", "result": code + "正文 <outside/>", "success": success,
         }), progress)
     for update in bridge.channel.update_card_element_content.await_args_list:
@@ -469,13 +475,14 @@ async def test_failed_tool_xml_code_keeps_fences_and_only_colors_its_title(monke
 async def test_streamed_xml_code_is_preserved_across_split_fences_and_tags(monkeypatch):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
 
     async def chunks():
         for token in ["正文 <outside/>\n`", "``xml\n<root>&", "amp;</root>\n`", "``\n<outside/>"]:
             yield token
 
-    message, stream = bridge._format_chat_event(ChatEvent(event=ChatEventType.ASSISTANT, context=chunks()))
-    await bridge.send("chat", message, stream)
+    message, stream = bridge.formatter._format_chat_event(ChatEvent(event=ChatEventType.ASSISTANT, context=chunks()))
+    await bridge.delivery.send("chat", message, stream)
     updates = [call.args[2] for call in bridge.channel.update_card_element_content.await_args_list]
     prefix = "正文 &lt;outside/&gt;\n"
     assert updates == [
@@ -490,16 +497,17 @@ async def test_streamed_xml_code_is_preserved_across_split_fences_and_tags(monke
 async def test_truncated_tool_code_block_does_not_swallow_the_next_result(monkeypatch):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, {
         **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL], "max_result_chars": 20,
     })
     progress = ToolProgress()
     code = "```xml\n<root>" + "x" * 30 + "</root>\n```"
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
         {"tool_call_id": call_id, "name": "shell", "arguments": {}} for call_id in ["a", "b"]
     ]), progress)
     for call_id, result, success in [("a", code, True), ("b", "<error/>", False)]:
-        await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+        await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
             "tool_call_id": call_id, "name": "shell", "result": result, "success": success,
         }), progress)
     updates = bridge.channel.update_card_element_content.await_args_list
@@ -511,6 +519,7 @@ async def test_truncated_tool_code_block_does_not_swallow_the_next_result(monkey
 async def test_shell_command_results_color_matching_card_titles(tmp_path, monkeypatch):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
 
     async def run(command, **_kwargs):
         return (
@@ -541,7 +550,7 @@ async def test_shell_command_results_color_matching_card_titles(tmp_path, monkey
                 results[result["tool_call_id"]] = result["success"]
             yield ChatEvent(**event)
 
-    monkeypatch.setattr(bridge_module, "iter_chat_events", events)
+    monkeypatch.setattr(conversation_module, "iter_chat_events", events)
     await bridge.consume([message()])
 
     assert results == {"failed": False, "succeeded": True}
@@ -560,11 +569,12 @@ async def test_shell_command_results_color_matching_card_titles(tmp_path, monkey
 async def test_empty_tool_output_is_not_left_running(monkeypatch):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     progress = ToolProgress()
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
         {"tool_call_id": "empty", "name": "shell", "arguments": {}},
     ]), progress)
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
         "tool_call_id": "empty", "name": "shell", "result": "", "success": True,
     }), progress)
     assert bridge.channel.update_card_element_content.await_args.args[2] == "（无输出）"
@@ -575,12 +585,13 @@ async def test_empty_tool_output_is_not_left_running(monkeypatch):
 async def test_all_tools_show_unmodified_arguments_in_header_and_only_output_when_expanded(monkeypatch, tool_name):
     bridge = bridge_with_channel()
     monkeypatch.setattr(delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     progress = ToolProgress()
     arguments = {
         "command": "mkdir -p test", "timeout_ms": 10000,
         "execution_title": "创建 test 文件夹", "execution_description": "创建名为 test 的文件夹。",
     }
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL, [
         {"tool_call_id": "create-test", "name": tool_name, "arguments": arguments},
     ]), progress)
     card = bridge.channel.create_card_instance.await_args.args[0]
@@ -593,7 +604,7 @@ async def test_all_tools_show_unmodified_arguments_in_header_and_only_output_whe
     assert summary["elements"][0]["content"] == "执行中…"
     assert "execution_title" in title and "execution_description" in title
 
-    await bridge.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
+    await bridge.tools.send_tool_progress("chat", tool_event(ChatEventType.TOOL_CALL_RESULT, {
         "tool_call_id": "create-test", "name": tool_name, "result": "Exit code: 0", "success": True,
     }), progress)
     content = bridge.channel.update_card_element_content.await_args.args[2]

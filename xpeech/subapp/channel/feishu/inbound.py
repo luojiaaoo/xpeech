@@ -17,6 +17,7 @@ from lark_channel.api.contact.v3.model.get_user_request import GetUserRequest
 from loguru import logger
 
 from ..schema import FileData, Message, TextData
+from .channel import XpeechFeishuChannel
 from .config import FEISHU_CACHE_DIR, FEISHU_USER_CACHE_TTL_SECONDS
 
 
@@ -24,8 +25,11 @@ class UnsupportedFeishuMessageError(ValueError):
     """表示当前适配器不支持该飞书消息。"""
 
 
-class FeishuInboundMixin:
+class FeishuInbound:
     """解析发送者身份，并将飞书入站消息转换为统一格式。"""
+
+    def __init__(self, channel: XpeechFeishuChannel):
+        self.channel = channel
 
     @alru_cache(maxsize=2048, ttl=FEISHU_USER_CACHE_TTL_SECONDS)
     async def get_user_identity(self, open_id: str) -> tuple[str, str | None]:
@@ -51,7 +55,7 @@ class FeishuInboundMixin:
             )
         return employee_no, email
 
-    async def _parse_msg(self, inbound_msg: InboundMessage) -> Message:
+    async def parse_message(self, inbound_msg: InboundMessage) -> Message:
         timestamp = inbound_msg.create_time // 1000
 
         async def _save_resource(
