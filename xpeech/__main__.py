@@ -22,18 +22,21 @@ def main() -> None:
     parser.set_defaults(
         host="0.0.0.0",
         port=7878,
-        scheduler_url="http://127.0.0.1:8090",
+        feishu_url="http://127.0.0.1:8090",
     )
     subparsers = parser.add_subparsers(dest="service")
 
     api_parser = subparsers.add_parser("api", help="Run the Xpeech API service.")
     api_parser.add_argument("--host", default="0.0.0.0")
     api_parser.add_argument("--port", type=int, default=7878)
-    api_parser.add_argument("--scheduler-url", type=_normalize_http_url, default="http://127.0.0.1:8090")
+    api_parser.add_argument("--feishu-url", type=_normalize_http_url, default="http://127.0.0.1:8090")
     api_parser.set_defaults(service="api")
 
     feishu_parser = subparsers.add_parser("feishu", help="Run the Feishu bridge.")
     feishu_parser.add_argument("--chat-url", type=_normalize_http_url, default="http://127.0.0.1:7878")
+
+    feishu_parser.add_argument("--host", default="0.0.0.0")
+    feishu_parser.add_argument("--port", type=int, default=8090)
 
     web_client_parser = subparsers.add_parser(
         "web_client", help="Run the authenticated web client.",
@@ -48,13 +51,6 @@ def main() -> None:
     token_parser.add_argument("--host", default="0.0.0.0")
     token_parser.add_argument("--port", type=int, default=7883)
 
-    scheduler_parser = subparsers.add_parser(
-        "scheduler", help="Run the single scheduler service.",
-    )
-    scheduler_parser.add_argument("--host", default="0.0.0.0")
-    scheduler_parser.add_argument("--port", type=int, default=8090)
-    scheduler_parser.add_argument("--backend-url", type=_normalize_http_url, default="http://127.0.0.1:7878")
-
     args = parser.parse_args()
     service = args.service or "api"
 
@@ -63,13 +59,13 @@ def main() -> None:
 
         if platform.system() != "Linux":
             raise RuntimeError("Xpeech API is only supported on Linux.")
-        run(host=args.host, port=args.port, scheduler_url=args.scheduler_url)
+        run(host=args.host, port=args.port, feishu_url=args.feishu_url)
         return
 
     if service == "feishu":
-        from .subapp.channel.feishu.bridge import run
+        from .subapp.channel.feishu.app import run
 
-        run(chat_url=args.chat_url)
+        run(chat_url=args.chat_url, host=args.host, port=args.port)
         return
 
     if service == "web_client":
@@ -82,12 +78,6 @@ def main() -> None:
         from .subapp.lark_token_manager.app import run
 
         run(host=args.host, port=args.port)
-        return
-
-    if service == "scheduler":
-        from .subapp.scheduler.app import run
-
-        run(host=args.host, port=args.port, backend_url=args.backend_url)
         return
 
     parser.error(f"Unknown service: {service}")

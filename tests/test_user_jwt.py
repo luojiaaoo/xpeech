@@ -112,24 +112,9 @@ def test_external_openapi_has_no_user_identity_parameters():
         assert names.isdisjoint({"user_id", "x-user-id"})
 
 
-def test_background_message_ignores_user_header(monkeypatch):
-    from unittest.mock import AsyncMock
-
-    from xpeech.agent.server.routes import background_messages
-
-    poll = AsyncMock(return_value=None)
-    monkeypatch.setattr(background_messages, "scheduler_request", poll)
-    token = create_token(ChannelTokenParams("feishu"))
-    response = TestClient(app).get(
-        "/background_message", headers={"Authorization": f"Bearer {token}", "x-user-id": "ignored"},
-    )
-    assert response.status_code == 204
-    poll.assert_awaited_once_with("GET", "/background_message?channel=feishu")
-
-
 @pytest.mark.parametrize("user_id", ["alice", "", "trusted/internal-user"])
 def test_internal_user_parameters_are_used_directly(user_id, monkeypatch):
-    from xpeech.subapp.scheduler import app as scheduler_service
+    from xpeech.subapp.channel.feishu import app as feishu_service
 
     observed = []
 
@@ -137,9 +122,9 @@ def test_internal_user_parameters_are_used_directly(user_id, monkeypatch):
         observed.append(user_id)
         return []
 
-    monkeypatch.setattr(scheduler_service, "list_scheduled_tasks", list_tasks)
+    monkeypatch.setattr(feishu_service, "list_scheduled_tasks", list_tasks)
     token = create_internal_access_token()
-    response = TestClient(scheduler_service.app).get(
+    response = TestClient(feishu_service.app).get(
         "/schedules", headers={"Authorization": f"Bearer {token}", "x-user-id": user_id},
     )
     assert response.status_code == 200

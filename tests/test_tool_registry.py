@@ -248,10 +248,12 @@ async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("not_interactive", [False, True])
+@pytest.mark.parametrize("channel", [None, "web_client", "feishu"])
 async def test_registers_supported_default_and_mcp_tools(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     not_interactive: bool,
+    channel: str | None,
 ):
     # This test uses an argument-free shell stub; exercise only registration
     # and leave command validation to the dcg tests above.
@@ -296,6 +298,7 @@ async def test_registers_supported_default_and_mcp_tools(
         workspace=tmp_path,
         config=config,
         not_interactive=not_interactive,
+        channel=channel,
     )
     await registration.start_tool_discovery()
 
@@ -317,11 +320,10 @@ async def test_registers_supported_default_and_mcp_tools(
         "ask_user_question",
         "list_sessions",
         "read_session",
-        "feishu_schedule",
-        "feishu_schedule_list",
-        "feishu_schedule_cancel",
         "query_mcp_status",
     ]
+    if channel == "feishu" and not not_interactive:
+        expected_tools[-1:-1] = ["feishu_schedule", "feishu_schedule_list", "feishu_schedule_cancel"]
     if not_interactive:
         interactive_names = {
             "ask_user_question",

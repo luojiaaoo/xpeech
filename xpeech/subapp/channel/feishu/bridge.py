@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-
 from lark_channel import DedupConfig, Events, InboundMessage, OutboundConfig, PolicyConfig, RetryConfig, SafetyConfig
 from loguru import logger
 
-from ....config.settings import settings
 from ..schema import Message
-from .background import FeishuBackgroundMessages
 from .channel import XpeechFeishuChannel
 from .conversation import FeishuConversation
 from .delivery import FeishuDelivery
@@ -59,7 +55,6 @@ class FeishuBridge:
             self.questions,
             self.tools,
         )
-        self.background = FeishuBackgroundMessages(chat_url, self.channel)
         self.channel.on(Events.MESSAGE, self._on_message)
         self.channel.on(Events.CARD_ACTION, self.questions.handle_action)
 
@@ -85,24 +80,6 @@ class FeishuBridge:
 
     async def start(self) -> None:
         try:
-            async with asyncio.TaskGroup() as task_group:
-                background_message_task = task_group.create_task(self.background.poll_background_messages())
-                try:
-                    await self.channel.connect()
-                finally:
-                    background_message_task.cancel()
+            await self.channel.connect()
         finally:
             await self.channel.disconnect()
-
-
-def run(chat_url: str) -> None:
-    try:
-        asyncio.run(
-            FeishuBridge(
-                chat_url=chat_url,
-                app_id=settings.feishu.app_id,
-                app_secret=settings.feishu.app_secret,
-            ).start()
-        )
-    except KeyboardInterrupt:
-        print("Stopped by user")

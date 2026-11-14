@@ -1,9 +1,8 @@
 from datetime import datetime
-from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator
+from pydantic import BaseModel, Field, RootModel
 
 
 # ------------------ 输入内容块 ------------------
@@ -35,29 +34,3 @@ class InboundMessage(BaseModel):
         default=False,
         description='是否为大模型请求添加 response_format={"type":"json_object"}，不修改提示词；模型不支持时返回 HTTP 400',
     )
-
-
-# ------------------ 定时任务输出消息 ------------------
-class BackgroundMessageChannel(StrEnum):
-    """后台消息支持的对外渠道。"""
-
-    FEISHU = "feishu"
-
-
-class FeishuBackgroundMessage(BaseModel):
-    """等待飞书渠道投递的 Agent 输出。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    channel: Literal[BackgroundMessageChannel.FEISHU] = BackgroundMessageChannel.FEISHU
-    open_id: str = Field(min_length=1)
-    content: str = Field(min_length=1)
-    schedule_type: Literal["run_at", "cron"]
-    schedule_value: str
-
-    @field_validator("open_id", "content")
-    @classmethod
-    def validate_non_blank_text(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("value must not be blank")
-        return value

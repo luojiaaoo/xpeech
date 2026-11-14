@@ -1,23 +1,19 @@
 from fastapi import Depends
 
-from .auth import require_channel_jwt, require_internal_jwt, require_user_jwt
+from .auth import require_internal_jwt, require_user_jwt
 from .auth import router as auth_router
-from .routes.background_messages import router as background_messages_router
 from .routes.chat import router as chat_router
 from .routes.chat_command import router as chat_command_router
 from .routes.files import router as files_router
-from .routes.internal import router as internal_router
 from .routes.public_file import router as public_file_router
 from .routes.skills import router as skills_router
 from .routes.statistics import router as statistics_router
 from .server import app
 
 app.include_router(auth_router)
-app.include_router(background_messages_router, dependencies=[Depends(require_channel_jwt)])
 app.include_router(files_router, dependencies=[Depends(require_user_jwt)])
 app.include_router(chat_router, dependencies=[Depends(require_user_jwt)])
 app.include_router(chat_command_router, dependencies=[Depends(require_user_jwt)])
-app.include_router(internal_router, dependencies=[Depends(require_internal_jwt)])
 app.include_router(skills_router, dependencies=[Depends(require_user_jwt)])
 app.include_router(statistics_router, dependencies=[Depends(require_internal_jwt)])
 app.include_router(public_file_router)

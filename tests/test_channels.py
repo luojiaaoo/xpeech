@@ -91,7 +91,7 @@ def test_custom_channel_can_get_token_and_use_business_endpoints(channels, sessi
     }
     assert client.post("/answer_question", data={"answer": "ok"}, headers=headers).status_code == 200
     assert client.get("/statistics", headers=headers).status_code == 401
-    assert client.post("/internal/scheduled-run", headers=headers).status_code == 401
+    assert client.post("/internal/scheduled-run", headers=headers).status_code == 404
 
 
 def test_custom_channel_rejects_wrong_key(channels):

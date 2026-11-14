@@ -58,7 +58,7 @@ services:
 
   backend:
     <<: *xpeech-service
-    command: ["api", "--host", "0.0.0.0", "--port", "8080", "--scheduler-url", "http://scheduler:8090"]
+    command: ["api", "--host", "0.0.0.0", "--port", "8080", "--feishu-url", "http://feishu:8090"]
     environment:
       <<: *common-environment
       XPEECH_TOKEN_MANAGER_URL: http://lark-token-manager:7883
@@ -66,8 +66,6 @@ services:
       replicas: ${BACKEND_REPLICAS:-8}
     depends_on:
       lark-token-manager:
-        condition: service_healthy
-      scheduler:
         condition: service_healthy
     expose:
       - "8080"
@@ -102,31 +100,10 @@ services:
       retries: 6
       start_period: 60s
 
-  scheduler:
-    <<: *xpeech-service
-    command: ["scheduler", "--host", "0.0.0.0", "--port", "8090", "--backend-url", "http://nginx:${BACKEND_PORT:-7878}"]
-    deploy:
-      replicas: 1
-    depends_on:
-      postgres:
-        condition: service_healthy
-    expose:
-      - "8090"
-    volumes:
-      - ./data/logs/scheduler:/app/data/logs
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/health"]
-      interval: 20s
-      timeout: 5s
-      retries: 6
-      start_period: 20s
-
   nginx:
     image: nginx:1.27.5-alpine
     depends_on:
       backend:
-        condition: service_healthy
-      scheduler:
         condition: service_healthy
     ports:
       - "${BACKEND_PORT:-7878}:${BACKEND_PORT:-7878}"
@@ -148,10 +125,20 @@ services:
 
   feishu:
     <<: *xpeech-service
-    command: ["feishu", "--chat-url", "http://nginx:${BACKEND_PORT:-7878}"]
+    command: ["feishu", "--host", "0.0.0.0", "--port", "8090", "--chat-url", "http://nginx:${BACKEND_PORT:-7878}"]
+    deploy:
+      replicas: 1
     depends_on:
-      nginx:
+      postgres:
         condition: service_healthy
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
 
   web_client:
     <<: *xpeech-service

@@ -78,7 +78,7 @@ secret_key = "replace-with-a-distinct-crm-secret-at-least-32-characters"
 | JWT payload `exp` | 必填，过期时间；服务端签发时有效期由 `jwt.access_token_expire_seconds` 决定，取值 1–60 秒，默认 60 秒；自行签发也应遵循此配置 |
 | JWT payload `sub` | 用户接口必填，用作稳定的用户 ID，规则见第 3.1 节 |
 
-`jwt.secret_key` 仅供 backend、scheduler 等内部服务互信。内部 JWT 不带 `kid` 或 `sub`，不能调用本文的聊天、答题、文件、技能接口；`/statistics` 及其子接口、内部调度接口也不属于外部通道的权限范围。
+`jwt.secret_key` 仅供 backend、飞书任务 API 等内部服务互信。内部 JWT 不带 `kid` 或 `sub`，不能调用本文的聊天、答题、文件、技能接口；`/statistics` 及其子接口、飞书内部任务管理接口也不属于外部通道的权限范围。
 
 通道名就是 JWT header 的 `kid`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能、用户工作区技能与 MCP 使用 `filter` 过滤表达式：省略 `filter` 的资源为公共资源，一律展示或注册；配置 `filter` 的资源仅在表达式求值为真时可见。表达式为 Python 布尔表达式极小子集，内置 `channel("...")`（匹配通道名）与 `org("...")`（匹配组织前缀）两个短名函数，服务端按白名单解析求值，不使用 eval。
 
@@ -666,7 +666,7 @@ SSE 建立后发生异常时，连接可能直接结束，不保证收到业务�
 
 - HTTP 客户端的读取超时应关闭或设置为足够覆盖整个 Agent 运行；答题等待本身可长达 300 秒。
 - 网关和反向代理需关闭响应缓冲，并设置足够的空闲超时，例如 Nginx 使用 `proxy_buffering off`。
-- Compose 默认通过 Nginx 暴露 API。Nginx 读取 JWT `sub` 做一致性哈希，将同一用户路由到同一 backend；验签由 backend 完成。内部调用以 `x-user-id` 分流，无标识时轮询。
+- Compose 默认通过 Nginx 暴露 API。Nginx 读取 JWT `sub` 做普通哈希，将同一用户路由到同一 backend；验签由 backend 完成。不使用 `x-user-id` 分流，没有 `sub` 时轮询。
 - 聊天运行状态和追问等待事件位于 backend 进程内存。自行部署多副本时需保持同一用户的请求路由一致；扩缩容、替换容器前应等待进行中的 SSE 结束。
 - backend 默认放开 CORS 来源、方法、请求头及响应头读取。浏览器可携带短期 Bearer Token 调用；共享密钥仍只保存在可信后端。
 - 对外部署使用 HTTPS，并按业务需要控制 API 网络入口。
@@ -948,28 +948,10 @@ python xpeech_question_demo.py
 
 ---
 
-## 9. 接收飞书后台任务消息（可选）
+## 9. 飞书定时任务
 
-该接口供自建飞书投递通道领取定时 Agent 任务结果，普通聊天接入无需调用。使用 `kid="feishu"`、含 `exp` 的通道 JWT，无需用户 `sub`：
-
-```http
-GET /background_message
-Authorization: Bearer <feishu-channel-token>
-```
-
-接口最长约 50 秒长轮询。有消息返回 HTTP `200` 和 JSON，无消息返回 `204 No Content`：
-
-```json
-{
-  "channel": "feishu",
-  "open_id": "ou_xxx",
-  "content": "后台任务执行结果",
-  "schedule_type": "cron",
-  "schedule_value": "0 9 * * *"
-}
-```
-
-投递方根据 `open_id` 将 `content` 发送给飞书用户，然后重新获取 Token 并发起下一次长轮询。通道由 JWT 决定，无需 `channel` 查询参数；其他通道调用返回 `403`。
+定时任务由内置飞书渠道管理。到期后渠道调用标准 `/chat_sync`，再直接发送执行结果。
+后端不再提供后台消息领取接口。飞书内部任务管理接口及部署方式见 [README](../README.md#飞书定时任务)。
 
 ---
 
@@ -986,6 +968,5 @@ Authorization: Bearer <feishu-channel-token>
 | POST | `/chat/stop` | 通道 JWT，含同一用户 `sub` | 停止指定会话的 SSE 生成，回收大模型并发名额 |
 | GET | `/chat/status` | 通道 JWT，含同一用户 `sub` | 查询指定会话是否仍被请求占用 |
 | GET | `/files?path=...` | 通道 JWT，含同一用户 `sub` | 下载用户工作区文件 |
-| GET | `/background_message` | Feishu 通道 JWT，无需 `sub` | 领取后台任务消息，长轮询 |
 
 接入前确认：JWT `kid/sub/exp` 与配置匹配，用户和会话在聊天、答题过程中保持一致；正确拼接 SSE 分片并读取至 EOF；答题使用独立请求，原流保持打开；文件路径经 URL 编码传递；代理关闭缓冲且超时足够；同一会话串行发送，不无条件重放中断的聊天请求。

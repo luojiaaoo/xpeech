@@ -1,69 +1,8 @@
 import json
-from datetime import datetime
-from typing import Annotated
 from urllib.parse import quote
 
-from pydantic import BaseModel, Field, field_validator, model_validator
-
-from .client import scheduler_request
-
-
-def _require_text(value: object, name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{name} must be a non-empty string")
-    return value
-
-
-class FeishuScheduleArgs(BaseModel):
-    """飞书后台定时 Agent 任务参数。
-
-    run_at 和 cron 只能有一个有效值。
-    """
-
-    prompt: Annotated[
-        str,
-        Field(description="定时执行时交给 Agent 的完整任务提示词，不能为空"),
-    ]
-    run_at: Annotated[
-        datetime | None,
-        Field(
-            description=(
-                "单次任务的 ISO 8601 执行时间；可以不带时区，"
-                "不带时区时按服务端系统本地时区解释"
-            )
-        ),
-    ] = None
-    cron: Annotated[
-        str | None,
-        Field(description="周期任务的标准 5 段 cron 表达式"),
-    ] = None
-
-    @field_validator("prompt")
-    @classmethod
-    def validate_prompt(cls, value: str) -> str:
-        return _require_text(value, "prompt")
-
-    @field_validator("run_at", "cron", mode="before")
-    @classmethod
-    def normalize_blank_trigger(cls, value: object) -> object | None:
-        if isinstance(value, str) and not value.strip():
-            return None
-        return value
-
-    @model_validator(mode="after")
-    def validate_trigger_choice(self):
-        if (self.run_at is None) == (self.cron is None):
-            raise ValueError("exactly one of run_at and cron must have a value")
-        return self
-
-
-class FeishuScheduleCancelArgs(BaseModel):
-    job_id: Annotated[str, Field(description="要取消的定时任务 ID")]
-
-    @field_validator("job_id")
-    @classmethod
-    def validate_job_id(cls, value: str) -> str:
-        return _require_text(value, "job_id")
+from .client import feishu_request
+from .tool_args import FeishuScheduleArgs, FeishuScheduleCancelArgs, _require_text
 
 
 async def feishu_schedule(
@@ -84,7 +23,7 @@ async def feishu_schedule(
             示例："0 9 * * *"
 
     Returns:
-        包含 job_id 和 next_run_time 的字典。
+        包含 task 对象的 JSON，task 包含 job_id、prompt、schedule_type、schedule_value 和 next_run_time。
 
     Examples:
         单次任务，明天早上9点提醒开会::
@@ -93,7 +32,7 @@ async def feishu_schedule(
             ...     prompt="提醒用户开会",
             ...     run_at="2026-09-08T09:00:00+08:00"
             ... )
-            {"job_id": "abc123", "next_run_time": "2026-09-08T09:00:00+08:00"}
+            {"task": {"job_id": "abc123", "next_run_time": "2026-09-08T09:00:00+08:00", ...}}
 
         周期任务，每天早上9点发笑话::
 
@@ -101,7 +40,7 @@ async def feishu_schedule(
             ...     prompt="给用户发一个笑话",
             ...     cron="0 9 * * *"
             ... )
-            {"job_id": "def456", "next_run_time": "2026-09-08T09:00:00+08:00"}
+            {"task": {"job_id": "def456", "next_run_time": "2026-09-08T09:00:00+08:00", ...}}
 
     Note:
         run_at 和 cron 只能有一个有效值。
@@ -114,24 +53,23 @@ async def feishu_schedule(
     validated_user_id = _require_text(user_id, "user_id")
     validated_sender_name = _require_text(sender_name, "sender_name")
 
-    job = await scheduler_request(
+    response = await feishu_request(
         "POST",
         "/schedules",
         user_id=validated_user_id,
         payload={
             **args.model_dump(mode="json"),
             "sender_name": validated_sender_name,
-            "channel": channel,
             "session_metadata": session_metadata,
         },
     )
-    return json.dumps(job, ensure_ascii=False)
+    return json.dumps(response, ensure_ascii=False)
 
 
 async def feishu_schedule_list(user_id: str | None) -> str:
-    """列出当前用户所有渠道仍有效的后台定时任务。"""
+    """列出当前用户仍有效的飞书定时任务。"""
     validated_user_id = _require_text(user_id, "user_id")
-    tasks = await scheduler_request("GET", "/schedules", user_id=validated_user_id)
+    tasks = await feishu_request("GET", "/schedules", user_id=validated_user_id)
     return json.dumps(tasks, ensure_ascii=False)
 
 
@@ -141,8 +79,8 @@ async def feishu_schedule_cancel(
 ) -> str:
     """取消当前用户拥有的后台定时任务。"""
     validated_user_id = _require_text(user_id, "user_id")
-    await scheduler_request(
+    result = await feishu_request(
         "DELETE", f"/schedules/{quote(args.job_id, safe='')}",
         user_id=validated_user_id,
     )
-    return f"Scheduled task cancelled successfully: {args.job_id}"
+    return json.dumps(result, ensure_ascii=False)

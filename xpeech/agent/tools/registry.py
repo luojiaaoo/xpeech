@@ -82,7 +82,7 @@ async def register_tools(
         max_history_days=settings.llm.max_history_days,
     ):
         provider.register_function_tool(tool)
-    if not not_interactive:
+    if channel == "feishu" and not not_interactive:
         for tool in (feishu_schedule, feishu_schedule_list, feishu_schedule_cancel):
             provider.register_function_tool(tool)
 
