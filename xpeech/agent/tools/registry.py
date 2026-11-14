@@ -18,6 +18,7 @@ from .mcp_client import (
     get_session_mcp_registration_from_config,
     register_mcp_bindings,
 )
+from .ptc import build_ptc_tool
 from .research import build_research_tools
 from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
 from .sessions import build_session_tools
@@ -37,6 +38,7 @@ async def register_tools(
 ) -> None:
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
     workspace = workspace.resolve()
+    provider.register_function_tool(build_ptc_tool(workspace=workspace))
     skills_loader = SkillsLoader(
         workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
     )

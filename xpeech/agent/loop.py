@@ -174,8 +174,16 @@ class AgentLoop:
             success = execution.succeeded
             duration_seconds = execution.duration_seconds
 
-            def append_tool_result_messages_yaml(tool_call: ToolCallRequest, result_: Any):
+            def append_tool_result_messages_yaml(
+                tool_call: ToolCallRequest, result_: Any, *, user_confirmed: bool = False,
+            ):
                 """将一次工具调用结果转换为对话历史消息。"""
+                if user_confirmed:
+                    notice = "【用户确认后执行】用户已同意本次操作，工具随后才开始执行。以下为实际结果："
+                    if isinstance(result_, str):
+                        result_ = f"{notice}\n\n{result_}"
+                    elif isinstance(result_, list):
+                        result_ = [{"type": "text", "text": notice}, *result_]
                 # 创建工具调用结果消息
                 if isinstance(result_, str):
                     _append_turn_message(
@@ -233,7 +241,8 @@ class AgentLoop:
                     # 覆盖方法调用的时间，遵守实际用户回答耗时
                     duration_seconds = time.perf_counter() - question_start_time
                     decision = question_event.answer
-                    if not timed_out and "confirm" in decision and "cancel" not in decision:
+                    user_confirmed = not timed_out and "confirm" in decision and "cancel" not in decision
+                    if user_confirmed:
                         execution_result = await self.tool_executor.execute_function(
                             tool_call,
                             execution_function,
@@ -258,7 +267,7 @@ class AgentLoop:
                         success = False
                         result = "执行确认回复格式异常，工具未执行。"
 
-                    append_tool_result_messages_yaml(tool_call, result)
+                    append_tool_result_messages_yaml(tool_call, result, user_confirmed=user_confirmed)
                     tool_result_content = result
                 elif isinstance(execution.value, SendFileRequest):
                     # 发送文件

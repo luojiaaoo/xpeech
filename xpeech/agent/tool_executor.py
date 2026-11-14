@@ -107,8 +107,12 @@ class ToolExecutor:
         sender_name: str | None = None,
         channel: str | None = None,
         session_id: str | None = None,
+        skip_limit_text: bool = False,
     ) -> ToolExecutionResult:
-        """执行用户确认后的工具执行函数（EXECUTION_REQUEST 流程），与普通工具调用共用执行逻辑。"""
+        """执行指定的工具函数，共用参数注入、超时和错误处理。
+
+        用于确认后的执行与 PTC；PTC 设置 skip_limit_text=True，在内存中处理完整中间结果。
+        """
 
         async def invoke() -> Any:
             return await self._call_tool_function(
@@ -121,7 +125,7 @@ class ToolExecutor:
                 session_id=session_id,
             )
 
-        return await self._run_tool_call(tool_call, invoke, loop_count=loop_count)
+        return await self._run_tool_call(tool_call, invoke, loop_count=loop_count, skip_limit_text=skip_limit_text)
 
     async def _call_tool_function(
         self,
@@ -159,6 +163,7 @@ class ToolExecutor:
         invoke: Callable[[], Awaitable[Any]],
         *,
         loop_count: int | None = None,
+        skip_limit_text: bool = False,
     ) -> ToolExecutionResult:
         """在超时保护内执行 invoke，并将异常转换为模型可读的结果。"""
         start_time = time.perf_counter()
@@ -172,7 +177,7 @@ class ToolExecutor:
         try:
             async with timeout_scope:
                 value = await invoke()
-                if isinstance(value, str) and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS:
+                if not skip_limit_text and isinstance(value, str) and tool_call.name not in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS:
                     value = await self._limit_text(tool_call, value, self._max_result_chars)
         except Exception as exc:  # noqa: BLE001 - tool failures are returned to the model
             duration = time.perf_counter() - start_time

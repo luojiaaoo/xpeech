@@ -71,6 +71,8 @@ def build_shell_tools(workspace: Path, *, skills_loader: SkillsLoader):
         f"""
             Execute a bash command in the current workspace and return the output.
 
+            Commands are checked by DCG before execution. A command may run immediately, require user confirmation, or be rejected. If confirmation is requested, the command has not run yet and executes only after the user approves. Rejected commands are not executed.
+
             **Access boundary (important):** except for files inside the current workspace, everything else in this sandbox — the network, the filesystem (e.g. /tmp, system paths, other directories), and background processes — is reachable **only through this shell tool**. Non-shell tools cannot see or touch any of it. So:
             - any task that needs network access, reads/writes paths outside the workspace, or interacts with running processes must be done via a bash command here;
             - only workspace files are shared with the rest of the toolchain; anything else stays inside the sandbox and is shell-only.

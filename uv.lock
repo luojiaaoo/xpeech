@@ -3419,6 +3419,34 @@ wheels = [
 ]
 
 [[package]]
+name = "starlark-pyo3"
+version = "2026.1.3"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple/" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/20/fe/824d5c2b189bdff7733c7d2933967bd9fce86cb11cf655dfb507f74dbd79/starlark_pyo3-2026.1.3.tar.gz", hash = "sha256:3e6735dfc767d1fd5a61fc3861e6d8b404b0166d1e32ce7ecd379d58e2644e54", size = 49534, upload-time = "2026-10-19T22:10:56.86Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/e3/2c/ecf5647b21f23ce60f434785e9bde2b8d6bc5ae49bf32ed1aa8bd37e8baa/starlark_pyo3-2026.1.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:89b557e18ce9337feebbfcd2cd0eb637020440991fd48d6ae4e3f639f06c078f", size = 2957776, upload-time = "2026-10-19T22:10:17.963Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ff/ff/cb3a57bc9771b8e552d37670028d255e246b56dcbe793f3e83a39e681f69/starlark_pyo3-2026.1.3-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5da53e4c1cc265ed1acf55a2ca7b27c0e841f18a852635d573d2a0b2401d8f27", size = 3677882, upload-time = "2026-10-19T22:10:19.831Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/51/ee/f0e0adbefd06710ae3d2c3c7d63ba57a8f920784f4e1ea436ef08a0a730e/starlark_pyo3-2026.1.3-cp312-cp312-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:413400bee45990bab032c5c7ad4fba51fe907df75f5ce89fdf8013de8e032597", size = 3460702, upload-time = "2026-10-19T22:10:21.896Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/2f/25/c4aec42f8974e1a5095f7e3378669ae83d81e3c6680766ee43c87db6429d/starlark_pyo3-2026.1.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6ba8e1036211ca5e921f38e8f78f53da6d56d0617e4b7e127436cf53bd252011", size = 3457608, upload-time = "2026-10-19T22:10:23.738Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/39/0f/e5a97049e65989686d5f1bd0171333de1cd0acde8ef2c6adf90f7346ed67/starlark_pyo3-2026.1.3-cp312-cp312-win_amd64.whl", hash = "sha256:ddef2d98ecca2e03df2458054379ba3e3af891211f3e840ce246802b3e0471d0", size = 2675734, upload-time = "2026-10-19T22:10:25.496Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/0d/87/c3faeda3e05721ef020f4b0c3811b77ac367a3d6b36d0062b9881994a162/starlark_pyo3-2026.1.3-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:c5c341f7918a7fa584b9d540024bbc18cdcf4ee5dd6ab617f584ebc0473d59be", size = 2955771, upload-time = "2026-10-19T22:10:27.248Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/7e/59/43cb3e6cc44e3ddeaafc47d1c5c433e6b1196061b42f352528f472bb7358/starlark_pyo3-2026.1.3-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:10f3b2588930c66874e4aa0398d3e14cb638d4fc5ca370ebe04c6f4fc69327af", size = 3677504, upload-time = "2026-10-19T22:10:29.092Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/84/b1/7de5e9dc2dde3fd9e23ceb2f65b2410c804009e7f08d5ae7c93be83c0f6b/starlark_pyo3-2026.1.3-cp313-cp313-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:6366d6d3bdda52331c1988abfad0642334fb225c802207638397cc2440ce3ea5", size = 3459745, upload-time = "2026-10-19T22:10:30.958Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/56/8e/93568e9e26b3251f5933161a1f81e5496ea474dfe4ec03af5d6084b82b06/starlark_pyo3-2026.1.3-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2dcc6fc32f5b12392435709c2e8b824361197ec8c8adb3fc00208d7cac2ee3c0", size = 3457077, upload-time = "2026-10-19T22:10:32.788Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/c7/74/e6a447be75ec3b378bf6c7f0393790b3a2b293a78fd412ce8672258b843a/starlark_pyo3-2026.1.3-cp313-cp313-win_amd64.whl", hash = "sha256:65f70dd0eb68b74358037480fedf6166f809d106425d26f04e6b8525a5ac8806", size = 2675712, upload-time = "2026-10-19T22:10:34.803Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/74/4b/d11ef289fd993273e44a20312094ba75a3985bc8d0868d32a7a88dffa25f/starlark_pyo3-2026.1.3-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:af8799454b314e347d4460e3bd7fe5f22d800a8f245eeea231820662e9e07bcc", size = 2957002, upload-time = "2026-10-19T22:10:36.566Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/83/02/443483cec82b6385f8b232d388c0e59d90191e117e6560784dac15a687b8/starlark_pyo3-2026.1.3-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7a91a24ad6378bb4523e3dd31031e62a5b703e4646cd3479f47e151a8c8f1139", size = 3457419, upload-time = "2026-10-19T22:10:38.39Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/4c/87/90dea504d3fc1e0305f5a247d74c646bb5e5bea5436ff6df3ae2018553a3/starlark_pyo3-2026.1.3-cp314-cp314-win_amd64.whl", hash = "sha256:985edca79ccc8cd6924018b1e07b466761ec2bc3d3ceac597063b24c26221bb5", size = 2676092, upload-time = "2026-10-19T22:10:40.149Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/35/5e/a5c22b637e91b423100519c3a31c35654e064ae261fde71ef091d64360a5/starlark_pyo3-2026.1.3-cp314-cp314t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b80a5b37ef5f9e4b577381b0acf368766d72443addf8357d6d261db6243287e0", size = 3459438, upload-time = "2026-10-19T22:10:42.361Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/5b/a2/06ad70d92ad4848cfb92ac10079139f0d19d308a7034ecf1eed1d3757ec1/starlark_pyo3-2026.1.3-cp315-cp315-macosx_11_0_arm64.whl", hash = "sha256:f9f8317100e204ea53a72fd9f6706541b542fabfd3000bc4fdbb80838f70eeab", size = 2957854, upload-time = "2026-10-19T22:10:44.493Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/9c/ee/846666825ba992cd8edd956cdbc25e3a95cc36e012483a6fbe52ad63ec9a/starlark_pyo3-2026.1.3-cp315-cp315-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a8c702356ecc7d71aab0d74b2d8fd717c999efbc02c36ecd981b8906273dfd43", size = 3457595, upload-time = "2026-10-19T22:10:46.238Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/41/c9/940b3ff0c8ff75f925b323346ad99e7d43e6d560be5a3336bac53183f757/starlark_pyo3-2026.1.3-cp315-cp315t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d0eb300ae1410ff24a4e8ca30fbb9e43550b6da7003e0292013ee5599537e0e8", size = 3459674, upload-time = "2026-10-19T22:10:48.109Z" },
+]
+
+[[package]]
 name = "starlette"
 version = "1.0.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple/" }
@@ -4056,6 +4084,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "requests" },
     { name = "sqlmodel" },
+    { name = "starlark-pyo3" },
     { name = "trafilatura" },
     { name = "tzdata" },
     { name = "uuid6" },
@@ -4100,6 +4129,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.27" },
     { name = "requests", specifier = ">=2.32.0" },
     { name = "sqlmodel", specifier = ">=0.0.39" },
+    { name = "starlark-pyo3", specifier = "==2026.1.3" },
     { name = "trafilatura", specifier = ">=2.3.1" },
     { name = "tzdata", specifier = ">=2026.2" },
     { name = "uuid6", specifier = ">=2025.0.1" },

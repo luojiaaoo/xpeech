@@ -35,6 +35,7 @@ dependencies = [
     "uvicorn[standard]>=0.46.0",
     "yarl>=1.23.0",
     "uuid6>=2025.0.1",
+    "starlark-pyo3==2026.1.3",
 ]
 
 [[tool.uv.index]]

@@ -210,7 +210,8 @@ async def test_optional_confirmation_check_receives_json_and_controls_prompt(
     arguments = {"command": "echo hello", "execution_description": "输出 hello"}
     call = ToolCallRequest(id="1", name="shell", arguments=arguments)
     events = []
-    async for event in stream_for(tmp_path, current_provider, [call], []):
+    history = []
+    async for event in stream_for(tmp_path, current_provider, [call], history):
         events.append(event)
         if event["event"] == "question":
             assert not not_interactive
@@ -224,6 +225,8 @@ async def test_optional_confirmation_check_receives_json_and_controls_prompt(
         else ["tool_call", "tool_call_result"]
     )
     result = json.loads(events[-1]["context"])["result"]
+    confirmed = decision is ExecutionDecision.CONFIRM and not not_interactive
+    assert history[-1]["content"].startswith("【用户确认后执行】") is confirmed
     if decision is ExecutionDecision.DENY or (decision is ExecutionDecision.CONFIRM and not_interactive):
         assert "PermissionError" in result and "拒绝执行" in result
         assert executions == []
@@ -355,7 +358,11 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
     assert [event["event"] for event in events] == ["tool_call", "question", "tool_call_result"]
     result = json.loads(events[-1]["context"])
     assert (result["tool_call_id"], result["name"]) == ("shell-1", "shell")
-    assert history[-1]["content"] == result["result"]
+    if expected == "confirmed":
+        assert history[-1]["content"].startswith("【用户确认后执行】")
+        assert history[-1]["content"].endswith(result["result"])
+    else:
+        assert history[-1]["content"] == result["result"]
     assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
     if expected == "confirmed":
         assert result["result"] == "command output"
@@ -407,8 +414,10 @@ async def test_timeout_does_not_execute(tmp_path, monkeypatch):
     current_provider = provider()
     current_provider.register_function_tool(build_execution_request_tool(ping))
     call = ToolCallRequest(id="1", name="ping", arguments={"execution_description": "测试连通性"})
-    events = [event async for event in stream_for(tmp_path, current_provider, [call], [])]
+    history = []
+    events = [event async for event in stream_for(tmp_path, current_provider, [call], history)]
     assert "超时" in json.loads(events[-1]["context"])["result"]
+    assert not history[-1]["content"].startswith("【用户确认后执行】")
     assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
 
 
@@ -509,7 +518,11 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(
             payload = json.loads(event["context"])
             result = payload["result"]
             assert payload["success"] is (behavior == "large_result")
-            assert history[-1]["content"] == result
+            if needs_confirmation:
+                assert history[-1]["content"].startswith("【用户确认后执行】")
+                assert history[-1]["content"].endswith(result)
+            else:
+                assert history[-1]["content"] == result
             if behavior == "error":
                 assert result == "RuntimeError: test failure"
             elif behavior == "timeout":
@@ -537,6 +550,42 @@ async def test_confirmed_execution_injects_runtime_context(tmp_path):
         elif event["event"] == "tool_call_result":
             result = json.loads(event["context"])["result"]
     assert result == "echo hello:approval-user:Alice:web:approval-session:test"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("needs_confirmation", [False, True])
+async def test_confirmation_notice_preserves_multimodal_output(tmp_path, needs_confirmation):
+    blocks = [
+        {"type": "text", "text": "tool output"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,test"}},
+    ]
+    executions = []
+
+    async def render():
+        """Return multimodal content."""
+        executions.append("executed")
+        return blocks
+
+    current_provider = provider()
+    current_provider.register_function_tool(build_execution_request_tool(
+        render, lambda _: ExecutionDecision.CONFIRM if needs_confirmation else ExecutionDecision.ALLOW,
+    ))
+    call = ToolCallRequest(id="render", name="render", arguments={"execution_description": "测试返回内容"})
+    history = []
+    async for event in stream_for(tmp_path, current_provider, [call], history):
+        if event["event"] == "question":
+            assert executions == []
+            await answer({"decision": "confirm"})
+        elif event["event"] == "tool_call_result":
+            payload = json.loads(event["context"])
+            assert payload["success"] and payload["result"] == blocks
+    content = history[-1]["content"]
+    if needs_confirmation:
+        assert content[0]["type"] == "text" and content[0]["text"].startswith("【用户确认后执行】")
+        assert content[1:] == blocks
+    else:
+        assert content == blocks
+    assert executions == ["executed"]
 
 
 @pytest.mark.asyncio

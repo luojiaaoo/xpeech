@@ -686,6 +686,97 @@ curl "http://localhost:7878/statistics/records/latest?limit=20" \
   -H "Authorization: Bearer <INTERNAL_JWT>"
 ```
 
+## Starlark PTC 工具编排
+
+内置 `run_ptc` 工具提供 PTC（Programmatic Tool Calling，程序化工具调用），在进程内运行 Starlark 解释器（`starlark-pyo3`），
+将文本、JSON 处理和多次工具调用串起来，不启动 Shell 或操作系统沙盒。
+PTC 始终注册，无需配置或启用开关。
+脚本定义 `main(inputs)`；注入 `call_tool(name, arguments)`、标准纯计算函数、
+`json.decode/encode` 和 `patch.py` 中显式登记的纯数据处理方法。
+禁用 `load`，不提供 `print`、Python 导入、文件、网络和进程 API。
+外部操作通过当前会话已注册的工具执行，沿用现有的工具权限与确认检查。
+
+编排的工具参数示例（假定当前会话已注册自定义 `echo` 工具）：
+
+```json
+{
+  "code": "def main(inputs):\n    text = inputs[\"text\"].strip().upper()\n    return call_tool(\"echo\", {\"content\": text})\n",
+  "inputs": {"text": " hello "}
+}
+```
+
+`call_tool` 返回工具的原始文本或 JSON 数据；需要解析 JSON 文本时使用 `json.decode`。
+工具仍经过统一执行器，保留参数校验、权限检查、超时及当前用户、会话和渠道上下文。
+MCP 工具必须先发现并注册；可先用 `query_mcp_status` 查询，再在下一次 PTC 执行中调用。
+
+需要复用时，用 `write_file` 将源码保存为工作区内的脚本，再通过文件路径执行：
+
+```json
+{
+  "path": "scripts/normalize.star",
+  "inputs": {"lines": [" banana ", "apple", "banana"]},
+  "timeout_ms": 120000
+}
+```
+
+`code` 与 `path` 必须且只能提供一个。文件按 UTF-8 读取（支持 BOM），路径相对于当前用户工作区，
+也可提供工作区内的绝对路径；拒绝目录越界及指向工作区外的符号链接。文件模式只读取源码后运行，
+每次读取最新完整内容，沿用同一执行器和总超时限制，不开放脚本内部的文件 API 或 `load`。
+
+PTC 代码集中放在 `xpeech/agent/tools/ptc/`：`ptc.py` 负责执行，
+`patch.py` 登记额外的纯计算方法，`__init__.py` 提供工具注册入口。
+额外注入方法集中写在 `xpeech/agent/tools/ptc/patch.py`，不在配置中存放脚本或方法。
+在该文件定义同步纯函数，并显式加入 `INJECTED_METHODS`，即可由 Starlark 直接调用。
+函数定义和登记名称统一使用 `ptc_` 前缀，避免与标准函数和工具入口冲突。
+目前提供了文本行清洗方法 `ptc_normalize_lines`；扩展示例：
+
+```python
+def ptc_join_lines(lines: list[str], separator: str = "\n") -> str:
+    """使用指定分隔符拼接文本行。"""
+    return separator.join(lines)
+
+INJECTED_METHODS = {
+    "ptc_normalize_lines": ptc_normalize_lines,
+    "ptc_join_lines": ptc_join_lines,
+}
+```
+
+Starlark 可以直接写：
+
+```python
+def main(inputs):
+    lines = ptc_normalize_lines(inputs["lines"])
+    return call_tool("echo", {"content": "\n".join(lines)})
+```
+
+注入方法的名称、签名和 docstring 会加入工具描述，便于模型使用。
+运行时只向方法传递 JSON 数据副本，返回值也必须是 JSON 数据；不注入执行器或会话对象。
+拒绝异步方法、宿主对象返回值以及 `InteractionRequest`；不维护保留名称名单或检测名称覆盖。
+`patch.py` 是受信任的宿主 Python 代码，纯计算约束由开发者保证；方法中不能访问文件、
+网络、进程或发起交互。有外部效果的操作应注册成工具，通过 `call_tool` 执行。
+方法表在注册时快照，修改代码后需重启服务并重新注册工具。
+
+PTC 可直接调用当前会话已注册的全部工具，无需另行声明白名单。
+工具通过 `call_tool("工具名", 参数)` 派发，不作为同名 Starlark 函数注入。
+普通工具保留原名，MCP 工具沿用 `mcp_<服务名>_<工具名>`，纯计算注入方法使用 `ptc_` 前缀。
+禁止递归调用 `run_ptc`；工具仍遵守当前会话已有的权限检查。
+
+任何工具调用失败，或返回 `InteractionRequest` 及其子类（确认执行、提问、发送文件等），
+都立即终止 PTC，不执行后续语句，不转交交互也不自动重试。
+已经完成的工具效果不会回滚；需要交互的操作应在 PTC 外单独调用。
+返回 JSON 包含 `ok`、`result` 或 `error` 和按顺序记录的 `tool_calls`。
+`ok=false` 表示流程中断，调用方应检查错误与已执行调用。
+
+源码和 PTC 传递的 JSON 数据不设置长度上限。执行限制包括总超时、工具调用次数、调用栈和协作式计算预算。
+模型可通过 `timeout_ms` 指定本次流程的总时限，默认 120,000 毫秒，最大 240,000 毫秒，
+并受外层 `max_tool_timeout` 约束。其他限制直接定义在 `ptc/ptc.py`：32 次工具调用、
+64 层调用栈和 1,000 次协作式检查；不需要配置文件。
+超时或取消会撤销后续工具派发并取消正在等待的异步工具；外部服务已经接受的操作无法撤回。
+PTC 中间结果保留完整值，不会被执行器截断或自动落盘；
+工具自身的返回大小限制仍生效。脚本执行后的最终报告沿用普通工具结果规则，过长时截断预览并保存完整报告。
+解释器在工作线程中运行；这些限制不是操作系统级
+CPU/内存硬隔离，单次大型字符串分配等仍可能消耗大量内存，原生操作中的取消也可能延迟。
+
 ## 自定义工具
 
 在 `conf.toml` 里指定工具包：

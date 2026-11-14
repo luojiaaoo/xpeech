@@ -304,6 +304,7 @@ async def test_registers_supported_default_and_mcp_tools(
 
     assert "read_image" not in provider.registered
     expected_tools = [
+        "run_ptc",
         "read_video",
         "read_file",
         "write_file",
@@ -786,6 +787,23 @@ async def test_mcp_status_tool_is_not_registered_without_servers(tmp_path):
     await registry.register_tools(user_id="no-mcp", provider=provider, workspace=tmp_path, config=ToolConfig())
     assert "query_mcp_status" not in provider.function_tools
     assert provider.mcp_tools == []
+
+
+@pytest.mark.asyncio
+async def test_ptc_is_always_registered_without_configuration(tmp_path):
+    provider = FakeProvider()
+    await registry.register_tools(
+        user_id="default-ptc", provider=provider, workspace=tmp_path,
+        config=ToolConfig(),
+    )
+    assert "ptc" not in ToolConfig.model_fields
+    assert "run_ptc" in provider.function_tools
+    [result] = [result async for result in ToolExecutor(
+        workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=provider.function_tools,
+    ).execute([ToolCallRequest(id="ptc-default", name="run_ptc", arguments={
+        "code": 'def main(inputs):\n    return ptc_normalize_lines([" b ", "a", "b"])',
+    })])]
+    assert result.succeeded and json.loads(result.value)["result"] == ["a", "b"]
 
 
 @pytest.mark.asyncio
