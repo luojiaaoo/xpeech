@@ -2,6 +2,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -27,6 +28,7 @@ class ToolExecutionResult:
     value: Any
     succeeded: bool
     duration_seconds: float
+    started_at: datetime
 
 
 class ToolExecutor:
@@ -167,6 +169,7 @@ class ToolExecutor:
     ) -> ToolExecutionResult:
         """在超时保护内执行 invoke，并将异常转换为模型可读的结果。"""
         start_time = time.perf_counter()
+        started_at = datetime.now().astimezone()
         logger.info(
             "Tool call started loop_count={} tool_name={} args={}",
             loop_count,
@@ -215,6 +218,7 @@ class ToolExecutor:
                 value=error,
                 succeeded=False,
                 duration_seconds=duration,
+                started_at=started_at,
             )
         else:
             duration = time.perf_counter() - start_time
@@ -229,6 +233,7 @@ class ToolExecutor:
                 value=value,
                 succeeded=True,
                 duration_seconds=duration,
+                started_at=started_at,
             )
 
     async def execute(

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -96,6 +97,7 @@ class TestMemoryConsolidator:
                 value="saved",
                 succeeded=True,
                 duration_seconds=0.1,
+                started_at=datetime.now().astimezone(),
             )
 
         consolidator = MemoryConsolidator(

@@ -4,6 +4,7 @@ import time
 from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from itertools import count
 from pathlib import Path
 from typing import Any, ClassVar
@@ -160,6 +161,53 @@ class AgentLoop:
 
         # 执行工具调用
         with_metas = []
+
+        def append_tool_result_messages_yaml(
+            tool_call: ToolCallRequest, result_: Any, *, started_at: datetime,
+            duration_seconds: float, user_confirmed: bool = False,
+        ):
+            """将一次工具调用结果转换为对话历史消息。"""
+            def prepend_text(content: Any, text: str) -> Any:
+                if isinstance(content, str):
+                    return f"{text}\n\n{content}"
+                if isinstance(content, list):
+                    return [{"type": "text", "text": text}, *content]
+                return content
+
+            timing = f"【工具调用】发起时间：{started_at:%H:%M:%S}；耗时：{duration_seconds:.2f} 秒"
+            result_ = prepend_text(result_, timing)
+            if user_confirmed:
+                notice = "【用户确认后执行】用户已同意本次操作，工具随后才开始执行。以下为实际结果："
+                result_ = prepend_text(result_, notice)
+            # 创建工具调用结果消息
+            if isinstance(result_, str):
+                _append_turn_message(
+                    messages_yaml, turn_messages,
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result_,
+                    }
+                )
+            elif isinstance(result_, list):
+                # 把带_meta属性的字典过滤出来
+                others = []
+                for i in result_:
+                    if isinstance(i, dict) and "_meta" in i:
+                        # 提取_meta属性，组装成消息
+                        _meta = i.pop("_meta")
+                        with_metas.extend([{"type": "text", "text": _meta}, i])
+                    else:
+                        others.append(i)
+                _append_turn_message(
+                    messages_yaml, turn_messages,
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": others,
+                    }
+                )
+
         async for execution in self.tool_executor.execute(
             response.tool_calls,
             loop_count=loop_count,
@@ -173,45 +221,6 @@ class AgentLoop:
             result = execution.value
             success = execution.succeeded
             duration_seconds = execution.duration_seconds
-
-            def append_tool_result_messages_yaml(
-                tool_call: ToolCallRequest, result_: Any, *, user_confirmed: bool = False,
-            ):
-                """将一次工具调用结果转换为对话历史消息。"""
-                if user_confirmed:
-                    notice = "【用户确认后执行】用户已同意本次操作，工具随后才开始执行。以下为实际结果："
-                    if isinstance(result_, str):
-                        result_ = f"{notice}\n\n{result_}"
-                    elif isinstance(result_, list):
-                        result_ = [{"type": "text", "text": notice}, *result_]
-                # 创建工具调用结果消息
-                if isinstance(result_, str):
-                    _append_turn_message(
-                        messages_yaml, turn_messages,
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": result_,
-                        }
-                    )
-                elif isinstance(result_, list):
-                    # 把带_meta属性的字典过滤出来
-                    others = []
-                    for i in result_:
-                        if isinstance(i, dict) and "_meta" in i:
-                            # 提取_meta属性，组装成消息
-                            _meta = i.pop("_meta")
-                            with_metas.extend([{"type": "text", "text": _meta}, i])
-                        else:
-                            others.append(i)
-                    _append_turn_message(
-                        messages_yaml, turn_messages,
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": others,
-                        }
-                    )
 
             if isinstance(execution.value, InteractionRequest) and success:
                 if isinstance(execution.value, ExecutionRequest):
@@ -267,13 +276,19 @@ class AgentLoop:
                         success = False
                         result = "执行确认回复格式异常，工具未执行。"
 
-                    append_tool_result_messages_yaml(tool_call, result, user_confirmed=user_confirmed)
+                    append_tool_result_messages_yaml(
+                        tool_call, result, started_at=execution.started_at,
+                        duration_seconds=duration_seconds, user_confirmed=user_confirmed,
+                    )
                     tool_result_content = result
                 elif isinstance(execution.value, SendFileRequest):
                     # 发送文件
                     logger.info("Sending file {}", execution.value.source)
                     tool_result_content = f"文件已发送：{execution.value.source}"
-                    append_tool_result_messages_yaml(tool_call, tool_result_content)
+                    append_tool_result_messages_yaml(
+                        tool_call, tool_result_content, started_at=execution.started_at,
+                        duration_seconds=duration_seconds,
+                    )
                     yield {"event": "send_file", "context": execution.value.source}
                 elif isinstance(execution.value, QuestionRequest):
                     # 等待用户输入
@@ -294,14 +309,20 @@ class AgentLoop:
                     # 覆盖方法调用的时间，遵守实际用户回答耗时
                     duration_seconds = time.perf_counter() - question_start_time
                     answer = question_event.answer
-                    append_tool_result_messages_yaml(tool_call, answer)
+                    append_tool_result_messages_yaml(
+                        tool_call, answer, started_at=execution.started_at,
+                        duration_seconds=duration_seconds,
+                    )
                     tool_result_content = answer
                 else:
                     raise TypeError(
                         f"未处理的交互请求类型: {type(execution.value).__name__} (tool={tool_call.name})"
                     )
             else:
-                append_tool_result_messages_yaml(tool_call, result)
+                append_tool_result_messages_yaml(
+                    tool_call, result, started_at=execution.started_at,
+                    duration_seconds=duration_seconds,
+                )
                 tool_result_content = result
 
             tool_call_result = {

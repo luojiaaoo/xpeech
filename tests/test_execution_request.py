@@ -362,7 +362,7 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
         assert history[-1]["content"].startswith("【用户确认后执行】")
         assert history[-1]["content"].endswith(result["result"])
     else:
-        assert history[-1]["content"] == result["result"]
+        assert history[-1]["content"].endswith("\n\n" + result["result"])
     assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
     if expected == "confirmed":
         assert result["result"] == "command output"
@@ -522,7 +522,7 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(
                 assert history[-1]["content"].startswith("【用户确认后执行】")
                 assert history[-1]["content"].endswith(result)
             else:
-                assert history[-1]["content"] == result
+                assert history[-1]["content"].endswith("\n\n" + result)
             if behavior == "error":
                 assert result == "RuntimeError: test failure"
             elif behavior == "timeout":
@@ -582,9 +582,11 @@ async def test_confirmation_notice_preserves_multimodal_output(tmp_path, needs_c
     content = history[-1]["content"]
     if needs_confirmation:
         assert content[0]["type"] == "text" and content[0]["text"].startswith("【用户确认后执行】")
-        assert content[1:] == blocks
+        assert content[1]["text"].startswith("【工具调用】发起时间：")
+        assert content[2:] == blocks
     else:
-        assert content == blocks
+        assert content[0]["text"].startswith("【工具调用】发起时间：")
+        assert content[1:] == blocks
     assert executions == ["executed"]
 
 

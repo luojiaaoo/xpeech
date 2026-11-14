@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +13,9 @@ from xpeech.provider.schema import ToolCallRequest
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fast_name", ["fast_tool", "missing", "send_file"])
-async def test_tool_results_are_sent_individually_as_tools_finish(tmp_path, fast_name):
+async def test_tool_results_are_sent_individually_as_tools_finish(tmp_path, fast_name, monkeypatch):
+    started_at = datetime(2026, 11, 15, 12, 34, 56).astimezone()
+    monkeypatch.setattr("xpeech.agent.tool_executor.datetime", SimpleNamespace(now=lambda: started_at))
     release_slow = asyncio.Event()
 
     async def slow_tool() -> str:
@@ -45,10 +48,13 @@ async def test_tool_results_are_sent_individually_as_tools_finish(tmp_path, fast
                 assert [call["id"] for call in history[0]["tool_calls"]] == ["slow", "fast"]
                 assert [call["tool_call_id"] for call in json.loads(event["context"])] == ["slow", "fast"]
             if event["event"] == "send_file":
-                assert history[-1] == {"role": "tool", "tool_call_id": "fast", "content": "文件已发送：fast result"}
+                assert history[-1]["content"].endswith("\n\n文件已发送：fast result")
             if event["event"] == "tool_call_result":
                 result = json.loads(event["context"])
                 assert set(result) == {"tool_call_id", "name", "result", "duration_seconds", "success"}
+                assert history[-1]["content"].startswith(
+                    f"【工具调用】发起时间：12:34:56；耗时：{result['duration_seconds']:.2f} 秒\n\n"
+                )
                 results.append(result)
                 if result["tool_call_id"] == "fast":
                     assert not release_slow.is_set()
