@@ -43,7 +43,7 @@ async def test_organization_cache_reuses_results_and_merges_concurrent_queries(m
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_organization", ["company/old", ""])
-async def test_organization_cache_expires_after_ten_minutes(monkeypatch, first_organization):
+async def test_organization_cache_expires_after_one_hour(monkeypatch, first_organization):
     execute = AsyncMock(side_effect=[json.dumps({"organization": first_organization}), json.dumps({"organization": "company/new"})])
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
     scheduled = []
@@ -52,7 +52,7 @@ async def test_organization_cache_expires_after_ten_minutes(monkeypatch, first_o
 
     def capture_expiry(delay, callback, *args, **kwargs):
         handle = call_later(delay, callback, *args, **kwargs)
-        if delay == 600:
+        if delay == 3600:
             scheduled.append((callback, args, handle))
         return handle
 

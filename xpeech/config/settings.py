@@ -450,7 +450,7 @@ class ExtraUserInfoConfig(BaseModel):
         if self.command_extra_user_info_template is None:
             raise ValueError("extra_user_info.command_extra_user_info_template is not configured")
         if self._query_extra_user_info is None:
-            @alru_cache(maxsize=4096, ttl=600)
+            @alru_cache(maxsize=4096, ttl=3600)
             async def _query_extra_user_info(user_id: str) -> object:
                 """Share cached JSON results across claims and concurrent queries."""
                 result = await execute_command_template(
@@ -460,7 +460,13 @@ class ExtraUserInfoConfig(BaseModel):
                     timeout=self.timeout,
                     required_variables=("user_id",),
                 )
-                return json.loads(result)
+                payload = json.loads(result)
+                logger.info(
+                    "Extra user info lookup succeeded user_id={!r} result={}",
+                    user_id,
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                )
+                return payload
 
             self._query_extra_user_info = _query_extra_user_info
         payload = await self._query_extra_user_info(user_id)

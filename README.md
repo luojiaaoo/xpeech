@@ -170,7 +170,7 @@ timeout = 10.0
 飞书与 Web 渠道的 HTTP、WebSocket 聊天入口执行注入，查询结果与组织、OAuth2 用户名提取共用缓存。
 表达式必须返回唯一的字符串，数字可使用 `tostring` 转换，空字符串会保留。配置了映射时必须配置查询命令，查询或字段提取失败会终止本次执行。
 每次创建 Runner 时先获取组织，同一结果用于技能提示词和 MCP 注册；`GET /skills` 也先获取当前用户的组织。
-命令的成功 JSON 结果在后端进程中按命令配置和用户 ID 缓存 10 分钟（最多 4096 项），同一用户的并发查询合并，
+命令的成功 JSON 结果在后端进程中按命令配置和用户 ID 缓存 1 小时（最多 4096 项），同一用户的并发查询合并，
 技能列表、Runner、MCP 和 Web 通道校验共用缓存；失败和超时不缓存。
 组织不从 JWT 额外字段、渠道配置或会话元数据读取，也不跨用户复用。
 未配置查询命令、命令失败、超时（默认 10 秒）或输出为空时，用户组织视为未知，`org()` 不匹配任何前缀，
@@ -1176,7 +1176,7 @@ token_auth_method = "client_secret_post"
 
 OAuth2 的 `username_claim` 必填，名称提取成功并去除首尾空白后截取前 64 个字符，用于创建本地账号。提取失败或结果为空时报错。相同 `user_id` 已存在时原子更新用户名。用户名在创建和更新入口均须非空。
 
-`username_source` 默认 `"oauth2"`，表示对 OAuth2 userinfo JSON 执行 `username_claim`。设为 `"extra_user_info"` 时，先按已鉴权用户 ID 执行额外信息查询命令，再对返回的 JSON 执行该表达式，与组织提取共用按用户缓存 10 分钟的命令结果。该模式必须配置 `extra_user_info.command_extra_user_info_template`。
+`username_source` 默认 `"oauth2"`，表示对 OAuth2 userinfo JSON 执行 `username_claim`。设为 `"extra_user_info"` 时，先按已鉴权用户 ID 执行额外信息查询命令，再对返回的 JSON 执行该表达式，与组织提取共用按用户缓存 1 小时的命令结果。该模式必须配置 `extra_user_info.command_extra_user_info_template`。
 
 从额外用户信息提取名称可配置为下面的形式。
 
