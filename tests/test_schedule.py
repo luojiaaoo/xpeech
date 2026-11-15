@@ -14,14 +14,17 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect
 
 from xpeech.agent.server.api import app as backend_app
-from xpeech.agent.tools.schedule import (
-    FeishuScheduleArgs,
-    FeishuScheduleCancelArgs,
-    feishu_schedule,
+from xpeech.agent.tools.schedule import client as tool_client
+from xpeech.agent.tools.schedule.schema import FeishuScheduleCreateRequest
+from xpeech.agent.tools.schedule.tool import (
     feishu_schedule_cancel,
+    feishu_schedule,
     feishu_schedule_list,
 )
-from xpeech.agent.tools.schedule import client as tool_client
+from xpeech.agent.tools.schedule.tool_args import (
+    FeishuScheduleCancelArgs,
+    FeishuScheduleArgs,
+)
 from xpeech.subapp.channel.feishu import app as service
 from xpeech.subapp.channel.feishu import schedule
 from xpeech.utils.channel_jwt import UserJWTAuth, UserTokenParams, create_token
@@ -35,6 +38,7 @@ def headers(user="alice"):
 def payload(**updates):
     return {
         "prompt": "task",
+        "run_at": None,
         "cron": "0 9 * * *",
         "sender_name": "Alice",
         "session_metadata": {"open_id": "ou_alice"},
@@ -76,7 +80,10 @@ async def api(running):
 )
 def test_trigger_validation(values):
     with pytest.raises(ValidationError):
-        FeishuScheduleArgs(**{"prompt": "task", **values})
+        FeishuScheduleCreateRequest(**{
+            "prompt": "task", "run_at": None, "cron": None,
+            "sender_name": "Alice", "session_metadata": {"open_id": "ou_alice"}, **values,
+        })
 
 
 @pytest.mark.asyncio
@@ -117,8 +124,10 @@ async def test_management_requires_internal_jwt(api, auth):
         ({"session_metadata": {}}, 422),
         ({"sender_name": " "}, 422),
         ({"run_at": "2000-01-01T00:00:00Z", "cron": None}, 400),
-        ({"cron": "* * * * *"}, 400),
-        ({"cron": "invalid"}, 400),
+        ({"cron": "* * * * *"}, 422),
+        ({"cron": "15 9 * * *"}, 422),
+        ({"cron": "*/30 * * * *"}, 422),
+        ({"cron": "invalid"}, 422),
         ({"run_at": "2099-01-01"}, 422),
         ({"channel": "web_client"}, 422),
     ],
@@ -160,7 +169,7 @@ async def test_tools_query_then_cancel(api, monkeypatch):
     )
     created = json.loads(
         await feishu_schedule(
-            FeishuScheduleArgs(prompt="task", cron="0 9 * * *"), {"open_id": "ou_alice"}, "Alice", "alice", "feishu"
+            FeishuScheduleArgs(prompt="task", run_at=None, cron="0 9 * * *"), {"open_id": "ou_alice"}, "Alice", "alice", "feishu"
         )
     )
     tasks = json.loads(await feishu_schedule_list("alice"))["tasks"]
@@ -170,7 +179,7 @@ async def test_tools_query_then_cancel(api, monkeypatch):
     with pytest.raises(ValueError):
         await feishu_schedule_cancel(FeishuScheduleCancelArgs(job_id=tasks[0]["job_id"]), "alice")
     with pytest.raises(ValueError, match="only available"):
-        await feishu_schedule(FeishuScheduleArgs(prompt="task", cron="0 9 * * *"), {}, "Alice", "alice", "web_client")
+        await feishu_schedule(FeishuScheduleArgs(prompt="task", run_at=None, cron="0 9 * * *"), {}, "Alice", "alice", "web_client")
 
 
 async def execute():
@@ -340,3 +349,106 @@ async def test_postgres_persistence(postgres_database):
             assert "feishu_scheduled_jobs" in inspect(engine).get_table_names()
         finally:
             await schedule.stop_background_scheduler()
+
+
+@pytest.mark.parametrize("value", ["2099-01-01", 4070908800, "4070908800", "明天9点", None, ""])
+def test_once_rejects_ambiguous_time(value):
+    with pytest.raises(ValidationError):
+        FeishuScheduleArgs(prompt="task", run_at=value, cron=None)
+
+
+@pytest.mark.parametrize("value", ["0 0 9 * * *", "*/15 * * * *", "0 25 * * *", "0 9 * * 7", ""])
+def test_cron_rejects_invalid_expression(value):
+    with pytest.raises(ValidationError):
+        FeishuScheduleArgs(prompt="task", run_at=None, cron=value)
+
+
+def test_creation_tool_schema():
+    from xpeech.agent.tools.helper import as_tool
+
+    parameters = as_tool(feishu_schedule)["function"]["parameters"]
+    assert set(parameters["properties"]) == {"prompt", "run_at", "cron"}
+    assert set(parameters["required"]) == {"prompt", "run_at", "cron"}
+    assert parameters["additionalProperties"] is False
+
+
+@pytest.mark.parametrize("values", [
+    {"run_at": None, "cron": None},
+    {"run_at": "2099-01-01T09:00:00+08:00", "cron": "0 9 * * *"},
+])
+def test_creation_requires_exactly_one_trigger(values):
+    with pytest.raises(ValidationError, match="exactly one"):
+        FeishuScheduleArgs(prompt="task", **values)
+
+
+def test_trigger_whitespace_and_weekday_semantics():
+    from zoneinfo import ZoneInfo
+    from xpeech.agent.tools.schedule.tool_args import parse_schedule_cron
+
+    assert FeishuScheduleCreateRequest(**payload(run_at=" ", cron=" 0  9 * * mon-fri ")).cron == "0 9 * * mon-fri"
+    assert FeishuScheduleCreateRequest(**payload(run_at="2099-01-01T09:00:00", cron=" ")).cron is None
+    timezone = ZoneInfo("Asia/Shanghai")
+    now = datetime(2099, 1, 1, tzinfo=timezone)
+    for weekday in ("mon", "0"):
+        next_run = parse_schedule_cron(f"0 9 * * {weekday}", timezone=timezone).get_next_fire_time(None, now)
+        assert next_run.weekday() == 0 and next_run.hour == 9
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("args,expected_type", [
+    (FeishuScheduleArgs(prompt="task", run_at="2099-01-01T09:00:00+08:00", cron=None), "run_at"),
+    (FeishuScheduleArgs(prompt="task", run_at=None, cron="0 9 * * mon-fri"), "cron"),
+])
+async def test_creation_tool_supports_both_modes(api, monkeypatch, args, expected_type):
+    monkeypatch.setattr(backend_app.state, "feishu_url", "http://feishu.test", raising=False)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        tool_client, "AsyncClient", lambda **kw: real_client(transport=httpx.ASGITransport(app=service.app), **kw)
+    )
+    created = json.loads(await feishu_schedule(args, {"open_id": "ou_alice"}, "Alice", "alice", "feishu"))
+    assert created["task"]["schedule_type"] == expected_type
+    assert created["task"]["prompt"] == "task"
+    assert len(json.loads(await feishu_schedule_list("alice"))["tasks"]) == 1
+
+
+@pytest.mark.parametrize("minute", ["0", "30", "0,30"])
+def test_cron_allows_only_hour_and_half_hour(minute):
+    from xpeech.agent.tools.schedule.tool_args import parse_schedule_cron
+
+    expression = f"{minute} * * * *"
+    assert FeishuScheduleArgs(prompt="task", run_at=None, cron=expression).cron == expression
+    trigger = parse_schedule_cron(expression)
+    assert str(next(field for field in trigger.fields if field.name == "minute")) == minute
+
+
+@pytest.mark.parametrize("minute", ["*", "*/30", "15", "0,15,30,45", "0-30", "0/30", "30,0", "00"])
+def test_cron_rejects_other_minute_syntax(minute):
+    from xpeech.agent.tools.schedule.tool_args import parse_schedule_cron
+
+    expression = f"{minute} * * * *"
+    with pytest.raises(ValidationError, match="minute field must be exactly"):
+        FeishuScheduleArgs(prompt="task", run_at=None, cron=expression)
+    with pytest.raises(ValueError, match="minute field must be exactly"):
+        parse_schedule_cron(expression)
+
+
+@pytest.mark.parametrize("values,missing", [
+    ({}, {"run_at", "cron"}),
+    ({"run_at": "2099-01-01T09:00:00+08:00"}, {"cron"}),
+    ({"cron": "0 9 * * *"}, {"run_at"}),
+])
+def test_creation_rejects_omitted_trigger_fields(values, missing):
+    with pytest.raises(ValidationError) as exc:
+        FeishuScheduleArgs(prompt="task", **values)
+    assert {error["loc"][0] for error in exc.value.errors() if error["type"] == "missing"} == missing
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["run_at", "cron"])
+async def test_management_requires_explicit_trigger_fields(api, field):
+    data = payload()
+    del data[field]
+    response = await api.post("/schedules", headers=headers(), json=data)
+    assert response.status_code == 422
+    assert any(error["loc"] == ["body", field] and error["type"] == "missing" for error in response.json()["detail"])
+    assert (await api.get("/schedules", headers=headers())).json() == {"tasks": []}

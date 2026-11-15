@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from .tool_args import FeishuScheduleArgs
 
@@ -16,7 +16,8 @@ class ScheduledTask(BaseModel):
 
 
 class FeishuScheduleCreateRequest(FeishuScheduleArgs):
-    model_config = ConfigDict(extra="forbid")
+    """飞书服务创建请求，增加任务投递所需的身份信息。"""
+
     sender_name: str = Field(min_length=1)
     session_metadata: dict[str, str]
 

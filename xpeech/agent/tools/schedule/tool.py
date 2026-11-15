@@ -2,7 +2,9 @@ import json
 from urllib.parse import quote
 
 from .client import feishu_request
-from .tool_args import FeishuScheduleArgs, FeishuScheduleCancelArgs, _require_text
+from .tool_args import (
+    FeishuScheduleArgs, FeishuScheduleCancelArgs, _require_text,
+)
 
 
 async def feishu_schedule(
@@ -12,41 +14,26 @@ async def feishu_schedule(
     user_id: str | None,
     channel: str | None,
 ) -> str:
-    """创建飞书后台定时 Agent 任务。
+    """创建飞书后台定时 Agent 任务，执行结果自动发送给当前用户。
 
-    Args:
-        prompt: 定时执行时交给 Agent 的完整任务提示词，不能为空。
-        run_at: 单次任务的 ISO 8601 执行时间，与 cron 二选一。
-            可以不带时区，不带时区时按服务端系统本地时区解释。
-            示例："2026-09-07T09:00:00+08:00" 或 "2026-09-07T09:00:00"
-        cron: 周期任务的标准 5 段 cron 表达式，与 run_at 二选一。
-            示例："0 9 * * *"
+    prompt 包含届时执行的完整任务和所需上下文。
+    run_at 和 cron 两个字段都必须传，且只能有一个非空值；另一个填 JSON null，不能填字符串 "null"。
 
-    Returns:
-        包含 task 对象的 JSON，task 包含 job_id、prompt、schedule_type、schedule_value 和 next_run_time。
+    单次任务：用于“明天9点”“一小时后”。按当前日期和用户时区计算未来的 ISO 8601 时间，
+    建议显式带时区偏移；不带时区按服务端系统本地时区解释。
+    示例（日期仅演示格式，调用时重新计算）：
+    {"prompt":"提醒用户开会","run_at":"2099-01-01T09:00:00+08:00","cron":null}
 
-    Examples:
-        单次任务，明天早上9点提醒开会::
+    周期任务：用于“每天”“每周”“工作日”。cron 按服务端系统本地时区执行，
+    共5段：分 时 日 月 星期，不含秒。分钟字段仅允许 0、30 或 0,30，不允许 *、步长或范围。
+    每半小时用 0,30 * * * *。星期推荐 mon-sun，数字 0=周一、6=周日，不支持7。
+    工作日9点示例：
+    {"prompt":"整理今天的新闻并发送摘要","run_at":null,"cron":"0 9 * * mon-fri"}
 
-            >>> feishu_schedule(
-            ...     prompt="提醒用户开会",
-            ...     run_at="2026-09-08T09:00:00+08:00"
-            ... )
-            {"task": {"job_id": "abc123", "next_run_time": "2026-09-08T09:00:00+08:00", ...}}
-
-        周期任务，每天早上9点发笑话::
-
-            >>> feishu_schedule(
-            ...     prompt="给用户发一个笑话",
-            ...     cron="0 9 * * *"
-            ... )
-            {"task": {"job_id": "def456", "next_run_time": "2026-09-08T09:00:00+08:00", ...}}
-
-    Note:
-        run_at 和 cron 只能有一个有效值。
+    仅在成功后确认创建，使用返回的 task.next_run_time 核对时间；报错时按提示修正参数。
     """
     if channel != "feishu":
-        raise ValueError("feishu_schedule is only available for Feishu sessions")
+        raise ValueError("Scheduling is only available for Feishu sessions")
 
     open_id = (session_metadata or {}).get("open_id")
     _require_text(open_id, "session_metadata.open_id")
@@ -77,7 +64,7 @@ async def feishu_schedule_cancel(
     args: FeishuScheduleCancelArgs,
     user_id: str | None,
 ) -> str:
-    """取消当前用户拥有的后台定时任务。"""
+    """取消当前用户的定时任务。先调用 feishu_schedule_list，使用返回的 job_id 原值。"""
     validated_user_id = _require_text(user_id, "user_id")
     result = await feishu_request(
         "DELETE", f"/schedules/{quote(args.job_id, safe='')}",

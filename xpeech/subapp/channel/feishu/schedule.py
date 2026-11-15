@@ -14,12 +14,12 @@ import httpx
 from apscheduler.job import Job
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from loguru import logger
 from sqlalchemy.engine import Engine
 
 from ....agent.tools.schedule.schema import ScheduledTask
+from ....agent.tools.schedule.tool_args import parse_schedule_cron
 from ....utils.channel_jwt import UserTokenParams, create_token
 from .cards import build_feishu_background_task_card
 from .channel import XpeechFeishuChannel
@@ -172,10 +172,7 @@ def schedule_feishu_task(
         schedule_value = normalized_run_at.isoformat()
     else:
         assert cron is not None
-        cron_fields = cron.split()
-        if cron_fields and "*" in cron_fields[0]:
-            raise ValueError("cron minute field must not contain '*'")
-        trigger = CronTrigger.from_crontab(cron, timezone=timezone)
+        trigger = parse_schedule_cron(cron, timezone=timezone)
         if trigger.get_next_fire_time(None, datetime.now(timezone)) is None:
             raise ValueError("cron does not produce a future run time")
         schedule_type = "cron"

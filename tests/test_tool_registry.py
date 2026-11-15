@@ -324,7 +324,9 @@ async def test_registers_supported_default_and_mcp_tools(
         "query_mcp_status",
     ]
     if channel == "feishu" and not not_interactive:
-        expected_tools[-1:-1] = ["feishu_schedule", "feishu_schedule_list", "feishu_schedule_cancel"]
+        expected_tools[-1:-1] = [
+            "feishu_schedule", "feishu_schedule_list", "feishu_schedule_cancel",
+        ]
     if not_interactive:
         interactive_names = {
             "ask_user_question",
