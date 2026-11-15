@@ -1,6 +1,5 @@
 ---
 name: embedded-systems
-short_description: MCU 与 RTOS 驱动开发
 description: Use when developing firmware for microcontrollers, implementing RTOS applications, or optimizing power consumption. Invoke for STM32, ESP32, FreeRTOS, bare-metal, power optimization, real-time systems, configure peripherals, write interrupt handlers, implement DMA transfers, debug timing issues.
 license: MIT
 metadata:

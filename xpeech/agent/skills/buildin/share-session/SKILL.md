@@ -1,6 +1,5 @@
 ---
 name: share-session
-short_description: 当前会话分享
 description: 当用户要求分享当前会话、导出聊天记录或把本次对话生成分享链接时使用。先确认详细分享、对话分享或摘要分享，再生成 HTML 并通过浏览器预览工具返回超链接。
 ---
 

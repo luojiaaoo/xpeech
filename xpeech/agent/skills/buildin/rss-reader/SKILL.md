@@ -1,6 +1,5 @@
 ---
 name: rss-reader
-short_description: RSS 订阅与资讯
 description: 按主题查找内建 RSS/Atom 订阅源，读取最新新闻、文章和技术动态并生成带来源链接的摘要；用于 RSS 源推荐、新闻简报、AI/科技简报、技术资讯汇总和订阅清单导出。
 ---
 

@@ -1,6 +1,5 @@
 ---
 name: cad-code-generation
-short_description: 参数化三维建模
 description: Create or edit runnable parametric CadQuery Python models for parts and assemblies, including manufacturable details and existing-feature preservation.
 ---
 

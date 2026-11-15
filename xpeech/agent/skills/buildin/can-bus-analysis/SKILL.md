@@ -1,6 +1,5 @@
 ---
 name: can-bus-analysis
-short_description: CAN 与 DBC 报文分析
 description: Analyze CAN bus traces - decode frames with DBC knowledge, interpret error frames, diagnose bus-off and communication problems, and assess bus load
 ---
 

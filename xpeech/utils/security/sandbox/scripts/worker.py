@@ -10,12 +10,6 @@ import tempfile
 
 
 async def execute(request: dict) -> dict:
-    environment = os.environ.copy()
-    for key, value in request["env"].items():
-        if value is None:
-            environment.pop(key, None)
-        else:
-            environment[key] = value
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         spawning = asyncio.create_task(
             asyncio.create_subprocess_exec(
@@ -25,7 +19,6 @@ async def execute(request: dict) -> dict:
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=stdout,
                 stderr=stderr,
-                env=environment,
                 start_new_session=True,
             )
         )

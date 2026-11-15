@@ -1,6 +1,5 @@
 ---
 name: cadquery-export
-short_description: STL 与 STEP 导出
 description: Export CadQuery models to STL/STEP/AMF/3MF and other formats for manufacturing, 3D printing, and visualization.
 ---
 

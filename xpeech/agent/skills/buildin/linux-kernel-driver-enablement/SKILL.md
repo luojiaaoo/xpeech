@@ -1,6 +1,5 @@
 ---
 name: linux-kernel-driver-enablement
-short_description: Linux 内核驱动开发与排查
 description: Use when enabling, porting, debugging, or upstreaming Linux kernel support for hardware devices. Covers kernel baselines, driver binding, device tree/ACPI resources, probe failures, regulators/clocks/resets/pinctrl, dynamic debug, tracing, userspace handoff, evidence capture, pitfalls, and verification.
 version: 1.0.0
 author: Hermes Agent

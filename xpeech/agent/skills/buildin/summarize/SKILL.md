@@ -1,6 +1,5 @@
 ---
 name: summarize
-short_description: 规则式文本摘要
 description: 使用本地规则脚本，从文本、TXT、Markdown、DOCX、PDF 或网页正文中优先选取含数字或提示词的句子，生成长度受限的摘录并统计关键词。适用于快速预览；不调用摘要模型，不保证语义覆盖或中文分词准确，扫描版 PDF 需先 OCR。
 ---
 

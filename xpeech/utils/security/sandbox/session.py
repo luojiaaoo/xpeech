@@ -12,7 +12,7 @@ from pathlib import Path
 import anyio
 from loguru import logger
 
-from ....agent.server.context import get_lark_user_access_token, get_user_id
+from ....agent.server.context import get_user_id
 from ....agent.skills.skill import SkillsLoader
 from ....config.settings import settings
 from .isolation import wrap_sandbox_command
@@ -177,16 +177,12 @@ class SandboxSession:
             response = asyncio.get_running_loop().create_future()
             self.pending[request_id] = response
             try:
-                # Tokens belong to the current request, never the cached session.
                 await self.send(
                     {
                         "op": "run",
                         "id": request_id,
                         "command": command,
                         "timeout_ms": timeout_ms,
-                        "env": {
-                            "LARKSUITE_CLI_USER_ACCESS_TOKEN": get_lark_user_access_token(),
-                        },
                     }
                 )
             except BaseException:

@@ -1,6 +1,5 @@
 ---
 name: gongwenformat-pro
-short_description: 公文 Word 排版
 description: 使用本地脚本将 Markdown、TXT 或 DOCX 正文套入 GB/T 9704-2012 公文版式，生成 Word 文件，支持标题、层级、红头、发文字号及版记。适用于已有内容的公文排版；字体需本机可用，PDF 导出另需 LibreOffice。包名含 Pro，但脚本没有付费接口或激活检查。
 ---
 

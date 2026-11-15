@@ -1,6 +1,5 @@
 ---
 name: capl-writer
-short_description: CAPL 编写与审查
 description: Write and review CAPL scripts for Vector CANoe/CANalyzer - ECU simulation, message handling, diagnostics automation, and test node patterns
 ---
 

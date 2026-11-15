@@ -1,6 +1,5 @@
 ---
 name: embedded-c-review
-short_description: 嵌入式 C 代码审查
 description: Review safety-critical embedded C code - ISR/shared-data races, volatile correctness, stack and timing hazards, defensive patterns for automotive ECUs
 ---
 

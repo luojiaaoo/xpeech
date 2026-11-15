@@ -1,6 +1,5 @@
 ---
 name: aihot
-short_description: AI HOT 资讯查询
 description: 通过 AI HOT 匿名只读 API 查询收录的 AI 新闻、精选、热点和日报，并整理带来源的中文简报。适用于查询该站收录的近期 AI 动态；需要网络，不需要 API Key，不能保证覆盖全网资讯。
 license: MIT. See LICENSE
 ---

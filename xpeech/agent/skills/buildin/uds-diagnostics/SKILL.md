@@ -1,6 +1,5 @@
 ---
 name: uds-diagnostics
-short_description: UDS 诊断日志分析
 description: Analyze UDS (ISO 14229) diagnostic communication - decode services and NRCs, explain request/response sequences, and troubleshoot failed diagnostic flows
 ---
 

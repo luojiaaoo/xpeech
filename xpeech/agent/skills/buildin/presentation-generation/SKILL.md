@@ -1,6 +1,5 @@
 ---
 name: presentation-generation
-short_description: HTML 演示文稿生成
 description: 为浏览器播放设计可自由排版的 16:9 HTML 演示页面，适用于网页幻灯片、路演展示与在线汇报。输出为 HTML 页面或完整项目包；需要按预设模板生成原生可编辑 PPTX 文件时使用 ppt-master。
 ---
 

@@ -1,6 +1,5 @@
 ---
 name: multi-search-engine
-short_description: 多引擎公开搜索
 description: 通过公开搜索 URL 生成多引擎检索链接，或用标准库脚本抓取可访问的搜索结果并去重。适用于公开资料检索与多来源核实；默认只生成链接，实际抓取受网络、反爬和验证码限制，无需付费搜索 API。
 license: MIT
 ---

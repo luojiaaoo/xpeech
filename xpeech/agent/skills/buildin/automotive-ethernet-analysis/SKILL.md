@@ -1,6 +1,5 @@
 ---
 name: wireshark
-short_description: DoIP 与以太网报文分析
 description: >-
   Captures and analyzes network traffic with Wireshark and tshark. Use when a
   user asks to sniff packets, debug a protocol, extract files from PCAPs,

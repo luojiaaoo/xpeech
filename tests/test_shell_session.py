@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from pydantic import ValidationError
 
-from xpeech.agent.server.context import lark_user_access_token_var, session_id_var, user_id_var
+from xpeech.agent.server.context import session_id_var, user_id_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import shell as shell_module
@@ -137,29 +137,25 @@ async def test_sandbox_rebuilds_when_wrapped_command_changes(stubbed_sandbox, ch
 
     if change == "remove_skill":
         add_skill()
-    token_context = lark_user_access_token_var.set(None)
-    try:
-        async with session.lock:
-            await session.start(skills_loader=SkillsLoader(session.workspace))
-            first = session.process
-            await session.start(skills_loader=SkillsLoader(session.workspace))
-            assert session.process is first
-            assert spawn.await_count == 1
-            if change == "add_skill":
-                add_skill()
-            elif change == "remove_skill":
-                (skill_dir / "SKILL.md").unlink()
-            elif change == "home_config":
-                config_home = settings.path.sandbox_home_path
-                config_home.mkdir()
-                (config_home / ".npmrc").write_text("managed config")
+    async with session.lock:
+        await session.start(skills_loader=SkillsLoader(session.workspace))
+        first = session.process
+        await session.start(skills_loader=SkillsLoader(session.workspace))
+        assert session.process is first
+        assert spawn.await_count == 1
+        if change == "add_skill":
+            add_skill()
+        elif change == "remove_skill":
+            (skill_dir / "SKILL.md").unlink()
+        elif change == "home_config":
+            config_home = settings.path.sandbox_home_path
+            config_home.mkdir()
+            (config_home / ".npmrc").write_text("managed config")
 
-            await session.start(skills_loader=SkillsLoader(session.workspace))
-            assert session.process is not first
-            assert spawn.await_count == 2
-            assert session.wrapped_command == list(spawn.call_args.args)
-    finally:
-        lark_user_access_token_var.reset(token_context)
+        await session.start(skills_loader=SkillsLoader(session.workspace))
+        assert session.process is not first
+        assert spawn.await_count == 2
+        assert session.wrapped_command == list(spawn.call_args.args)
 
 
 @pytest.mark.asyncio
@@ -288,58 +284,6 @@ async def test_request_during_expiry_waits_for_cleanup(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_request_credentials_are_refreshed_without_replaying_commands(tmp_path, monkeypatch):
-    session = SandboxSession(tmp_path)
-    requests = []
-
-    async def start(_skills_loader):
-        pass
-
-    async def send(request):
-        requests.append(request)
-        session.pending[request["id"]].set_result(CommandResult(b"", b"", 0))
-
-    monkeypatch.setattr(session, "start", start)
-    monkeypatch.setattr(session, "send", send)
-    user_context = user_id_var.set("alice")
-    try:
-        for value in ("old-token", "new-token", None):
-            context = lark_user_access_token_var.set(value)
-            try:
-                await session.execute("true", 100, skills_loader=SkillsLoader(session.workspace))
-            finally:
-                lark_user_access_token_var.reset(context)
-        assert [r["env"]["LARKSUITE_CLI_USER_ACCESS_TOKEN"] for r in requests] == [
-            "old-token",
-            "new-token",
-            None,
-        ]
-        # SHELL_USER_ID 由沙盒级设置，不随命令下发。
-        assert all("SHELL_USER_ID" not in r["env"] for r in requests)
-    finally:
-        user_id_var.reset(user_context)
-
-
-@pytest.mark.asyncio
-async def test_sandbox_reuses_process_when_only_request_token_changes(stubbed_sandbox):
-    """令牌只随命令下发：token 刷新不重建沙盒，也不烘进 bwrap 参数。"""
-    session, spawn, _builtin_root = stubbed_sandbox
-    token_context = lark_user_access_token_var.set(None)
-    try:
-        async with session.lock:
-            await session.start(skills_loader=SkillsLoader(session.workspace))
-            first = session.process
-            for value in ("old-token", "new-token", None):
-                lark_user_access_token_var.set(value)
-                await session.start(skills_loader=SkillsLoader(session.workspace))
-                assert session.process is first
-                assert spawn.await_count == 1
-                assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in session.wrapped_command
-    finally:
-        lark_user_access_token_var.reset(token_context)
-
-
-@pytest.mark.asyncio
 async def test_concurrent_first_shell_calls_share_initialization_then_execute_in_parallel(tmp_path, monkeypatch):
     manager = SandboxManager()
     initializing = asyncio.Event()
@@ -450,18 +394,16 @@ async def test_commands_overlap_in_one_sandbox_and_route_out_of_order_output(tmp
 
 @linux_sandbox
 @pytest.mark.asyncio
-async def test_concurrent_credentials_and_large_outputs_stay_with_their_request(tmp_path, manager):
+async def test_concurrent_large_outputs_stay_with_their_request(tmp_path, manager):
     workspace = tmp_path / "alice"
     workspace.mkdir()
 
     async def command(index):
-        context = lark_user_access_token_var.set(f"token-{index}")
         user_context = user_id_var.set(f"user-{index}")
         try:
             result = await manager.run(
                 f"touch started-{index}; "
                 "while [ $(find . -name 'started-*' | wc -l) -lt 4 ]; do sleep 0.01; done; "
-                "printf '%s\\n' \"$LARKSUITE_CLI_USER_ACCESS_TOKEN\"; "
                 f"head -c 100000 /dev/zero | tr '\\0' '{index}'; "
                 f"printf error-{index} >&2",
                 workspace,
@@ -470,9 +412,8 @@ async def test_concurrent_credentials_and_large_outputs_stay_with_their_request(
             )
         finally:
             user_id_var.reset(user_context)
-            lark_user_access_token_var.reset(context)
         assert result.returncode == 0 and not result.timed_out
-        assert result.stdout == f"token-{index}\n".encode() + str(index).encode() * 100000
+        assert result.stdout == str(index).encode() * 100000
         assert result.stderr == f"error-{index}".encode()
 
     await asyncio.gather(*(command(index) for index in range(4)))

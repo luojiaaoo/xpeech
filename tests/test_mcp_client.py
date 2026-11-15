@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from xpeech.agent.server.context import lark_user_access_token_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
@@ -164,7 +163,6 @@ async def test_stdio_rebuilds_when_wrapped_command_changes(tmp_path, stdio_trans
     registration = mcp_client.create_mcp_registration(
         server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
     )
-    context = lark_user_access_token_var.set(None)
     try:
         await registration._get_tool_bindings()
         assert await registration.call_tool("echo", {}) == "session-1"
@@ -187,29 +185,6 @@ async def test_stdio_rebuilds_when_wrapped_command_changes(tmp_path, stdio_trans
             assert (str(skill_dir) in params.args) is (change == "add_skill")
         assert state.calls == [(1, "echo"), (2, "echo")]
     finally:
-        lark_user_access_token_var.reset(context)
-        await registration.aclose()
-
-
-@pytest.mark.asyncio
-async def test_stdio_connection_ignores_request_tokens(tmp_path, stdio_transport):
-    """请求令牌不烘进参数，也不重建缓存的 stdio 连接。"""
-    state = stdio_transport
-    registration = mcp_client.create_mcp_registration(
-        server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
-    )
-    context = lark_user_access_token_var.set(None)
-    try:
-        await registration._get_tool_bindings()
-        for token in ("old-token", "new-token", None):
-            lark_user_access_token_var.set(token)
-            assert await registration.call_tool("echo", {}) == "session-1"
-            assert len(state.sessions) == 1
-            params = state.sessions[-1].params
-            assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in params.args
-        assert state.calls == [(1, "echo"), (1, "echo"), (1, "echo")]
-    finally:
-        lark_user_access_token_var.reset(context)
         await registration.aclose()
 
 
@@ -222,7 +197,6 @@ async def test_stdio_rebuild_waits_for_active_calls_without_serializing_unchange
     registration = mcp_client.create_mcp_registration(
         server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
     )
-    context = lark_user_access_token_var.set(None)
     pending = asyncio.create_task(registration.call_tool("wait", {}))
     rebuilding = None
     try:
@@ -248,7 +222,6 @@ async def test_stdio_rebuild_waits_for_active_calls_without_serializing_unchange
         assert registration._active_calls == 0
         assert state.calls == [(1, "wait"), (1, "fast"), (2, "after")]
     finally:
-        lark_user_access_token_var.reset(context)
         state.release.set()
         if rebuilding is not None:
             rebuilding.cancel()

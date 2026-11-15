@@ -1,6 +1,5 @@
 ---
 name: aspice-review
-short_description: ASPICE 工作产品审查
 description: Review automotive software work products against Automotive SPICE (A-SPICE) base practices for SWE.1-SWE.6 and produce assessment-style findings
 ---
 

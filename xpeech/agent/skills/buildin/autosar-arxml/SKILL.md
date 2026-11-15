@@ -1,6 +1,5 @@
 ---
 name: autosar-arxml
-short_description: ARXML 结构与引用分析
 description: Read, explain, and sanity-check AUTOSAR ARXML - software components, ports, interfaces, signals, and BSW configuration concepts
 ---
 

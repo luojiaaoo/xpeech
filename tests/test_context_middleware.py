@@ -15,7 +15,6 @@ from xpeech.utils.internal_jwt import create_internal_access_token
 def current_context():
     return (
         context.get_user_id(), context.get_session_id(), context.get_request_id(),
-        context.get_lark_user_access_token(),
     )
 
 
@@ -43,8 +42,6 @@ async def test_request_context_is_available_and_restored(credential, raise_error
     async def downstream(scope, receive, send):
         observed.append(current_context())
         assert context.get_user_id() == expected_user
-        # 用户访问令牌改由表单参数依赖注入，中间件不再携带。
-        assert context.get_lark_user_access_token() is None
         assert context.get_session_id() == session_id
         assert UUID(context.get_request_id()).version == 4
         if raise_error:

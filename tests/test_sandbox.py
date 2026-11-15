@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 
-from xpeech.agent.server.context import lark_user_access_token_var, user_id_var
+from xpeech.agent.server.context import user_id_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR, SkillsLoader
 from xpeech.agent.tools.filesystem import ReadFileArgs, WriteFileArgs, build_file_tools
@@ -294,38 +294,6 @@ async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
     assert {
         (str(config_home / relative_path), str(home / relative_path)) for relative_path in config_files
     } <= read_only_binds
-
-
-@pytest.mark.asyncio
-async def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-
-    async def wrapped(token: str | None) -> list[str]:
-        context = lark_user_access_token_var.set(token)
-        try:
-            return await sandbox.wrap_sandbox_command("true", workspace, skills_loader=SkillsLoader(workspace))
-        finally:
-            lark_user_access_token_var.reset(context)
-
-    plain_args = await wrapped(None)
-    token_args = await wrapped("u-request-token")
-    plain_binds = set(_option_pairs(plain_args, "--ro-bind"))
-    token_binds = set(_option_pairs(token_args, "--ro-bind"))
-    skills_target = workspace / "skills"
-    builtin_root = BUILTIN_SKILLS_DIR.resolve()
-
-    # 令牌只随命令下发，沙盒参数完全不涉及。
-    assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in plain_args
-    assert (str(builtin_root / "lark-skills"), str(skills_target / "lark-skills")) in plain_binds
-    assert (str(builtin_root / "lark-cli-auth"), str(skills_target / "lark-cli-auth")) in plain_binds
-
-    assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in token_args
-    assert (
-        str(builtin_root / "lark-skills-token"),
-        str(skills_target / "lark-skills-token"),
-    ) in token_binds
-    assert not any(target == str(skills_target / "lark-cli-auth") for _, target in token_binds)
 
 
 @pytest.mark.asyncio

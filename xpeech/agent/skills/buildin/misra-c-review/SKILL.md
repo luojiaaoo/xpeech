@@ -1,6 +1,5 @@
 ---
 name: misra-c-review
-short_description: MISRA C 代码与偏离审查
 description: Review embedded C code against MISRA C guidelines - identify violations, explain the safety rationale, propose compliant fixes, and write proper deviations
 ---
 

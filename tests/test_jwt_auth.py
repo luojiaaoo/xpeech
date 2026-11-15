@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 
 from xpeech.agent import execute as execute_module
 from xpeech.agent.server.api import app
-from xpeech.agent.server.context import get_lark_user_access_token
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, settings
@@ -120,7 +119,8 @@ def test_access_token_does_not_carry_lark_user_access_token():
 
 
 @pytest.mark.asyncio
-async def test_chat_injects_isolated_shell_tokens_without_saving_them(tmp_path, monkeypatch):
+@pytest.mark.parametrize("endpoint", ["/chat", "/chat_sync"])
+async def test_chat_ignores_lark_user_access_tokens(tmp_path, monkeypatch, endpoint):
     monkeypatch.setattr(settings.path, "cache_path", tmp_path / "cache")
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "sandbox-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
@@ -137,14 +137,16 @@ async def test_chat_injects_isolated_shell_tokens_without_saving_them(tmp_path, 
             await asyncio.wait_for(both_started.wait(), timeout=5)
         await asyncio.sleep(0)
         args = await sandbox.wrap_sandbox_command("lark-cli whoami", tmp_path, skills_loader=SkillsLoader(tmp_path))
-        # 请求令牌只随命令下发，沙盒参数完全不涉及。
         assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in args
-        observed.append((message.user_id, get_lark_user_access_token()))
+        observed.append(message.user_id)
         assert "lark_user_access_token" not in message.model_dump_json()
         yield {"event": "assistant", "context": "ok"}
 
     async def create(_user_id, **_kwargs):
-        return SimpleNamespace(workspace=tmp_path, run=run)
+        async def run_not_interactive(message):
+            return [event async for event in run(message)]
+
+        return SimpleNamespace(workspace=tmp_path, run=run, run_not_interactive=run_not_interactive)
 
     monkeypatch.setattr(execute_module.AgentRunner, "create", create)
 
@@ -154,7 +156,7 @@ async def test_chat_injects_isolated_shell_tokens_without_saving_them(tmp_path, 
         if lark_user_access_token is not None:
             data["lark_user_access_token"] = lark_user_access_token
         return await client.post(
-            "/chat",
+            endpoint,
             headers={
                 "Authorization": f"Bearer {token}",
                 "x-session-id": "00000000-0000-7000-8000-000000000000",
@@ -169,12 +171,11 @@ async def test_chat_injects_isolated_shell_tokens_without_saving_them(tmp_path, 
             send(client, "session-two", "u-second"),
         )
         assert all(response.status_code == 200 for response in responses)
-        assert set(observed) == {("session-one", "u-first"), ("session-two", "u-second")}
+        assert set(observed) == {"session-one", "session-two"}
         response = await send(client, "session-one", None)
 
     assert response.status_code == 200
-    assert observed[-1] == ("session-one", None)
-    assert get_lark_user_access_token() is None
+    assert observed[-1] == "session-one"
 
 
 def test_expired_access_token_is_rejected():

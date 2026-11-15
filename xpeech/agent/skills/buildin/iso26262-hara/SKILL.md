@@ -1,6 +1,5 @@
 ---
 name: iso26262-hara
-short_description: HARA 危害分析辅助
 description: Guide Hazard Analysis and Risk Assessment (HARA) per ISO 26262 - hazard identification, S/E/C classification, ASIL determination, and safety goal formulation
 ---
 

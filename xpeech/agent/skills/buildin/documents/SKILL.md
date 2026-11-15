@@ -1,6 +1,5 @@
 ---
 name: documents
-short_description: Office 与 PDF 文档生成、转换及校验
 description: >-
   Generate, inspect, validate, and fix PDF, Word (.docx), Excel (.xlsx), and
   PowerPoint (.pptx) documents: turn structured content into render-ready

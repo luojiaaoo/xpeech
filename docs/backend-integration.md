@@ -143,21 +143,9 @@ curl -sS --fail-with-body -X POST "http://localhost:7878/token" \
 
 SSE 一旦建立，不会因 Token 在流中途过期而中断；`/answer_question`、`/files` 是独立请求，仍需携带有效 Token。答题、下载和技能请求应使用与聊天相同的用户 `sub`。
 
-### 2.5 飞书用户令牌（可选）
+### 2.5 飞书用户授权
 
-飞书通道需要以用户身份调用命令时，可在用户 JWT payload 中额外携带字符串 `lark_user_access_token`：
-
-```python
-claims = {
-    "sub": "demo-user",
-    "exp": datetime.now(UTC) + timedelta(seconds=60),
-    "lark_user_access_token": "<feishu-user-access-token>",
-}
-```
-
-使用 `jwt.channels.feishu.secret_key` 签名，header 设置 `kid="feishu"`。该声明仅用于当前请求，不保存到会话历史，后续请求需重新携带；内部 JWT 不接受此声明。
-
-携带非空令牌时，沙盒加载 `lark-skills-token`，`lark-cli` 使用该令牌且不回退请求 `lark-token-manager`；未携带时加载 `lark-skills` 和 `lark-cli-auth`，使用令牌容器。
+`/chat` 和 `/chat_sync` 不再支持通过请求注入飞书用户令牌。飞书命令使用 `lark-skills` 和 `lark-cli-auth`，通过令牌容器管理用户授权。
 
 ---
 

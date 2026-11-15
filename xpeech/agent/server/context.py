@@ -3,7 +3,6 @@ from contextvars import ContextVar
 user_id_var: ContextVar[str | None] = ContextVar("user_id", default=None)
 session_id_var: ContextVar[str | None] = ContextVar("session_id", default=None)
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
-lark_user_access_token_var: ContextVar[str | None] = ContextVar("lark_user_access_token", default=None)
 
 
 def get_user_id() -> str | None:
@@ -16,7 +15,3 @@ def get_session_id() -> str | None:
 
 def get_request_id() -> str | None:
     return request_id_var.get()
-
-
-def get_lark_user_access_token() -> str | None:
-    return lark_user_access_token_var.get()

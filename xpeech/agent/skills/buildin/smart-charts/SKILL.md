@@ -1,6 +1,5 @@
 ---
 name: smart-charts
-short_description: 交互式数据图表
 description: 将 CSV、TSV、TXT、Excel 或 JSON 表格按预设图型和主题渲染为可离线打开的交互式 ECharts HTML；支持数据画像、聚合转换与绘图统计。适用于已有表格数据的可视化，输出为 HTML 图表，不是独立业务仪表盘或书面报告。
 license: MIT
 ---

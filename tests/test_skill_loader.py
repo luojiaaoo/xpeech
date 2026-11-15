@@ -8,21 +8,16 @@ import pytest
 from pydantic import ValidationError
 
 from xpeech.agent.prompt.system import build_system_prompt
-from xpeech.agent.server.context import lark_user_access_token_var
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillInfo, SkillMetadata, SkillsLoader
 
 
-def test_public_builtin_short_descriptions_are_present_and_readable():
+def test_builtin_descriptions_are_present_and_readable():
     for skill_file in sorted(skill_module.BUILTIN_SKILLS_DIR.glob("*/SKILL.md")):
         content = skill_file.read_bytes().decode("utf-8")
         skill = SkillInfo(source="builtin", path=str(skill_file), content=content)
-        if skill.metadata.internal:
-            continue
-
-        summary = skill.metadata.kwargs.get("short_description")
-        assert isinstance(summary, str) and summary.strip(), skill_file
-        assert re.search(r"[\u4e00-\u9fff]", summary), skill_file
+        assert skill.metadata.description.strip(), skill_file
+        assert "short_description" not in skill.metadata.kwargs, skill_file
         assert not re.search(r"\?{3,}|\ufffd|\u951f\u65a4\u62f7", content), skill_file
 
 
@@ -55,7 +50,6 @@ def test_engineering_skill_metadata_and_upstream_integrity(skill_name: str):
 
     assert skill.metadata.name == {"automotive-ethernet-analysis": "wireshark"}.get(skill_name, skill_name)
     assert skill.metadata.description.strip()
-    assert re.search(r"[\u4e00-\u9fff]", skill.metadata.kwargs["short_description"])
     assert "???" not in content
     assert "\ufffd" not in content
     assert skill.metadata.always is False
@@ -187,41 +181,12 @@ async def test_interactive_skill_filter_applies_to_list_and_prompt(
     assert "<name>regular-skill</name>" in prompt
 
 
-@pytest.mark.parametrize(
-    ("skill_name", "short_description"),
-    [
-        ("algorithmic-poster-philosophy", "海报设计"),
-        ("chat2duckdb", "DuckDB 数据分析"),
-        ("lark-skills", "飞书全能力助手"),
-        ("markdown-formatter", "Markdown 格式化"),
-        ("presentation-generation", "HTML 演示文稿生成"),
-        ("weather", "天气查询与预报"),
-    ],
-)
-def test_builtin_short_descriptions_match_backend_server(
-    skill_name: str, short_description: str
-):
-    skill_file = skill_module.BUILTIN_SKILLS_DIR / skill_name / "SKILL.md"
-    skill = SkillInfo(source="builtin", path=str(skill_file), content=skill_file.read_text(encoding="utf-8"))
-
-    assert skill.metadata.kwargs["short_description"] == short_description
-
-
 @pytest.mark.asyncio
-async def test_injected_token_selects_dedicated_lark_skill(tmp_path: Path):
-    context = lark_user_access_token_var.set("u-request-token")
-    try:
-        skills = await SkillsLoader(tmp_path / "workspace").list_skill_info()
-    finally:
-        lark_user_access_token_var.reset(context)
+async def test_builtin_lark_skills_use_managed_auth():
+    skills = await SkillsLoader(None).list_builtin_skill_info()
+    names = {skill.metadata.name for skill in skills}
 
-    lark_skills = [skill for skill in skills if skill.metadata.name == "lark-skills-token"]
-    assert len(lark_skills) == 1
-    assert "不主动发起授权" in lark_skills[0].body
-    # 注入方式属于后端实现细节，不应暴露在技能文档里
-    assert "表单参数" not in lark_skills[0].body
-    assert lark_skills[0].path == str(tmp_path / "workspace/skills/lark-skills-token/SKILL.md")
-    assert all(skill.metadata.name not in {"lark-skills", "lark-cli-auth"} for skill in skills)
+    assert {"lark-skills", "lark-cli-auth"} <= names
 
 
 @pytest.mark.parametrize("content", ["# Instructions", "---\nname: example\n# Missing closing delimiter"])

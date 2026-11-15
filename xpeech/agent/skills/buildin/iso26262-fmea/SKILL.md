@@ -1,6 +1,5 @@
 ---
 name: iso26262-fmea
-short_description: FMEA 失效分析辅助
 description: Guide FMEA for automotive systems - structure/function/failure analysis, severity-occurrence-detection rating, action prioritization, and safety-analysis alignment with ISO 26262
 ---
 

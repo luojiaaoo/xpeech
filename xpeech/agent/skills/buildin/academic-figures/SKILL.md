@@ -1,6 +1,5 @@
 ---
 name: academic-figures
-short_description: 学术数据绘图
 description: 根据 JSON、CSV 或 Excel 数据，使用本地 Python 绘图脚本生成森林图、生存曲线、ROC、PRISMA 等静态学术图表，导出 PNG、PDF、SVG 或 TIFF；支持期刊尺寸预设与可选重叠检查。适用于已有研究数据的论文配图。仅接入免费本地版。
 ---
 

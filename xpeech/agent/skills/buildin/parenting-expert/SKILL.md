@@ -1,6 +1,5 @@
 ---
 name: parenting-expert
-short_description: 分龄育儿参考
 description: 按年龄和问题场景检索随包育儿参考资料，整理日常照护、亲子沟通、行为引导与家庭陪伴建议。适用于家长咨询与计划整理；属于知识和提示词技能，没有独立诊断模型，医疗与政策信息需核对最新权威来源。
 license: MIT
 ---
