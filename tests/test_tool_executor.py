@@ -71,7 +71,6 @@ def test_tool_model_info(has_model, has_metadata):
     assert info.has_user_id is False
     assert info.has_sender_name is False
     assert info.has_channel is False
-    assert info.has_tool_executor is False
     if has_model:
         assert info.model_cls is EchoArgs
     else:
@@ -564,34 +563,6 @@ class TestToolExecutor:
             )
         ]
         assert result.value == "ok:session-1:Alice:feishu:test"
-
-    @pytest.mark.asyncio
-    async def test_injects_tool_executor_only_when_declared(self, tmp_path: Path):
-        async def orchestrator(args: EchoArgs, tool_executor) -> str:
-            """Chain tool calls with the injected executor."""
-            assert isinstance(tool_executor, ToolExecutor)
-            return args.text
-
-        async def plain(args: EchoArgs) -> str:
-            return args.text
-
-        schema = as_tool(orchestrator)["function"]["parameters"]
-        assert set(schema["properties"]) == {"text"}
-        results = [
-            result
-            async for result in ToolExecutor(
-                workspace=tmp_path,
-                max_result_chars=10_000,
-                mapping_tool_call_funcs={"orchestrator": orchestrator, "plain": plain},
-            ).execute(
-                [
-                    ToolCallRequest(id="1", name="orchestrator", arguments={"text": "a"}),
-                    ToolCallRequest(id="2", name="plain", arguments={"text": "b"}),
-                ],
-            )
-        ]
-        assert all(result.succeeded for result in results)
-        assert [result.value for result in results] == ["a", "b"]
 
     @pytest.mark.asyncio
     async def test_injects_channel_only_when_declared(self, tmp_path: Path):

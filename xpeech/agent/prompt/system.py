@@ -110,12 +110,6 @@ def _get_identity(workspace: Path, channel: str | None = None) -> str:
                 - When an HTML file must be previewed for a user, you MUST use the `create_browser_preview` tool. NEVER start or manage your own HTTP server for HTML preview, including as a fallback.
                 - Skills marked as source='builtin' are read-only. Any attempt to modify, delete, or overwrite them will not take effect.
 
-                ## PTC
-
-                - Use `run_ptc` to chain tool calls and process their results. Before writing or modifying a PTC script, read the `starlark-ptc` skill.
-                - Never call `ask_user_question`, `send_file`, or `run_ptc` from inside PTC. Ask questions and deliver files through direct tool calls; do not nest PTC executions.
-                - `shell` and tools whose parameter schema contains `execution_description` may be blocked or require user confirmation. Execute the intended call directly to verify it runs without confirmation before adding it to a PTC script. Calls that are blocked or require confirmation must stay outside PTC.
-
             """
         )
         .lstrip()

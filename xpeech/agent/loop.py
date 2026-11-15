@@ -162,23 +162,20 @@ class AgentLoop:
         # 执行工具调用
         with_metas = []
 
+        def prepend_text(content: Any, text: str) -> Any:
+            if isinstance(content, str):
+                return f"{text}\n\n{content}"
+            if isinstance(content, list):
+                return [{"type": "text", "text": text}, *content]
+            return content
+
         def append_tool_result_messages_yaml(
             tool_call: ToolCallRequest, result_: Any, *, started_at: datetime,
-            duration_seconds: float, user_confirmed: bool = False,
+            duration_seconds: float,
         ):
             """将一次工具调用结果转换为对话历史消息。"""
-            def prepend_text(content: Any, text: str) -> Any:
-                if isinstance(content, str):
-                    return f"{text}\n\n{content}"
-                if isinstance(content, list):
-                    return [{"type": "text", "text": text}, *content]
-                return content
-
             timing = f"【工具调用】发起时间：{started_at:%H:%M:%S}；耗时：{duration_seconds:.2f} 秒"
             result_ = prepend_text(result_, timing)
-            if user_confirmed:
-                notice = "【用户确认后执行】用户已同意本次操作，工具随后才开始执行。以下为实际结果："
-                result_ = prepend_text(result_, notice)
             # 创建工具调用结果消息
             if isinstance(result_, str):
                 _append_turn_message(
@@ -266,6 +263,8 @@ class AgentLoop:
                         result = execution_result.value
                         duration_seconds += execution_result.duration_seconds
                         success = execution_result.succeeded
+                        notice = "【用户确认后执行】用户已同意本次操作，工具随后才开始执行。以下为实际结果："
+                        result = prepend_text(result, notice)
                     elif timed_out:
                         success = False
                         result = "用户确认超时，工具未执行。"
@@ -278,7 +277,7 @@ class AgentLoop:
 
                     append_tool_result_messages_yaml(
                         tool_call, result, started_at=execution.started_at,
-                        duration_seconds=duration_seconds, user_confirmed=user_confirmed,
+                        duration_seconds=duration_seconds,
                     )
                     tool_result_content = result
                 elif isinstance(execution.value, SendFileRequest):

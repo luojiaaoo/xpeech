@@ -226,13 +226,14 @@ async def test_optional_confirmation_check_receives_json_and_controls_prompt(
     )
     result = json.loads(events[-1]["context"])["result"]
     confirmed = decision is ExecutionDecision.CONFIRM and not not_interactive
-    assert history[-1]["content"].startswith("【用户确认后执行】") is confirmed
+    assert result.startswith("【用户确认后执行】") is confirmed
+    assert history[-1]["content"].endswith("\n\n" + result)
     if decision is ExecutionDecision.DENY or (decision is ExecutionDecision.CONFIRM and not_interactive):
         assert "PermissionError" in result and "拒绝执行" in result
         assert executions == []
         assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
         return
-    assert result == "command output"
+    assert result.split("\n\n")[-1] == "command output"
     [args] = executions
     assert type(args) is CommandArgs
     assert args.command == "echo hello" and args.timeout_ms == 100
@@ -359,13 +360,13 @@ async def test_waits_for_confirmation_using_the_entire_reply(tmp_path, reply, ex
     result = json.loads(events[-1]["context"])
     assert (result["tool_call_id"], result["name"]) == ("shell-1", "shell")
     if expected == "confirmed":
-        assert history[-1]["content"].startswith("【用户确认后执行】")
+        assert result["result"].startswith("【用户确认后执行】")
         assert history[-1]["content"].endswith(result["result"])
     else:
         assert history[-1]["content"].endswith("\n\n" + result["result"])
     assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
     if expected == "confirmed":
-        assert result["result"] == "command output"
+        assert result["result"].split("\n\n")[-1] == "command output"
         [args] = executions
         assert type(args) is CommandArgs
         assert args.command == "echo hello" and args.timeout_ms == 100
@@ -447,7 +448,8 @@ async def test_multiple_requests_are_confirmed_individually(tmp_path):
     assert len(questions) == 2
     assert executions == ["ping"]
     assert "取消" in results[0]["result"]
-    assert results[1]["result"] == "pong"
+    assert results[1]["result"].startswith("【用户确认后执行】")
+    assert results[1]["result"].split("\n\n")[-1] == "pong"
 
 
 @pytest.mark.asyncio
@@ -488,7 +490,9 @@ async def test_confirmation_wait_does_not_consume_execution_timeout(tmp_path):
             await asyncio.sleep(0.03)
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
-            assert json.loads(event["context"])["result"] == "pong"
+            result = json.loads(event["context"])["result"]
+            assert result.startswith("【用户确认后执行】")
+            assert result.split("\n\n")[-1] == "pong"
 
 
 @pytest.mark.asyncio
@@ -519,12 +523,12 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(
             result = payload["result"]
             assert payload["success"] is (behavior == "large_result")
             if needs_confirmation:
-                assert history[-1]["content"].startswith("【用户确认后执行】")
+                assert result.startswith("【用户确认后执行】")
                 assert history[-1]["content"].endswith(result)
             else:
                 assert history[-1]["content"].endswith("\n\n" + result)
             if behavior == "error":
-                assert result == "RuntimeError: test failure"
+                assert result.split("\n\n")[-1] == "RuntimeError: test failure"
             elif behavior == "timeout":
                 assert "timed out" in result
             else:
@@ -549,7 +553,8 @@ async def test_confirmed_execution_injects_runtime_context(tmp_path):
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
             result = json.loads(event["context"])["result"]
-    assert result == "echo hello:approval-user:Alice:web:approval-session:test"
+    assert result.startswith("【用户确认后执行】")
+    assert result.split("\n\n")[-1] == "echo hello:approval-user:Alice:web:approval-session:test"
 
 
 @pytest.mark.asyncio
@@ -578,11 +583,17 @@ async def test_confirmation_notice_preserves_multimodal_output(tmp_path, needs_c
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
             payload = json.loads(event["context"])
-            assert payload["success"] and payload["result"] == blocks
+            assert payload["success"]
+            if needs_confirmation:
+                assert payload["result"][0]["text"].startswith("【用户确认后执行】")
+                assert payload["result"][1:] == blocks
+            else:
+                assert payload["result"] == blocks
+            assert history[-1]["content"][1:] == payload["result"]
     content = history[-1]["content"]
     if needs_confirmation:
-        assert content[0]["type"] == "text" and content[0]["text"].startswith("【用户确认后执行】")
-        assert content[1]["text"].startswith("【工具调用】发起时间：")
+        assert content[0]["text"].startswith("【工具调用】发起时间：")
+        assert content[1]["type"] == "text" and content[1]["text"].startswith("【用户确认后执行】")
         assert content[2:] == blocks
     else:
         assert content[0]["text"].startswith("【工具调用】发起时间：")
@@ -682,7 +693,9 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
             if denied:
                 assert "PermissionError" in result and "拒绝执行" in result
             else:
-                assert result == "remote result"
+                confirmed = not not_interactive and needs_confirmation is not False
+                assert result.startswith("【用户确认后执行】") is confirmed
+                assert result.split("\n\n")[-1] == "remote result"
     if not_interactive:
         assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
     assert remote_calls == ([] if denied else [("echo", {"text": "hello", "extra": 1})])
@@ -780,7 +793,9 @@ async def test_custom_confirmation_copy_is_not_passed_to_original_tool(tmp_path,
             assert card["body"]["elements"][-1]["columns"][0]["elements"][0]["text"]["content"] == "确认"
             await answer({"decision": "confirm"})
         elif event["event"] == "tool_call_result":
-            assert json.loads(event["context"])["result"] == "hello"
+            result = json.loads(event["context"])["result"]
+            assert result.startswith("【用户确认后执行】") is needs_confirmation
+            assert result.split("\n\n")[-1] == "hello"
     assert executions == [{"command": "echo hello"}]
 
 
