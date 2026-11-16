@@ -11,7 +11,7 @@ def tool_event(event_type, entries):
     return ChatEvent(event=event_type, context=json.dumps(entries, ensure_ascii=False))
 
 
-def test_token_usage_only_shows_three_summary_metrics():
+def test_token_usage_shows_summary_metrics_with_model_call_count():
     usage = {
         "上下文使用率": "13.61% (20k / 147k)",
         "上下文明细": {
@@ -24,7 +24,7 @@ def test_token_usage_only_shows_three_summary_metrics():
         "输入 Token": "0k", "输出 Token": "0k", "大模型请求次数": "1",
     }
     formatted = FeishuEventFormatter()._format_token_usage(json.dumps(usage))
-    assert formatted == "上下文使用率：13.61% (20k / 147k) | 总 Token：1k | 会话时长：2秒"
+    assert formatted == "上下文使用率：13.61% (20k / 147k) | 总 Token：1k | 会话时长：2秒 | 大模型请求次数：1"
 
 
 @pytest.mark.parametrize("event_type", [ChatEventType.THINKING, ChatEventType.TOOL_CALL])

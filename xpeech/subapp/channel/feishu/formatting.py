@@ -230,7 +230,7 @@ class FeishuEventFormatter:
     def _format_token_usage(self, context: str) -> str:
         data = json.loads(context)
         return " | ".join(
-            f"{key}：{data[key]}" for key in ("上下文使用率", "总 Token", "会话时长") if key in data
+            f"{key}：{data[key]}" for key in ("上下文使用率", "总 Token", "会话时长", "大模型请求次数") if key in data
         )
 
     @staticmethod
