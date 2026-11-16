@@ -44,11 +44,11 @@ async def test_context_reads_memory(tmp_path, monkeypatch, memory):
     )
 
     contexts = await asyncio.wait_for(context_prompt_module.build_context_messages(tmp_path), 5)
-    memories = [message for message in contexts if message["context_type"] == "memory"]
+    memories = [message for message in contexts if message["content"].startswith("<system-reminder>\n## Long-term Memory\n")]
 
     if memory is not None:
         assert memories == [{
-            "role": "user", "context_type": "memory",
+            "role": "user",
             "content": f"<system-reminder>\n## Long-term Memory\n{memory}\n</system-reminder>",
         }]
     else:
@@ -73,8 +73,8 @@ class TestMemoryConsolidator:
 
         result = await consolidator.consolidate([
             {"role": "system", "content": "system"},
-            {"role": "user", "context_type": "skills", "content": "skill catalog"},
-            {"role": "user", "context_type": "memory", "content": "current memory"},
+            {"role": "user", "content": "<system-reminder>skill catalog</system-reminder>"},
+            {"role": "user", "content": "<system-reminder>current memory</system-reminder>"},
         ])
 
         assert result == ConsolidationResult(status="skipped", message="当前上下文为空，无需记忆")
@@ -115,7 +115,7 @@ class TestMemoryConsolidator:
         )
 
         result = await consolidator.consolidate([
-            {"role": "user", "context_type": "skills", "content": "skill catalog"},
+            {"role": "user", "content": "<system-reminder>skill catalog</system-reminder>"},
             {"role": "user", "content": "remember this"},
         ])
 

@@ -24,7 +24,7 @@ class TestMessageUtils:
         messages = [
             {"role": "system", "content": "fixed rules"},
             {"role": "user", "content": "<system-reminder>current identity</system-reminder>"},
-            {"role": "user", "context_type": "memory", "content": "legacy unwrapped memory"},
+            {"role": "user", "content": "<system-reminder>current memory</system-reminder>"},
             *actual_messages,
         ]
 
@@ -35,7 +35,7 @@ class TestMessageUtils:
             {"role": "system", "content": "system"},
             {"role": "user", "timestamp": 123.0, "content": "hello"},
             {"role": "user", "content": "generated"},
-            {"role": "user", "context_type": "skills", "content": "skill catalog"},
+            {"role": "user", "content": "<system-reminder>skill catalog</system-reminder>"},
         ]
 
         cleaned = strip_internal_message_metadata(messages)
@@ -44,8 +44,8 @@ class TestMessageUtils:
         assert messages[1]["timestamp"] == 123.0
         assert is_timestamped_user_message(messages[1])
         assert not is_timestamped_user_message(messages[2])
-        assert cleaned[3] == {"role": "user", "content": "skill catalog"}
-        assert messages[3]["context_type"] == "skills"
+        assert cleaned[3] == {"role": "user", "content": "<system-reminder>skill catalog</system-reminder>"}
+        assert messages[3] == cleaned[3]
 
     def test_keep_messages_for_days_returns_historical_and_recent_segments(self):
         messages = [

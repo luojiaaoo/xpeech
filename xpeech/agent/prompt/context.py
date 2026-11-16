@@ -11,12 +11,7 @@ from ...utils.file_io import LockedFile
 from ..memory import MemoryStore
 from ..skills.skill import SkillsLoader
 
-BOOTSTRAP_FILES = {
-    "AGENTS.md": "agent_instructions",
-    "SOUL.md": "personality",
-    "USER.md": "user_profile",
-    "TOOLS.md": "tool_notes",
-}
+BOOTSTRAP_FILES = ("AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md")
 
 
 def _get_identity(channel: str | None = None) -> str:
@@ -83,30 +78,29 @@ async def build_context_messages(
     user_organization: str | None = None,
     not_interactive: bool = False,
 ) -> list[dict[str, Any]]:
-    """分开加载各类动态内容；空内容不产生消息，类型标记仅供内部使用。"""
+    """分开加载各类动态内容，以 system-reminder 包裹；空内容不产生消息。"""
     messages = []
 
-    def add(context_type: str, content: str) -> None:
+    def add(content: str) -> None:
         if content.strip():
             messages.append({
                 "role": "user",
-                "context_type": context_type,
                 "content": f"<system-reminder>\n{content.strip()}\n</system-reminder>",
             })
 
-    add("identity", _get_identity(channel))
-    add("workspace", _workspace_context(workspace))
-    for filename, context_type in BOOTSTRAP_FILES.items():
+    add(_get_identity(channel))
+    add(_workspace_context(workspace))
+    for filename in BOOTSTRAP_FILES:
         path = workspace / filename
         if await anyio.Path(path).is_file():
             content = await LockedFile(path).read_text()
             if content.strip():
-                add(context_type, f"## {filename}\n\n{content}")
+                add(f"## {filename}\n\n{content}")
 
     memory = MemoryStore(workspace)
-    add("memory", await memory.get_memory_context())
-    add("self_improvement", await memory.get_self_improvement_context())
-    add("skills", await SkillsLoader(
+    add(await memory.get_memory_context())
+    add(await memory.get_self_improvement_context())
+    add(await SkillsLoader(
         workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
     ).build_skills_prompt())
     return messages

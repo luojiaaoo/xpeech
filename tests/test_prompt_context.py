@@ -6,6 +6,7 @@ import pytest
 from xpeech.agent import loop as loop_module
 from xpeech.agent.compression import ConversationCompressor
 from xpeech.agent.history import YamlHistoryRepository
+from xpeech.agent.helper import is_context_message
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.memory import MemoryStore
 from xpeech.agent.prompt.context import build_context_messages
@@ -34,11 +35,8 @@ async def test_dynamic_contexts_are_separate_and_do_not_change_system_prompt(tmp
     system = await build_system_prompt()
     contexts = await build_context_messages(tmp_path)
 
-    assert [message["context_type"] for message in contexts] == [
-        "identity", "workspace", "agent_instructions", "personality", "user_profile", "tool_notes",
-        "memory", "self_improvement", "skills",
-    ]
-    assert all(message["role"] == "user" and "timestamp" not in message for message in contexts)
+    assert len(contexts) == 9
+    assert all(set(message) == {"role", "content"} and message["role"] == "user" for message in contexts)
     assert all(
         message["content"].startswith("<system-reminder>\n")
         and message["content"].endswith("\n</system-reminder>")
@@ -103,7 +101,7 @@ async def test_run_replaces_front_contexts_without_accumulating_versions(tmp_pat
 
     assert first_request[0] == second_request[0]
     assert second_request[0]["role"] == "system"
-    assert all("context_type" not in item and "timestamp" not in item for item in second_request)
+    assert all(set(item) == {"role", "content"} for item in second_request)
     assert all(
         item["role"] == "user" and item["content"].startswith("<system-reminder>\n")
         for item in second_request[1:5]
@@ -120,7 +118,7 @@ async def test_run_replaces_front_contexts_without_accumulating_versions(tmp_pat
     assert [item["role"] for item in saved] == ["user", "assistant", "user", "assistant"]
     assert "first question" in str(saved[0]["content"])
     assert "second question" in str(saved[2]["content"])
-    assert all("context_type" not in item for item in agent.records.append.await_args.kwargs["messages"])
+    assert not any(is_context_message(item) for item in agent.records.append.await_args.kwargs["messages"])
 
 
 @pytest.mark.asyncio
@@ -130,15 +128,16 @@ async def test_compression_preserves_contexts_without_summarizing_them(mode):
         return sum(len(message["content"]) for message in messages)
 
     summarize = AsyncMock(side_effect=lambda **_: response("x"))
-    compressor = ConversationCompressor(
-        chat=summarize, summary_tokens=100, max_accept_tokens=100, target_tokens=10,
-        token_counter=count_tokens,
-    )
     prefix = [
         {"role": "system", "content": "s"},
-        {"role": "user", "context_type": "memory", "content": "m"},
-        {"role": "user", "context_type": "skills", "content": "k"},
+        {"role": "user", "content": "<system-reminder>m</system-reminder>"},
+        {"role": "user", "content": "<system-reminder>k</system-reminder>"},
     ]
+    prefix_size = await count_tokens(messages=prefix)
+    compressor = ConversationCompressor(
+        chat=summarize, summary_tokens=100, max_accept_tokens=prefix_size + 100, target_tokens=prefix_size + 7,
+        token_counter=count_tokens,
+    )
     history = [
         {"role": "user", "timestamp": 1, "content": "o" * 40},
         {"role": "assistant", "content": "a" * 10},
@@ -156,5 +155,5 @@ async def test_compression_preserves_contexts_without_summarizing_them(mode):
     else:
         assert len(compressed) == 4
     summary_input = summarize.await_args.kwargs["messages"]
-    assert all("context_type" not in item for item in summary_input)
+    assert not any(is_context_message(item) for item in summary_input)
     assert sum(item["role"] == "system" for item in summary_input) == 1

@@ -56,8 +56,8 @@ class TestYamlHistoryRepository:
         repository = YamlHistoryRepository(tmp_path)
         history = [
             {"role": "system", "content": "hidden"},
-            {"role": "user", "context_type": "memory", "content": "old memory"},
-            {"role": "user", "context_type": "skills", "content": "old skills"},
+            {"role": "user", "content": "<system-reminder>old memory</system-reminder>"},
+            {"role": "user", "content": "<system-reminder>old skills</system-reminder>"},
             {"role": "user", "content": "<system-reminder>\nold identity\n</system-reminder>"},
             {"role": "user", "content": "hello"},
         ]

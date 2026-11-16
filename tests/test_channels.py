@@ -50,7 +50,7 @@ async def test_channel_prompt_replaces_identity_and_appends_custom_prompt(
     system = await build_system_prompt(channel="crm")
 
     assert identity["role"] == "user"
-    assert identity["context_type"] == "identity"
+    assert identity["content"].startswith("<system-reminder>\n")
     assert "CRM identity" in identity["content"]
     assert "Global identity" not in identity["content"]
     assert "CRM identity" not in system["content"]
@@ -261,7 +261,7 @@ async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tm
     assert skill.metadata.filter == 'channel("crm")'
     assert "filter" not in skill.metadata.kwargs
     contexts = await build_context_messages(tmp_path, channel="crm")
-    assert "# CRM instructions" in next(item["content"] for item in contexts if item["context_type"] == "skills")
+    assert "# CRM instructions" in "\n\n".join(item["content"] for item in contexts)
 
 
 @pytest.mark.parametrize("filter_yaml", ["channel()", "[1]", "['crm']", "import os", "123"])
