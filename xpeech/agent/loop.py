@@ -86,9 +86,10 @@ class AgentLoop:
         self.channel = channel
         self.user_organization = user_organization
         self.mapping_tool_call_funcs = mapping_tool_call_funcs if mapping_tool_call_funcs is not None else {}
-        # 为正常回复和摘要中较大的输出预算留空间，再扣固定的安全 buffer。
-        output_reserve = max(provider.parameters.max_tokens, SUMMARY_TOKENS)
-        self.max_accept_token = self.provider.default_context_token - output_reserve - AUTOCOMPACT_BUFFER_TOKENS
+        # 避免 token 预估和实际有差距，按模型窗口的 90% 扣除摘要预算和固定 buffer。
+        self.max_accept_token = (
+            int(self.provider.default_context_token * 0.9) - SUMMARY_TOKENS - AUTOCOMPACT_BUFFER_TOKENS
+        )
         self.history = YamlHistoryRepository(
             settings.path.session_history_path,
             max_history_days=settings.llm.max_history_days,

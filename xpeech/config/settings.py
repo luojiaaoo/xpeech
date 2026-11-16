@@ -26,6 +26,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
+from ..agent.prompt.consolidation import SUMMARY_TOKENS
 from ..provider.schema import LLMParameters
 from ..utils.command_template import CommandTemplateError, execute_command_template
 from ..utils.file_io import ensure_path
@@ -186,6 +187,13 @@ class LLMConfig(BaseModel):
     parallel: int = Field(default=4)
     max_iterations: int = Field(default=40, ge=1)
     max_history_days: int = Field(default=30, ge=1)
+
+    @field_validator("parameters")
+    @classmethod
+    def validate_parameters(cls, value: LLMParameters) -> LLMParameters:
+        if value.max_tokens <= SUMMARY_TOKENS:
+            raise ValueError(f"max_tokens must be greater than the summary budget ({SUMMARY_TOKENS})")
+        return value
 
     @field_validator("api_key_config")
     @classmethod

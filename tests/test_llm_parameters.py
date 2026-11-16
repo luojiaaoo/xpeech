@@ -45,6 +45,12 @@ def test_removed_summary_budget_is_rejected():
         LLMConfig.model_validate(base_llm_config(summary_tokens=20000))
 
 
+@pytest.mark.parametrize("max_tokens", [4096, 19999, 20000])
+def test_llm_config_requires_output_budget_greater_than_summary(max_tokens):
+    with pytest.raises(ValidationError, match="max_tokens must be greater than the summary budget"):
+        LLMConfig.model_validate(base_llm_config(parameters={"max_tokens": max_tokens}))
+
+
 def test_llm_parameters_copy_with_only_explicit_overrides():
     parameters = LLMParameters(
         max_tokens=4096,
@@ -111,13 +117,13 @@ def test_llm_config_reads_nested_parameters():
     config = LLMConfig.model_validate(
         base_llm_config(
             parameters={
-                "max_tokens": 4096,
+                "max_tokens": 20001,
                 "max_context_tokens": 262144,
                 "top_p": 0.8,
             },
         )
     )
 
-    assert config.parameters.max_tokens == 4096
+    assert config.parameters.max_tokens == 20001
     assert config.parameters.max_context_tokens == 262144
     assert config.parameters.top_p == 0.8

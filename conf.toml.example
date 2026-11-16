@@ -124,7 +124,7 @@ max_history_days = 30
 
 [llm.parameters]
 max_tokens = 32768
-max_context_tokens = 262144 # 必须 >= 200000，填写模型实际支持的上下文窗口。
+max_context_tokens = 262144
 temperature = 1.0
 top_p = 0.95
 top_k = 20

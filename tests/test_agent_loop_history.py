@@ -90,6 +90,31 @@ async def test_final_response_is_emitted_and_persisted_when_model_returns_no_tex
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "context_tokens, output_tokens, expected_threshold",
+    [(200000, 32768, 147000), (262144, 32768, 202929), (200000, 20001, 147000)],
+)
+async def test_compression_uses_90_percent_of_context_window(
+    tmp_path, monkeypatch, context_tokens, output_tokens, expected_threshold,
+):
+    count_tokens = AsyncMock(return_value=expected_threshold - 1)
+    monkeypatch.setattr(AgentLoop, "_count_context_tokens", count_tokens)
+    provider = LiteLLMProvider(
+        api_key="test",
+        api_base="https://example.test",
+        default_model="test",
+        parameters=LLMParameters(max_context_tokens=context_tokens, max_tokens=output_tokens),
+    )
+    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[], max_iterations=1)
+
+    assert agent_loop.max_accept_token == expected_threshold
+    assert agent_loop.compressor._target_tokens == expected_threshold // 2
+    assert not await agent_loop.compressor.should_compress([])
+    count_tokens.return_value = expected_threshold
+    assert await agent_loop.compressor.should_compress([])
+
+
+@pytest.mark.asyncio
 async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path, monkeypatch):
     async def build_test_system_prompt(**_kwargs):
         return {"role": "system", "content": "system"}
@@ -102,7 +127,7 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
         api_key="test",
         api_base="https://example.test",
         default_model="test",
-        parameters=LLMParameters(max_context_tokens=200000, max_tokens=186830),
+        parameters=LLMParameters(max_context_tokens=200000),
     )
     provider.register_mcp_tool(
         search,
@@ -116,6 +141,14 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
         },
     )
     agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[], max_iterations=1)
+    # 使用较小预算验证工具定义也会触发压缩。
+    agent_loop.max_accept_token = 170
+    agent_loop.compressor = loop_module.ConversationCompressor(
+        chat=agent_loop.chat,
+        max_accept_tokens=170,
+        target_tokens=85,
+        token_counter=agent_loop._count_context_tokens,
+    )
     messages = [{"role": "user", "timestamp": 1.0, "content": "hello"}]
     assert await token_counter(messages) < agent_loop.max_accept_token
     assert await agent_loop.compressor.should_compress(messages)
