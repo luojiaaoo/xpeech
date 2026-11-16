@@ -38,6 +38,17 @@ CRON_DESCRIPTION = (
     "星期推荐使用 mon-sun，数字 0=周一、6=周日，不支持7。"
 )
 
+RUN_AT_DESCRIPTION = (
+    "单次任务：未来的 ISO 8601 日期和时间，例如 2099-01-01T09:00:00+08:00。"
+    "请按当前日期计算，不能直接传‘明天9点’、纯日期或 Unix 时间戳。"
+    "建议带时区偏移；不带时区按服务端系统本地时区解释。"
+)
+
+
+def validate_schedule_cron(value: str) -> str:
+    parse_schedule_cron(value)
+    return " ".join(value.split())
+
 
 def validate_run_at_format(value: object) -> object:
     if isinstance(value, str):
@@ -60,21 +71,49 @@ class FeishuScheduleCancelArgs(BaseModel):
         return _require_text(value, "job_id")
 
 
-class FeishuScheduleArgs(BaseModel):
-    """创建单次或周期任务；两个时间字段都必填，且只能有一个非空值。"""
-
+class _FeishuScheduleBaseArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: Annotated[
         str,
         Field(description="定时执行时交给 Agent 的完整任务提示词，不能为空"),
     ]
+
+    @field_validator("prompt")
+    @classmethod
+    def validate_prompt(cls, value: str) -> str:
+        return _require_text(value, "prompt")
+
+
+class FeishuScheduleOnceArgs(_FeishuScheduleBaseArgs):
+    """创建单次任务。"""
+
+    run_at: Annotated[datetime, Field(description=RUN_AT_DESCRIPTION)]
+
+    @field_validator("run_at", mode="before")
+    @classmethod
+    def validate_run_at(cls, value: object) -> object:
+        return validate_run_at_format(value)
+
+
+class FeishuScheduleCronArgs(_FeishuScheduleBaseArgs):
+    """创建周期任务。"""
+
+    cron: Annotated[str, Field(description=CRON_DESCRIPTION)]
+
+    @field_validator("cron")
+    @classmethod
+    def validate_cron(cls, value: str) -> str:
+        return validate_schedule_cron(value)
+
+
+class FeishuScheduleArgs(_FeishuScheduleBaseArgs):
+    """调度接口的创建参数；两个时间字段都必填，且只能有一个非空值。"""
+
     run_at: Annotated[
         datetime | None,
         Field(description=(
-            "单次任务：未来的 ISO 8601 日期和时间，例如 2099-01-01T09:00:00+08:00。"
-            "请按当前日期计算，不能直接传‘明天9点’、纯日期或 Unix 时间戳。"
-            "建议带时区偏移；不带时区按服务端系统本地时区解释。此字段必填；周期任务传 JSON null，与 cron 必须且只能有一个非空值"
+            RUN_AT_DESCRIPTION + "此字段必填；周期任务传 JSON null，与 cron 必须且只能有一个非空值"
         )),
     ]
     cron: Annotated[
@@ -83,11 +122,6 @@ class FeishuScheduleArgs(BaseModel):
             CRON_DESCRIPTION + "此字段必填；单次任务传 JSON null，与 run_at 必须且只能有一个非空值"
         )),
     ]
-
-    @field_validator("prompt")
-    @classmethod
-    def validate_prompt(cls, value: str) -> str:
-        return _require_text(value, "prompt")
 
     @field_validator("run_at", "cron", mode="before")
     @classmethod
@@ -105,8 +139,7 @@ class FeishuScheduleArgs(BaseModel):
     @classmethod
     def validate_cron(cls, value: str | None) -> str | None:
         if value is not None:
-            parse_schedule_cron(value)
-            return " ".join(value.split())
+            return validate_schedule_cron(value)
         return value
 
     @model_validator(mode="after")

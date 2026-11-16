@@ -18,12 +18,15 @@ from xpeech.agent.tools.schedule import client as tool_client
 from xpeech.agent.tools.schedule.schema import FeishuScheduleCreateRequest
 from xpeech.agent.tools.schedule.tool import (
     feishu_schedule_cancel,
-    feishu_schedule,
+    feishu_schedule_cron,
     feishu_schedule_list,
+    feishu_schedule_once,
 )
 from xpeech.agent.tools.schedule.tool_args import (
     FeishuScheduleCancelArgs,
     FeishuScheduleArgs,
+    FeishuScheduleCronArgs,
+    FeishuScheduleOnceArgs,
 )
 from xpeech.subapp.channel.feishu import app as service
 from xpeech.subapp.channel.feishu import schedule
@@ -168,8 +171,8 @@ async def test_tools_query_then_cancel(api, monkeypatch):
         tool_client, "AsyncClient", lambda **kw: real_client(transport=httpx.ASGITransport(app=service.app), **kw)
     )
     created = json.loads(
-        await feishu_schedule(
-            FeishuScheduleArgs(prompt="task", run_at=None, cron="0 9 * * *"), {"open_id": "ou_alice"}, "Alice", "alice", "feishu"
+        await feishu_schedule_cron(
+            FeishuScheduleCronArgs(prompt="task", cron="0 9 * * *"), {"open_id": "ou_alice"}, "Alice", "alice", "feishu"
         )
     )
     tasks = json.loads(await feishu_schedule_list("alice"))["tasks"]
@@ -178,8 +181,6 @@ async def test_tools_query_then_cancel(api, monkeypatch):
     assert result["cancelled"] is True
     with pytest.raises(ValueError):
         await feishu_schedule_cancel(FeishuScheduleCancelArgs(job_id=tasks[0]["job_id"]), "alice")
-    with pytest.raises(ValueError, match="only available"):
-        await feishu_schedule(FeishuScheduleArgs(prompt="task", run_at=None, cron="0 9 * * *"), {}, "Alice", "alice", "web_client")
 
 
 async def execute():
@@ -354,21 +355,26 @@ async def test_postgres_persistence(postgres_database):
 @pytest.mark.parametrize("value", ["2099-01-01", 4070908800, "4070908800", "明天9点", None, ""])
 def test_once_rejects_ambiguous_time(value):
     with pytest.raises(ValidationError):
-        FeishuScheduleArgs(prompt="task", run_at=value, cron=None)
+        FeishuScheduleOnceArgs(prompt="task", run_at=value)
 
 
 @pytest.mark.parametrize("value", ["0 0 9 * * *", "*/15 * * * *", "0 25 * * *", "0 9 * * 7", ""])
 def test_cron_rejects_invalid_expression(value):
     with pytest.raises(ValidationError):
-        FeishuScheduleArgs(prompt="task", run_at=None, cron=value)
+        FeishuScheduleCronArgs(prompt="task", cron=value)
 
 
-def test_creation_tool_schema():
+@pytest.mark.parametrize("tool,trigger", [
+    (feishu_schedule_cron, "cron"),
+    (feishu_schedule_once, "run_at"),
+])
+def test_creation_tool_schema(tool, trigger):
     from xpeech.agent.tools.helper import as_tool
 
-    parameters = as_tool(feishu_schedule)["function"]["parameters"]
-    assert set(parameters["properties"]) == {"prompt", "run_at", "cron"}
-    assert set(parameters["required"]) == {"prompt", "run_at", "cron"}
+    parameters = as_tool(tool)["function"]["parameters"]
+    assert set(parameters["properties"]) == {"prompt", trigger}
+    assert set(parameters["required"]) == {"prompt", trigger}
+    assert parameters["properties"][trigger]["type"] == "string"
     assert parameters["additionalProperties"] is False
 
 
@@ -395,18 +401,27 @@ def test_trigger_whitespace_and_weekday_semantics():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("args,expected_type", [
-    (FeishuScheduleArgs(prompt="task", run_at="2099-01-01T09:00:00+08:00", cron=None), "run_at"),
-    (FeishuScheduleArgs(prompt="task", run_at=None, cron="0 9 * * mon-fri"), "cron"),
+@pytest.mark.parametrize("tool,args,expected_type,expected_value", [
+    (
+        feishu_schedule_once,
+        FeishuScheduleOnceArgs(prompt="task", run_at="2099-01-01T09:00:00+08:00"),
+        "run_at", "2099-01-01T09:00:00+08:00",
+    ),
+    (
+        feishu_schedule_cron,
+        FeishuScheduleCronArgs(prompt="task", cron=" 0  9 * * mon-fri "),
+        "cron", "0 9 * * mon-fri",
+    ),
 ])
-async def test_creation_tool_supports_both_modes(api, monkeypatch, args, expected_type):
+async def test_creation_tools(api, monkeypatch, tool, args, expected_type, expected_value):
     monkeypatch.setattr(backend_app.state, "feishu_url", "http://feishu.test", raising=False)
     real_client = httpx.AsyncClient
     monkeypatch.setattr(
         tool_client, "AsyncClient", lambda **kw: real_client(transport=httpx.ASGITransport(app=service.app), **kw)
     )
-    created = json.loads(await feishu_schedule(args, {"open_id": "ou_alice"}, "Alice", "alice", "feishu"))
+    created = json.loads(await tool(args, {"open_id": "ou_alice"}, "Alice", "alice", "feishu"))
     assert created["task"]["schedule_type"] == expected_type
+    assert created["task"]["schedule_value"] == expected_value
     assert created["task"]["prompt"] == "task"
     assert len(json.loads(await feishu_schedule_list("alice"))["tasks"]) == 1
 
@@ -416,7 +431,7 @@ def test_cron_allows_only_hour_and_half_hour(minute):
     from xpeech.agent.tools.schedule.tool_args import parse_schedule_cron
 
     expression = f"{minute} * * * *"
-    assert FeishuScheduleArgs(prompt="task", run_at=None, cron=expression).cron == expression
+    assert FeishuScheduleCronArgs(prompt="task", cron=expression).cron == expression
     trigger = parse_schedule_cron(expression)
     assert str(next(field for field in trigger.fields if field.name == "minute")) == minute
 
@@ -427,7 +442,7 @@ def test_cron_rejects_other_minute_syntax(minute):
 
     expression = f"{minute} * * * *"
     with pytest.raises(ValidationError, match="minute field must be exactly"):
-        FeishuScheduleArgs(prompt="task", run_at=None, cron=expression)
+        FeishuScheduleCronArgs(prompt="task", cron=expression)
     with pytest.raises(ValueError, match="minute field must be exactly"):
         parse_schedule_cron(expression)
 
@@ -452,3 +467,38 @@ async def test_management_requires_explicit_trigger_fields(api, field):
     assert response.status_code == 422
     assert any(error["loc"] == ["body", field] and error["type"] == "missing" for error in response.json()["detail"])
     assert (await api.get("/schedules", headers=headers())).json() == {"tasks": []}
+
+
+@pytest.mark.parametrize("model,trigger,other_trigger,value", [
+    (FeishuScheduleCronArgs, "cron", "run_at", "0 9 * * *"),
+    (FeishuScheduleOnceArgs, "run_at", "cron", "2099-01-01T09:00:00+08:00"),
+])
+def test_creation_tool_args_require_only_their_trigger(model, trigger, other_trigger, value):
+    for invalid in ({}, {trigger: None}, {trigger: value, other_trigger: None}):
+        with pytest.raises(ValidationError):
+            model(prompt="task", **invalid)
+    with pytest.raises(ValidationError, match="prompt must be a non-empty string"):
+        model(prompt=" ", **{trigger: value})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool,args", [
+    (feishu_schedule_cron, FeishuScheduleCronArgs(prompt="task", cron="0 9 * * *")),
+    (feishu_schedule_once, FeishuScheduleOnceArgs(prompt="task", run_at="2099-01-01T09:00:00+08:00")),
+])
+@pytest.mark.parametrize("updates,error", [
+    ({"channel": "web_client"}, "only available"),
+    ({"session_metadata": {}}, "session_metadata.open_id"),
+    ({"sender_name": " "}, "sender_name"),
+    ({"user_id": None}, "user_id"),
+])
+async def test_creation_tools_require_feishu_context(monkeypatch, tool, args, updates, error):
+    request = AsyncMock()
+    monkeypatch.setattr("xpeech.agent.tools.schedule.tool.feishu_request", request)
+    context = {
+        "session_metadata": {"open_id": "ou_alice"},
+        "sender_name": "Alice", "user_id": "alice", "channel": "feishu", **updates,
+    }
+    with pytest.raises(ValueError, match=error):
+        await tool(args, **context)
+    request.assert_not_awaited()

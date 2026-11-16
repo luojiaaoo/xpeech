@@ -466,8 +466,8 @@ docker compose up -d --build --force-recreate backend
 省略、空值或其他格式均返回 HTTP 422。
 Web 客户端为新会话生成 UUIDv7，不提供默认会话；只有飞书桥接使用其 channel 内定义的固定
 `DEFAULT_SESSION_ID`，并在聊天和答题请求中显式传入。
-流式交互会话均向模型提供后台任务工具
-`feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`；`/chat_sync` 等非交互执行不提供这些工具。
+飞书流式交互会话向模型提供后台任务工具
+`feishu_schedule_cron`、`feishu_schedule_once`、`feishu_schedule_list` 和 `feishu_schedule_cancel`；`/chat_sync` 等非交互执行不提供这些工具。
 对外用户身份只使用 JWT `sub`；仅内部请求通过 `x-user-id` 传递用户。代码字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
 OAuth2 用户标识配置使用 `user_id_claim`。
 
@@ -629,17 +629,18 @@ XPEECH_TEST_DATABASE_URL='postgresql://test_user:test_password@127.0.0.1:5432/xp
 ## 飞书定时任务
 
 在飞书会话中可以直接用自然语言要求 Agent 创建、查看或取消定时任务，例如“明天上午 9 点提醒我
-提交周报”或“每天上午 9 点发送一份行业简报”。Agent 会分别调用 `feishu_schedule`、
-`feishu_schedule_list` 和 `feishu_schedule_cancel`。这三个工具仅在飞书交互聊天中提供；查看和取消操作只会
+提交周报”或“每天上午 9 点发送一份行业简报”。Agent 使用 `feishu_schedule_once` 创建单次任务，
+使用 `feishu_schedule_cron` 创建周期任务，使用 `feishu_schedule_list` 查看、`feishu_schedule_cancel` 取消任务。
+这四个工具仅在飞书交互聊天中提供；查看和取消操作只会
 作用于当前用户拥有的任务。每个用户最多同时保留 4 个定时任务。
 
-创建任务时，`run_at` 和 `cron` 只能有一个有效值：
+创建任务时，两个工具都需要 `prompt`，并且只接收各自的时间字段：
 
-- `run_at`：单次任务的 ISO 8601 时间，例如 `2026-09-08T09:00:00+08:00`。时区可以省略；
+- `feishu_schedule_once` 的 `run_at`：单次任务的 ISO 8601 时间，例如 `2099-01-01T09:00:00+08:00`，调用时按当前日期计算未来时间。时区可以省略；
   省略时按服务端系统本地时区解释。建议显式携带时区偏移，避免部署环境变化产生歧义。
-- `cron`：周期任务的标准 5 段 cron 表达式，例如 `0 9 * * *` 表示每天 9:00。分钟字段不能
-  包含 `*`，因此 `* * * * *`、`*/5 * * * *` 等表达式会被拒绝。
-- 空字符串和纯空白字段按未提供处理；如果两个字段都有有效值，或两个字段都没有有效值，任务创建失败。
+- `feishu_schedule_cron` 的 `cron`：周期任务的标准 5 段 cron 表达式，例如 `0 9 * * *` 表示每天 9:00。
+  分钟字段仅允许 `0`、`30` 或 `0,30`。
+- 时间字段必填且不能为 `null`、空字符串或纯空白；不要向工具传入另一种任务的时间字段。
 
 飞书渠道启动时读取 `[database]` 指定的 PostgreSQL 数据库中的 `feishu_scheduled_jobs` 表。
 backend 通过 `api --feishu-url` 管理任务，飞书通过 `feishu --chat-url` 调用 `/chat_sync` 执行。
@@ -850,7 +851,8 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `ask_user_question` | 向用户发送表单提问 |
 | `list_sessions` | 分页查看当前用户的普通会话和后台执行历史，包含各自的渠道名 |
 | `read_session` | 按会话 ID 分页读取历史消息 |
-| `feishu_schedule` | 为当前飞书会话创建单次或周期后台定时任务 |
+| `feishu_schedule_cron` | 为当前飞书会话创建周期后台定时任务 |
+| `feishu_schedule_once` | 为当前飞书会话创建单次后台定时任务 |
 | `feishu_schedule_list` | 查看当前用户的定时任务 |
 | `feishu_schedule_cancel` | 取消当前用户拥有的定时任务 |
 
