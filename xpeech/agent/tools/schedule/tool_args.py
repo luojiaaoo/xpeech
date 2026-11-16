@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Annotated
 
@@ -18,10 +19,15 @@ def parse_schedule_cron(value: str, *, timezone=None) -> CronTrigger:
             "cron must have exactly 5 fields: minute hour day month day_of_week; "
             "e.g. '0 9 * * *' (no seconds)"
         )
-    if fields[0] not in {"0", "30", "0,30"}:
+    minute = fields[0]
+    minute_values = minute.split(",")
+    if (
+        not re.fullmatch(r"(?:[0-9]|[1-5][0-9])(?:,(?:[0-9]|[1-5][0-9]))?", minute)
+        or (len(minute_values) == 2 and abs(int(minute_values[0]) - int(minute_values[1])) != 30)
+    ):
         raise ValueError(
-            "cron minute field must be exactly '0', '30', or '0,30'; "
-            "wildcards, steps, ranges, and other minutes are not allowed"
+            "cron minute field must be a single minute (0-59) or two minutes exactly 30 apart "
+            "(e.g. '0,30', '11,41', '15,45'); wildcards, steps, and ranges are not allowed"
         )
     try:
         return CronTrigger.from_crontab(" ".join(fields), timezone=timezone)
@@ -33,7 +39,9 @@ def parse_schedule_cron(value: str, *, timezone=None) -> CronTrigger:
 
 CRON_DESCRIPTION = (
     "周期任务：5 段 cron，依次为 分 时 日 月 星期，不含秒，按服务端系统本地时区执行。"
-    "分钟字段仅允许 0、30 或 0,30，禁止 *、步长、范围及其他分钟值；每半小时写 0,30 * * * *。"
+    "分钟字段允许单个 0-59 的分钟值，或两个相差30分钟的值（如 0,30、11,41、15,45）；"
+    "禁止 *、步长、范围及其他组合，每小时最多执行两次。每半小时可写 11,41 * * * *。"
+    "用户未指定具体分钟时，建议避开整点、半点等常见时间，分散执行以避免并发高峰；用户指定时按指定时间执行。"
     "每天9点：0 9 * * *；工作日9点：0 9 * * mon-fri。"
     "星期推荐使用 mon-sun，数字 0=周一、6=周日，不支持7。"
 )

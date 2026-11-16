@@ -128,7 +128,7 @@ async def test_management_requires_internal_jwt(api, auth):
         ({"sender_name": " "}, 422),
         ({"run_at": "2000-01-01T00:00:00Z", "cron": None}, 400),
         ({"cron": "* * * * *"}, 422),
-        ({"cron": "15 9 * * *"}, 422),
+        ({"cron": "15,44 9 * * *"}, 422),
         ({"cron": "*/30 * * * *"}, 422),
         ({"cron": "invalid"}, 422),
         ({"run_at": "2099-01-01"}, 422),
@@ -426,25 +426,42 @@ async def test_creation_tools(api, monkeypatch, tool, args, expected_type, expec
     assert len(json.loads(await feishu_schedule_list("alice"))["tasks"]) == 1
 
 
-@pytest.mark.parametrize("minute", ["0", "30", "0,30"])
-def test_cron_allows_only_hour_and_half_hour(minute):
+@pytest.mark.parametrize("minute", ["0", "1", "11", "15", "30", "59", "0,30", "11,41", "15,45", "29,59", "41,11"])
+def test_cron_allows_single_minute_or_half_hour_pair(minute):
     from xpeech.agent.tools.schedule.tool_args import parse_schedule_cron
 
     expression = f"{minute} * * * *"
     assert FeishuScheduleCronArgs(prompt="task", cron=expression).cron == expression
     trigger = parse_schedule_cron(expression)
-    assert str(next(field for field in trigger.fields if field.name == "minute")) == minute
+    now = datetime(2099, 1, 1, tzinfo=trigger.timezone)
+    first = trigger.get_next_fire_time(None, now)
+    assert first.minute == min(int(value) for value in minute.split(","))
+    if "," in minute:
+        second = trigger.get_next_fire_time(first, first + timedelta(seconds=1))
+        third = trigger.get_next_fire_time(second, second + timedelta(seconds=1))
+        assert second - first == third - second == timedelta(minutes=30)
 
 
-@pytest.mark.parametrize("minute", ["*", "*/30", "15", "0,15,30,45", "0-30", "0/30", "30,0", "00"])
+@pytest.mark.parametrize("minute", ["*", "*/30", "0,15,30,45", "0-30", "0/30", "00", "60", "-1", "11,40", "15,46", "0,59", "15,15", "0,30,30", "11,", ",41"])
 def test_cron_rejects_other_minute_syntax(minute):
     from xpeech.agent.tools.schedule.tool_args import parse_schedule_cron
 
     expression = f"{minute} * * * *"
-    with pytest.raises(ValidationError, match="minute field must be exactly"):
+    with pytest.raises(ValidationError, match="minute field must be a single minute"):
         FeishuScheduleCronArgs(prompt="task", cron=expression)
-    with pytest.raises(ValueError, match="minute field must be exactly"):
+    with pytest.raises(ValueError, match="minute field must be a single minute"):
         parse_schedule_cron(expression)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("minute", ["17", "59", "0,30", "11,41", "15,45", "29,59"])
+async def test_management_accepts_single_minute_or_half_hour_pair(api, minute):
+    expression = f"{minute} * * * *"
+    response = await api.post("/schedules", headers=headers(), json=payload(cron=expression))
+    assert response.status_code == 200
+    task = response.json()["task"]
+    assert task["schedule_value"] == expression
+    assert datetime.fromisoformat(task["next_run_time"]).minute in {int(value) for value in minute.split(",")}
 
 
 @pytest.mark.parametrize("values,missing", [
