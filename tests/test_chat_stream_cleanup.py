@@ -69,6 +69,7 @@ def streaming_chat(monkeypatch, tmp_path):
         "build_system_prompt",
         AsyncMock(return_value={"role": "system", "content": "system"}),
     )
+    monkeypatch.setattr(loop_module, "build_context_messages", AsyncMock(return_value=[]))
     monkeypatch.setattr(loop_module, "build_user_prompt", AsyncMock(return_value={"role": "user", "content": "hi"}))
     provider = LiteLLMProvider(
         api_key="test",

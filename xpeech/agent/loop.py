@@ -23,6 +23,7 @@ from .compression import ConversationCompressor
 from .helper import strip_internal_message_metadata
 from .history import YamlHistoryRepository
 from .memory import MemoryConsolidator, MemoryStore
+from .prompt.context import build_context_messages
 from .prompt.helper import (
     build_user_prompt,
     set_system_prompt,
@@ -394,10 +395,11 @@ class AgentLoop:
             else await self.history.load(message.user_id, message.session_id, channel=message.channel)
         )
 
-        # 拼接系统提示词
+        # 固定系统提示词后按类型插入本轮最新的动态 user 上下文。
         messages_yaml = set_system_prompt(
             messages_yaml,
-            await build_system_prompt(
+            await build_system_prompt(channel=self.channel),
+            await build_context_messages(
                 workspace=self.workspace,
                 channel=self.channel,
                 user_organization=self.user_organization,

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from xpeech.agent.memory import ConsolidationResult, MemoryConsolidator, MemoryStore
-from xpeech.agent.prompt import system as system_prompt_module
+from xpeech.agent.prompt import context as context_prompt_module
 from xpeech.agent.tool_executor import ToolExecutionResult, ToolExecutor
 from xpeech.provider.schema import LLMResponse, ToolCallChunk, ToolCallRequest
 
@@ -35,21 +35,24 @@ def make_response(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("memory", [None, "用户偏好简洁回答"])
-async def test_system_prompt_reads_memory(tmp_path, monkeypatch, memory):
+async def test_context_reads_memory(tmp_path, monkeypatch, memory):
     store = MemoryStore(tmp_path)
     if memory is not None:
         await store.write_long_term(memory)
     monkeypatch.setattr(
-        system_prompt_module.SkillsLoader, "build_skills_prompt", AsyncMock(return_value=""),
+        context_prompt_module.SkillsLoader, "build_skills_prompt", AsyncMock(return_value=""),
     )
 
-    prompt = await asyncio.wait_for(system_prompt_module.build_system_prompt(tmp_path), 5)
+    contexts = await asyncio.wait_for(context_prompt_module.build_context_messages(tmp_path), 5)
+    memories = [message for message in contexts if message["context_type"] == "memory"]
 
-    assert prompt["role"] == "system"
     if memory is not None:
-        assert f"## Long-term Memory\n{memory}" in prompt["content"]
+        assert memories == [{
+            "role": "user", "context_type": "memory",
+            "content": f"<system-reminder>\n## Long-term Memory\n{memory}\n</system-reminder>",
+        }]
     else:
-        assert "## Long-term Memory" not in prompt["content"]
+        assert memories == []
 
 
 class TestMemoryConsolidator:
@@ -68,7 +71,11 @@ class TestMemoryConsolidator:
             summary_tokens=100,
         )
 
-        result = await consolidator.consolidate([{"role": "system", "content": "system"}])
+        result = await consolidator.consolidate([
+            {"role": "system", "content": "system"},
+            {"role": "user", "context_type": "skills", "content": "skill catalog"},
+            {"role": "user", "context_type": "memory", "content": "current memory"},
+        ])
 
         assert result == ConsolidationResult(status="skipped", message="当前上下文为空，无需记忆")
 
@@ -107,11 +114,17 @@ class TestMemoryConsolidator:
             summary_tokens=100,
         )
 
-        result = await consolidator.consolidate([{"role": "user", "content": "remember this"}])
+        result = await consolidator.consolidate([
+            {"role": "user", "context_type": "skills", "content": "skill catalog"},
+            {"role": "user", "content": "remember this"},
+        ])
 
         assert result == ConsolidationResult(status="saved", message="已记忆本次会话关键内容")
         assert chat_kwargs is not None
         assert chat_kwargs["parameters"].max_tokens == 100
+        assert chat_kwargs["messages"][0]["role"] == "user"
+        assert chat_kwargs["messages"][1] == {"role": "user", "content": "remember this"}
+        assert "skill catalog" not in str(chat_kwargs["messages"])
 
     @pytest.mark.asyncio
     async def test_response_without_tool_call_is_skipped(self, tmp_path: Path):

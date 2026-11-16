@@ -110,7 +110,7 @@ class MemoryStore:
         await self.history_file.append_text(entry.rstrip() + "\n\n")
 
     async def get_memory_context(self) -> str:
-        """读取长期记忆并生成系统提示词上下文。"""
+        """读取长期记忆并生成动态上下文。"""
         long_term = await self.read_long_term()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
 
@@ -181,7 +181,7 @@ class MemoryConsolidator:
         """在已有文件锁的保护下整理并保存记忆。"""
         memory_context = await self._store.get_memory_context() or "(empty)"
         messages_for_consolidation = [
-            {"role": "system", "content": "## Current Long-term Memory\n" + memory_context},
+            {"role": "user", "content": "## Current Long-term Memory\n" + memory_context},
             *clean_messages,
             {
                 "role": "user",

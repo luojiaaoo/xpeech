@@ -211,7 +211,7 @@ class SkillsLoader:
         ]
 
     async def build_skills_prompt(self) -> str:
-        """Build the complete skills section for the system prompt."""
+        """Build the skills catalog and always-loaded bodies for user-role context."""
 
         def format_skills_summary(skills: list[SkillInfo]) -> str:
             """Format already loaded skill information as XML."""

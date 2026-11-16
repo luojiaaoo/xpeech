@@ -10,7 +10,8 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from xpeech.agent.prompt.system import _get_identity, build_system_prompt
+from xpeech.agent.prompt.context import build_context_messages
+from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app
 from xpeech.agent.skills import skill as skill_module
@@ -34,22 +35,35 @@ def channels(monkeypatch):
     return channels
 
 
-def test_channel_prompt_replaces_identity_and_appends_custom_prompt(channels, monkeypatch, tmp_path):
-    monkeypatch.setattr(settings.llm, "system_identity_prompt", "Global identity")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("global_identity", ["Global identity", ""])
+async def test_channel_prompt_replaces_identity_and_appends_custom_prompt(
+    channels, monkeypatch, tmp_path, global_identity,
+):
+    monkeypatch.setattr(settings.llm, "system_identity_prompt", global_identity)
     monkeypatch.setattr(settings.llm, "custom_system_prompt", "Global custom prompt")
     channels["crm"].system_identity_prompt = "CRM identity"
     channels["crm"].custom_system_prompt = "CRM custom prompt"
 
-    identity = _get_identity(tmp_path, channel="crm")
+    contexts = await build_context_messages(tmp_path, channel="crm")
+    identity = contexts[0]
+    system = await build_system_prompt(channel="crm")
 
-    assert "CRM identity" in identity
-    assert "Global identity" not in identity
-    assert identity.index("Global custom prompt") < identity.index("CRM custom prompt")
+    assert identity["role"] == "user"
+    assert identity["context_type"] == "identity"
+    assert "CRM identity" in identity["content"]
+    assert "Global identity" not in identity["content"]
+    assert "CRM identity" not in system["content"]
+    assert "Global identity" not in system["content"]
+    assert "Global custom prompt" not in identity["content"]
+    assert system["content"].index("Global custom prompt") < system["content"].index("CRM custom prompt")
 
-    fallback_identity = _get_identity(tmp_path, channel="erp")
-    assert "Global identity" in fallback_identity
-    assert "Global custom prompt" in fallback_identity
-    assert "CRM custom prompt" not in fallback_identity
+    fallback_identity = (await build_context_messages(tmp_path, channel="erp"))[0]["content"]
+    assert (global_identity or "You are xpeech") in fallback_identity
+    assert "CRM identity" not in fallback_identity
+    fallback_system = (await build_system_prompt(channel="erp"))["content"]
+    assert "Global custom prompt" in fallback_system
+    assert "CRM custom prompt" not in fallback_system
 
 
 @pytest.mark.parametrize("name", ["internal", "", "bad name"])
@@ -246,8 +260,8 @@ async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tm
     skill = (await loader.list_skill_info())[0]
     assert skill.metadata.filter == 'channel("crm")'
     assert "filter" not in skill.metadata.kwargs
-    system_prompt = await build_system_prompt(tmp_path, channel="crm")
-    assert "# CRM instructions" in system_prompt["content"]
+    contexts = await build_context_messages(tmp_path, channel="crm")
+    assert "# CRM instructions" in next(item["content"] for item in contexts if item["context_type"] == "skills")
 
 
 @pytest.mark.parametrize("filter_yaml", ["channel()", "[1]", "['crm']", "import os", "123"])

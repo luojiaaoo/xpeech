@@ -11,7 +11,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from xpeech.agent.prompt.system import build_system_prompt
+from xpeech.agent.prompt.context import build_context_messages
 from xpeech.agent.server.api import app
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
@@ -148,15 +148,16 @@ async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_
     assert set(skills) == expected_engineering
     assert skills["engineering"].metadata.filter == 'org("公司/研发/", "公司/研发/")'
     assert "filter" not in skills["engineering"].metadata.kwargs
-    system = await build_system_prompt(tmp_path, user_organization="公司/研发/平台")
-    assert "# Instructions for engineering" in system["content"]
+    contexts = await build_context_messages(tmp_path, user_organization="公司/研发/平台")
+    context = next(item["content"] for item in contexts if item["context_type"] == "skills")
+    assert "# Instructions for engineering" in context
     if source == "workspace":
         # 工作区技能由用户自己放置，不受过滤表达式限制。
-        assert "# Instructions for sales" in system["content"]
-        assert "<name>sales</name>" in system["content"]
+        assert "# Instructions for sales" in context
+        assert "<name>sales</name>" in context
     else:
-        assert "# Instructions for sales" not in system["content"]
-        assert "<name>sales</name>" not in system["content"]
+        assert "# Instructions for sales" not in context
+        assert "<name>sales</name>" not in context
 
 
 @pytest.mark.asyncio

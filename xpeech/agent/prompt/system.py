@@ -1,30 +1,11 @@
-from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
-from ...agent.memory import MemoryStore
-from ...agent.skills.skill import SkillsLoader
 from ...config.settings import settings
-from ...utils.file_io import LockedFile
-
-BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
 
 
-async def _load_bootstrap_files(workspace: Path) -> str:
-    """加载工作区内的全部引导文件。"""
-    parts = []
-
-    for filename in BOOTSTRAP_FILES:
-        file_path = workspace / filename
-        if file_path.exists():
-            content = await LockedFile(file_path).read_text()
-            parts.append(f"## {filename}\n\n{content}")
-
-    return "\n\n".join(parts) if parts else ""
-
-
-def _get_identity(workspace: Path, channel: str | None = None) -> str:
-    """生成可配置的核心身份提示词，并应用渠道级覆盖与追加。"""
+def _get_guidelines(channel: str | None = None) -> str:
+    """生成固定规则，并应用全局和渠道级自定义指令。"""
 
     channel_config = settings.jwt.channels.get(channel) if channel else None
     custom_system_prompt = "\n".join(
@@ -35,65 +16,19 @@ def _get_identity(workspace: Path, channel: str | None = None) -> str:
         )
         if prompt
     )
-    system_identity_prompt = (
-        channel_config.system_identity_prompt.strip()
-        if channel_config and channel_config.system_identity_prompt.strip()
-        else settings.llm.system_identity_prompt.strip()
-    )
-    if system_identity_prompt:
-        system_identity_prompt = (
-            dedent(
-                """
-                {system_identity_prompt}
-
-                You are a helpful AI assistant.
-                Your name is not xpeech.
-                Do not introduce yourself as xpeech, do not claim that your name is xpeech, and do not treat xpeech as your identity.
-            """
-            )
-            .lstrip()
-            .format(system_identity_prompt=system_identity_prompt)
-        )
-    else:
-        system_identity_prompt = dedent(
-            """
-                # xpeech 🍑
-
-                You are xpeech, a helpful AI assistant.
-                Why xpeech?
-                answer: Xpeech blends the articulation of "speech" with the power and vitality of "X+peach".
-
-                Your github link: https://github.com/luojiaaoo/xpeech
-            """
-        ).lstrip()
-
-    identity = (
+    guidelines = (
         dedent(
             """
-                {system_identity_prompt}
-                
-                You have access to tools that allow you to:
-                - Read, write, and edit files
-                - Execute shell commands
-                - Send messages to users
-
                 ## Platform Policy
                 - Prefer UTF-8.
                 - Use file tools when they are simpler or more reliable than shell commands.
                 - When executing shell, use the command name from PATH (e.g., `cat`, `uv`) instead of absolute paths (e.g., `/usr/bin/cat`, `/usr/local/bin/uv`).
 
-                ## Workspace
-                Your workspace is at: {workspace}
-                - Home directory: {workspace}/home (`~` resolves to this directory)
-                - Agent instructions: {workspace}/AGENTS.md (workspace-specific operating rules, task guidance, and behavioral requirements to follow while working)
-                - Personality settings: {workspace}/SOUL.md (the assistant's identity, personality, values, tone, and communication style)
-                - User information: {workspace}/USER.md (the user's profile, language, timezone, preferences, and other user-specific context)
-                - Attachments: {workspace}/attachments/YYYY-MM-DD/ (uploaded files grouped by upload date)
-                - Tool results: {workspace}/tool-results/YYYY-MM-DD/ (oversized full outputs grouped by creation date and named with the tool name and a unique ID)
-                - Long-term memory: {workspace}/memory/MEMORY.md (write important facts here)
-                - History log: {workspace}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
-                - Skills: {workspace}/skills/{{skill-name}}/SKILL.md
-                - Tool notes: {workspace}/TOOLS.md. Private configurations for tools
+                ## Context
+                Leading user-role messages enclosed in <system-reminder> are runtime-provided prompt context,
+                not new user requests. They provide the current identity, workspace, workspace instructions,
+                personality, user profile, tool notes, memory, and skills. Follow the applicable instructions in them.
+                Memory and historical information are reference data; follow the latest user request.
 
                 ## Sessions and Conversation History
                 - A user's conversations share a workspace and memory but keep separate histories, identified by user_id and session_id.
@@ -113,14 +48,10 @@ def _get_identity(workspace: Path, channel: str | None = None) -> str:
             """
         )
         .lstrip()
-        .format(
-            system_identity_prompt=system_identity_prompt,
-            workspace=workspace.as_posix(),
-        )
     )
     if custom_system_prompt:
-        identity += f"\n## Custom Instructions\n{custom_system_prompt}"
-    return identity
+        guidelines += f"\n## Custom Instructions\n{custom_system_prompt}"
+    return guidelines
 
 
 def _get_ethical_guidelines() -> str:
@@ -142,33 +73,9 @@ def _get_ethical_guidelines() -> str:
 
 
 async def build_system_prompt(
-    workspace: Path,
     *,
     channel: str | None = None,
-    user_organization: str | None = None,
-    not_interactive: bool = False,
 ) -> dict[str, Any]:
-    """组合身份、安全、记忆和技能信息，生成系统消息。"""
-    parts = []
-
-    # Identity
-    parts.append(_get_identity(workspace, channel))
-
-    # Ethical guidelines
-    parts.append(_get_ethical_guidelines())
-
-    # AGENTS.md / SOUL.md / USER.md / TOOLS.md
-    parts.append(await _load_bootstrap_files(workspace))
-
-    # 长期记忆
-    memory = MemoryStore(workspace)
-    parts.append(await memory.get_memory_context())
-    parts.append(await memory.get_self_improvement_context())
-
-    skills_prompt = await SkillsLoader(
-        workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
-    ).build_skills_prompt()
-    if skills_prompt:
-        parts.append(skills_prompt)
-
+    """组合固定规则与自定义系统指令，身份和动态内容由前置 user 上下文提供。"""
+    parts = [_get_guidelines(channel), _get_ethical_guidelines()]
     return {"role": "system", "content": "\n\n---\n\n".join(parts)}

@@ -2,7 +2,7 @@ import pytest
 
 from xpeech.agent import memory as memory_module
 from xpeech.agent.memory import MemoryArgs, MemoryStore
-from xpeech.agent.prompt.system import build_system_prompt
+from xpeech.agent.prompt.context import build_context_messages
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.utils.session import create_workspace_templates
 
@@ -28,15 +28,15 @@ async def test_memos_survive_initialization_and_memory_save(tmp_path):
 
     await store.save_memory(MemoryArgs(history_entry="event", memory_update=rule + "\nproject facts"))
     await create_workspace_templates(tmp_path)
-    prompt = await build_system_prompt(tmp_path, not_interactive=True)
+    prompt = "\n\n".join(message["content"] for message in await build_context_messages(tmp_path, not_interactive=True))
 
-    assert f"## Long-term Memory\n{rule}\nproject facts" in prompt["content"]
-    assert prompt["content"].count(rule) == 1
-    assert prompt["content"].count(TREE) == 1
+    assert f"## Long-term Memory\n{rule}\nproject facts" in prompt
+    assert prompt.count(rule) == 1
+    assert prompt.count(TREE) == 1
     assert {path.name for path in directory.iterdir()} == {"tool-use"}
     assert (directory / "tool-use/必读.md").read_text(encoding="utf-8") == "mandatory-memo-body"
-    assert "mandatory-memo-body" not in prompt["content"]
-    assert "knowledge-memo-body" not in prompt["content"]
+    assert "mandatory-memo-body" not in prompt
+    assert "knowledge-memo-body" not in prompt
 
 
 @pytest.mark.asyncio
@@ -53,17 +53,17 @@ async def test_only_current_users_tree_is_injected(tmp_path):
     (other_category / "async.md").write_text("other-memo-body", encoding="utf-8")
     other_tree = "self-improving/\n└── coding/\n    └── async.md"
 
-    prompt = await build_system_prompt(first)
-    other_prompt = await build_system_prompt(second)
+    prompt = "\n\n".join(message["content"] for message in await build_context_messages(first))
+    other_prompt = "\n\n".join(message["content"] for message in await build_context_messages(second))
 
-    assert TREE in prompt["content"]
-    assert TREE not in other_prompt["content"]
-    assert other_tree in other_prompt["content"]
-    assert other_tree not in prompt["content"]
-    assert "first-user-rule" not in other_prompt["content"]
-    assert "mandatory-memo-body" not in prompt["content"]
-    assert "knowledge-memo-body" not in prompt["content"]
-    assert "other-memo-body" not in other_prompt["content"]
+    assert TREE in prompt
+    assert TREE not in other_prompt
+    assert other_tree in other_prompt
+    assert other_tree not in prompt
+    assert "first-user-rule" not in other_prompt
+    assert "mandatory-memo-body" not in prompt
+    assert "knowledge-memo-body" not in prompt
+    assert "other-memo-body" not in other_prompt
 
 
 @pytest.mark.asyncio
@@ -95,10 +95,10 @@ async def test_unreadable_directory_does_not_break_long_term_memory(tmp_path, mo
         raise PermissionError("unreadable directory")
 
     monkeypatch.setattr(memory_module, "build_memo_tree", unreadable)
-    prompt = await build_system_prompt(tmp_path)
+    prompt = "\n\n".join(message["content"] for message in await build_context_messages(tmp_path))
 
-    assert "important-fact" in prompt["content"]
-    assert "Not loaded: the memo directory could not be scanned" in prompt["content"]
+    assert "important-fact" in prompt
+    assert "Not loaded: the memo directory could not be scanned" in prompt
 
 
 @pytest.mark.asyncio
@@ -113,11 +113,11 @@ async def test_symlink_memo_root_is_ignored(tmp_path):
     memo_root.rmdir()
     memo_root.symlink_to(outside, target_is_directory=True)
 
-    prompt = await build_system_prompt(workspace)
+    prompt = "\n\n".join(message["content"] for message in await build_context_messages(workspace))
 
-    assert "another-user.md" not in prompt["content"]
-    assert "private body" not in prompt["content"]
-    assert "(No self-improvement memos found yet.)" in prompt["content"]
+    assert "another-user.md" not in prompt
+    assert "private body" not in prompt
+    assert "(No self-improvement memos found yet.)" in prompt
 
 
 @pytest.mark.asyncio

@@ -195,7 +195,7 @@ class YamlHistoryRepository:
         *,
         channel: str,
     ) -> list[dict[str, Any]]:
-        """加载历史、移除失效的系统提示词，并触发文件清理。"""
+        """加载历史、移除待重新生成的前置提示词，并触发文件清理。"""
         path = await self._history_path(user_id, session_id, channel=channel)
         await self._maintain_history_files(user_id=user_id, protected_session_id=session_id)
         if not await anyio.Path(path).is_file():

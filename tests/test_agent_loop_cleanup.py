@@ -28,6 +28,7 @@ def response(*chunks):
 
 @pytest.fixture
 def turn(monkeypatch, tmp_path):
+    monkeypatch.setattr(loop_module, "build_context_messages", AsyncMock(return_value=[]))
     monkeypatch.setattr(loop_module, "get_request_id", lambda: "test-request")
     monkeypatch.setattr(loop_module, "build_system_prompt", AsyncMock(return_value={"role": "system", "content": "sys"}))
     monkeypatch.setattr(loop_module, "build_user_prompt", AsyncMock(return_value={"role": "user", "content": "hi"}))

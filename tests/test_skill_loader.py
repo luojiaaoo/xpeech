@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 import pytest
 from pydantic import ValidationError
 
-from xpeech.agent.prompt.system import build_system_prompt
+from xpeech.agent.prompt.context import build_context_messages
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillInfo, SkillMetadata, SkillsLoader
 
@@ -130,14 +130,16 @@ def test_internal_builtin_skills_are_marked(skill_name: str):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("not_interactive", [False, True])
-async def test_system_prompt_filters_builtin_interactive_skill(tmp_path: Path, not_interactive: bool):
-    prompt = await build_system_prompt(tmp_path, not_interactive=not_interactive)
+async def test_context_filters_builtin_interactive_skill(tmp_path: Path, not_interactive: bool):
+    prompt = "\n\n".join(message["content"] for message in await build_context_messages(
+        tmp_path, not_interactive=not_interactive,
+    ))
 
-    assert ("<name>ask-user-question</name>" in prompt["content"]) is not not_interactive
-    assert ("### Skill: ask-user-question" in prompt["content"]) is not not_interactive
-    assert ("通过 `ask_user_question` 向用户追问" in prompt["content"]) is not not_interactive
-    assert "<name>memory</name>" in prompt["content"]
-    assert "### Skill: memory" in prompt["content"]
+    assert ("<name>ask-user-question</name>" in prompt) is not not_interactive
+    assert ("### Skill: ask-user-question" in prompt) is not not_interactive
+    assert ("通过 `ask_user_question` 向用户追问" in prompt) is not not_interactive
+    assert "<name>memory</name>" in prompt
+    assert "### Skill: memory" in prompt
 
 
 @pytest.mark.asyncio

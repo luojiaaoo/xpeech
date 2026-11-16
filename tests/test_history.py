@@ -56,6 +56,9 @@ class TestYamlHistoryRepository:
         repository = YamlHistoryRepository(tmp_path)
         history = [
             {"role": "system", "content": "hidden"},
+            {"role": "user", "context_type": "memory", "content": "old memory"},
+            {"role": "user", "context_type": "skills", "content": "old skills"},
+            {"role": "user", "content": "<system-reminder>\nold identity\n</system-reminder>"},
             {"role": "user", "content": "hello"},
         ]
         await repository.save(
@@ -85,6 +88,7 @@ class TestYamlHistoryRepository:
                     {"role": "system", "content": "legacy system prompt"},
                     {"role": "user", "content": "hello"},
                     {"role": "system", "content": "another internal prompt"},
+                    {"role": "user", "content": "<system-reminder>\nold skills\n</system-reminder>"},
                     {"role": "assistant", "content": "answer"},
                 ]
             ),

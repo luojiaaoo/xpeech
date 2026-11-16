@@ -12,6 +12,7 @@ from xpeech.provider.schema import LLMResponse
 
 @pytest.fixture(autouse=True)
 def request_context(monkeypatch):
+    monkeypatch.setattr(loop_module, "build_context_messages", AsyncMock(return_value=[]))
     monkeypatch.setattr(loop_module, "get_request_id", lambda: "00000000-0000-4000-8000-000000000001")
 
 
@@ -37,13 +38,14 @@ async def test_context_commands_continue_with_trailing_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive):
+    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive):
         assert workspace == tmp_path
         assert user_organization == "公司/研发/平台"
         assert not_interactive is False
-        return {"role": "system", "content": "system"}
+        return []
 
-    monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
+    monkeypatch.setattr(loop_module, "build_context_messages", build_test_context_messages)
+    monkeypatch.setattr(loop_module, "build_system_prompt", AsyncMock(return_value={"role": "system", "content": "system"}))
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
 
     agent_loop = AgentLoop.__new__(AgentLoop)

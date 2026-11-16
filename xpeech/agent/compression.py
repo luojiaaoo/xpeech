@@ -45,7 +45,7 @@ class ConversationCompressor:
         return total_tokens < self._target_tokens
 
     async def _summarize_messages(self, messages: list[Message]) -> list[Message]:
-        """调用模型总结历史消息，并恢复原有系统消息。"""
+        """调用模型总结对话历史，并保留系统提示词与动态前置上下文。"""
         system_messages, history_messages = split_system_messages(messages)
         messages_for_summary = [
             {"role": "system", "content": SUMMARY_PROMPT},
@@ -131,7 +131,7 @@ class ConversationCompressor:
             if not await self._is_within_target(retained_messages):
                 continue
 
-            # 只有最终的“系统消息 + 摘要 + 最近消息”仍能放入目标时才保留摘要。
+            # 只有最终的“前置提示词 + 摘要 + 最近消息”仍能放入目标时才保留摘要。
             if split_index:
                 summarized_messages = await self._summarize_messages(
                     prepend_system_messages(history_messages[:split_index], system_messages)

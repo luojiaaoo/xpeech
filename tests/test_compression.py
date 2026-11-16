@@ -2,6 +2,7 @@ import pytest
 
 from xpeech.agent.compression import ConversationCompressor
 from xpeech.agent.helper import is_timestamped_user_message, strip_internal_message_metadata
+from xpeech.agent.prompt.helper import remove_system_messages
 from xpeech.provider.schema import LLMResponse
 
 
@@ -13,11 +14,28 @@ def make_response(content: str) -> LLMResponse:
 
 
 class TestMessageUtils:
+    def test_remove_system_messages_keeps_user_requests_and_quoted_reminders(self):
+        actual_messages = [
+            {"role": "user", "timestamp": 123.0, "content": "<system-reminder>example</system-reminder>"},
+            {"role": "user", "content": "Explain <system-reminder>example</system-reminder>"},
+            {"role": "assistant", "content": "<system-reminder>example</system-reminder>"},
+            {"role": "tool", "content": "<system-reminder>example</system-reminder>"},
+        ]
+        messages = [
+            {"role": "system", "content": "fixed rules"},
+            {"role": "user", "content": "<system-reminder>current identity</system-reminder>"},
+            {"role": "user", "context_type": "memory", "content": "legacy unwrapped memory"},
+            *actual_messages,
+        ]
+
+        assert remove_system_messages(messages) == actual_messages
+
     def test_strip_internal_metadata_does_not_mutate_history(self):
         messages = [
             {"role": "system", "content": "system"},
             {"role": "user", "timestamp": 123.0, "content": "hello"},
             {"role": "user", "content": "generated"},
+            {"role": "user", "context_type": "skills", "content": "skill catalog"},
         ]
 
         cleaned = strip_internal_message_metadata(messages)
@@ -26,6 +44,8 @@ class TestMessageUtils:
         assert messages[1]["timestamp"] == 123.0
         assert is_timestamped_user_message(messages[1])
         assert not is_timestamped_user_message(messages[2])
+        assert cleaned[3] == {"role": "user", "content": "skill catalog"}
+        assert messages[3]["context_type"] == "skills"
 
     def test_keep_messages_for_days_returns_historical_and_recent_segments(self):
         messages = [

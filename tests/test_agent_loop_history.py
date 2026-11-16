@@ -16,6 +16,7 @@ from xpeech.utils.helper import token_counter
 
 @pytest.fixture(autouse=True)
 def request_context(monkeypatch):
+    monkeypatch.setattr(loop_module, "build_context_messages", AsyncMock(return_value=[]))
     monkeypatch.setattr(loop_module, "get_request_id", lambda: "00000000-0000-4000-8000-000000000001")
 
 
@@ -148,13 +149,14 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
 @pytest.mark.asyncio
 @pytest.mark.parametrize("json_output", [False, True])
 async def test_not_interactive_run_saves_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
-    async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive):
+    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive):
         assert workspace == tmp_path
         assert user_organization == "公司/研发/平台"
         assert not_interactive is True
-        return {"role": "system", "content": "system"}
+        return []
 
-    monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
+    monkeypatch.setattr(loop_module, "build_context_messages", build_test_context_messages)
+    monkeypatch.setattr(loop_module, "build_system_prompt", AsyncMock(return_value={"role": "system", "content": "system"}))
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
 
     agent_loop = AgentLoop.__new__(AgentLoop)
@@ -224,13 +226,14 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
 ):
     expected_not_interactive = not_interactive
 
-    async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive):
+    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive):
         assert workspace == tmp_path
         assert user_organization is None
         assert not_interactive is expected_not_interactive
-        return {"role": "system", "content": "system"}
+        return []
 
-    monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
+    monkeypatch.setattr(loop_module, "build_context_messages", build_test_context_messages)
+    monkeypatch.setattr(loop_module, "build_system_prompt", AsyncMock(return_value={"role": "system", "content": "system"}))
 
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
@@ -337,7 +340,8 @@ async def test_request_yaml_retains_new_messages_across_multiple_compressions(tm
     saved = agent_loop.records.append.await_args.kwargs["messages"]
     assert [item["role"] for item in saved] == ["user", "assistant", "tool", "assistant"]
     assert "new question" in str(saved[0]["content"])
-    assert saved[2]["content"] == "uncompressed tool output"
+    assert saved[2]["content"].startswith("【工具调用】")
+    assert saved[2]["content"].split("\n\n", 1)[1] == "uncompressed tool output"
     assert saved[3]["content"] == "final answer"
     assert "previous question" not in str(saved)
     assert "compressed summary" not in str(saved)

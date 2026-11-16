@@ -3,13 +3,16 @@ from textwrap import dedent
 from typing import Any
 
 from ...agent.server.schema import InboundMessage, InputText
+from ..helper import is_context_message
 
 
 def is_system_message(message: dict[str, Any]) -> bool:
-    return message["role"] == "system"
+    """内部系统提示词包括 system 消息和前置 user 上下文。"""
+    return message["role"] == "system" or is_context_message(message)
 
 
 def split_system_messages(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """将固定系统提示词与动态前置上下文一起从对话历史分离。"""
     system_messages = []
     other_messages = []
     for message in messages:
@@ -21,6 +24,7 @@ def split_system_messages(messages: list[dict[str, Any]]) -> tuple[list[dict[str
 
 
 def remove_system_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """剔除 system 消息及前置 system-reminder 上下文，保留真实对话。"""
     return split_system_messages(messages)[1]
 
 
@@ -34,8 +38,10 @@ def prepend_system_messages(
 def set_system_prompt(
     messages: list[dict[str, Any]],
     system_prompt: dict[str, Any],
+    context_messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    return [system_prompt, *remove_system_messages(messages)]
+    """用本轮的最新提示词替换旧前缀，不向对话追加上下文版本。"""
+    return [system_prompt, *context_messages, *remove_system_messages(messages)]
 
 
 def build_inbound_message_metadata(*metas: dict[str, str], sort: bool = False) -> str:

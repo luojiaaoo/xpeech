@@ -220,18 +220,19 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         async def chat(self, **_kwargs):
             return next(responses)
 
-    async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive):
+    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive):
         assert workspace == tmp_path / "workspace"
         assert channel == "crm"
         assert user_organization is None
         assert not_interactive is False
-        return {"role": "system", "content": "system"}
+        return []
 
     async def count_test_tokens(self, messages):
         return 10
 
     monkeypatch.setattr(loop_module, "get_request_id", lambda: "00000000-0000-4000-8000-000000000003")
-    monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
+    monkeypatch.setattr(loop_module, "build_context_messages", build_test_context_messages)
+    monkeypatch.setattr(loop_module, "build_system_prompt", AsyncMock(return_value={"role": "system", "content": "system"}))
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", count_test_tokens)
 
     agent_loop = AgentLoop(
