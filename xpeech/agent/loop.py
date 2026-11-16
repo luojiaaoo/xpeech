@@ -19,10 +19,11 @@ from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import LLMResponse, ToolCallRequest
 from ..utils.database import get_async_database_engine
 from ..utils.question import USER_TIMEOUT, build_execution_question
-from .compression import ConversationCompressor
+from .compression import AUTOCOMPACT_BUFFER_TOKENS, ConversationCompressor
 from .helper import strip_internal_message_metadata
 from .history import YamlHistoryRepository
 from .memory import MemoryConsolidator, MemoryStore
+from .prompt.consolidation import SUMMARY_TOKENS
 from .prompt.context import build_context_messages
 from .prompt.helper import (
     build_user_prompt,
@@ -72,7 +73,6 @@ class AgentLoop:
         provider: LiteLLMProvider,
         workspace: Path,
         tools: list[str],
-        summary_tokens: int,
         max_iterations: int,
         channel: str | None = None,
         user_organization: str | None = None,
@@ -82,12 +82,13 @@ class AgentLoop:
         self.provider = provider
         self.workspace = workspace
         self.tools = tools
-        self.summary_tokens = summary_tokens
         self.max_iterations = max_iterations
         self.channel = channel
         self.user_organization = user_organization
         self.mapping_tool_call_funcs = mapping_tool_call_funcs if mapping_tool_call_funcs is not None else {}
-        self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
+        # 为正常回复和摘要中较大的输出预算留空间，再扣固定的安全 buffer。
+        output_reserve = max(provider.parameters.max_tokens, SUMMARY_TOKENS)
+        self.max_accept_token = self.provider.default_context_token - output_reserve - AUTOCOMPACT_BUFFER_TOKENS
         self.history = YamlHistoryRepository(
             settings.path.session_history_path,
             max_history_days=settings.llm.max_history_days,
@@ -104,16 +105,14 @@ class AgentLoop:
         )
         self.compressor = ConversationCompressor(
             chat=self.chat,
-            summary_tokens=self.summary_tokens,
             max_accept_tokens=self.max_accept_token,
-            target_tokens=int(self.provider.default_context_token * 0.4),
+            target_tokens=self.max_accept_token // 2,
             token_counter=self._count_context_tokens,
         )
         self.memory_consolidator = MemoryConsolidator(
             store=MemoryStore(workspace=self.workspace),
             chat=self.chat,
             execute_tools=self.tool_executor.execute,
-            summary_tokens=self.summary_tokens,
         )
 
     async def tool_call(
@@ -406,7 +405,7 @@ class AgentLoop:
                 not_interactive=not_interactive,
             ),
         )
-        # 拼接用户消息（给user添加时间戳字典，用于二级压缩）
+        # 时间戳标记真实用户请求，压缩时按完整回合切分。
         turn_messages: list[dict[str, Any]] = []
         _append_turn_message(
             messages_yaml, turn_messages,

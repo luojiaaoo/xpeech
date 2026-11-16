@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..provider.schema import LLMParameters, LLMResponse, ToolCallRequest
 from ..utils.file_io import LockedFile, ensure_path
+from .prompt.consolidation import MEMORY_PROMPT, SUMMARY_TOKENS
 from .prompt.helper import remove_system_messages
 from .tool_executor import ToolExecutionResult
 
@@ -159,13 +160,11 @@ class MemoryConsolidator:
         store: MemoryStore,
         chat: ChatCallable,
         execute_tools: ToolExecutorCallable,
-        summary_tokens: int,
     ) -> None:
         """初始化记忆存储、模型调用函数和工具执行函数。"""
         self._store = store
         self._chat = chat
         self._execute_tools = execute_tools
-        self._summary_tokens = summary_tokens
 
     async def consolidate(self, messages: list[dict[str, Any]]) -> ConsolidationResult:
         """整理对话中的重要信息，并返回结构化处理结果。"""
@@ -181,17 +180,18 @@ class MemoryConsolidator:
         """在已有文件锁的保护下整理并保存记忆。"""
         memory_context = await self._store.get_memory_context() or "(empty)"
         messages_for_consolidation = [
+            {"role": "system", "content": MEMORY_PROMPT},
             {"role": "user", "content": "## Current Long-term Memory\n" + memory_context},
             *clean_messages,
             {
                 "role": "user",
-                "content": "Process this conversation and MUST call the save_memory tool with your consolidation.",
+                "content": "Review this conversation and save any information worth remembering using save_memory.",
             },
         ]
         logger.info("Consolidating memory")
         response = await self._chat(
             messages=messages_for_consolidation,
-            parameters=LLMParameters(max_tokens=self._summary_tokens),
+            parameters=LLMParameters(max_tokens=SUMMARY_TOKENS),
             tools=[self._store.save_memory],
             remove_default_tools=True,
         )

@@ -123,7 +123,8 @@ async def test_run_replaces_front_contexts_without_accumulating_versions(tmp_pat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["days", "turns", "fallback"])
-async def test_compression_preserves_contexts_without_summarizing_them(mode):
+async def test_compression_preserves_contexts_without_summarizing_them(mode, monkeypatch):
+    monkeypatch.setattr("xpeech.agent.compression.SUMMARY_TOKENS", 1)
     async def count_tokens(*, messages):
         return sum(len(message["content"]) for message in messages)
 
@@ -135,7 +136,7 @@ async def test_compression_preserves_contexts_without_summarizing_them(mode):
     ]
     prefix_size = await count_tokens(messages=prefix)
     compressor = ConversationCompressor(
-        chat=summarize, summary_tokens=100, max_accept_tokens=prefix_size + 100, target_tokens=prefix_size + 7,
+        chat=summarize, max_accept_tokens=prefix_size + 100, target_tokens=prefix_size + 7,
         token_counter=count_tokens,
     )
     history = [

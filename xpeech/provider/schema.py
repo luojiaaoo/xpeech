@@ -29,7 +29,7 @@ class LLMParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_tokens: int = Field(default=32768, gt=0)
-    max_context_tokens: int = Field(default=200000, gt=0)
+    max_context_tokens: int = Field(default=200000, ge=200000)
     temperature: float | None = Field(default=None, ge=0.0)
     top_p: float | None = Field(default=None, ge=0.0, le=1.0)
     top_k: int | None = Field(default=None, ge=0)

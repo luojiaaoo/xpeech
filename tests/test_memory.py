@@ -8,6 +8,7 @@ import pytest
 
 from xpeech.agent.memory import ConsolidationResult, MemoryConsolidator, MemoryStore
 from xpeech.agent.prompt import context as context_prompt_module
+from xpeech.agent.prompt.consolidation import MEMORY_PROMPT
 from xpeech.agent.tool_executor import ToolExecutionResult, ToolExecutor
 from xpeech.provider.schema import LLMResponse, ToolCallChunk, ToolCallRequest
 
@@ -68,7 +69,6 @@ class TestMemoryConsolidator:
             store=MemoryStore(tmp_path),
             chat=chat,
             execute_tools=execute_tools,
-            summary_tokens=100,
         )
 
         result = await consolidator.consolidate([
@@ -111,7 +111,6 @@ class TestMemoryConsolidator:
             store=MemoryStore(tmp_path),
             chat=chat,
             execute_tools=execute_tools,
-            summary_tokens=100,
         )
 
         result = await consolidator.consolidate([
@@ -121,9 +120,10 @@ class TestMemoryConsolidator:
 
         assert result == ConsolidationResult(status="saved", message="已记忆本次会话关键内容")
         assert chat_kwargs is not None
-        assert chat_kwargs["parameters"].max_tokens == 100
-        assert chat_kwargs["messages"][0]["role"] == "user"
-        assert chat_kwargs["messages"][1] == {"role": "user", "content": "remember this"}
+        assert chat_kwargs["parameters"].max_tokens == 20_000
+        assert chat_kwargs["messages"][0] == {"role": "system", "content": MEMORY_PROMPT}
+        assert chat_kwargs["messages"][1]["role"] == "user"
+        assert chat_kwargs["messages"][2] == {"role": "user", "content": "remember this"}
         assert "skill catalog" not in str(chat_kwargs["messages"])
 
     @pytest.mark.asyncio
@@ -138,7 +138,6 @@ class TestMemoryConsolidator:
             store=MemoryStore(tmp_path),
             chat=chat,
             execute_tools=execute_tools,
-            summary_tokens=100,
         )
 
         result = await consolidator.consolidate([{"role": "user", "content": "hello"}])
@@ -157,8 +156,8 @@ class TestMemoryConsolidator:
         )
 
         async def chat(**kwargs):
-            context = kwargs["messages"][0]["content"]
-            fact = kwargs["messages"][1]["content"]
+            context = kwargs["messages"][1]["content"]
+            fact = kwargs["messages"][2]["content"]
             calls.append(fact)
             if fact == "first fact":
                 first_started.set()
@@ -178,7 +177,7 @@ class TestMemoryConsolidator:
         def make_consolidator(workspace):
             return MemoryConsolidator(
                 store=MemoryStore(workspace), chat=chat,
-                execute_tools=executor.execute, summary_tokens=100,
+                execute_tools=executor.execute,
             )
 
         consolidator = make_consolidator(tmp_path)
@@ -225,7 +224,7 @@ class TestMemoryConsolidator:
             pytest.fail("no tool execution expected")
 
         consolidator = MemoryConsolidator(
-            store=MemoryStore(tmp_path), chat=chat, execute_tools=execute_tools, summary_tokens=100,
+            store=MemoryStore(tmp_path), chat=chat, execute_tools=execute_tools,
         )
         task = asyncio.create_task(consolidator.consolidate([{"role": "user", "content": "fact"}]))
         await asyncio.wait_for(started.wait(), 5)

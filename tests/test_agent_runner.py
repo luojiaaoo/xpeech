@@ -43,7 +43,6 @@ def make_config(workspace_base_path: Path):
             support_video=False,
             support_json_output=True,
             default_tools=["tool-a"],
-            summary_tokens=100,
             max_iterations=5,
         ),
         tool=object(),

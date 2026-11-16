@@ -343,7 +343,7 @@ async def test_chat_delegates_stream_defaults_to_retry_client():
 
     parameters = LLMParameters(
         max_tokens=4096,
-        max_context_tokens=65536,
+        max_context_tokens=262144,
         temperature=0.8,
         top_p=0.9,
         top_k=10,
@@ -379,7 +379,7 @@ async def test_chat_delegates_stream_defaults_to_retry_client():
         "min_p": 0.1,
         "repetition_penalty": 1.1,
     }
-    assert provider.default_context_token == 65536
+    assert provider.default_context_token == 262144
     assert response.content == "ok"
 
 

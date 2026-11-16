@@ -65,7 +65,6 @@ class AgentRunner:
             provider=provider,
             workspace=self.workspace,
             tools=llm_config.default_tools,
-            summary_tokens=llm_config.summary_tokens,
             max_iterations=llm_config.max_iterations,
             channel=self.channel,
             user_organization=self.user_organization,

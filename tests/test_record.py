@@ -239,7 +239,6 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         provider=Provider(),
         workspace=tmp_path / "workspace",
         tools=[],
-        summary_tokens=100,
         max_iterations=3,
         channel="crm",
         mapping_tool_call_funcs={"fake_tool": fake_tool},

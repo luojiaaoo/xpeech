@@ -102,7 +102,7 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
         api_key="test",
         api_base="https://example.test",
         default_model="test",
-        parameters=LLMParameters(max_context_tokens=200),
+        parameters=LLMParameters(max_context_tokens=200000, max_tokens=186830),
     )
     provider.register_mcp_tool(
         search,
@@ -115,7 +115,7 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
             },
         },
     )
-    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[], summary_tokens=10, max_iterations=1)
+    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[], max_iterations=1)
     messages = [{"role": "user", "timestamp": 1.0, "content": "hello"}]
     assert await token_counter(messages) < agent_loop.max_accept_token
     assert await agent_loop.compressor.should_compress(messages)
