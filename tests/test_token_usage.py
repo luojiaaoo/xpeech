@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from xpeech.agent.record import ConversationRecord
 from xpeech.agent.token_usage import TokenUsage, format_token_count
 
 
@@ -29,17 +28,12 @@ async def test_usage_event_uses_display_counts_without_recounting_full_context(m
     )
     context_tokens = {"系统提示词": system_tokens, "用户上下文": 20}
     usage = TokenUsage(provider=provider, tools=[], compression_threshold=147_000, context_tokens=context_tokens)
-    record = ConversationRecord(
-        user_id="user", session_id="session", request_id="request", channel="test", sender_name="Alice",
-        user_question="hello", model_response="answer", input_tokens=1000, output_tokens=234,
-        model_call_count=2, duration_s=3,
-    )
     event = await usage.build_event([
         {"role": "system", "content": "rules"},
         {"role": "user", "content": "<system-reminder>identity</system-reminder>"},
         {"role": "user", "content": "hello", "timestamp": 1.0},
         {"role": "assistant", "content": "answer"},
-    ], record)
+    ], input_tokens=1000, output_tokens=234, model_call_count=2, duration_s=3)
 
     counter.assert_awaited_once_with([
         {"role": "user", "content": "hello"}, {"role": "assistant", "content": "answer"},

@@ -8,7 +8,6 @@ from ..provider.litellm_provider import LiteLLMProvider
 from ..utils.helper import token_counter
 from .helper import strip_internal_message_metadata
 from .prompt.helper import remove_system_messages
-from .record import ConversationRecord
 
 
 def format_token_count(value: int) -> str:
@@ -25,7 +24,15 @@ class TokenUsage:
     compression_threshold: int
     context_tokens: dict[str, int]
 
-    async def build_event(self, messages: list[dict[str, Any]], record: ConversationRecord) -> dict[str, str]:
+    async def build_event(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        model_call_count: int,
+        duration_s: float,
+    ) -> dict[str, str]:
         """补充最终对话和工具的独立计数，汇总中文统计字段。"""
         tool_tokens = await self.provider.chat_count_tool_tokens(tools=self.tools)
         components = {
@@ -53,10 +60,10 @@ class TokenUsage:
             "context": json.dumps({
                 "上下文使用率": context_usage,
                 "上下文明细": details,
-                "输入 Token": format_token_count(record.input_tokens),
-                "输出 Token": format_token_count(record.output_tokens),
-                "总 Token": format_token_count(record.input_tokens + record.output_tokens),
-                "会话时长": f"{record.duration_s:.0f}秒",
-                "大模型请求次数": str(record.model_call_count),
+                "输入 Token": format_token_count(input_tokens),
+                "输出 Token": format_token_count(output_tokens),
+                "总 Token": format_token_count(input_tokens + output_tokens),
+                "会话时长": f"{duration_s:.0f}秒",
+                "大模型请求次数": str(model_call_count),
             }, ensure_ascii=False),
         }

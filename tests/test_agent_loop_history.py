@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.orm import Session, make_transient_to_detached
+from sqlalchemy.orm.exc import DetachedInstanceError
 
 import xpeech.agent.loop as loop_module
 from xpeech.agent.loop import AgentLoop
@@ -91,6 +93,43 @@ async def test_final_response_is_emitted_and_persisted_when_model_returns_no_tex
         "role": "assistant", "content": expected_content,
     }
     assert agent_loop.records.append.await_args.args[0].model_response == expected_content
+
+
+@pytest.mark.asyncio
+async def test_token_usage_is_emitted_after_saved_record_expires(tmp_path):
+    response = make_response("answer")
+    response.usage.update({"prompt_tokens": 1234, "completion_tokens": 5678})
+    provider = LiteLLMProvider(
+        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    )
+    provider.chat = AsyncMock(return_value=response)
+    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[], max_iterations=1)
+    agent_loop.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
+
+    async def save_record(record, *, messages):
+        # 重现提交后字段过期、会话关闭后的真实 ORM 状态，无需连接数据库。
+        record.id = 1
+        make_transient_to_detached(record)
+        with Session() as session:
+            session.add(record)
+            session.expire(record)
+
+    agent_loop.records = SimpleNamespace(append=AsyncMock(side_effect=save_record))
+    message = InboundMessage(
+        user_id="user", session_id="session", sender_name="Alice", channel="test",
+        session_metadata={}, content=[InputText(text="hello")], files=[],
+    )
+
+    events = [event async for event in agent_loop.run(message)]
+
+    with pytest.raises(DetachedInstanceError):
+        _ = agent_loop.records.append.await_args.args[0].input_tokens
+    assert {"event": "assistant", "context": "answer"} in events
+    assert events[-1]["event"] == "token_usage"
+    metrics = json.loads(events[-1]["context"])
+    assert (metrics["输入 Token"], metrics["输出 Token"], metrics["总 Token"]) == ("1k", "5k", "6k")
+    assert metrics["大模型请求次数"] == "1"
+    assert "上下文明细" in metrics
 
 
 @pytest.mark.asyncio

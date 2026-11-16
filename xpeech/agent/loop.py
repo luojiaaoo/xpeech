@@ -574,7 +574,13 @@ class AgentLoop:
             duration_s=duration_s,
         )
         await self.records.append(record, messages=turn_messages)
-        yield await token_usage.build_event(messages_yaml, record)
+        yield await token_usage.build_event(
+            messages_yaml,
+            input_tokens=self._input_tokens,
+            output_tokens=self._output_tokens,
+            model_call_count=self._model_call_count,
+            duration_s=duration_s,
+        )
 
         logger.info("Agent run completed")
 
