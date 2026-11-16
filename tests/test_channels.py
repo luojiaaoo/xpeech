@@ -45,7 +45,9 @@ async def test_channel_prompt_replaces_identity_and_appends_custom_prompt(
     channels["crm"].system_identity_prompt = "CRM identity"
     channels["crm"].custom_system_prompt = "CRM custom prompt"
 
-    contexts = await build_context_messages(tmp_path, channel="crm")
+    contexts = await build_context_messages(
+        tmp_path, channel="crm", user_organization=None, not_interactive=False, token_counts={},
+    )
     identity = contexts[0]
     system = await build_system_prompt(channel="crm")
 
@@ -58,7 +60,9 @@ async def test_channel_prompt_replaces_identity_and_appends_custom_prompt(
     assert "Global custom prompt" not in identity["content"]
     assert system["content"].index("Global custom prompt") < system["content"].index("CRM custom prompt")
 
-    fallback_identity = (await build_context_messages(tmp_path, channel="erp"))[0]["content"]
+    fallback_identity = (await build_context_messages(
+        tmp_path, channel="erp", user_organization=None, not_interactive=False, token_counts={},
+    ))[0]["content"]
     assert (global_identity or "You are xpeech") in fallback_identity
     assert "CRM identity" not in fallback_identity
     fallback_system = (await build_system_prompt(channel="erp"))["content"]
@@ -260,7 +264,9 @@ async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tm
     skill = (await loader.list_skill_info())[0]
     assert skill.metadata.filter == 'channel("crm")'
     assert "filter" not in skill.metadata.kwargs
-    contexts = await build_context_messages(tmp_path, channel="crm")
+    contexts = await build_context_messages(
+        tmp_path, channel="crm", user_organization=None, not_interactive=False, token_counts={},
+    )
     assert "# CRM instructions" in "\n\n".join(item["content"] for item in contexts)
 
 

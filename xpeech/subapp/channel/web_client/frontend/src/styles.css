@@ -301,6 +301,18 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .token-usage-detail dt { color: #8a919f; overflow-wrap: anywhere; }
 .token-usage-detail dd { min-width: 0; margin: 0; color: #4b5260; font-weight: 500; text-align: end; overflow-wrap: anywhere; }
 .token-usage-icon { margin-inline: 2px; color: #8a919f; }
+.context-usage-card { width: min(320px, calc(100vw - 48px)); max-height: min(520px, 75vh); overflow: auto; color: #4b5260; font-size: 12px; }
+.context-usage-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.context-usage-heading strong { color: #252c38; font-size: 14px; }
+.context-usage-chart { display: grid; place-items: center; width: 120px; height: 120px; margin: 16px auto; border-radius: 50%; }
+.context-usage-center { display: flex; width: 86px; height: 86px; flex-direction: column; align-items: center; justify-content: center; border-radius: 50%; background: #fff; }
+.context-usage-center strong { color: #252c38; font-size: 18px; }
+.context-usage-center > span { margin-top: 2px; color: #8a919f; }
+.context-usage-legend { display: flex; flex-direction: column; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.context-usage-legend li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 58px; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.context-usage-dot { width: 7px; height: 7px; border-radius: 50%; }
+.context-usage-name { overflow-wrap: anywhere; }
+.context-usage-ratio { color: #8a919f; text-align: end; }
 .token-usage-metric {
   display: inline-flex;
   align-items: center;

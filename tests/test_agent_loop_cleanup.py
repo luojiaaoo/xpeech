@@ -33,6 +33,10 @@ def turn(monkeypatch, tmp_path):
     monkeypatch.setattr(loop_module, "build_system_prompt", AsyncMock(return_value={"role": "system", "content": "sys"}))
     monkeypatch.setattr(loop_module, "build_user_prompt", AsyncMock(return_value={"role": "user", "content": "hi"}))
     agent = AgentLoop.__new__(AgentLoop)
+    agent.provider = SimpleNamespace(
+        default_context_token=200_000, default_model="test",
+        chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
+    )
     agent.workspace = tmp_path
     agent.channel = "test"
     agent.user_organization = None

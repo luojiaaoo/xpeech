@@ -101,10 +101,11 @@ def format_now(format_string: str = "%Y-%m-%d") -> str:
     return datetime.now().astimezone().strftime(format_string)
 
 
-async def token_counter(messages: list[dict], tools: list[dict] | None = None) -> int:
+async def token_counter(messages: list[dict] | None = None, tools: list[dict] | None = None) -> int:
+    """估算消息和工具定义的词元数，支持只传工具。"""
     from litellm import token_counter as _token_counter
 
-    cleaned_messages, video_tokens = await _strip_video_blocks_and_count_tokens(messages)
+    cleaned_messages, video_tokens = await _strip_video_blocks_and_count_tokens(messages or [])
     return _token_counter(model="gpt-4o", messages=cleaned_messages, tools=tools) + video_tokens
 
 

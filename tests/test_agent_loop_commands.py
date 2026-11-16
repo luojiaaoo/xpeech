@@ -38,7 +38,7 @@ async def test_context_commands_continue_with_trailing_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive):
+    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive, token_counts):
         assert workspace == tmp_path
         assert user_organization == "公司/研发/平台"
         assert not_interactive is False
@@ -49,6 +49,10 @@ async def test_context_commands_continue_with_trailing_prompt(
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
 
     agent_loop = AgentLoop.__new__(AgentLoop)
+    agent_loop.provider = SimpleNamespace(
+        default_context_token=200_000, default_model="test",
+        chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
+    )
     agent_loop.workspace = tmp_path
     agent_loop.channel = None
     agent_loop.user_organization = "公司/研发/平台"

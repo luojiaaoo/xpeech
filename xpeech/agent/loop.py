@@ -18,6 +18,7 @@ from ..config.settings import settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import LLMResponse, ToolCallRequest
 from ..utils.database import get_async_database_engine
+from ..utils.helper import token_counter
 from ..utils.question import USER_TIMEOUT, build_execution_question
 from .compression import AUTOCOMPACT_BUFFER_TOKENS, ConversationCompressor
 from .helper import strip_internal_message_metadata
@@ -34,6 +35,7 @@ from .record import ConversationRecord, ConversationRecordRepository
 from .server.context import get_request_id
 from .server.schema import InboundMessage
 from .tool_executor import ToolExecutor
+from .token_usage import TokenUsage
 from .tools.execution_request import EXECUTION_DESCRIPTION, EXECUTION_PARAMETERS, EXECUTION_TITLE
 from .tools.interactions import (
     ExecutionRequest,
@@ -396,14 +398,22 @@ class AgentLoop:
         )
 
         # 固定系统提示词后按类型插入本轮最新的动态 user 上下文。
+        system_prompt = await build_system_prompt(channel=self.channel)
+        token_usage = TokenUsage(
+            provider=self.provider,
+            tools=self.tools,
+            compression_threshold=self.max_accept_token,
+            context_tokens={"系统提示词": await token_counter([system_prompt])},
+        )
         messages_yaml = set_system_prompt(
             messages_yaml,
-            await build_system_prompt(channel=self.channel),
+            system_prompt,
             await build_context_messages(
                 workspace=self.workspace,
                 channel=self.channel,
                 user_organization=self.user_organization,
                 not_interactive=not_interactive,
+                token_counts=token_usage.context_tokens,
             ),
         )
         # 时间戳标记真实用户请求，压缩时按完整回合切分。
@@ -550,59 +560,26 @@ class AgentLoop:
             input_content.text for input_content in message.content if isinstance(input_content, InputText)
         )
         duration_s = time.perf_counter() - start_time
-        await self.records.append(
-            ConversationRecord(
-                user_id=message.user_id,
-                session_id=message.session_id,
-                request_id=request_id,
-                channel=message.channel,
-                sender_name=message.sender_name,
-                user_question=user_question,
-                model_response=final_content,
-                input_tokens=self._input_tokens,
-                output_tokens=self._output_tokens,
-                model_call_count=self._model_call_count,
-                duration_s=duration_s,
-            ),
-            messages=turn_messages,
+        record = ConversationRecord(
+            user_id=message.user_id,
+            session_id=message.session_id,
+            request_id=request_id,
+            channel=message.channel,
+            sender_name=message.sender_name,
+            user_question=user_question,
+            model_response=final_content,
+            input_tokens=self._input_tokens,
+            output_tokens=self._output_tokens,
+            model_call_count=self._model_call_count,
+            duration_s=duration_s,
         )
-
-        def format_token_count(value: int) -> str:
-            if value < 1_000:
-                return str(value)
-            amount, unit = value / 1_000, "k"
-            # A rounded 1000k is more naturally displayed as 1m.
-            if round(amount, 2) >= 1_000:
-                amount, unit = value / 1_000_000, "m"
-            return f"{amount:.2f}".rstrip("0").rstrip(".") + unit
-
-        # Context size is estimated separately from provider-reported consumption.
-        token_count = await self._count_context_tokens(messages_yaml)
-        token_percent = min(1, token_count / self.max_accept_token) * 100
-        token_notify = "♻️ 即将达到最大上下文" if token_percent > 90 else ""
-        context_usage = (
-            f"{token_percent:.2f}% "
-            f"({format_token_count(token_count)} / {format_token_count(self.max_accept_token)}) {token_notify}"
-        ).strip()
-        yield {
-            "event": "token_usage",
-            "context": json.dumps(
-                {
-                    "上下文使用率": context_usage,
-                    "输入 Token": format_token_count(self._input_tokens),
-                    "输出 Token": format_token_count(self._output_tokens),
-                    "总 Token": format_token_count(self._input_tokens + self._output_tokens),
-                    "会话时长": f"{duration_s:.0f}秒",
-                    "大模型请求次数": str(self._model_call_count),
-                },
-                ensure_ascii=False,
-            ),
-        }
+        await self.records.append(record, messages=turn_messages)
+        yield await token_usage.build_event(messages_yaml, record)
 
         logger.info("Agent run completed")
 
     async def _count_context_tokens(self, messages: list[dict[str, Any]]) -> int:
-        """按实际请求统计消息及工具定义的上下文占用。"""
+        """按原有整包估算判断是否需要压缩，与展示用的分项统计独立。"""
         return await self.provider.chat_count_tokens(messages=strip_internal_message_metadata(messages), tools=self.tools)
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs) -> LLMResponse:

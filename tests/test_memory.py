@@ -44,7 +44,9 @@ async def test_context_reads_memory(tmp_path, monkeypatch, memory):
         context_prompt_module.SkillsLoader, "build_skills_prompt", AsyncMock(return_value=""),
     )
 
-    contexts = await asyncio.wait_for(context_prompt_module.build_context_messages(tmp_path), 5)
+    contexts = await asyncio.wait_for(context_prompt_module.build_context_messages(
+        tmp_path, channel=None, user_organization=None, not_interactive=False, token_counts={},
+    ), 5)
     memories = [message for message in contexts if message["content"].startswith("<system-reminder>\n## Long-term Memory\n")]
 
     if memory is not None:

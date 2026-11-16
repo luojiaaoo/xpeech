@@ -18,6 +18,7 @@ class RegisteredTool:
 
     func: ToolFunc
     tool_json: dict[str, Any]
+    source: Literal["system_tools", "mcp_tools"] = "system_tools"
 
 
 ToolRegistry: TypeAlias = dict[str, RegisteredTool]

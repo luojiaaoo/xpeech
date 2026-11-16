@@ -8,6 +8,7 @@ import anyio
 
 from ...config.settings import settings
 from ...utils.file_io import LockedFile
+from ...utils.helper import token_counter
 from ..memory import MemoryStore
 from ..skills.skill import SkillsLoader
 
@@ -74,33 +75,35 @@ def _workspace_context(workspace: Path) -> str:
 async def build_context_messages(
     workspace: Path,
     *,
-    channel: str | None = None,
-    user_organization: str | None = None,
-    not_interactive: bool = False,
+    channel: str | None,
+    user_organization: str | None,
+    not_interactive: bool,
+    token_counts: dict[str, int],
 ) -> list[dict[str, Any]]:
-    """分开加载各类动态内容，以 system-reminder 包裹；空内容不产生消息。"""
+    """组装动态上下文时同步统计各块占用；空内容不产生消息或统计项。"""
     messages = []
 
-    def add(content: str) -> None:
+    async def add(category: str, content: str) -> None:
         if content.strip():
             messages.append({
                 "role": "user",
                 "content": f"<system-reminder>\n{content.strip()}\n</system-reminder>",
             })
+            token_counts[category] = token_counts.get(category, 0) + await token_counter([messages[-1]])
 
-    add(_get_identity(channel))
-    add(_workspace_context(workspace))
+    await add("用户上下文", _get_identity(channel))
+    await add("用户上下文", _workspace_context(workspace))
     for filename in BOOTSTRAP_FILES:
         path = workspace / filename
         if await anyio.Path(path).is_file():
             content = await LockedFile(path).read_text()
             if content.strip():
-                add(f"## {filename}\n\n{content}")
+                await add("用户上下文", f"## {filename}\n\n{content}")
 
     memory = MemoryStore(workspace)
-    add(await memory.get_memory_context())
-    add(await memory.get_self_improvement_context())
-    add(await SkillsLoader(
+    await add("长期记忆", await memory.get_memory_context())
+    await add("用户上下文", await memory.get_self_improvement_context())
+    await add("技能", await SkillsLoader(
         workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
     ).build_skills_prompt())
     return messages

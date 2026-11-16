@@ -45,6 +45,10 @@ async def test_token_counter_includes_tools_alongside_video_tokens(monkeypatch):
     assert text_and_tools_tokens > text_tokens
     assert await helper.token_counter(messages, tools=tools) == text_and_tools_tokens + 125
     assert messages[0]["content"][1]["type"] == "video_url"
+    tool_tokens = await helper.token_counter(tools=tools)
+    assert tool_tokens > await helper.token_counter()
+    assert await helper.token_counter(messages=None, tools=tools) == tool_tokens
+    assert await helper.token_counter([], tools=tools) == tool_tokens
 
 
 def test_compress_image_returns_raw_and_mime_type():

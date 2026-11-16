@@ -12,6 +12,7 @@ import {
   EllipsisOutlined,
   LoadingOutlined,
   PaperClipOutlined,
+  PieChartOutlined,
   DownOutlined,
   RobotOutlined,
 } from '@ant-design/icons';
@@ -60,6 +61,49 @@ const tokenUsageLabels: Record<string, string> = {
   会话时长: '耗时',
 };
 const tokenUsageSummaryKeys = ['上下文使用率', '总 Token', '会话时长'];
+type ContextPart = { 词元数: number; 占比: number };
+type ContextUsage = Record<string, ContextPart>;
+const contextPartColors = [
+  '#e6a23c', '#5b8ff9', '#61b6b2', '#9270ca', '#ff9d4d', '#6dc8ec',
+  '#8cb96c', '#d28bbb', '#6875a9', '#f46665', '#6f93c8', '#a0b5c0',
+];
+
+function renderContextUsage(usage: ContextUsage) {
+  const parts = Object.entries(usage)
+    .filter(([key, part]) => part.词元数 > 0 || key === '剩余空间')
+    .map(([key, part], index) => ({
+      key, ...part,
+      color: key === '剩余空间' ? '#e9eef5' : contextPartColors[index % contextPartColors.length],
+    }));
+  let end = 0;
+  const slices = parts.map(part => {
+    const start = end;
+    end = Math.min(100, end + part.占比 * 100);
+    return `${part.color} ${start}% ${end}%`;
+  });
+  const usedRatio = Math.min(1, parts.filter(part => part.key !== '剩余空间')
+    .reduce((sum, part) => sum + part.占比, 0));
+  const percent = `${(usedRatio * 100).toFixed(2)}%`;
+  return (
+    <div className="context-usage-card">
+      <div className="context-usage-heading"><strong>上下文占用</strong></div>
+      <div className="context-usage-chart" role="img" aria-label={`上下文占用 ${percent}`}
+        style={{ background: `conic-gradient(${slices.join(', ') || '#e9eef5 0% 100%'})` }}>
+        <div className="context-usage-center"><strong>{percent}</strong><span>已使用</span></div>
+      </div>
+      <ul className="context-usage-legend">
+        {parts.map(part => (
+          <li key={part.key}>
+            <span className="context-usage-dot" style={{ background: part.color }} />
+            <span className="context-usage-name">{part.key}</span>
+            <span>{`${Math.floor(part.词元数 / 1000)}k`}</span>
+            <span className="context-usage-ratio">{(part.占比 * 100).toFixed(2)}%</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 async function copyText(text: string) {
   if (navigator.clipboard && window.isSecureContext) {
@@ -90,21 +134,28 @@ async function copyMessage(text: string) {
 
 function renderTokenUsage(tokenUsage: string) {
   let metrics: { key: string; label: string; value: string }[];
+  let contextUsage: ContextUsage | undefined;
   try {
     const data = JSON.parse(tokenUsage) as unknown;
     if (!data || Array.isArray(data) || typeof data !== 'object') throw new Error('Invalid token usage');
-    metrics = Object.entries(data).map(([label, value]) => ({
-      key: label,
-      label: tokenUsageLabels[label] || label,
-      value: ['大模型请求次数', '大模型交互次数'].includes(label) && /^\d+$/.test(String(value))
-        ? `${String(value)} 次`
-        : String(value),
-    }));
+    metrics = Object.entries(data).flatMap(([label, value]) => {
+      if (label === '上下文明细' && value && typeof value === 'object') {
+        contextUsage = value as ContextUsage;
+        return [];
+      }
+      return [{
+        key: label,
+        label: tokenUsageLabels[label] || label,
+        value: ['大模型请求次数', '大模型交互次数'].includes(label) && /^\d+$/.test(String(value))
+          ? `${String(value)} 次`
+          : String(value),
+      }];
+    });
   } catch {
     metrics = [{ key: '详情', label: '详情', value: tokenUsage }];
   }
 
-  if (!metrics.length) return null;
+  if (!metrics.length && !contextUsage) return null;
   const summary = tokenUsageSummaryKeys.flatMap(key => metrics.filter(metric => metric.key === key));
   const details = metrics.filter(metric => !tokenUsageSummaryKeys.includes(metric.key));
   const renderMetric = (metric: typeof metrics[number]) => (
@@ -134,6 +185,12 @@ function renderTokenUsage(tokenUsage: string) {
         >
           <Button type="text" size="small" className="token-usage-more"
             icon={<EllipsisOutlined />} aria-label="查看更多统计" />
+        </Popover>
+      ) : null}
+      {contextUsage ? (
+        <Popover trigger="click" placement="topLeft" content={renderContextUsage(contextUsage)}>
+          <Button type="text" size="small" className="token-usage-more"
+            icon={<PieChartOutlined />} aria-label="查看上下文占用" />
         </Popover>
       ) : null}
     </div>

@@ -85,6 +85,7 @@ def streaming_chat(monkeypatch, tmp_path):
         return response
 
     agent = AgentLoop.__new__(AgentLoop)
+    agent.provider = provider
     agent.workspace = tmp_path
     agent.channel = None
     agent.user_organization = None
@@ -93,6 +94,7 @@ def streaming_chat(monkeypatch, tmp_path):
     agent.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))
     agent.tools = []
     agent.max_iterations = 2
+    agent.max_accept_token = 147_000
     agent.chat = call_provider
     runner = AgentRunner("cleanup-user", config=SimpleNamespace(path=SimpleNamespace(workspace_base_path=tmp_path)))
     runner._agent_loop = agent

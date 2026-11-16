@@ -132,7 +132,7 @@ def test_internal_builtin_skills_are_marked(skill_name: str):
 @pytest.mark.parametrize("not_interactive", [False, True])
 async def test_context_filters_builtin_interactive_skill(tmp_path: Path, not_interactive: bool):
     prompt = "\n\n".join(message["content"] for message in await build_context_messages(
-        tmp_path, not_interactive=not_interactive,
+        tmp_path, channel=None, user_organization=None, not_interactive=not_interactive, token_counts={},
     ))
 
     assert ("<name>ask-user-question</name>" in prompt) is not not_interactive

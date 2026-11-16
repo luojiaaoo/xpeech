@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -6,7 +7,7 @@ import pytest
 from xpeech.agent import loop as loop_module
 from xpeech.agent.compression import ConversationCompressor
 from xpeech.agent.history import YamlHistoryRepository
-from xpeech.agent.helper import is_context_message
+from xpeech.agent.helper import is_context_message, strip_internal_message_metadata
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.memory import MemoryStore
 from xpeech.agent.prompt.context import build_context_messages
@@ -14,7 +15,47 @@ from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.server.schema import InboundMessage, InputText
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.config.settings import settings
-from xpeech.provider.schema import LLMResponse
+from xpeech.provider.litellm_provider import LiteLLMProvider
+from xpeech.provider.schema import LLMParameters, LLMResponse
+from xpeech.utils.helper import token_counter
+
+
+@pytest.mark.asyncio
+async def test_context_breakdown_accumulates_blocks_and_leaves_messages_clean(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop_module, "get_request_id", lambda: "test-request")
+    monkeypatch.setattr(SkillsLoader, "build_skills_prompt", AsyncMock(return_value="available skills"))
+    (tmp_path / "AGENTS.md").write_text("workspace rules", encoding="utf-8")
+    (tmp_path / "SOUL.md").write_text("", encoding="utf-8")
+    await MemoryStore(tmp_path).write_long_term("user preference")
+    provider = LiteLLMProvider(
+        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    )
+    agent = AgentLoop(provider=provider, workspace=tmp_path, tools=[], max_iterations=1)
+    agent.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
+    agent.records = SimpleNamespace(append=AsyncMock())
+    provider.chat = AsyncMock(side_effect=lambda **_: response("final answer " * 100))
+    message = InboundMessage(
+        user_id="alice", session_id="session", sender_name="Alice", channel="test",
+        content=[InputText(text="hello")], files=[], session_metadata={},
+    )
+
+    events = [event async for event in agent.run(message)]
+    details = json.loads(events[-1]["context"])["上下文明细"]
+    parts = {name: part for name, part in details.items() if name != "剩余空间"}
+    assert {"用户上下文", "长期记忆", "技能", "对话消息"} <= parts.keys()
+    assert not {"身份", "工作区", "工作区指令", "人格设定", "用户信息", "工具说明", "备忘录目录"} & parts.keys()
+    assert all(set(item) == {"role", "content"} for item in provider.chat.await_args.kwargs["messages"])
+    saved = strip_internal_message_metadata(agent.history.save.await_args.args[2])
+    total = sum(part["词元数"] for part in parts.values())
+    assert sum(part["占比"] for part in parts.values()) == pytest.approx(total / agent.max_accept_token)
+    history = [item for item in saved if item["role"] == "assistant" or isinstance(item["content"], list)]
+    assert parts["系统提示词"]["词元数"] == await token_counter([saved[0]])
+    assert parts["对话消息"]["词元数"] == await token_counter(history)
+    assert "请求封装" not in parts
+    assert "压缩预留" not in details
+    assert "safety_margin" not in details
+    assert total + details["剩余空间"]["词元数"] == agent.max_accept_token
+    assert all(set(part) == {"词元数", "占比"} for part in details.values())
 
 
 def response(content):
@@ -33,10 +74,18 @@ async def test_dynamic_contexts_are_separate_and_do_not_change_system_prompt(tmp
     monkeypatch.setattr(settings.llm, "system_identity_prompt", "original identity")
 
     system = await build_system_prompt()
-    contexts = await build_context_messages(tmp_path)
+    token_counts = {}
+    contexts = await build_context_messages(
+        tmp_path, channel=None, user_organization=None, not_interactive=False, token_counts=token_counts,
+    )
 
     assert len(contexts) == 9
     assert all(set(message) == {"role", "content"} and message["role"] == "user" for message in contexts)
+    assert list(token_counts) == ["用户上下文", "长期记忆", "技能"]
+    assert token_counts["用户上下文"] == sum([
+        await token_counter([contexts[index]]) for index in (0, 1, 2, 3, 4, 5, 7)
+    ])
+    assert all(tokens > 0 for tokens in token_counts.values())
     assert all(
         message["content"].startswith("<system-reminder>\n")
         and message["content"].endswith("\n</system-reminder>")
@@ -44,7 +93,9 @@ async def test_dynamic_contexts_are_separate_and_do_not_change_system_prompt(tmp
     )
     assert "original identity" in contexts[0]["content"]
     assert tmp_path.as_posix() in contexts[1]["content"]
-    assert "contents of AGENTS.md" in contexts[2]["content"]
+    for index, filename in enumerate(("AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"), start=2):
+        assert f"## {filename}\n\ncontents of {filename}" in contexts[index]["content"]
+        assert "original identity" not in contexts[index]["content"]
     assert "prefers concise replies" in contexts[6]["content"]
     for text in ("original identity", tmp_path.as_posix(), "contents of", "prefers concise replies", "skill catalog"):
         assert text not in system["content"]
@@ -54,7 +105,9 @@ async def test_dynamic_contexts_are_separate_and_do_not_change_system_prompt(tmp
     await MemoryStore(tmp_path).write_long_term("updated preference")
     monkeypatch.setattr(settings.llm, "system_identity_prompt", "updated identity")
     assert await build_system_prompt() == system
-    updated = await build_context_messages(tmp_path)
+    updated = await build_context_messages(
+        tmp_path, channel=None, user_organization=None, not_interactive=False, token_counts={},
+    )
     assert "updated identity" in updated[0]["content"]
     assert "updated rules" in updated[2]["content"]
     assert "updated preference" in updated[6]["content"]
@@ -77,7 +130,11 @@ async def test_run_replaces_front_contexts_without_accumulating_versions(tmp_pat
     agent.history = YamlHistoryRepository(tmp_path / "history")
     agent.records = SimpleNamespace(append=AsyncMock())
     agent.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))
-    agent.provider = SimpleNamespace(chat=AsyncMock(side_effect=lambda **_: response("answer")))
+    agent.provider = SimpleNamespace(
+        chat=AsyncMock(side_effect=lambda **_: response("answer")),
+        default_context_token=200_000, default_model="test",
+        chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
+    )
     agent.tools = []
     agent.max_iterations = 1
     agent.max_accept_token = 100_000

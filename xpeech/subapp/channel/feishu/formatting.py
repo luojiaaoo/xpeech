@@ -228,8 +228,10 @@ class FeishuEventFormatter:
         return message, iter_content
 
     def _format_token_usage(self, context: str) -> str:
-        data: dict[str, str] = json.loads(context)
-        return " | ".join(f"{key}：{value}" for key, value in data.items())
+        data = json.loads(context)
+        return " | ".join(
+            f"{key}：{data[key]}" for key in ("上下文使用率", "总 Token", "会话时长") if key in data
+        )
 
     @staticmethod
     def _truncate(text: str, max_chars: int | None) -> str:

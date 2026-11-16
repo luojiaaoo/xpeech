@@ -63,7 +63,7 @@ async function chatPage(
     },
     '@ant-design/icons': Object.fromEntries([
       'CheckCircleOutlined', 'CloudUploadOutlined', 'CodeOutlined', 'CopyOutlined', 'DashboardOutlined', 'DownloadOutlined', 'EllipsisOutlined',
-      'LoadingOutlined', 'PaperClipOutlined', 'DownOutlined', 'RobotOutlined',
+      'LoadingOutlined', 'PaperClipOutlined', 'PieChartOutlined', 'DownOutlined', 'RobotOutlined',
     ].map(name => [name, name])),
     './api': {
       getFile() {}, downloadFile() {}, chatSync() {}, stopChat,
@@ -189,6 +189,45 @@ test('the process receives its running state and usage while the final answer an
   assert.equal(items[2].content.props.children.props.content, '最终回复');
   assert.equal(items[3].content.props.className, 'bubble-footer');
   assert.equal(items[3].content.props.children[0].props['aria-label'], 'Token 使用情况');
+  page.cleanupHistory();
+});
+
+test('context pie chart appears beside the statistics menu and shows token counts and ratios', async () => {
+  const page = await chatPage(async () => ({ stopped: true }));
+  page.render().onSubmit('hello');
+  const usage = {
+    上下文使用率: '13.61% (20k / 147k)',
+    '总 Token': '1k', 会话时长: '2秒', '输入 Token': '0k',
+    上下文明细: {
+      系统提示词: { 词元数: 2199, 占比: 2199 / 147000 }, 对话消息: { 词元数: 17801, 占比: 17801 / 147000 },
+      剩余空间: { 词元数: 127000, 占比: 127000 / 147000 },
+    },
+  };
+  const stream = page.streams[0];
+  stream.receive({ event: 'assistant', context: 'answer' });
+  stream.receive({ event: 'token_usage', context: JSON.stringify(usage) });
+  stream.finish();
+  await tick();
+  const summary = page.items().find((item: any) => item.role === 'summary');
+  const details = JSON.stringify(summary.content);
+  assert.ok(details.includes('查看更多统计'));
+  assert.ok(details.includes('查看上下文占用'));
+  assert.ok(details.includes('PieChartOutlined'));
+  assert.ok(details.includes('conic-gradient('));
+  assert.ok(details.includes('上下文占用 13.61%'));
+  assert.ok(details.includes('系统提示词'));
+  assert.ok(details.includes('2k'));
+  assert.ok(details.includes('17k'));
+  assert.ok(details.includes('1.50'));
+  assert.ok(details.includes('剩余空间'));
+  assert.ok(details.includes('127k'));
+  assert.ok(details.includes('86.39'));
+  assert.ok(!details.includes('压缩预留'));
+  assert.ok(!details.includes('AUTOCOMPACT_BUFFER'));
+  assert.ok(!details.includes('安全余量'));
+  assert.ok(!details.includes('[object Object]'));
+  assert.ok(!details.includes('自动压缩阈值'));
+  assert.ok(!details.includes('上下文上限'));
   page.cleanupHistory();
 });
 

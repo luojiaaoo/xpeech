@@ -148,7 +148,9 @@ async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_
     assert set(skills) == expected_engineering
     assert skills["engineering"].metadata.filter == 'org("公司/研发/", "公司/研发/")'
     assert "filter" not in skills["engineering"].metadata.kwargs
-    contexts = await build_context_messages(tmp_path, user_organization="公司/研发/平台")
+    contexts = await build_context_messages(
+        tmp_path, channel=None, user_organization="公司/研发/平台", not_interactive=False, token_counts={},
+    )
     context = "\n\n".join(item["content"] for item in contexts)
     assert "# Instructions for engineering" in context
     if source == "workspace":

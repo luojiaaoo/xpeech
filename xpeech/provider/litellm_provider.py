@@ -124,7 +124,8 @@ class LiteLLMProvider:
     ) -> None:
         """注册已绑定的 MCP 函数，保留服务器提供的 schema。"""
 
-        self._publish_tool(func_.__name__, self._build_function_tool(func_, tool_json=tool_json))
+        tool = self._build_function_tool(func_, tool_json=tool_json)
+        self._publish_tool(func_.__name__, RegisteredTool(func=tool.func, tool_json=tool.tool_json, source="mcp_tools"))
 
     async def _parse_tools(self, funcs: list[Callable[[type[BaseModel] | None], str | list]]) -> ToolRegistry:
         """解析普通函数工具。"""
@@ -156,11 +157,21 @@ class LiteLLMProvider:
         messages: list[dict[str, Any]],
         tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
     ) -> int:
-        """估算消息和实际启用的工具定义占用的上下文，强制不排除默认工具。"""
-        registered_tools = await self._resolve_tools(
-            tools, remove_all_tools=False, remove_default_tools=False
-        )
+        """整包估算消息及启用的工具定义，供上下文压缩判断使用。"""
+        registered_tools = await self._resolve_tools(tools)
         return await token_counter(messages, tools=[tool.tool_json for tool in registered_tools.values()] or None)
+
+    async def chat_count_tool_tokens(
+        self,
+        tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
+    ) -> dict[str, int]:
+        """分别估算实际启用的系统工具和 MCP 工具定义，不包含对话消息。"""
+        counts = {}
+        registered_tools = await self._resolve_tools(tools)
+        for source in ("system_tools", "mcp_tools"):
+            schemas = [tool.tool_json for tool in registered_tools.values() if tool.source == source]
+            counts[source] = await token_counter(tools=schemas) if schemas else 0
+        return counts
 
     async def chat(
         self,

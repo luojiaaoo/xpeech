@@ -14,6 +14,43 @@ from xpeech.utils.helper import token_counter
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("override_mcp", [False, True])
+async def test_tool_usage_counts_only_effective_schemas(override_mcp):
+    async def local_tool() -> str:
+        """Run a local operation."""
+        return "local"
+
+    async def remote_tool() -> str:
+        """Override the remote tool locally."""
+        return "remote"
+
+    provider = LiteLLMProvider(
+        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    )
+    provider.register_function_tool(local_tool)
+    provider.register_mcp_tool(remote_tool, tool_json={
+        "type": "function", "function": {
+            "name": "remote_tool", "description": "MCP instructions " * 100,
+            "parameters": {"type": "object", "properties": {}},
+        },
+    })
+    tools = [remote_tool] if override_mcp else []
+    counts = await provider.chat_count_tool_tokens(tools)
+    enabled = await provider._resolve_tools(tools)
+    local_schemas = [tool.tool_json for tool in enabled.values() if tool.source == "system_tools"]
+    assert counts["system_tools"] == await token_counter(tools=local_schemas)
+    if not override_mcp:
+        assert counts["mcp_tools"] == await token_counter(tools=[provider.default_tools["remote_tool"].tool_json])
+    assert counts["system_tools"] > 0
+    assert (counts["mcp_tools"] == 0) is override_mcp
+
+    empty = LiteLLMProvider(
+        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    )
+    assert await empty.chat_count_tool_tokens() == {"system_tools": 0, "mcp_tools": 0}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("exit_kind", ["break", "cancel_flush"])
 async def test_closing_parsed_model_stream_returns_permit_without_task_exit(monkeypatch, exit_kind):
     semaphore = asyncio.Semaphore(1)
@@ -136,7 +173,7 @@ async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected
     messages = [{"role": "user", "content": "hello"}]
     request = {"messages": messages, "tools": ["search", extra_tool], **options}
 
-    # chat_count_tokens 不接受 remove_* 开关，强制按完整工具集统计。
+    # 压缩预算保持整包计数，不接受 chat 的 remove_* 开关。
     count = await provider.chat_count_tokens(messages=messages, tools=["search", extra_tool])
     await provider.chat(messages=messages, tools=["search", extra_tool])
     full_tools = captured_kwargs["tools"]

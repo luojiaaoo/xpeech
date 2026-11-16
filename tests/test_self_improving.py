@@ -28,7 +28,9 @@ async def test_memos_survive_initialization_and_memory_save(tmp_path):
 
     await store.save_memory(MemoryArgs(history_entry="event", memory_update=rule + "\nproject facts"))
     await create_workspace_templates(tmp_path)
-    prompt = "\n\n".join(message["content"] for message in await build_context_messages(tmp_path, not_interactive=True))
+    prompt = "\n\n".join(message["content"] for message in await build_context_messages(
+        tmp_path, channel=None, user_organization=None, not_interactive=True, token_counts={},
+    ))
 
     assert f"## Long-term Memory\n{rule}\nproject facts" in prompt
     assert prompt.count(rule) == 1
@@ -53,8 +55,12 @@ async def test_only_current_users_tree_is_injected(tmp_path):
     (other_category / "async.md").write_text("other-memo-body", encoding="utf-8")
     other_tree = "self-improving/\n└── coding/\n    └── async.md"
 
-    prompt = "\n\n".join(message["content"] for message in await build_context_messages(first))
-    other_prompt = "\n\n".join(message["content"] for message in await build_context_messages(second))
+    prompt = "\n\n".join(message["content"] for message in await build_context_messages(
+        first, channel=None, user_organization=None, not_interactive=False, token_counts={},
+    ))
+    other_prompt = "\n\n".join(message["content"] for message in await build_context_messages(
+        second, channel=None, user_organization=None, not_interactive=False, token_counts={},
+    ))
 
     assert TREE in prompt
     assert TREE not in other_prompt
@@ -95,7 +101,9 @@ async def test_unreadable_directory_does_not_break_long_term_memory(tmp_path, mo
         raise PermissionError("unreadable directory")
 
     monkeypatch.setattr(memory_module, "build_memo_tree", unreadable)
-    prompt = "\n\n".join(message["content"] for message in await build_context_messages(tmp_path))
+    prompt = "\n\n".join(message["content"] for message in await build_context_messages(
+        tmp_path, channel=None, user_organization=None, not_interactive=False, token_counts={},
+    ))
 
     assert "important-fact" in prompt
     assert "Not loaded: the memo directory could not be scanned" in prompt
@@ -113,7 +121,9 @@ async def test_symlink_memo_root_is_ignored(tmp_path):
     memo_root.rmdir()
     memo_root.symlink_to(outside, target_is_directory=True)
 
-    prompt = "\n\n".join(message["content"] for message in await build_context_messages(workspace))
+    prompt = "\n\n".join(message["content"] for message in await build_context_messages(
+        workspace, channel=None, user_organization=None, not_interactive=False, token_counts={},
+    ))
 
     assert "another-user.md" not in prompt
     assert "private body" not in prompt

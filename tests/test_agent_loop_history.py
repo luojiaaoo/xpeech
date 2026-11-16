@@ -53,6 +53,10 @@ async def test_final_response_is_emitted_and_persisted_when_model_returns_no_tex
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
 
     agent_loop = AgentLoop.__new__(AgentLoop)
+    agent_loop.provider = SimpleNamespace(
+        default_context_token=200_000, default_model="test",
+        chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
+    )
     agent_loop.workspace = tmp_path
     agent_loop.channel = None
     agent_loop.user_organization = None
@@ -176,13 +180,25 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
     saved_messages = agent_loop.history.save.await_args.args[2]
     count = await agent_loop._count_context_tokens(saved_messages)
     assert 170 <= count < 1_000
-    assert json.loads(events[-1]["context"])["上下文使用率"] == (f"100.00% ({count} / 170) ♻️ 即将达到最大上下文")
+    # 系统提示词、对话和工具定义独立计数后直接累计。
+    context_count = (
+        await token_counter([saved_messages[0]])
+        + await token_counter(loop_module.strip_internal_message_metadata(saved_messages[1:]))
+        + await token_counter(tools=[provider.default_tools["search"].tool_json])
+    )
+    usage = json.loads(events[-1]["context"])
+    assert usage["上下文使用率"] == (f"{min(1, context_count / 170):.2%} ({context_count // 1000}k / 0k) ♻️ 即将达到最大上下文")
+    details = usage["上下文明细"]
+    parts = {name: part for name, part in details.items() if name != "剩余空间"}
+    assert details["MCP 工具"]["词元数"] > 0
+    assert sum(part["词元数"] for part in parts.values()) == context_count
+    assert all(part["占比"] == min(1, part["词元数"] / 170) for part in parts.values())
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("json_output", [False, True])
 async def test_not_interactive_run_saves_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
-    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive):
+    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive, token_counts):
         assert workspace == tmp_path
         assert user_organization == "公司/研发/平台"
         assert not_interactive is True
@@ -193,6 +209,10 @@ async def test_not_interactive_run_saves_yaml_history(tmp_path: Path, monkeypatc
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
 
     agent_loop = AgentLoop.__new__(AgentLoop)
+    agent_loop.provider = SimpleNamespace(
+        default_context_token=200_000, default_model="test",
+        chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
+    )
     agent_loop.workspace = tmp_path
     agent_loop.channel = None
     agent_loop.user_organization = "公司/研发/平台"
@@ -259,7 +279,7 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
 ):
     expected_not_interactive = not_interactive
 
-    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive):
+    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive, token_counts):
         assert workspace == tmp_path
         assert user_organization is None
         assert not_interactive is expected_not_interactive
@@ -269,6 +289,9 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     monkeypatch.setattr(loop_module, "build_system_prompt", AsyncMock(return_value={"role": "system", "content": "system"}))
 
     agent_loop = AgentLoop.__new__(AgentLoop)
+    agent_loop.provider = SimpleNamespace(
+        chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
+    )
     agent_loop.workspace = tmp_path
     agent_loop.channel = None
     agent_loop.user_organization = None
@@ -333,6 +356,10 @@ async def test_request_yaml_retains_new_messages_across_multiple_compressions(tm
     monkeypatch.setattr(loop_module, "build_system_prompt", system_prompt)
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", AsyncMock(return_value=10))
     agent_loop = AgentLoop.__new__(AgentLoop)
+    agent_loop.provider = SimpleNamespace(
+        default_context_token=200_000, default_model="test",
+        chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
+    )
     agent_loop.workspace = tmp_path
     agent_loop.channel = None
     agent_loop.user_organization = None
