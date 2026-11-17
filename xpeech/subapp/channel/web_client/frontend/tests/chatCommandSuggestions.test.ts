@@ -92,8 +92,8 @@ test('file candidates show local modification dates and readable sizes only for 
       name: `${size}.txt`, path: `${size}.txt`, is_directory: false, modified_at, size,
     })),
   ], truncated: false });
-  assert.equal(folder.metadata, '修改于 2026-11-17 14:05');
-  assert.deepEqual(files.map(item => item.metadata),
-    ['0 B', '6 B', '1023 B', '1 KB', '1.5 KB', '1 MB', '1 GB', '1 TB']
-      .map(size => `修改于 2026-11-17 14:05 · ${size}`));
+  assert.equal(folder.modifiedAt, '2026/11/17 14:05');
+  assert.equal(folder.fileSize, '');
+  assert.ok(files.every(item => item.modifiedAt === '2026/11/17 14:05'));
+  assert.deepEqual(files.map(item => item.fileSize), ['0 B', '6 B', '1023 B', '1 KB', '1.5 KB', '1 MB', '1 GB', '1 TB']);
 });

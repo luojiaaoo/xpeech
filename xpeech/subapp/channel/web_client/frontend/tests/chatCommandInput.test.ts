@@ -161,7 +161,8 @@ test('typing @ immediately lists first-level entries and allows selecting a fold
   await tick();
   assert.equal(input.popup()['aria-busy'], false);
   const text = renderedText(input.popup().children);
-  assert.ok(text.includes('修改于 2026-11-17 14:05'));
+  assert.ok(text.includes('2026/11/17 14:05'));
+  assert.ok(!text.includes('修改于'));
   assert.ok(text.includes('1.5 KB'));
   input.sender().onKeyDown({ key: 'Enter', nativeEvent: {}, preventDefault() {} });
   assert.equal(input.sender().value, '@"docs/" ');
@@ -180,6 +181,12 @@ test('file lookup waits 500ms after the final keystroke', async () => {
   input.advance(1);
   assert.equal(input.requests.length, 1);
   assert.equal(input.requests[0].query, '*abc*');
+  input.requests[0].resolve({ entries: [{
+    name: 'abc.txt', path: 'docs/nested/abc.txt', is_directory: false,
+    modified_at: '2026-11-17T06:05:00Z', size: 6,
+  }], truncated: false });
+  await tick();
+  assert.ok(renderedText(input.popup().children).includes('abc.txt docs/nested/abc.txt'));
   input.dispose();
 });
 

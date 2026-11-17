@@ -36,8 +36,15 @@ async function mountTree(files: Function) {
   const { outputText } = ts.transpileModule(readFileSync(new URL('../src/WorkspaceFileTree.tsx', import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX },
   });
+  const helperSource = ts.transpileModule(readFileSync(new URL('../src/chatCommandSuggestions.ts', import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.ESNext },
+  }).outputText;
+  const helpers = new vm.SourceTextModule(helperSource, { context });
+  await helpers.link(() => { throw new Error('Only type imports expected'); });
+  await helpers.evaluate();
   const component = new vm.SourceTextModule(outputText, { context });
   await component.link(specifier => {
+    if (specifier === './chatCommandSuggestions') return helpers;
     const values = exports[specifier];
     assert.ok(values, specifier);
     return new vm.SyntheticModule(Object.keys(values), function () {
@@ -67,20 +74,26 @@ async function mountTree(files: Function) {
 
 test('folders and files can be selected while expansion alone lazily loads children', async () => {
   const calls: string[] = [];
+  const modified_at = new Date(2026, 10, 17, 14, 5).toISOString();
   const tree = await mountTree(async (path: string) => {
     calls.push(path);
-    return { entries: path ? [{ name: 'a.txt', path: 'docs/a.txt', is_directory: false }] : [
-      { name: 'docs', path: 'docs', is_directory: true }, { name: 'other', path: 'other', is_directory: true },
+    return { entries: path ? [{ name: 'a.txt', path: 'docs/a.txt', is_directory: false, modified_at, size: 1536 }] : [
+      { name: 'docs', path: 'docs', is_directory: true, modified_at, size: null },
+      { name: 'other', path: 'other', is_directory: true, modified_at, size: null },
     ], truncated: false };
   });
   assert.deepEqual(calls, ['']);
   assert.equal(tree.render().expandAction, false);
+  const folderColumns = Array.from(tree.render().treeData[0].title.props.children, (column: any) => column.props.children);
+  assert.deepEqual(folderColumns, ['docs', '2026/11/17 14:05', '']);
   tree.render().onSelect([], { node: tree.render().treeData[0] });
   assert.deepEqual(tree.selected, ['docs/']);
   assert.deepEqual(calls, ['']);
   await tree.render().loadData(tree.render().treeData[0]);
   assert.deepEqual(calls, ['', 'docs']);
   const folder = tree.render().treeData[0];
+  const fileColumns = Array.from(folder.children[0].title.props.children, (column: any) => column.props.children);
+  assert.deepEqual(fileColumns, ['a.txt', '2026/11/17 14:05', '1.5 KB']);
   await tree.render().loadData(folder);
   assert.deepEqual(calls, ['', 'docs']);
   tree.render().onSelect([], { node: folder.children[0] });

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Alert, Button, Empty, Spin, Tree } from 'antd';
 import { FileOutlined, FolderOutlined } from '@ant-design/icons';
 import { chatCommandApi } from './api';
+import { fileEntryDetails } from './chatCommandSuggestions';
 
 type FileNode = {
   key: string; path: string; title: ReactNode; icon?: ReactNode;
@@ -38,11 +39,19 @@ export default function WorkspaceFileTree({ onSelect }: { onSelect: (path: strin
       try {
         const result = await chatCommandApi.files(path, '', controller.signal, offset);
         if (controller.signal.aborted) return;
-        const children: FileNode[] = result.entries.map(entry => ({
-          key: `file:${entry.path}`, path: entry.path, title: entry.name,
-          icon: entry.is_directory ? <FolderOutlined /> : <FileOutlined />,
-          isLeaf: !entry.is_directory, selectable: true, isDirectory: entry.is_directory,
-        }));
+        const children: FileNode[] = result.entries.map(entry => {
+          const { modifiedAt, fileSize } = fileEntryDetails(entry);
+          return {
+            key: `file:${entry.path}`, path: entry.path,
+            title: <span className="workspace-file-row" title={entry.path}>
+              <span className="workspace-file-name">{entry.name}</span>
+              <span className="workspace-file-date" aria-label="修改时间">{modifiedAt}</span>
+              <span className="workspace-file-size" aria-label="文件大小">{fileSize}</span>
+            </span>,
+            icon: entry.is_directory ? <FolderOutlined /> : <FileOutlined />,
+            isLeaf: !entry.is_directory, selectable: true, isDirectory: entry.is_directory,
+          };
+        });
         if (result.truncated) {
           const nextOffset = offset + result.entries.length;
           children.push({

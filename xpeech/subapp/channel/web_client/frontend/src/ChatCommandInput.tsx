@@ -203,16 +203,24 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
                 ) : null}
                 <div role="option" id={`${listId}-${index}`} aria-selected={index === selected}
                   className={`chat-command-suggestion${index === selected ? ' selected' : ''}`}
-                  title={`${item.name} — ${item.description}${item.metadata ? ` — ${item.metadata}` : ''}`} onMouseEnter={() => setSelected(index)}
+                  title={[item.description, item.modifiedAt, item.fileSize].filter(Boolean).join(' — ')} onMouseEnter={() => setSelected(index)}
                   onMouseDown={event => event.preventDefault()} onClick={() => select(item)}>
                   <span className={`chat-command-suggestion-icon ${item.kind}`}>{icons[item.kind]}</span>
-                  <span className="chat-command-suggestion-content">
+                  {trigger.kind === 'file' ? (
+                    <span className="workspace-file-row">
+                      <span className="chat-command-suggestion-heading">
+                        <span className="chat-command-suggestion-name">{item.name}</span>
+                        <span className="chat-command-suggestion-description">{item.description}</span>
+                      </span>
+                      <span className="workspace-file-date" aria-label="修改时间">{item.modifiedAt}</span>
+                      <span className="workspace-file-size" aria-label="文件大小">{item.fileSize}</span>
+                    </span>
+                  ) : (
                     <span className="chat-command-suggestion-heading">
                       <span className="chat-command-suggestion-name">{item.name}</span>
                       <span className="chat-command-suggestion-description">{item.description}</span>
                     </span>
-                    {item.metadata ? <span className="chat-command-suggestion-metadata">{item.metadata}</span> : null}
-                  </span>
+                  )}
                 </div>
               </div>
             ))}

@@ -1,4 +1,4 @@
-import type { ChatCommandCatalog, WorkspaceEntries } from './types';
+import type { ChatCommandCatalog, WorkspaceEntries, WorkspaceEntry } from './types';
 
 export type ChatCommandTrigger = {
   kind: 'slash' | 'file'; start: number; end: number; query: string; commands: boolean;
@@ -6,7 +6,7 @@ export type ChatCommandTrigger = {
 export type ChatCommandSuggestion = {
   key: string; kind: 'command' | 'skill' | 'file' | 'directory';
   name: string; description: string; value: string;
-  metadata?: string;
+  modifiedAt?: string; fileSize?: string;
 };
 
 export function chatCommandTrigger(text: string, caret: number): ChatCommandTrigger | null {
@@ -46,7 +46,7 @@ function formatModifiedAt(value: string): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return '';
   const pad = (part: number) => String(part).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function formatFileSize(size: number): string {
@@ -56,20 +56,20 @@ function formatFileSize(size: number): string {
   return `${Number(size.toFixed(unit ? 1 : 0))} ${units[unit]}`;
 }
 
+export function fileEntryDetails(item: WorkspaceEntry): { modifiedAt: string; fileSize: string } {
+  return {
+    modifiedAt: item.modified_at ? formatModifiedAt(item.modified_at) : '',
+    fileSize: !item.is_directory && typeof item.size === 'number' ? formatFileSize(item.size) : '',
+  };
+}
+
 export function fileSuggestions(result: WorkspaceEntries): ChatCommandSuggestion[] {
-  return result.entries.map(item => {
-    const modifiedAt = item.modified_at ? formatModifiedAt(item.modified_at) : '';
-    const metadata = [
-      modifiedAt ? `修改于 ${modifiedAt}` : '',
-      !item.is_directory && typeof item.size === 'number' ? formatFileSize(item.size) : '',
-    ].filter(Boolean).join(' · ');
-    return {
-      key: item.path, kind: item.is_directory ? 'directory' as const : 'file' as const,
-      name: item.name, description: item.path,
-      metadata,
-      value: `@${JSON.stringify(item.is_directory ? `${item.path}/` : item.path)} `,
-    };
-  });
+  return result.entries.map(item => ({
+    key: item.path, kind: item.is_directory ? 'directory' as const : 'file' as const,
+    name: item.name, description: item.path,
+    ...fileEntryDetails(item),
+    value: `@${JSON.stringify(item.is_directory ? `${item.path}/` : item.path)} `,
+  }));
 }
 
 export function fileSearchPattern(query: string): string {
