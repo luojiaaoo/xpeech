@@ -1,5 +1,7 @@
+from datetime import UTC, datetime
 from fnmatch import fnmatchcase
 from pathlib import Path
+from stat import S_ISDIR, S_ISREG
 from typing import Annotated
 
 import anyio
@@ -14,7 +16,7 @@ from ..dependencies import authenticated_user_id
 router = APIRouter()
 
 SEARCH_EXCLUDED_NAMES = frozenset({
-    ".git", ".hg", ".svn", ".venv", "venv", ".local_lib", "node_modules", "__pycache__",
+    ".git", ".hg", ".svn", ".idea", ".vscode", ".venv", "venv", ".local_lib", "node_modules", "__pycache__",
     ".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox", ".npm", ".yarn",
     ".pnpm-store", ".ds_store", "thumbs.db",
 })
@@ -43,6 +45,23 @@ async def _search_path_allowed(path: anyio.Path, workspace: anyio.Path) -> bool:
         return False
 
 
+async def _workspace_entry(path: anyio.Path, workspace: anyio.Path) -> dict | None:
+    try:
+        info = await path.stat()
+    except (OSError, RuntimeError):
+        return None
+    is_directory = S_ISDIR(info.st_mode)
+    if not is_directory and not S_ISREG(info.st_mode):
+        return None
+    return {
+        "name": path.name,
+        "path": path.relative_to(workspace).as_posix(),
+        "is_directory": is_directory,
+        "modified_at": datetime.fromtimestamp(info.st_mtime, UTC).isoformat(),
+        "size": None if is_directory else info.st_size,
+    }
+
+
 @router.get("/files/search")
 async def search_workspace_files(
     user_id: Annotated[str, Depends(authenticated_user_id)],
@@ -66,10 +85,10 @@ async def search_workspace_files(
             path = directory / name
             if not await _search_path_allowed(path, workspace):
                 continue
-            is_directory = await path.is_dir()
-            if not is_directory and not await path.is_file():
+            entry = await _workspace_entry(path, workspace)
+            if entry is None:
                 continue
-            entries.append({"name": path.name, "path": path.relative_to(workspace).as_posix(), "is_directory": is_directory})
+            entries.append(entry)
             if len(entries) > 100:
                 return {"entries": entries[:100], "truncated": True}
     return {"entries": entries, "truncated": False}
@@ -81,6 +100,7 @@ async def list_workspace_files(
     path: str = "",
     query: Annotated[str, Query(max_length=255)] = "",
     offset: Annotated[int, Query(ge=0)] = 0,
+    initial_load: bool = False,
 ):
     """Browse only the authenticated user's workspace; never follow escaping links."""
     workspace = await _user_workspace(user_id)
@@ -95,9 +115,13 @@ async def list_workspace_files(
         return {"entries": [], "truncated": False}
     if not await directory.is_dir():
         raise HTTPException(404, "Directory not found")
+    if initial_load and _excluded_from_search(directory, workspace):
+        return {"entries": [], "truncated": False}
     entries = []
     try:
         async for child in directory.iterdir():
+            if initial_load and _excluded_from_search(child, workspace):
+                continue
             if not child.name.casefold().startswith(query.casefold()):
                 continue
             try:
@@ -106,14 +130,12 @@ async def list_workspace_files(
                 continue
             if not resolved.is_relative_to(workspace):
                 continue
-            is_directory = await child.is_dir()
-            if not is_directory and not await child.is_file():
+            if initial_load and _excluded_from_search(resolved, workspace):
                 continue
-            entries.append({
-                "name": child.name,
-                "path": child.relative_to(workspace).as_posix(),
-                "is_directory": is_directory,
-            })
+            entry = await _workspace_entry(child, workspace)
+            if entry is None:
+                continue
+            entries.append(entry)
     except OSError:
         raise HTTPException(403, "Directory cannot be read") from None
     entries.sort(key=lambda item: (not item["is_directory"], item["name"].casefold()))

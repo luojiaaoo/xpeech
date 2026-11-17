@@ -358,6 +358,9 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .chat-command-suggestion.selected { background: #f3f4f6; }
 .chat-command-suggestion-icon { flex-shrink: 0; color: #8a8f9b; }
 .chat-command-suggestion-icon.skill, .chat-command-suggestion-icon.directory { color: #1677ff; }
+.chat-command-suggestion-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat-command-suggestion-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-command-suggestion-metadata { font-size: 12px; color: #8a8f9b; overflow-wrap: anywhere; }
 .chat-command-suggestion-name { flex-shrink: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .chat-command-suggestion-description { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8a8f9b; }
 .chat-command-suggestions-status { padding: 14px 8px; color: #8a8f9b; font-size: 12px; overflow-wrap: anywhere; }

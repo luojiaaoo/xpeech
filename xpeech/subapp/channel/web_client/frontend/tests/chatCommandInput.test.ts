@@ -7,6 +7,12 @@ import ts from 'typescript';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
+function renderedText(node: any): string {
+  if (typeof node === 'string') return node;
+  if (Array.isArray(node)) return node.map(renderedText).join(' ');
+  return node?.props ? renderedText(node.props.children) : '';
+}
+
 async function inputHarness(manualTimers = false) {
   class Textarea { selectionStart = 0; }
   let now = 0;
@@ -37,10 +43,10 @@ async function inputHarness(manualTimers = false) {
   let cursor = 0;
   let value = '';
   let pendingEffects: Function[] = [];
-  const requests: { query?: string; path?: string; signal: AbortSignal; resolve: Function }[] = [];
-  function pending(signal: AbortSignal, query?: string, path?: string) {
+  const requests: { query?: string; path?: string; initialLoad?: boolean; signal: AbortSignal; resolve: Function }[] = [];
+  function pending(signal: AbortSignal, query?: string, path?: string, initialLoad?: boolean) {
     return new Promise((resolve, reject) => {
-      requests.push({ query, path, signal, resolve });
+      requests.push({ query, path, initialLoad, signal, resolve });
       signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
     });
   }
@@ -80,7 +86,9 @@ async function inputHarness(manualTimers = false) {
     './api': { chatCommandApi: {
       catalog: (signal: AbortSignal) => pending(signal),
       searchFiles: (query: string, signal: AbortSignal) => pending(signal, query),
-      files: (path: string, query: string, signal: AbortSignal) => pending(signal, query, path),
+      files: (path: string, query: string, signal: AbortSignal, _offset: number, options?: { initialLoad?: boolean }) => (
+        pending(signal, query, path, options?.initialLoad)
+      ),
     } },
     './WorkspaceFileTree': { default: 'FileTree' },
   };
@@ -144,12 +152,17 @@ test('typing @ immediately lists first-level entries and allows selecting a fold
   assert.equal(input.requests.length, 1);
   assert.equal(input.requests[0].path, '');
   assert.equal(input.requests[0].query, '');
+  assert.equal(input.requests[0].initialLoad, true);
+  const modified_at = new Date(2026, 10, 17, 14, 5).toISOString();
   input.requests[0].resolve({ entries: [
-    { name: 'docs', path: 'docs', is_directory: true },
-    { name: 'README.md', path: 'README.md', is_directory: false },
+    { name: 'docs', path: 'docs', is_directory: true, modified_at, size: null },
+    { name: 'README.md', path: 'README.md', is_directory: false, modified_at, size: 1536 },
   ], truncated: false });
   await tick();
   assert.equal(input.popup()['aria-busy'], false);
+  const text = renderedText(input.popup().children);
+  assert.ok(text.includes('修改于 2026-11-17 14:05'));
+  assert.ok(text.includes('1.5 KB'));
   input.sender().onKeyDown({ key: 'Enter', nativeEvent: {}, preventDefault() {} });
   assert.equal(input.sender().value, '@"docs/" ');
   input.dispose();

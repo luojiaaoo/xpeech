@@ -73,8 +73,8 @@ test('file search results insert plain paths, including folders, spaces and quot
   assert.equal(trigger.kind, 'file');
   const choices = fileSuggestions({
     entries: [
-      { name: 'a folder', path: '我的 文件/a folder', is_directory: true },
-      { name: 'a"b.txt', path: '我的 文件/a"b.txt', is_directory: false },
+      { name: 'a folder', path: '我的 文件/a folder', is_directory: true, modified_at: '2026-11-17T06:05:00Z', size: null },
+      { name: 'a"b.txt', path: '我的 文件/a"b.txt', is_directory: false, modified_at: '2026-11-17T06:05:00Z', size: 6 },
     ], truncated: false,
   });
   const reference = applySuggestion(text, trigger, choices[1]);
@@ -82,4 +82,18 @@ test('file search results insert plain paths, including folders, spaces and quot
   assert.equal(chatCommandTrigger(reference.value, reference.caret), null);
   const folderReference = applySuggestion(text, trigger, choices[0]);
   assert.equal(folderReference.value, '请看@"我的 文件/a folder/" ');
+});
+
+test('file candidates show local modification dates and readable sizes only for files', () => {
+  const modified_at = new Date(2026, 10, 17, 14, 5).toISOString();
+  const [folder, ...files] = fileSuggestions({ entries: [
+    { name: 'docs', path: 'docs', is_directory: true, modified_at, size: null },
+    ...[0, 6, 1023, 1024, 1536, 1024 ** 2, 1024 ** 3, 1024 ** 4].map(size => ({
+      name: `${size}.txt`, path: `${size}.txt`, is_directory: false, modified_at, size,
+    })),
+  ], truncated: false });
+  assert.equal(folder.metadata, '修改于 2026-11-17 14:05');
+  assert.deepEqual(files.map(item => item.metadata),
+    ['0 B', '6 B', '1023 B', '1 KB', '1.5 KB', '1 MB', '1 GB', '1 TB']
+      .map(size => `修改于 2026-11-17 14:05 · ${size}`));
 });

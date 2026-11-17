@@ -6,6 +6,7 @@ export type ChatCommandTrigger = {
 export type ChatCommandSuggestion = {
   key: string; kind: 'command' | 'skill' | 'file' | 'directory';
   name: string; description: string; value: string;
+  metadata?: string;
 };
 
 export function chatCommandTrigger(text: string, caret: number): ChatCommandTrigger | null {
@@ -41,12 +42,34 @@ export function slashSuggestions(trigger: ChatCommandTrigger, catalog: ChatComma
     }));
 }
 
+function formatModifiedAt(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatFileSize(size: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
+  return `${Number(size.toFixed(unit ? 1 : 0))} ${units[unit]}`;
+}
+
 export function fileSuggestions(result: WorkspaceEntries): ChatCommandSuggestion[] {
-  return result.entries.map(item => ({
-    key: item.path, kind: item.is_directory ? 'directory' as const : 'file' as const,
-    name: item.name, description: item.path,
-    value: `@${JSON.stringify(item.is_directory ? `${item.path}/` : item.path)} `,
-  }));
+  return result.entries.map(item => {
+    const modifiedAt = item.modified_at ? formatModifiedAt(item.modified_at) : '';
+    const metadata = [
+      modifiedAt ? `修改于 ${modifiedAt}` : '',
+      !item.is_directory && typeof item.size === 'number' ? formatFileSize(item.size) : '',
+    ].filter(Boolean).join(' · ');
+    return {
+      key: item.path, kind: item.is_directory ? 'directory' as const : 'file' as const,
+      name: item.name, description: item.path,
+      metadata,
+      value: `@${JSON.stringify(item.is_directory ? `${item.path}/` : item.path)} `,
+    };
+  });
 }
 
 export function fileSearchPattern(query: string): string {

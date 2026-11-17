@@ -137,8 +137,14 @@ export const chatCommandApi = {
       throw error;
     }
   },
-  files: (path: string, query: string, signal?: AbortSignal, offset = 0) => request<WorkspaceEntries>(
-    `/api/files/list?${new URLSearchParams({ path, query, ...(offset ? { offset: String(offset) } : {}) })}`, { signal },
+  files: (
+    path: string, query: string, signal?: AbortSignal, offset = 0,
+    { initialLoad = false }: { initialLoad?: boolean } = {},
+  ) => request<WorkspaceEntries>(
+    `/api/files/list?${new URLSearchParams({
+      path, query, ...(offset ? { offset: String(offset) } : {}),
+      ...(initialLoad ? { initial_load: 'true' } : {}),
+    })}`, { signal },
   ),
 };
 

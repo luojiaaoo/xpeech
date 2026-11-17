@@ -1,3 +1,5 @@
+import os
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import httpx
@@ -80,10 +82,11 @@ def test_file_choices_use_name_prefixes_and_stay_in_the_users_workspace(chat_com
     (workspace / "loop").symlink_to(workspace / "loop")
     response = client.get("/files/list", params={"query": "rep", "user_id": "bob"}, headers=headers)
     assert response.status_code == 200
-    assert response.json() == {"entries": [
+    assert response.json()["truncated"] is False
+    assert [{key: item[key] for key in ("name", "path", "is_directory")} for item in response.json()["entries"]] == [
         {"name": "Reports", "path": "Reports", "is_directory": True},
         {"name": "Report.txt", "path": "Report.txt", "is_directory": False},
-    ], "truncated": False}
+    ]
     entries = client.get("/files/list", headers=headers).json()["entries"]
     assert {item["name"] for item in entries} == {"Report.txt", "old-report.txt", "Reports"}
     nested = client.get("/files/list", params={"path": "Reports", "query": "中文"}, headers=headers)
@@ -92,6 +95,30 @@ def test_file_choices_use_name_prefixes_and_stay_in_the_users_workspace(chat_com
         assert client.get("/files/list", params={"path": path}, headers=headers).status_code == 403
     assert client.get("/files/list", params={"path": "missing"}, headers=headers).status_code == 404
     assert client.get("/files/list").status_code == 401
+
+
+@pytest.mark.parametrize(("endpoint", "params"), [
+    ("/files/search", {"query": "*"}),
+    ("/files/list", {}),
+    ("/files/list", {"initial_load": True}),
+])
+def test_file_candidates_include_modification_dates_and_file_sizes(chat_command_client, endpoint, params):
+    client, workspace, headers = chat_command_client
+    (workspace / "docs").mkdir()
+    (workspace / "report.txt").write_bytes("内容".encode("utf-8"))
+    (workspace / "empty.txt").touch()
+    modified_at = datetime(2026, 11, 17, 6, 5, tzinfo=UTC)
+    for name in ("docs", "report.txt", "empty.txt"):
+        os.utime(workspace / name, (modified_at.timestamp(), modified_at.timestamp()))
+    response = client.get(endpoint, headers=headers, params=params)
+    assert response.status_code == 200
+    entries = {item["name"]: item for item in response.json()["entries"]}
+    assert {name: item["modified_at"] for name, item in entries.items()} == {
+        name: modified_at.isoformat() for name in ("docs", "report.txt", "empty.txt")
+    }
+    assert entries["docs"]["is_directory"] is True and entries["docs"]["size"] is None
+    assert entries["report.txt"]["is_directory"] is False and entries["report.txt"]["size"] == 6
+    assert entries["empty.txt"]["is_directory"] is False and entries["empty.txt"]["size"] == 0
 
 
 def test_file_choices_limit_results_and_handle_new_workspaces(chat_command_client):
@@ -180,7 +207,7 @@ def test_file_search_fnmatch_patterns_match_only_names(chat_command_client, quer
 
 def test_search_prunes_internal_directories_but_tree_can_browse_them(chat_command_client, monkeypatch):
     client, workspace, headers = chat_command_client
-    excluded = {".git", ".venv", ".local_lib", "node_modules", "__pycache__", ".cache"}
+    excluded = {".git", ".idea", ".vscode", ".venv", ".local_lib", "node_modules", "__pycache__", ".cache"}
     for directory in sorted(excluded):
         path = workspace / directory / "internal.txt"
         path.parent.mkdir(parents=True)
@@ -191,6 +218,7 @@ def test_search_prunes_internal_directories_but_tree_can_browse_them(chat_comman
         path.touch()
     (workspace / "git-alias").symlink_to(workspace / ".git", target_is_directory=True)
     (workspace / "internal-link.txt").symlink_to(workspace / ".git" / "internal.txt")
+    (workspace / ".DS_Store").touch()
     walk = anyio.Path.walk
     visited = []
 
@@ -216,9 +244,32 @@ def test_search_prunes_internal_directories_but_tree_can_browse_them(chat_comman
         }
     listed = client.get("/files/list", headers=headers).json()["entries"]
     assert excluded <= {item["name"] for item in listed}
+    suggestions = client.get("/files/list", headers=headers, params={"initial_load": True}).json()
+    assert suggestions["truncated"] is False
+    assert {item["path"] for item in suggestions["entries"]} == {"docs", ".notes", "build", "dist"}
     for directory in sorted(excluded):
         entries = client.get("/files/list", headers=headers, params={"path": directory}).json()["entries"]
         assert [item["name"] for item in entries] == ["internal.txt"]
+        assert client.get("/files/list", headers=headers, params={
+            "path": directory, "initial_load": True,
+        }).json() == {"entries": [], "truncated": False}
+
+
+def test_initial_load_filters_entries_before_pagination(chat_command_client):
+    client, workspace, headers = chat_command_client
+    for name in (".git", ".venv", ".idea", ".vscode", "node_modules"):
+        (workspace / name).mkdir()
+    for index in range(105):
+        (workspace / f"file-{index:03}.txt").touch()
+    first = client.get("/files/list", headers=headers, params={"initial_load": True}).json()
+    second = client.get("/files/list", headers=headers, params={
+        "initial_load": True, "offset": 100,
+    }).json()
+    assert len(first["entries"]) == 100 and first["truncated"] is True
+    assert len(second["entries"]) == 5 and second["truncated"] is False
+    assert {item["name"] for item in first["entries"] + second["entries"]} == {
+        f"file-{index:03}.txt" for index in range(105)
+    }
 
 
 def test_search_stops_walking_after_enough_matches(chat_command_client, monkeypatch):

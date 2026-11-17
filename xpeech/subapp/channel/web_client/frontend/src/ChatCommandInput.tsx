@@ -81,7 +81,7 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
       try {
         const data = query.trim()
           ? await chatCommandApi.searchFiles(fileSearchPattern(query), controller.signal)
-          : await chatCommandApi.files('', '', controller.signal);
+          : await chatCommandApi.files('', '', controller.signal, 0, { initialLoad: true });
         if (controller.signal.aborted) return;
         setChoices(fileSuggestions(data));
         setTruncated(data.truncated);
@@ -203,11 +203,16 @@ const ChatCommandInput = forwardRef<ComponentRef<typeof Sender>, ComponentProps<
                 ) : null}
                 <div role="option" id={`${listId}-${index}`} aria-selected={index === selected}
                   className={`chat-command-suggestion${index === selected ? ' selected' : ''}`}
-                  title={`${item.name} — ${item.description}`} onMouseEnter={() => setSelected(index)}
+                  title={`${item.name} — ${item.description}${item.metadata ? ` — ${item.metadata}` : ''}`} onMouseEnter={() => setSelected(index)}
                   onMouseDown={event => event.preventDefault()} onClick={() => select(item)}>
                   <span className={`chat-command-suggestion-icon ${item.kind}`}>{icons[item.kind]}</span>
-                  <span className="chat-command-suggestion-name">{item.name}</span>
-                  <span className="chat-command-suggestion-description">{item.description}</span>
+                  <span className="chat-command-suggestion-content">
+                    <span className="chat-command-suggestion-heading">
+                      <span className="chat-command-suggestion-name">{item.name}</span>
+                      <span className="chat-command-suggestion-description">{item.description}</span>
+                    </span>
+                    {item.metadata ? <span className="chat-command-suggestion-metadata">{item.metadata}</span> : null}
+                  </span>
                 </div>
               </div>
             ))}

@@ -4,6 +4,30 @@ import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
 
+test('initial file suggestions request internal exclusions while tree browsing keeps its default', async () => {
+  const urls: URL[] = [];
+  const context = vm.createContext({
+    Headers, FormData, URLSearchParams,
+    fetch: async (url: string) => {
+      urls.push(new URL(url, 'https://assistant.test'));
+      return Response.json({ entries: [], truncated: false });
+    },
+  });
+  const module = new vm.SourceTextModule(stripTypeScriptTypes(
+    readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'),
+  ), { context });
+  await module.link(() => { throw new Error('Only type imports expected'); });
+  await module.evaluate();
+  const { chatCommandApi } = module.namespace as { chatCommandApi: { files: Function } };
+  await chatCommandApi.files('', '', undefined, 0, { initialLoad: true });
+  await chatCommandApi.files('docs', '', undefined, 100);
+  assert.equal(urls[0].pathname, '/api/files/list');
+  assert.equal(urls[0].searchParams.get('initial_load'), 'true');
+  assert.equal(urls[1].searchParams.has('initial_load'), false);
+  assert.equal(urls[1].searchParams.get('path'), 'docs');
+  assert.equal(urls[1].searchParams.get('offset'), '100');
+});
+
 test('file search treats invalid patterns as empty results and preserves other request errors', async () => {
   let response = Response.json({ detail: 'Invalid glob pattern' }, { status: 422 });
   let expired = 0;
