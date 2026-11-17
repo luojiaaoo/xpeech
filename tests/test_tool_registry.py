@@ -590,62 +590,9 @@ async def test_mcp_confirmation_selection_at_registration(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("async_check", [False, True])
-@pytest.mark.parametrize("decision", list(ExecutionDecision))
-@pytest.mark.parametrize("not_interactive", [False, True])
-async def test_register_mcp_bindings_passes_confirmation_callback(
-    tmp_path, async_check, decision, not_interactive,
-):
-    session = SimpleNamespace(
-        list_tools=AsyncMock(return_value=SimpleNamespace(tools=[{
-            "name": "echo",
-            "inputSchema": {
-                "type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"],
-            },
-        }])),
-        call_tool=AsyncMock(return_value={"content": [{"type": "text", "text": "echo result"}]}),
-    )
-    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
-    registration._session = session
-    task = registration.start_tool_discovery()
-    await task
-    check = (AsyncMock if async_check else Mock)(return_value=decision)
-    provider = FakeProvider()
-    mcp_client.register_mcp_bindings(
-        task,
-        registration=registration,
-        provider=provider,
-        execution_request_tools=["echo"],
-        execution_request_tool_prompts={},
-        not_interactive=not_interactive,
-        requires_confirmation=check,
-    )
-    [(schema, tool)] = provider.mcp_tools
-    arguments = {"text": "hello", "execution_description": "测试回调"}
-    [result] = [result async for result in ToolExecutor(
-        workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={tool.__name__: tool},
-    ).execute([ToolCallRequest(id="1", name="mcp_demo_echo", arguments=arguments)])]
-    check.assert_called_once()
-    assert json.loads(check.call_args.args[0]) == arguments
-    if async_check:
-        check.assert_awaited_once()
-    assert "execution_description" in schema["function"]["parameters"]["required"]
-    if decision is not ExecutionDecision.ALLOW:
-        session.call_tool.assert_not_called()
-        if decision is ExecutionDecision.DENY or not_interactive:
-            assert not result.succeeded and "拒绝执行" in result.value
-        else:
-            assert result.succeeded and result.value == EXECUTION_REQUEST
-    else:
-        assert result.succeeded and result.value == "echo result"
-        session.call_tool.assert_awaited_once_with("echo", arguments={"text": "hello"})
-    await registration.aclose()
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("request_user_confirmation", [None, False, True])
 @pytest.mark.parametrize("not_interactive", [False, True])
-@pytest.mark.parametrize("prompt_source", ["argument", "config"])
+@pytest.mark.parametrize("prompt_source", ["bindings", "config"])
 async def test_register_mcp_bindings_passes_confirmation_prompt(
     tmp_path, monkeypatch, request_user_confirmation, not_interactive, prompt_source,
 ):
@@ -685,8 +632,8 @@ async def test_register_mcp_bindings_passes_confirmation_prompt(
         else:
             mcp_client.register_mcp_bindings(
                 task, registration=registration, provider=provider, execution_request_tools=["echo"],
-                execution_request_tool_prompts={},
-                not_interactive=not_interactive, requires_confirmation=prompt,
+                execution_request_tool_prompts={"e*": prompt},
+                not_interactive=not_interactive,
             )
         [(schema, tool)] = provider.mcp_tools
         assert binding.schema == original_schema

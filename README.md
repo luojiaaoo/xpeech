@@ -875,7 +875,7 @@ MCP 工具调用后续期 20 分钟，空闲超时后自动关闭。
 
 `execution_request_tools` 在 `enabled_tools` 筛选后生效，不会启用原本被禁用的工具。
 命中的工具会增加必填的 `execution_description` 参数，并通过 `question` 表单等待用户确认；
-说明字段不会传给 MCP 服务器。非交互模式下，未提供 `requires_confirmation` 回调或提示词字符串时，这些工具会在注册阶段被过滤；提供判断规则时，按每次调用的判断决定直接执行或拒绝执行。
+说明字段不会传给 MCP 服务器。非交互模式下，未匹配提示词时，这些工具会在注册阶段被过滤；匹配提示词时，按每次调用的模型判断决定直接执行或拒绝执行。
 
 如果同一工具也匹配 `execution_request_tool_prompts` 的 key，会把对应提示词注入工具说明，
 并增加 `request_user_confirmation: bool = False` 参数供模型判断。`True` 时请求用户确认，`False` 或省略时直接执行。
@@ -908,6 +908,8 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `feishu_schedule_cancel` | 取消当前用户拥有的定时任务 |
 
 `shell` 已接入本地 dcg 危险命令检查：普通命令直接执行，破坏性文件/Git 操作需要用户确认，系统高危命令直接拒绝；检查失败不执行，也不弹确认。
+同时注入模型判断提示词：危险操作、大批量不可恢复的操作或覆盖重要数据时需要用户确认；仅读取的命令无需确认。
+模型要求确认或 dcg 返回确认，任一命中就询问用户；dcg 的拒绝和检查错误仍优先处理。
 模型调用时必须填写
 `execution_description`，说明本次具体要做什么及目的；界面会显示说明和实际执行参数，
 执行确认复用 `question` 事件，使用 `type: "confirm"` 展示说明、参数和“确认” / “取消”按钮。
@@ -950,16 +952,17 @@ Xpeech 仅调用 `dcg test` 检查命令，不需要安装其他 Agent 的 hook�
 危险命令的确认/拒绝规则统一由 dcg 策略维护。文件系统访问边界由 bwrap 的挂载隔离和只读挂载保证，
 Shell 不在宿主机上解析命令路径或拦截 `../`、`..\` 等路径文本。
 
-需要按本次调用决定是否询问时，可在注册代码中传入可选的 `requires_confirmation`：
+需要按本次调用决定是否询问时，可在注册代码中通过 `requires_confirmation` 传入
+`ExecutionConfirmation` 数据类，其 `callback` 和 `prompt` 字段均可选，支持同时配置：
 
 ```python
 import json
 
-from xpeech.agent.tools.execution_request import ExecutionDecision, build_execution_request_tool
+from xpeech.agent.tools.execution_request import ExecutionConfirmation, ExecutionDecision, build_execution_request_tool
 from xpeech.agent.tools.shell import build_shell_tools
 
 
-def requires_confirmation(payload: str) -> ExecutionDecision:
+def check_confirmation(payload: str) -> ExecutionDecision:
     request = json.loads(payload)
     # 仅 pwd 直接执行，其他命令均询问用户。
     return ExecutionDecision.ALLOW if request["command"] == "pwd" else ExecutionDecision.CONFIRM
@@ -968,7 +971,7 @@ def requires_confirmation(payload: str) -> ExecutionDecision:
 provider.register_function_tool(
     build_execution_request_tool(
         build_shell_tools(workspace=workspace),
-        requires_confirmation=requires_confirmation,
+        requires_confirmation=ExecutionConfirmation(callback=check_confirmation),
         not_interactive=not_interactive,
     )
 )
@@ -977,39 +980,41 @@ provider.register_function_tool(
 回调接收 JSON 字符串，例如 `{"command":"pwd","execution_description":"查看当前目录"}`。
 `execution_description` 与原工具参数位于同一层，仅包含调用时提供并通过参数模型校验的字段，
 不补入未提供的默认参数。回调支持同步函数或 `async def`：返回 `ExecutionDecision.CONFIRM` 时询问用户，
-返回 `ExecutionDecision.ALLOW` 时直接执行原工具；返回 `ExecutionDecision.DENY` 时直接拒绝，提示“发现高危命令，直接拒绝执行。”，
-不发出 `question` 事件；省略回调时每次都询问。回调抛出异常、超时或返回其他类型时，
+返回 `ExecutionDecision.ALLOW` 时继续检查模型判断（如配置了提示词）；返回 `ExecutionDecision.DENY` 时直接拒绝，提示“发现高危命令，直接拒绝执行。”，
+不发出 `question` 事件；回调和提示词均未配置时每次都询问。回调抛出异常、超时或返回其他类型时，
 按工具错误返回，原工具不会执行。
 
 回调必须返回枚举成员；旧的布尔值、`None` 和普通字符串均作为类型错误处理，不会执行工具。
 
-`requires_confirmation` 也支持字符串，用于向模型注入是否需要确认的判断提示词：
+`ExecutionConfirmation.prompt` 用于向模型注入是否需要确认的判断提示词，也可与回调组合：
 
 ```python
 provider.register_function_tool(
     build_execution_request_tool(
         tool,
-        requires_confirmation="删除文件或向外部发送消息时需要用户确认，读取信息时无需确认。",
+        requires_confirmation=ExecutionConfirmation(
+            callback=check_confirmation,
+            prompt="删除文件或向外部发送消息时需要用户确认，读取信息时无需确认。",
+        ),
     )
 )
 ```
 
-字符串模式会在工具说明中加入提示词，并增加由模型填写的 `request_user_confirmation: bool = False` 参数。
-`request_user_confirmation=True` 时发送用户确认，`False` 或省略时跳过确认、直接执行；
+配置 `prompt` 时会在工具说明中加入提示词，并增加由模型填写的 `request_user_confirmation: bool = False` 参数。
+回调返回 `CONFIRM` 或模型填写 `request_user_confirmation=True`，任意一方命中就请求用户确认；
+两者均不要求确认时直接执行。回调返回 `DENY` 始终优先拒绝；即使模型要求确认，也必须执行回调检查。
 `request_user_confirmation` 不会传给原工具或 MCP 服务器，也不会显示在确认卡片的执行参数中。
-此参数仅在字符串模式下新增，callable 模式继续使用回调的三态判断。
+此参数仅在配置了 `prompt` 时新增。只需一种判断规则时，仅填写 `callback` 或 `prompt` 即可。
 
-`not_interactive` 默认为 `False`。设置为 `True` 时，回调返回 `ExecutionDecision.CONFIRM` 会直接拒绝执行，
-返回 `ExecutionDecision.ALLOW` 仍直接执行，不发出 `question` 事件。此时必须提供 `requires_confirmation`，
+`not_interactive` 默认为 `False`。设置为 `True` 时，回调或模型任意一方要求确认都会直接拒绝执行，
+两者均不要求确认时直接执行，不发出 `question` 事件。此时必须通过 `requires_confirmation` 提供至少一种判断规则，
 否则在构造包装器时抛出 `ValueError`，提示“请在注册的时候就屏蔽掉，而不是在运行时屏蔽”。
 `registry.py` 会把当前会话的 `not_interactive` 传给 Shell 和需要确认的 MCP 包装器。
 
-字符串模式也支持非交互模式：`request_user_confirmation=True` 时拒绝执行，`False` 或省略时直接执行。
-
 直接执行时会移除 `execution_description`、`execution_title` 和 `request_user_confirmation`，仅把原工具参数传给原函数。
-MCP 包装也支持回调或提示词字符串，可在 `registry.py` 的 `register_mcp_bindings` 注册参数中传入；
-`requires_confirmation` 是 Python 注册参数，MCP 的提示词也可通过 `conf.toml` 的 `execution_request_tool_prompts` 配置，
-匹配的配置提示词优先于注册参数。非交互模式下未提供回调或提示词时，需要确认的 MCP 工具不会注册。
+MCP 工具通过 `conf.toml` 的 `execution_request_tools` 选择需要确认的工具，
+并通过 `execution_request_tool_prompts` 配置模型判断提示词；未匹配提示词时每次都询问。
+非交互模式下未匹配提示词时，需要确认的 MCP 工具不会注册。
 
 工具文本结果超过 `[tool].max_result_chars`（默认 10,000）时不会丢弃尾部内容：完整结果会以
 文本文件保存到当前用户 workspace 的 `tool-results/`，工具消息返回原始内容前缀、总字符数和

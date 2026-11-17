@@ -16,7 +16,7 @@ import json
 import platform
 import re
 import shutil
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -35,7 +35,7 @@ from ...utils.filter_expr import parse_filter
 from ...utils.security.sandbox import wrap_sandbox_command
 from ...utils.security.sandbox.isolation import SANDBOX_EXECUTABLES
 from ..skills.skill import SkillsLoader
-from .execution_request import ExecutionDecision, build_execution_request_tool, execution_request_schema
+from .execution_request import ExecutionConfirmation, build_execution_request_tool, execution_request_schema
 
 _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset(
     (
@@ -1160,7 +1160,6 @@ def register_mcp_bindings(
     execution_request_tools: list[str],
     execution_request_tool_prompts: Mapping[str, str] | None,
     not_interactive: bool,
-    requires_confirmation: Callable[[str], ExecutionDecision | Awaitable[ExecutionDecision]] | str | None = None,
 ) -> None:
     if task.cancelled():
         return
@@ -1175,22 +1174,23 @@ def register_mcp_bindings(
             fnmatchcase(tool_func.mcp_original_name, pattern)
             for pattern in execution_request_tools
         ):
-            confirmation_check = next(
+            prompt = next(
                 (
                     prompt for pattern, prompt in (execution_request_tool_prompts or {}).items()
                     if fnmatchcase(tool_func.mcp_original_name, pattern)
                 ),
-                requires_confirmation,
+                None,
             )
-            if not_interactive and confirmation_check is None:
+            if not_interactive and prompt is None:
                 continue
+            confirmation = ExecutionConfirmation(prompt=prompt)
             tool_func = build_execution_request_tool(
                 tool_func,
-                requires_confirmation=confirmation_check,
+                requires_confirmation=confirmation,
                 not_interactive=not_interactive,
             )
             tool_json = execution_request_schema(
                 tool_json,
-                requires_confirmation=confirmation_check if isinstance(confirmation_check, str) else None,
+                requires_confirmation=confirmation,
             )
         provider.register_mcp_tool(tool_func, tool_json=tool_json)

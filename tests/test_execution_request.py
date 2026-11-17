@@ -17,6 +17,7 @@ from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.ask_user_question import QuestionArgs, ask_user_question
 from xpeech.agent.tools.execution_request import (
     EXECUTION_REQUEST,
+    ExecutionConfirmation,
     ExecutionDecision,
     build_execution_request_tool,
     execution_request_schema,
@@ -103,6 +104,7 @@ async def test_placeholder_returns_marker_without_running_original_function(tmp_
 @pytest.mark.parametrize("kwargs", [
     {"not_interactive": True},
     {"not_interactive": True, "requires_confirmation": None},
+    {"not_interactive": True, "requires_confirmation": ExecutionConfirmation()},
 ])
 def test_noninteractive_wrapper_requires_confirmation_callback_at_registration(kwargs):
     async def ping():
@@ -127,7 +129,8 @@ async def test_power_commands_are_rejected_without_prompting(tmp_path, monkeypat
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(
-            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
+            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)),
+            ExecutionConfirmation(callback=partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)),
         )
     )
     call = ToolCallRequest(
@@ -158,7 +161,8 @@ async def test_shell_checks_once_before_confirmed_execution(tmp_path, monkeypatc
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(
-            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
+            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)),
+            ExecutionConfirmation(callback=partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)),
         )
     )
     call = ToolCallRequest(
@@ -180,8 +184,9 @@ async def test_shell_checks_once_before_confirmed_execution(tmp_path, monkeypatc
 @pytest.mark.parametrize("async_check", [False, True])
 @pytest.mark.parametrize("decision", list(ExecutionDecision))
 @pytest.mark.parametrize("not_interactive", [False, True])
+@pytest.mark.parametrize("request_user_confirmation", [None, False, True])
 async def test_optional_confirmation_check_receives_json_and_controls_prompt(
-    tmp_path, async_check, decision, not_interactive
+    tmp_path, async_check, decision, not_interactive, request_user_confirmation,
 ):
     checks = []
     executions = []
@@ -202,11 +207,16 @@ async def test_optional_confirmation_check_receives_json_and_controls_prompt(
     current_provider.register_function_tool(
         build_execution_request_tool(
             shell,
-            requires_confirmation=async_checker if async_check else check,
+            requires_confirmation=ExecutionConfirmation(
+                callback=async_checker if async_check else check,
+                prompt="根据本次操作判断是否需要确认。" if request_user_confirmation is not None else None,
+            ),
             not_interactive=not_interactive,
         )
     )
     arguments = {"command": "echo hello", "execution_description": "输出 hello"}
+    if request_user_confirmation is not None:
+        arguments["request_user_confirmation"] = request_user_confirmation
     call = ToolCallRequest(id="1", name="shell", arguments=arguments)
     events = []
     history = []
@@ -218,16 +228,18 @@ async def test_optional_confirmation_check_receives_json_and_controls_prompt(
             await answer({"decision": "confirm"})
 
     assert checks == [arguments]
+    needs_confirmation = decision is ExecutionDecision.CONFIRM or request_user_confirmation is True
+    denied = decision is ExecutionDecision.DENY or (needs_confirmation and not_interactive)
+    confirmed = needs_confirmation and not denied
     assert [event["event"] for event in events] == (
         ["tool_call", "question", "tool_call_result"]
-        if decision is ExecutionDecision.CONFIRM and not not_interactive
+        if confirmed
         else ["tool_call", "tool_call_result"]
     )
     result = json.loads(events[-1]["context"])["result"]
-    confirmed = decision is ExecutionDecision.CONFIRM and not not_interactive
     assert result.startswith("【用户确认后执行】") is confirmed
     assert history[-1]["content"].endswith("\n\n" + result)
-    if decision is ExecutionDecision.DENY or (decision is ExecutionDecision.CONFIRM and not_interactive):
+    if denied:
         assert "PermissionError" in result and "拒绝执行" in result
         assert executions == []
         assert ("approval-user", "approval-session") not in AgentLoop.SESSION_QUESTION_EVENT
@@ -260,7 +272,7 @@ async def test_prompt_confirmation_uses_model_decision(
 
     prompt = "删除文件需要确认，读取信息可直接执行。"
     tool = build_execution_request_tool(
-        shell if has_arguments else ping, prompt, not_interactive=not_interactive,
+        shell if has_arguments else ping, ExecutionConfirmation(prompt=prompt), not_interactive=not_interactive,
     )
     schema = as_tool(tool)["function"]
     assert prompt in schema["description"]
@@ -297,7 +309,8 @@ async def test_prompt_confirmation_uses_model_decision(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("behavior", ["error", "timeout", "invalid_result", "deny"])
-async def test_confirmation_check_failure_never_prompts_or_executes(tmp_path, behavior):
+@pytest.mark.parametrize("model_requests_confirmation", [False, True])
+async def test_confirmation_check_failure_never_prompts_or_executes(tmp_path, behavior, model_requests_confirmation):
     async def ping():
         """Ping."""
         pytest.fail("failed check executed the actual tool")
@@ -310,8 +323,12 @@ async def test_confirmation_check_failure_never_prompts_or_executes(tmp_path, be
         return ExecutionDecision.DENY if behavior == "deny" else "invalid"
 
     current_provider = provider()
-    current_provider.register_function_tool(build_execution_request_tool(ping, check))
-    call = ToolCallRequest(id="1", name="ping", arguments={"execution_description": "测试"})
+    current_provider.register_function_tool(build_execution_request_tool(
+        ping, ExecutionConfirmation(callback=check, prompt="根据本次操作判断是否需要确认。"),
+    ))
+    call = ToolCallRequest(id="1", name="ping", arguments={
+        "execution_description": "测试", "request_user_confirmation": model_requests_confirmation,
+    })
     events = [event async for event in stream_for(tmp_path, current_provider, [call], [], tool_timeout=0.05)]
     assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
     result = json.loads(events[-1]["context"])["result"]
@@ -322,7 +339,7 @@ async def test_confirmation_check_failure_never_prompts_or_executes(tmp_path, be
     elif behavior == "deny":
         assert result == "PermissionError: 发现高危命令，直接拒绝执行。"
     else:
-        assert result == "TypeError: requires_confirmation must return an ExecutionDecision"
+        assert result == "TypeError: requires_confirmation.callback must return an ExecutionDecision"
 
 
 @pytest.mark.asyncio
@@ -333,12 +350,14 @@ async def test_callback_requires_enum_and_never_executes_legacy_values(tmp_path,
         pytest.fail("invalid decision executed the tool")
 
     current_provider = provider()
-    current_provider.register_function_tool(build_execution_request_tool(ping, lambda _: invalid_result))
+    current_provider.register_function_tool(build_execution_request_tool(
+        ping, ExecutionConfirmation(callback=lambda _: invalid_result),
+    ))
     call = ToolCallRequest(id="1", name="ping", arguments={"execution_description": "测试决策类型"})
     events = [event async for event in stream_for(tmp_path, current_provider, [call], [])]
     assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
     assert json.loads(events[-1]["context"])["result"] == (
-        "TypeError: requires_confirmation must return an ExecutionDecision"
+        "TypeError: requires_confirmation.callback must return an ExecutionDecision"
     )
 
 
@@ -453,7 +472,9 @@ async def test_invalid_request_never_prompts_or_executes(tmp_path, arguments, co
         pytest.fail("invalid request reached confirmation check")
 
     current_provider = provider()
-    current_provider.register_function_tool(build_execution_request_tool(shell, check if conditional else None))
+    current_provider.register_function_tool(build_execution_request_tool(
+        shell, ExecutionConfirmation(callback=check) if conditional else None,
+    ))
     call = ToolCallRequest(id="1", name="shell", arguments=arguments)
     events = [event async for event in stream_for(tmp_path, current_provider, [call], [])]
     assert [event["event"] for event in events] == ["tool_call", "tool_call_result"]
@@ -567,7 +588,9 @@ async def test_direct_execution_preserves_error_timeout_and_result_handling(
 
     current_provider = provider()
     current_provider.register_function_tool(build_execution_request_tool(
-        ping, lambda _: ExecutionDecision.CONFIRM if needs_confirmation else ExecutionDecision.ALLOW
+        ping, ExecutionConfirmation(
+            callback=lambda _: ExecutionDecision.CONFIRM if needs_confirmation else ExecutionDecision.ALLOW,
+        ),
     ))
     call = ToolCallRequest(id="1", name="ping", arguments={"execution_description": "测试"})
     history = []
@@ -629,7 +652,9 @@ async def test_confirmation_notice_preserves_multimodal_output(tmp_path, needs_c
 
     current_provider = provider()
     current_provider.register_function_tool(build_execution_request_tool(
-        render, lambda _: ExecutionDecision.CONFIRM if needs_confirmation else ExecutionDecision.ALLOW,
+        render, ExecutionConfirmation(
+            callback=lambda _: ExecutionDecision.CONFIRM if needs_confirmation else ExecutionDecision.ALLOW,
+        ),
     ))
     call = ToolCallRequest(id="render", name="render", arguments={"execution_description": "测试返回内容"})
     history = []
@@ -715,7 +740,8 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
 
     current_provider.register_mcp_tool(
         build_execution_request_tool(
-            binding.func, check if needs_confirmation is not None else None, not_interactive=not_interactive
+            binding.func, ExecutionConfirmation(callback=check) if needs_confirmation is not None else None,
+            not_interactive=not_interactive,
         ),
         tool_json=wrapped_schema,
     )
@@ -830,7 +856,9 @@ async def test_custom_confirmation_copy_is_not_passed_to_original_tool(tmp_path,
 
     current_provider = provider()
     current_provider.register_function_tool(build_execution_request_tool(
-        shell, lambda _: ExecutionDecision.CONFIRM if needs_confirmation else ExecutionDecision.ALLOW,
+        shell, ExecutionConfirmation(
+            callback=lambda _: ExecutionDecision.CONFIRM if needs_confirmation else ExecutionDecision.ALLOW,
+        ),
     ))
     call = ToolCallRequest(id="custom-copy", name="shell", arguments={
         "command": "echo hello", "execution_description": "输出 hello",

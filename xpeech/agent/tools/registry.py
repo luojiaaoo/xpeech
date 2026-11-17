@@ -9,7 +9,7 @@ from ..skills.skill import SkillsLoader
 from .ask_user_question import ask_user_question
 from .browser_preview import build_browser_preview_tool
 from .document import build_document_tool
-from .execution_request import build_execution_request_tool
+from .execution_request import ExecutionConfirmation, build_execution_request_tool
 from .file_message import build_file_message_tools
 from .filesystem import build_file_tools
 from .mcp_client import (
@@ -54,7 +54,10 @@ async def register_tools(
     provider.register_function_tool(
         build_execution_request_tool(
             build_shell_tools(workspace=workspace, skills_loader=skills_loader),
-            requires_confirmation=partial(shell_requires_confirmation, workspace=workspace),
+            requires_confirmation=ExecutionConfirmation(
+                callback=partial(shell_requires_confirmation, workspace=workspace),
+                prompt="危险操作、大批量不可恢复的操作或覆盖重要数据时需要用户确认；仅读取的命令无需确认。",
+            ),
             not_interactive=not_interactive,
         )
     )
