@@ -207,12 +207,18 @@ def test_file_search_fnmatch_patterns_match_only_names(chat_command_client, quer
 
 def test_search_prunes_internal_directories_but_tree_can_browse_them(chat_command_client, monkeypatch):
     client, workspace, headers = chat_command_client
-    excluded = {".git", ".idea", ".vscode", ".venv", ".local_lib", "node_modules", "__pycache__", ".cache"}
+    excluded = {
+        ".git", ".idea", ".vscode", ".venv", ".local_lib", "node_modules", "__pycache__", ".cache",
+        "site-packages", "dist-packages",
+    }
     for directory in sorted(excluded):
         path = workspace / directory / "internal.txt"
         path.parent.mkdir(parents=True)
         path.touch()
-    for name in ("docs/report.md", "docs/node_modules/internal.txt", ".notes/readme.md", "build/result.pdf", "dist/report.html"):
+    for name in (
+        "docs/report.md", "docs/node_modules/internal.txt", ".notes/readme.md", "build/result.pdf", "dist/report.html",
+        "home/.local/lib/python3.12/site-packages/internal.py", "usr/lib/python3/dist-packages/internal.py", "src/main.py",
+    ):
         path = workspace / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
@@ -231,14 +237,14 @@ def test_search_prunes_internal_directories_but_tree_can_browse_them(chat_comman
     response = client.get("/files/search", headers=headers, params={"query": "*"})
     assert response.status_code == 200
     paths = {item["path"] for item in response.json()["entries"]}
-    assert {"docs/report.md", ".notes/readme.md", "build/result.pdf", "dist/report.html"} <= paths
+    assert {"docs/report.md", ".notes/readme.md", "build/result.pdf", "dist/report.html", "src/main.py"} <= paths
     assert all(not excluded.intersection(path.split("/")) for path in paths)
     assert "git-alias" not in paths
     assert "internal-link.txt" not in paths
     assert ("docs",) in visited
     assert all(not excluded.intersection(parts) for parts in visited)
     assert ("git-alias",) not in visited
-    for query in (".git", "node_modules", "git-alias", "internal-link.txt"):
+    for query in (".git", "node_modules", "site-packages", "dist-packages", "internal.py", "git-alias", "internal-link.txt"):
         assert client.get("/files/search", headers=headers, params={"query": query}).json() == {
             "entries": [], "truncated": False,
         }
@@ -246,13 +252,57 @@ def test_search_prunes_internal_directories_but_tree_can_browse_them(chat_comman
     assert excluded <= {item["name"] for item in listed}
     suggestions = client.get("/files/list", headers=headers, params={"initial_load": True}).json()
     assert suggestions["truncated"] is False
-    assert {item["path"] for item in suggestions["entries"]} == {"docs", ".notes", "build", "dist"}
+    assert {item["path"] for item in suggestions["entries"]} == {"docs", ".notes", "build", "dist", "home", "usr", "src"}
     for directory in sorted(excluded):
         entries = client.get("/files/list", headers=headers, params={"path": directory}).json()["entries"]
         assert [item["name"] for item in entries] == ["internal.txt"]
         assert client.get("/files/list", headers=headers, params={
             "path": directory, "initial_load": True,
         }).json() == {"entries": [], "truncated": False}
+
+
+@pytest.mark.parametrize("gopath", ["home/go", "custom-gopath"])
+def test_go_package_caches_are_pruned_from_search_and_initial_load(chat_command_client, monkeypatch, gopath):
+    client, workspace, headers = chat_command_client
+    caches = {f"{gopath}/pkg/mod", f"{gopath}/pkg/sum"}
+    for directory in caches:
+        path = workspace / directory / "cache/download/memory.go"
+        path.parent.mkdir(parents=True)
+        path.touch()
+    sources = {f"{gopath}/src/memory.go", "docs/mod/memory.go", "docs/pkg/memory.go", "docs/go/memory.go"}
+    for name in sources:
+        path = workspace / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    (workspace / "cache-alias").symlink_to(workspace / gopath / "pkg/mod", target_is_directory=True)
+    (workspace / "memory-link.go").symlink_to(workspace / gopath / "pkg/mod/cache/download/memory.go")
+    walk = anyio.Path.walk
+    visited = []
+
+    async def track_walk(path, **kwargs):
+        async for directory, dirs, files in walk(path, **kwargs):
+            visited.append(directory.relative_to(workspace).as_posix())
+            yield directory, dirs, files
+
+    monkeypatch.setattr(anyio.Path, "walk", track_walk)
+    response = client.get("/files/search", headers=headers, params={"query": "*"})
+    assert response.status_code == 200
+    paths = {item["path"] for item in response.json()["entries"]}
+    assert sources <= paths
+    assert not {"cache-alias", "memory-link.go"} & paths
+    assert all(not any(path == cache or path.startswith(f"{cache}/") for cache in caches) for path in paths | set(visited))
+    assert f"{gopath}/pkg" in visited
+    assert client.get("/files/list", headers=headers, params={
+        "path": f"{gopath}/pkg", "initial_load": True,
+    }).json() == {"entries": [], "truncated": False}
+    initial = client.get("/files/list", headers=headers, params={"initial_load": True}).json()["entries"]
+    assert not {"cache-alias", "memory-link.go"} & {item["path"] for item in initial}
+    for directory in caches:
+        assert client.get("/files/list", headers=headers, params={
+            "path": directory, "initial_load": True,
+        }).json() == {"entries": [], "truncated": False}
+        entries = client.get("/files/list", headers=headers, params={"path": directory}).json()["entries"]
+        assert [item["name"] for item in entries] == ["cache"]
 
 
 def test_initial_load_filters_entries_before_pagination(chat_command_client):

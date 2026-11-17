@@ -18,12 +18,17 @@ router = APIRouter()
 SEARCH_EXCLUDED_NAMES = frozenset({
     ".git", ".hg", ".svn", ".idea", ".vscode", ".venv", "venv", ".local_lib", "node_modules", "__pycache__",
     ".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox", ".npm", ".yarn",
-    ".pnpm-store", ".ds_store", "thumbs.db",
+    ".pnpm-store", ".ds_store", "thumbs.db", "site-packages", "dist-packages",
 })
+SEARCH_EXCLUDED_PATHS = frozenset({("pkg", "mod"), ("pkg", "sum")})
 
 
 def _excluded_from_search(path: anyio.Path, workspace: anyio.Path) -> bool:
-    return any(part.casefold() in SEARCH_EXCLUDED_NAMES for part in path.relative_to(workspace).parts)
+    parts = tuple(part.casefold() for part in path.relative_to(workspace).parts)
+    return (
+        any(part in SEARCH_EXCLUDED_NAMES for part in parts)
+        or any(pair in SEARCH_EXCLUDED_PATHS for pair in zip(parts, parts[1:]))
+    )
 
 
 async def _user_workspace(user_id: str) -> anyio.Path:
@@ -78,7 +83,7 @@ async def search_workspace_files(
     entries = []
     async for directory, dirs, files in workspace.walk(top_down=True, follow_symlinks=False):
         # 原地修改 dirs，让 walk 跳过这些目录及其全部子项。
-        dirs[:] = [name for name in dirs if name.casefold() not in SEARCH_EXCLUDED_NAMES]
+        dirs[:] = [name for name in dirs if not _excluded_from_search(directory / name, workspace)]
         for name in dirs + files:
             if name.casefold() in SEARCH_EXCLUDED_NAMES or not fnmatchcase(name.casefold(), pattern):
                 continue
