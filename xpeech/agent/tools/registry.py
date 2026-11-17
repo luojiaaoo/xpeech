@@ -110,6 +110,7 @@ async def register_tools(
             registration=registration,
             provider=provider,
             execution_request_tools=server_config.execution_request_tools,
+            execution_request_tool_prompts=server_config.execution_request_tool_prompts,
             not_interactive=not_interactive,
         )
         if task.done():

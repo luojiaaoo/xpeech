@@ -144,6 +144,9 @@ class MCPServerSettings(BaseModel):
     verify_tls: bool = Field(default=True, validation_alias="verify_tls")
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"], validation_alias="enabled_tools")
     execution_request_tools: list[str] = Field(default_factory=list)
+    execution_request_tool_prompts: dict[str, str] = Field(
+        default_factory=dict, description="需要执行确认的工具名或通配模式到模型判断提示词的映射",
+    )
     tool_timeout: float = Field(default=30.0, validation_alias="tool_timeout")
     connect_timeout: float = Field(default=30.0, gt=0, validation_alias="connect_timeout")
     filter: str | None = Field(default=None, description="资源过滤表达式；省略表示公共 MCP")

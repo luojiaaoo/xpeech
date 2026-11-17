@@ -13,11 +13,20 @@ from .interactions import ExecutionRequest
 
 EXECUTION_DESCRIPTION = "execution_description"
 EXECUTION_TITLE = "execution_title"
+REQUEST_USER_CONFIRMATION = "request_user_confirmation"
 # 需要用户确认时返回的标记，Agent 主循环识别后询问用户再执行原函数。
 EXECUTION_REQUEST = ExecutionRequest()
 _DESCRIPTION = "说明本次执行具体要做什么以及目的。"
 _TITLE = "根据本次操作生成简短的确认卡片标题。"
-EXECUTION_PARAMETERS = {EXECUTION_DESCRIPTION, EXECUTION_TITLE}
+_REQUEST_USER_CONFIRMATION_DESCRIPTION = "根据工具说明中的判断规则决定是否需要用户确认；需要时为 true，否则为 false，默认 false。"
+EXECUTION_PARAMETERS = {EXECUTION_DESCRIPTION, EXECUTION_TITLE, REQUEST_USER_CONFIRMATION}
+
+
+def _confirmation_prompt(prompt: str) -> str:
+    return (
+        f"请根据以下规则判断本次调用是否需要用户确认，并设置 {REQUEST_USER_CONFIRMATION}：\n"
+        f"{prompt}\n{_REQUEST_USER_CONFIRMATION_DESCRIPTION}"
+    )
 
 
 class ExecutionDecision(StrEnum):
@@ -30,7 +39,7 @@ class ExecutionDecision(StrEnum):
 
 def build_execution_request_tool(
     function: Callable,
-    requires_confirmation: Callable[[str], ExecutionDecision | Awaitable[ExecutionDecision]] | None = None,
+    requires_confirmation: Callable[[str], ExecutionDecision | Awaitable[ExecutionDecision]] | str | None = None,
     *,
     not_interactive: bool = False,
 ) -> Callable:
@@ -40,8 +49,10 @@ def build_execution_request_tool(
     字符串（仅包含调用时提供的字段），支持同步或异步函数。必须返回 ExecutionDecision：
     CONFIRM 时询问用户，ALLOW 时直接执行，DENY 时直接拒绝高危命令，不询问用户。
     异常或其他返回值按工具错误处理，不执行原函数。
-    not_interactive=True 时必须提供 requires_confirmation；无回调的工具应在注册时过滤。
-    回调判断需要确认的调用直接拒绝，不询问用户。
+    requires_confirmation 也可为判断提示词字符串，将注入工具说明，并增加 request_user_confirmation: bool = False
+    参数供模型判断；request_user_confirmation=True 时询问用户，False 时直接执行。
+    not_interactive=True 时必须提供 requires_confirmation；未提供判断规则的工具应在注册时过滤。
+    判断需要确认的调用直接拒绝，不询问用户。
     """
     if not_interactive and requires_confirmation is None:
         raise ValueError(
@@ -51,21 +62,27 @@ def build_execution_request_tool(
     for name in EXECUTION_PARAMETERS:
         if name in model_info.model_cls.model_fields:
             raise ValueError(f"Tool already defines reserved parameter: {name}")
+    extra_fields = {}
+    if isinstance(requires_confirmation, str):
+        extra_fields[REQUEST_USER_CONFIRMATION] = (bool, Field(default=False, description=_REQUEST_USER_CONFIRMATION_DESCRIPTION))
     model_cls = create_model(
         f"{function.__name__}ExecutionArgs",
         __base__=model_info.model_cls,
         execution_description=(str, Field(description=_DESCRIPTION, min_length=1, pattern=r"\S")),
         execution_title=(str, Field(default="执行确认", description=_TITLE, min_length=1, pattern=r"\S")),
+        **extra_fields,
     )
 
     execution_function = ensure_async(function)
-    check_confirmation = ensure_async(requires_confirmation) if requires_confirmation is not None else None
+    check_confirmation = ensure_async(requires_confirmation) if callable(requires_confirmation) else None
 
     async def execution_request(args) -> Any:
-        if check_confirmation is None:
-            return EXECUTION_REQUEST
-
-        decision = await check_confirmation(args.model_dump_json(exclude_unset=True))
+        if isinstance(requires_confirmation, str):
+            decision = ExecutionDecision.CONFIRM if args.request_user_confirmation else ExecutionDecision.ALLOW
+        elif check_confirmation is None:
+            decision = ExecutionDecision.CONFIRM
+        else:
+            decision = await check_confirmation(args.model_dump_json(exclude_unset=True))
         if not isinstance(decision, ExecutionDecision):
             raise TypeError("requires_confirmation must return an ExecutionDecision")
         if decision is ExecutionDecision.DENY:
@@ -82,12 +99,16 @@ def build_execution_request_tool(
     execution_request.__name__ = function.__name__
     execution_request.__annotations__ = {"args": model_cls, "return": Any}
     execution_request.__doc__ = f"{function.__doc__ or function.__name__}\n\n{_DESCRIPTION}"
+    if isinstance(requires_confirmation, str):
+        execution_request.__doc__ += f"\n\n{_confirmation_prompt(requires_confirmation)}"
     execution_request.execution_function = execution_function
     return execution_request
 
 
-def execution_request_schema(tool_json: dict[str, Any]) -> dict[str, Any]:
-    """给 MCP 原始 schema 增加执行说明和确认文案字段，保留其余约束且不修改服务器缓存。"""
+def execution_request_schema(
+    tool_json: dict[str, Any], *, requires_confirmation: str | None = None,
+) -> dict[str, Any]:
+    """给 MCP schema 增加确认字段和可选的模型判断提示词，保留约束且不修改服务器缓存。"""
     schema = deepcopy(tool_json)
     function = schema["function"]
     parameters = function.setdefault("parameters", {"type": "object", "properties": {}})
@@ -110,4 +131,11 @@ def execution_request_schema(tool_json: dict[str, Any]) -> dict[str, Any]:
     }
     parameters.setdefault("required", []).append(EXECUTION_DESCRIPTION)
     function["description"] = f"{function.get('description', '')}\n\n{_DESCRIPTION}".strip()
+    if requires_confirmation is not None:
+        properties[REQUEST_USER_CONFIRMATION] = {
+            "type": "boolean",
+            "description": _REQUEST_USER_CONFIRMATION_DESCRIPTION,
+            "default": False,
+        }
+        function["description"] += f"\n\n{_confirmation_prompt(requires_confirmation)}"
     return schema

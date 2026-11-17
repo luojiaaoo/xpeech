@@ -616,6 +616,7 @@ async def test_register_mcp_bindings_passes_confirmation_callback(
         registration=registration,
         provider=provider,
         execution_request_tools=["echo"],
+        execution_request_tool_prompts={},
         not_interactive=not_interactive,
         requires_confirmation=check,
     )
@@ -639,6 +640,136 @@ async def test_register_mcp_bindings_passes_confirmation_callback(
         assert result.succeeded and result.value == "echo result"
         session.call_tool.assert_awaited_once_with("echo", arguments={"text": "hello"})
     await registration.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_user_confirmation", [None, False, True])
+@pytest.mark.parametrize("not_interactive", [False, True])
+@pytest.mark.parametrize("prompt_source", ["argument", "config"])
+async def test_register_mcp_bindings_passes_confirmation_prompt(
+    tmp_path, monkeypatch, request_user_confirmation, not_interactive, prompt_source,
+):
+    session = SimpleNamespace(
+        list_tools=AsyncMock(return_value=SimpleNamespace(tools=[{
+            "name": "echo",
+            "description": "Echo text.",
+            "inputSchema": {
+                "type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"],
+                "additionalProperties": True,
+            },
+        }])),
+        call_tool=AsyncMock(return_value={"content": [{"type": "text", "text": "echo result"}]}),
+    )
+    registration = mcp_client.create_mcp_registration(
+        server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
+    )
+    registration._session = session
+    task = registration.start_tool_discovery()
+    [binding] = await task
+    original_schema = json.loads(json.dumps(binding.schema))
+    prompt = "向外部发送消息前需要用户确认。"
+    provider = FakeProvider()
+    try:
+        if prompt_source == "config":
+            get_registration = AsyncMock(return_value=registration)
+            monkeypatch.setattr(registry, "get_session_mcp_registration_from_config", get_registration)
+            config = ToolConfig.model_validate({"mcpServers": {"demo": {
+                "command": "demo", "execution_request_tools": ["e*"],
+                "execution_request_tool_prompts": {"e?ho": prompt},
+            }}})
+            await registry.register_tools(
+                user_id="prompt-test", provider=provider, workspace=tmp_path, config=config,
+                not_interactive=not_interactive,
+            )
+            await registration._discovery_task
+        else:
+            mcp_client.register_mcp_bindings(
+                task, registration=registration, provider=provider, execution_request_tools=["echo"],
+                execution_request_tool_prompts={},
+                not_interactive=not_interactive, requires_confirmation=prompt,
+            )
+        [(schema, tool)] = provider.mcp_tools
+        assert binding.schema == original_schema
+        assert prompt in schema["function"]["description"]
+        parameters = schema["function"]["parameters"]
+        assert parameters["properties"]["request_user_confirmation"]["default"] is False
+        assert parameters["properties"]["request_user_confirmation"]["type"] == "boolean"
+        assert parameters["required"] == ["text", "execution_description"]
+        assert parameters["additionalProperties"] is True
+        arguments = {"text": "hello", "extra": 1, "execution_description": "测试提示词"}
+        if request_user_confirmation is not None:
+            arguments["request_user_confirmation"] = request_user_confirmation
+        result = await ToolExecutor(
+            workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={tool.__name__: tool},
+        ).execute_one(ToolCallRequest(id="prompt", name=tool.__name__, arguments=arguments))
+        if request_user_confirmation:
+            session.call_tool.assert_not_awaited()
+            if not_interactive:
+                assert not result.succeeded and "拒绝执行" in result.value
+            else:
+                assert result.succeeded and result.value == EXECUTION_REQUEST
+        else:
+            assert result.succeeded and result.value == "echo result"
+            session.call_tool.assert_awaited_once_with("echo", arguments={"text": "hello", "extra": 1})
+    finally:
+        await registration.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("not_interactive", [False, True])
+@pytest.mark.parametrize(("prompts", "expected_prompts"), [
+    ({}, {}),
+    ({"echo": "第一条"}, {"echo": "第一条"}),
+    ({"e*": "第一条"}, {"echo": "第一条"}),
+    ({"e?ho": "第一条"}, {"echo": "第一条"}),
+    ({"[ep]*": "第一条"}, {"echo": "第一条", "ping": "第一条"}),
+    ({"mcp_demo_*": "第一条"}, {}),
+    ({"E*": "第一条"}, {}),
+    ({"e*": "第一条", "echo": "第二条"}, {"echo": "第一条"}),
+    ({"echo": ""}, {"echo": ""}),
+    ({"disabled": "第一条", "plain": "第二条"}, {}),
+])
+async def test_mcp_confirmation_prompts_only_apply_to_selected_tools(
+    tmp_path, monkeypatch, not_interactive, prompts, expected_prompts,
+):
+    session = SimpleNamespace(list_tools=AsyncMock(return_value=SimpleNamespace(tools=[
+        {"name": name, "description": name, "inputSchema": {"type": "object", "properties": {}}}
+        for name in ("echo", "ping", "plain", "disabled")
+    ])))
+
+    async def connect(registration):
+        registration._session = session
+
+    monkeypatch.setattr(mcp_client.MCPServerRegistration, "_connect", connect)
+    provider = FakeProvider()
+    config = ToolConfig.model_validate({"mcpServers": {"demo": {
+        "command": "demo", "enabled_tools": ["echo", "ping", "plain"],
+        "execution_request_tools": ["e*", "p?ng"],
+        "execution_request_tool_prompts": prompts,
+    }}})
+    try:
+        await registry.register_tools(
+            user_id="prompt-selection", provider=provider, workspace=tmp_path, config=config,
+            not_interactive=not_interactive,
+        )
+        await asyncio.gather(*(
+            registration.start_tool_discovery() for registration in pooled_mcp_registrations()
+        ))
+        tools = {tool.__name__: (schema, tool) for schema, tool in provider.mcp_tools}
+        expected_names = {"plain", *expected_prompts} if not_interactive else {"echo", "ping", "plain"}
+        assert set(tools) == {f"mcp_demo_{name}" for name in expected_names}
+        for name in expected_names:
+            schema, tool = tools[f"mcp_demo_{name}"]
+            properties = schema["function"]["parameters"]["properties"]
+            assert ("execution_description" in properties) is (name != "plain")
+            assert ("request_user_confirmation" in properties) is (name in expected_prompts)
+            fields = get_tool_model_cls(tool).model_cls.model_fields
+            assert ("request_user_confirmation" in fields) is (name in expected_prompts)
+            if name in expected_prompts:
+                assert expected_prompts[name] in schema["function"]["description"]
+                assert "第二条" not in schema["function"]["description"]
+    finally:
+        await mcp_client.close_all_mcp_connections()
 
 
 @pytest.mark.asyncio

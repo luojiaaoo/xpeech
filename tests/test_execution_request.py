@@ -16,13 +16,12 @@ from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import shell as shell_module
 from xpeech.agent.tools.ask_user_question import QuestionArgs, ask_user_question
 from xpeech.agent.tools.execution_request import (
-    EXECUTION_PARAMETERS,
     EXECUTION_REQUEST,
     ExecutionDecision,
     build_execution_request_tool,
     execution_request_schema,
 )
-from xpeech.agent.tools.helper import as_tool
+from xpeech.agent.tools.helper import as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import create_mcp_registration
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
@@ -237,6 +236,63 @@ async def test_optional_confirmation_check_receives_json_and_controls_prompt(
     [args] = executions
     assert type(args) is CommandArgs
     assert args.command == "echo hello" and args.timeout_ms == 100
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_user_confirmation", [None, False, True])
+@pytest.mark.parametrize("not_interactive", [False, True])
+@pytest.mark.parametrize("has_arguments", [False, True])
+async def test_prompt_confirmation_uses_model_decision(
+    tmp_path, request_user_confirmation, not_interactive, has_arguments,
+):
+    executions = []
+
+    def shell(args: CommandArgs):
+        """Execute a command."""
+        assert type(args) is CommandArgs
+        executions.append(args.model_dump(exclude_unset=True))
+        return "done"
+
+    async def ping():
+        """Ping."""
+        executions.append({})
+        return "done"
+
+    prompt = "删除文件需要确认，读取信息可直接执行。"
+    tool = build_execution_request_tool(
+        shell if has_arguments else ping, prompt, not_interactive=not_interactive,
+    )
+    schema = as_tool(tool)["function"]
+    assert prompt in schema["description"]
+    assert schema["parameters"]["properties"]["request_user_confirmation"]["type"] == "boolean"
+    assert get_tool_model_cls(tool).model_cls.model_fields["request_user_confirmation"].default is False
+
+    current_provider = provider()
+    current_provider.register_function_tool(tool)
+    original_arguments = {"command": "echo hello"} if has_arguments else {}
+    arguments = {**original_arguments, "execution_description": "测试模型判断"}
+    if request_user_confirmation is not None:
+        arguments["request_user_confirmation"] = request_user_confirmation
+    call = ToolCallRequest(id="prompt", name=tool.__name__, arguments=arguments)
+    events = []
+    async for event in stream_for(tmp_path, current_provider, [call], []):
+        events.append(event)
+        if event["event"] == "question":
+            assert executions == []
+            assert validate_confirm_question_json(event["context"])["arguments"] == original_arguments
+            await answer({"decision": "confirm"})
+
+    assert [event["event"] for event in events] == (
+        ["tool_call", "question", "tool_call_result"]
+        if request_user_confirmation and not not_interactive else ["tool_call", "tool_call_result"]
+    )
+    result = json.loads(events[-1]["context"])
+    if request_user_confirmation and not_interactive:
+        assert not result["success"] and "拒绝执行" in result["result"]
+        assert executions == []
+    else:
+        assert result["success"] and result["result"].endswith("done")
+        assert executions == [original_arguments]
 
 
 @pytest.mark.asyncio
@@ -757,7 +813,7 @@ def test_placeholder_schema_keeps_original_constraints_and_hides_injected_contex
     placeholder = build_execution_request_tool(shell)
     schema = as_tool(placeholder)["function"]["parameters"]
     assert placeholder.__name__ == "shell"
-    assert set(schema["properties"]) == {"command", "timeout_ms", *EXECUTION_PARAMETERS}
+    assert set(schema["properties"]) == {"command", "timeout_ms", "execution_description", "execution_title"}
     assert "execution_description" in schema["required"]
     assert schema["properties"]["timeout_ms"]["exclusiveMinimum"] == 0
 

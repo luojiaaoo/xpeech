@@ -799,6 +799,7 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 enabled_tools = ["*"]
 execution_request_tools = ["write_*", "edit_*"]
+execution_request_tool_prompts = { "write_*" = "覆盖已有文件或批量修改时需要确认，新增文件无需确认。" }
 tool_timeout = 30
 ```
 
@@ -852,6 +853,7 @@ stdio MCP、内置文件工具和 Shell 的相对路径基准保持一致。远�
 - `verify_tls`：是否校验远程 HTTPS 证书，默认 `true`。仅在自签名证书且无法安装内部 CA 时设为 `false`。
 - `enabled_tools`：允许注册的 MCP 原始工具名或通配模式，默认 `["*"]` 表示全部注册；`[]` 表示全部禁用。
 - `execution_request_tools`：需要用户确认的 MCP 原始工具名或通配模式，默认 `[]`；`["*"]` 表示所有已启用工具都需要确认。例如 `["write_*", "delete_*"]`。
+- `execution_request_tool_prompts`：工具名或通配模式到判断提示词的字典，默认 `{}`。仅对 `execution_request_tools` 命中的工具生效；匹配提示词后由模型填写 `request_user_confirmation` 决定是否询问，未匹配时每次都询问。多个 key 匹配时，使用配置顺序中的第一个。
 - `filter`：资源过滤表达式，省略表示公共 MCP；表达式求值为真才连接并注册，语法和内置短名函数见上文「过滤表达式」。
 - `tool_timeout`：单次 MCP 工具调用超时时间，单位秒。
 
@@ -869,11 +871,16 @@ stdio MCP 始终按 `(user_id, workspace)` 缓存和隔离；远程 MCP 配置 `
 MCP 工具调用后续期 20 分钟，空闲超时后自动关闭。
 
 注册后的工具名会加上 `mcp_<server>_` 前缀，例如 `filesystem` Server 暴露的 `read_file` 会注册为 `mcp_filesystem_read_file`。
-`enabled_tools` 和 `execution_request_tools` 均只匹配 MCP 原始工具名，支持 `*`、`?`、`[abc]`，区分大小写。
+`enabled_tools`、`execution_request_tools` 和 `execution_request_tool_prompts` 的 key 均只匹配 MCP 原始工具名，支持 `*`、`?`、`[abc]`，区分大小写。
 
 `execution_request_tools` 在 `enabled_tools` 筛选后生效，不会启用原本被禁用的工具。
 命中的工具会增加必填的 `execution_description` 参数，并通过 `question` 表单等待用户确认；
-说明字段不会传给 MCP 服务器。非交互模式下，未提供 `requires_confirmation` 回调时，这些工具会在注册阶段被过滤；提供回调时，按每次调用的判断决定直接执行或拒绝执行。
+说明字段不会传给 MCP 服务器。非交互模式下，未提供 `requires_confirmation` 回调或提示词字符串时，这些工具会在注册阶段被过滤；提供判断规则时，按每次调用的判断决定直接执行或拒绝执行。
+
+如果同一工具也匹配 `execution_request_tool_prompts` 的 key，会把对应提示词注入工具说明，
+并增加 `request_user_confirmation: bool = False` 参数供模型判断。`True` 时请求用户确认，`False` 或省略时直接执行。
+非交互模式仍注册匹配提示词的工具，但 `request_user_confirmation=True` 的调用会被拒绝。
+只匹配提示词、未命中 `execution_request_tools` 的工具保持普通执行，提示词不会单独启用确认或启用被禁用的工具。
 
 ## 内置工具
 
@@ -976,14 +983,33 @@ provider.register_function_tool(
 
 回调必须返回枚举成员；旧的布尔值、`None` 和普通字符串均作为类型错误处理，不会执行工具。
 
+`requires_confirmation` 也支持字符串，用于向模型注入是否需要确认的判断提示词：
+
+```python
+provider.register_function_tool(
+    build_execution_request_tool(
+        tool,
+        requires_confirmation="删除文件或向外部发送消息时需要用户确认，读取信息时无需确认。",
+    )
+)
+```
+
+字符串模式会在工具说明中加入提示词，并增加由模型填写的 `request_user_confirmation: bool = False` 参数。
+`request_user_confirmation=True` 时发送用户确认，`False` 或省略时跳过确认、直接执行；
+`request_user_confirmation` 不会传给原工具或 MCP 服务器，也不会显示在确认卡片的执行参数中。
+此参数仅在字符串模式下新增，callable 模式继续使用回调的三态判断。
+
 `not_interactive` 默认为 `False`。设置为 `True` 时，回调返回 `ExecutionDecision.CONFIRM` 会直接拒绝执行，
 返回 `ExecutionDecision.ALLOW` 仍直接执行，不发出 `question` 事件。此时必须提供 `requires_confirmation`，
 否则在构造包装器时抛出 `ValueError`，提示“请在注册的时候就屏蔽掉，而不是在运行时屏蔽”。
 `registry.py` 会把当前会话的 `not_interactive` 传给 Shell 和需要确认的 MCP 包装器。
 
-直接执行时会移除 `execution_description`，仅把原工具参数传给原函数。
-MCP 包装也支持此回调，需在 `registry.py` 的 `register_mcp_bindings` 注册参数中传入；
-它是 Python 注册参数，不是 `conf.toml` 配置项。非交互模式下未提供回调时，需要确认的 MCP 工具不会注册。
+字符串模式也支持非交互模式：`request_user_confirmation=True` 时拒绝执行，`False` 或省略时直接执行。
+
+直接执行时会移除 `execution_description`、`execution_title` 和 `request_user_confirmation`，仅把原工具参数传给原函数。
+MCP 包装也支持回调或提示词字符串，可在 `registry.py` 的 `register_mcp_bindings` 注册参数中传入；
+`requires_confirmation` 是 Python 注册参数，MCP 的提示词也可通过 `conf.toml` 的 `execution_request_tool_prompts` 配置，
+匹配的配置提示词优先于注册参数。非交互模式下未提供回调或提示词时，需要确认的 MCP 工具不会注册。
 
 工具文本结果超过 `[tool].max_result_chars`（默认 10,000）时不会丢弃尾部内容：完整结果会以
 文本文件保存到当前用户 workspace 的 `tool-results/`，工具消息返回原始内容前缀、总字符数和

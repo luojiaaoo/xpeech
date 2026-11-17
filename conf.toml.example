@@ -154,6 +154,7 @@ browser_preview_path = "data/browser_preview"
 # env = { API_KEY = "replace-with-service-api-key" } # 仅 stdio；禁止配置 PATH 和 HOME，两者由沙盒管理
 # enabled_tools = ["*"] # 按 MCP 原始工具名匹配，支持 *、?、[abc]，例如 ["read_*", "write_?"]
 # execution_request_tools = ["write_*", "edit_*"] # 支持通配符 *、?、[abc]；["*"] 表示全部，[] 表示不启用
+# execution_request_tool_prompts = { "write_*" = "覆盖已有文件或批量修改时需要确认，新增文件无需确认。" } # 仅对 execution_request_tools 命中的工具生效；多个 key 匹配时使用首项
 # connect_timeout = 30
 # tool_timeout = 120
 
@@ -163,6 +164,7 @@ transport = "streamable-http"
 url = "https://xsct.ai/mcp"
 enabled_tools = ["*"]
 execution_request_tools = [] # 按 MCP 原始工具名匹配，例如 ["write_*", "delete_*"]
+execution_request_tool_prompts = {} # 原始工具名或通配模式 -> 判断提示词；未匹配提示词的确认工具每次都询问
 connect_timeout = 30
 tool_timeout = 120
 
@@ -177,6 +179,7 @@ tool_timeout = 120
 # verify_tls = false # 仅用于自签名证书；生产环境优先安装并信任内部 CA
 # enabled_tools = ["*"]
 # execution_request_tools = ["*"]
+# execution_request_tool_prompts = { "*" = "修改或删除数据、向外部发送消息时需要用户确认，查询信息无需确认。" }
 # connect_timeout = 30
 # tool_timeout = 120
 

@@ -1158,8 +1158,9 @@ def register_mcp_bindings(
     registration: MCPServerRegistration,
     provider: Any,
     execution_request_tools: list[str],
+    execution_request_tool_prompts: Mapping[str, str] | None,
     not_interactive: bool,
-    requires_confirmation: Callable[[str], ExecutionDecision | Awaitable[ExecutionDecision]] | None = None,
+    requires_confirmation: Callable[[str], ExecutionDecision | Awaitable[ExecutionDecision]] | str | None = None,
 ) -> None:
     if task.cancelled():
         return
@@ -1174,12 +1175,22 @@ def register_mcp_bindings(
             fnmatchcase(tool_func.mcp_original_name, pattern)
             for pattern in execution_request_tools
         ):
-            if not_interactive and requires_confirmation is None:
+            confirmation_check = next(
+                (
+                    prompt for pattern, prompt in (execution_request_tool_prompts or {}).items()
+                    if fnmatchcase(tool_func.mcp_original_name, pattern)
+                ),
+                requires_confirmation,
+            )
+            if not_interactive and confirmation_check is None:
                 continue
             tool_func = build_execution_request_tool(
                 tool_func,
-                requires_confirmation=requires_confirmation,
+                requires_confirmation=confirmation_check,
                 not_interactive=not_interactive,
             )
-            tool_json = execution_request_schema(tool_json)
+            tool_json = execution_request_schema(
+                tool_json,
+                requires_confirmation=confirmation_check if isinstance(confirmation_check, str) else None,
+            )
         provider.register_mcp_tool(tool_func, tool_json=tool_json)
