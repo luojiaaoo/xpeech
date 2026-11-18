@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseCsv } from '../src/csvPreview.ts';
+import { parseCsv } from '../src/parseCsv.ts';
 import { filePreviewKind } from '../src/filePreviewKind.ts';
 
 test('recognizes requested preview formats with Windows paths, Chinese names and uppercase extensions', () => {

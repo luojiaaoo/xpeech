@@ -318,6 +318,9 @@ def create_proxy_router(
                 content = payload.get("content")
                 if not isinstance(content, str):
                     raise HTTPException(422, "content 必须是 JSON 字符串")
+                continuation = payload.get("continuation", False)
+                if not isinstance(continuation, bool):
+                    raise HTTPException(422, "continuation 必须是布尔值")
                 metadata = payload.get("session_metadata", {})
                 if not isinstance(metadata, dict):
                     raise HTTPException(422, "session_metadata 必须是 JSON 对象")
@@ -386,18 +389,34 @@ def create_proxy_router(
 
                     history_user_id, history_channel = _history_identity(user)
                     user_event = _user_history_event(content, files)
+                    if continuation:
+                        user_event["continuation"] = True
                     collector = _SSEEventCollector()
                     sent_events = 0
 
+                    async def save_events(events: list[dict]) -> None:
+                        with anyio.CancelScope(shield=True):
+                            try:
+                                await history.append(
+                                    history_user_id, session_id, events, channel=history_channel,
+                                )
+                            except Exception:  # noqa: BLE001 - 历史失败不能改变聊天响应
+                                logger.exception("Web event history could not be saved")
+
+                    await save_events([user_event])
+
                     async def emit_events() -> None:
                         nonlocal sent_events
-                        for event in collector.events[sent_events:]:
+                        events = collector.events[sent_events:]
+                        # Persist in receipt order across streams, not request completion order.
+                        await save_events(events)
+                        sent_events = len(collector.events)
+                        for event in events:
                             await websocket.send_json({
                                 "type": "event",
                                 "session_id": session_id,
                                 "event": event,
                             })
-                        sent_events = len(collector.events)
 
                     try:
                         async for chunk in upstream.aiter_bytes():
@@ -413,18 +432,7 @@ def create_proxy_router(
                         await emit_events()
                     finally:
                         with anyio.CancelScope(shield=True):
-                            try:
-                                await chat_stream.aclose()
-                            finally:
-                                try:
-                                    await history.append(
-                                        history_user_id,
-                                        session_id,
-                                        [user_event, *collector.events],
-                                        channel=history_channel,
-                                    )
-                                except Exception:  # noqa: BLE001 - 历史失败不能改变聊天响应
-                                    logger.exception("Web event history could not be saved")
+                            await chat_stream.aclose()
                     await websocket.send_json({"type": "done", "session_id": session_id})
                 except (WebSocketDisconnect, RuntimeError):
                     pass

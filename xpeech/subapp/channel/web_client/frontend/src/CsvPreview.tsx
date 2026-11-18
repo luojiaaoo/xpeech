@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Alert, Empty, Table } from 'antd';
-import { parseCsv } from './csvPreview';
+import { parseCsv } from './parseCsv';
 
 export default function CsvPreview({ content }: { content: string }) {
   const result = useMemo(() => {

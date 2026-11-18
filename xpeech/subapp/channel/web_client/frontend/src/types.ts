@@ -155,6 +155,7 @@ export interface ChatHistory {
 }
 
 export type ChatEventType =
+  | 'queued'
   | 'user'
   | 'assistant'
   | 'assistant_end'
@@ -171,6 +172,8 @@ export type ChatEventType =
 export interface ChatEvent {
   event: ChatEventType;
   context: string;
+  /** Display-only metadata for a user insertion during an ongoing process. */
+  continuation?: boolean;
 }
 
 export interface ToolCallResult {
@@ -204,6 +207,7 @@ export interface ChatMessage {
   toolCall?: ToolCallInfo;
   historical?: boolean;
   questionToolId?: string;
+  continuation?: boolean;
 }
 export type ChatCommandChoice = { name: string; description: string; path?: string };
 export type ChatCommandCatalog = { commands: ChatCommandChoice[]; skills: ChatCommandChoice[] };

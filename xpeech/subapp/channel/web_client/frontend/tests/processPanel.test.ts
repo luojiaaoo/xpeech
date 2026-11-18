@@ -7,7 +7,7 @@ import ts from 'typescript';
 async function processPanel() {
   let now = 1000;
   let elapsed: number | null = null;
-  let previousRunning: boolean | undefined;
+  let previousDependencies: string | undefined;
   let cleanup: (() => void) | undefined;
   let interval: (() => void) | undefined;
   const context = vm.createContext({
@@ -24,10 +24,11 @@ async function processPanel() {
   const dependencies: Record<string, Record<string, any>> = {
     react: {
       useState: () => [elapsed, (value: number) => { elapsed = value; }],
-      useEffect(effect: () => (() => void) | undefined, [running]: [boolean]) {
-        if (running === previousRunning) return;
+      useEffect(effect: () => (() => void) | undefined, dependencies: boolean[]) {
+        const signature = JSON.stringify(dependencies);
+        if (signature === previousDependencies) return;
         cleanup?.();
-        previousRunning = running;
+        previousDependencies = signature;
         cleanup = effect();
       },
     },
@@ -50,8 +51,8 @@ async function processPanel() {
   });
   await module.evaluate();
   return {
-    render(running: boolean, tokenUsage?: string) {
-      const tree = (module.namespace.default as Function)({ running, tokenUsage, children: '过程' });
+    render(running: boolean, tokenUsage?: string, showDuration = true) {
+      const tree = (module.namespace.default as Function)({ running, tokenUsage, showDuration, children: '过程' });
       assert.equal(tree.type, 'details');
       assert.equal(tree.props.open, undefined);
       const summary = tree.props.children[0];
@@ -99,4 +100,19 @@ test('history uses token usage duration without starting a timer and tolerates m
     assert.equal(panel.render(false, usage), '工作已结束');
   }
   assert.equal(panel.hasTimer(), false);
+});
+
+test('inserted process segments show status without live or historical duration and start no timer', async () => {
+  const panel = await processPanel();
+  assert.equal(panel.render(true, undefined, false), '工作中');
+  assert.equal(panel.hasTimer(), false);
+  panel.advance(5000);
+  assert.equal(panel.render(true, undefined, false), '工作中');
+  assert.equal(panel.render(false, '{"会话时长":"32秒"}', false), '工作已结束');
+  assert.equal(panel.hasTimer(), false);
+  panel.render(true);
+  assert.equal(panel.hasTimer(), true);
+  panel.render(true, undefined, false);
+  assert.equal(panel.hasTimer(), false);
+  panel.unmount();
 });

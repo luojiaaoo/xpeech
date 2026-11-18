@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn, startChatTurn } from '../src/chatState.ts';
+import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn, startChatTurn, createChatEventQueue } from '../src/chatState.ts';
 import type { ChatEvent, ToolCallResult } from '../src/types.ts';
 
 function apply(events: ChatEvent[], initial = startChatTurn([], '帮我做个海报')) {
@@ -11,6 +11,63 @@ const event = (type: ChatEvent['event'], context = ''): ChatEvent => ({ event: t
 // TODO(remove-legacy-tool-events): 多数测试沿用旧元组及 id/无 success 结果；清理时将这些夹具改为新协议。
 const tools = (type: 'tool_call', rows: unknown[][]) => event(type, JSON.stringify(rows));
 const toolResult = (result: ToolCallResult) => event('tool_call_result', JSON.stringify(result));
+
+test('session queue uses receipt sequence and drains reentrant events without consulting a clock', (t) => {
+  t.mock.method(Date, 'now', () => { throw new Error('The event queue must not read the clock'); });
+  const received: string[] = [];
+  const sequences: number[] = [];
+  const queue = createChatEventQueue((value, sequence) => {
+    received.push(value.context);
+    sequences.push(sequence);
+    if (value.context === 'first') {
+      queue.push(event('user', 'second'));
+      queue.push(event('assistant', 'third'));
+    }
+  });
+  queue.push(event('user', 'first'));
+  assert.deepEqual(received, ['first', 'second', 'third']);
+  assert.deepEqual(sequences, [0, 1, 2]);
+});
+
+test('user insertions split the process without interrupting tools and suppress only the new segment timer', () => {
+  const before = apply([
+    event('assistant', 'before'), tools('tool_call', [['a', 'read_file', {}]]),
+  ]);
+  const processKey = chatDisplayItems(before, true)[1].key;
+  const inserted = appendChatEvent(before, { ...event('user', 'inserted'), continuation: true });
+  const items = chatDisplayItems(inserted, true);
+  const process = items.filter(item => item.role === 'process');
+  assert.equal(process.length, 2);
+  assert.equal(process[0].key, processKey);
+  assert.equal(process[0].showDuration, true);
+  assert.equal(process[1].showDuration, false);
+  assert.equal(inserted.find(item => item.toolCall)?.toolCall?.status, 'running');
+  const completed = appendChatEvent(inserted,
+    toolResult({ id: 'a', name: 'read_file', result: 'ok', duration_seconds: 1 }));
+  assert.equal(completed.filter(item => item.role === 'tool').length, 1);
+  assert.equal(completed.find(item => item.toolCall)?.toolCall?.status, 'completed');
+  const history = chatMessagesFromEvents([
+    event('user', 'first'), event('assistant', 'before'),
+    { ...event('user', 'inserted'), continuation: true }, event('assistant', 'after'),
+  ]);
+  assert.deepEqual(chatDisplayItems(history).filter(item => item.role === 'process')
+    .map(item => item.showDuration), [true, false]);
+});
+
+test('inserting a user message keeps pending tools available for later results and history replay', () => {
+  const events = [
+    event('user', 'first'), tools('tool_call', [['a', 'read_file', {}]]),
+    event('user', 'second'), event('queued', 'queued'),
+    toolResult({ id: 'a', name: 'read_file', result: 'ok', duration_seconds: 1 }),
+    event('assistant', 'answer'),
+  ];
+  const messages = events.reduce(appendChatEvent, []);
+  assert.equal(messages.filter(item => item.role === 'tool').length, 1);
+  assert.equal(messages.find(item => item.toolCall)?.toolCall?.status, 'completed');
+  const history = chatMessagesFromEvents(events);
+  assert.deepEqual(history.map(item => [item.role, item.content]),
+    finishChatTurn(messages).map(item => [item.role, item.content]));
+});
 
 test('folds a running turn into one process item until its final reply is known', () => {
   const initial = startChatTurn([], '读取文件');

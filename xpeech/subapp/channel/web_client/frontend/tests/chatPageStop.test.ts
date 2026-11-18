@@ -120,40 +120,28 @@ async function chatPage(
   return { render, items: () => render('BubbleList').items, streams, errors, running, messages: () => slots[0].value, cleanupHistory };
 }
 
-test('a disconnected socket keeps the composer busy until backend status confirms idle', async () => {
+test('a disconnected stream ends locally without blocking the next send', async () => {
   const sockets: FakeWebSocket[] = [];
-  const starts: any[] = [];
   class FakeWebSocket {
     onopen: (() => void) | null = null;
     onmessage: ((event: { data: string }) => void) | null = null;
     onclose: (() => void) | null = null;
     constructor() { sockets.push(this); queueMicrotask(() => this.onopen?.()); }
-    send(raw: string) { starts.push(JSON.parse(raw)); }
+    send() {}
     close() { this.onclose?.(); }
   }
-  let confirmIdle!: (response: Response) => void;
   const page = await chatPage(async () => ({ stopped: true }), {
     WebSocket: FakeWebSocket,
-    fetch(url: string) {
-      assert.equal(url, '/api/chat/status');
-      return new Promise<Response>(resolve => { confirmIdle = resolve; });
-    },
+    fetch() { throw new Error('No status polling expected'); },
   });
   page.render().onSubmit('hello');
   await tick();
   sockets[0].close();
   await tick();
-  assert.equal(page.render().loading, true);
-  page.render().onSubmit('must wait');
-  assert.equal(starts.length, 1);
-  assert.deepEqual(page.running, [true]);
-  confirmIdle(Response.json({ active: false }));
-  await tick();
   assert.equal(page.render().loading, false);
-  assert.deepEqual(page.running, [true, false]);
   page.render().onSubmit('next');
   await tick();
-  assert.equal(starts.length, 2);
+  assert.equal(sockets.length, 2);
   sockets[1].onmessage?.({ data: JSON.stringify({ type: 'done', session_id: 'session-one' }) });
   await tick();
   page.cleanupHistory();
@@ -299,5 +287,69 @@ test('a failed stop keeps the stream running and allows retrying the stop action
   assert.equal(calls, 2);
   assert.equal(page.streams[0].signal.aborted, true);
   assert.equal(page.render().loading, false);
+  page.cleanupHistory();
+});
+
+test('typing during a reply enables sending and queued streams do not finish the session', async () => {
+  const page = await chatPage(async () => ({ stopped: true }));
+  page.render().onSubmit('first');
+  page.streams[0].receive({ event: 'assistant', context: 'before insertion' });
+  assert.equal(page.render().loading, true);
+  page.render().onChange('second');
+  assert.equal(page.render().loading, false);
+  page.render().onSubmit('second');
+  assert.equal(page.streams.length, 2);
+  assert.equal(page.render().loading, true);
+  const process = page.items().filter((item: any) => item.role === 'process');
+  assert.equal(process[0].content.props.showDuration, true);
+  assert.equal(process[1].content.props.showDuration, false);
+  page.streams[1].receive({ event: 'queued', context: 'queued' });
+  page.streams[1].finish();
+  await tick();
+  assert.equal(page.render().loading, true);
+  assert.deepEqual(page.running, [true]);
+  page.streams[0].receive({ event: 'assistant', context: 'after insertion' });
+  assert.deepEqual(Array.from(page.messages().filter((item: any) => ['user', 'assistant'].includes(item.role)),
+    (item: any) => item.content), ['first', 'before insertion', 'second', 'after insertion']);
+  page.streams[0].finish();
+  await tick();
+  assert.equal(page.render().loading, false);
+  assert.deepEqual(page.running, [true, false]);
+  page.cleanupHistory();
+});
+
+test('stopping a session aborts every pending stream and ignores their late events', async () => {
+  const page = await chatPage(async () => ({ stopped: true }));
+  page.render().onSubmit('first');
+  page.render().onSubmit('second');
+  assert.equal(page.streams.length, 2);
+  page.render().onCancel();
+  await tick();
+  assert.ok(page.streams.every(stream => stream.signal.aborted));
+  page.streams[0].receive({ event: 'assistant', context: 'late' });
+  assert.equal(page.messages().some((item: any) => item.content === 'late'), false);
+  assert.deepEqual(page.running, [true, false]);
+  page.cleanupHistory();
+});
+
+test('an acknowledged inbox socket cannot keep the process running after the original execution ends', async () => {
+  const page = await chatPage(async () => ({ stopped: true }));
+  page.render().onSubmit('first');
+  page.render().onSubmit('inserted');
+  page.streams[1].receive({ event: 'queued', context: 'queued' });
+  // Leave the queued socket open while the execution completes.
+  page.streams[0].receive({ event: 'assistant', context: 'answer' });
+  page.streams[0].finish();
+  await tick();
+  assert.equal(page.render().loading, false);
+  assert.deepEqual(page.running, [true, false]);
+  assert.ok(page.messages().every((item: any) => !item.streaming && !item.transient));
+  page.streams[1].finish();
+  await tick();
+  assert.deepEqual(page.running, [true, false]);
+  page.render().onSubmit('new turn');
+  assert.equal(page.messages().filter((item: any) => item.role === 'user').at(-1).continuation, undefined);
+  page.streams[2].finish();
+  await tick();
   page.cleanupHistory();
 });

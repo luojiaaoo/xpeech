@@ -18,7 +18,8 @@ SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["opening", "idle", "keepalive", "partial", "complete"])
-async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tmp_path, monkeypatch, phase):
+@pytest.mark.parametrize("continuation", [False, True])
+async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tmp_path, monkeypatch, phase, continuation):
     ready = asyncio.Event()
     closed = asyncio.Event()
     client_closed = asyncio.Event()
@@ -26,6 +27,9 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
     sent = []
     history = JsonlEventHistoryRepository(tmp_path)
     user = User(user_id="alice", username="Alice", password_hash="unused")
+    user_event = {"event": "user", "context": "hi"}
+    if continuation:
+        user_event["continuation"] = True
 
     class Upstream(httpx.AsyncByteStream):
         async def __aiter__(self):
@@ -68,6 +72,7 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
     await messages.put({"type": "websocket.connect"})
     await messages.put({"type": "websocket.receive", "text": json.dumps({
         "type": "start", "session_id": SESSION_ID, "content": '[{"text":"hi"}]',
+        "continuation": continuation,
     })})
     scope = {
         "type": "websocket", "asgi": {"version": "3.0"}, "scheme": "ws",
@@ -82,6 +87,13 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
     task = asyncio.create_task(app(scope, messages.get, send))
     try:
         await asyncio.wait_for(ready.wait(), timeout=1)
+        if phase in {"partial", "idle", "keepalive"}:
+            # History is visible while the original stream is still open. A
+            # concurrent queued request must not be saved ahead of this request.
+            expected = [user_event]
+            if phase == "partial":
+                expected.append({"event": "assistant", "context": "hello"})
+            assert await history.load("alice", SESSION_ID, channel="web_client") == expected
         if phase != "complete":
             await messages.put({"type": "websocket.disconnect", "code": 1000})
         await asyncio.wait_for(asyncio.shield(task), timeout=1)
@@ -91,7 +103,7 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
         else:
             assert closed.is_set()
             saved = await history.load("alice", SESSION_ID, channel="web_client")
-            expected = [{"event": "user", "context": "hi"}]
+            expected = [user_event]
             if phase in {"partial", "complete"}:
                 expected.append({"event": "assistant", "context": "hello"})
             assert saved == expected

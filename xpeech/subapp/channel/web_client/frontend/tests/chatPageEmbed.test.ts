@@ -39,7 +39,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
     antd: { Alert: 'Alert', Button: 'Button', Flex: 'Flex', Popover: 'Popover', Tooltip: 'Tooltip', Typography: { Text: 'Text' }, message: { error() {} } },
     '@ant-design/icons': Object.fromEntries([
       'CheckCircleOutlined', 'CloudUploadOutlined', 'CodeOutlined', 'CopyOutlined', 'DashboardOutlined', 'DownloadOutlined', 'EllipsisOutlined',
-      'LoadingOutlined', 'PaperClipOutlined', 'DownOutlined', 'RobotOutlined',
+      'LoadingOutlined', 'PaperClipOutlined', 'PieChartOutlined', 'DownOutlined', 'RobotOutlined',
     ].map(name => [name, name])),
     './api': {
       getFile() {}, downloadFile() {}, stopChat() {},
@@ -54,7 +54,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
         return [{ event: 'assistant', context: '完成' }, { event: 'send_file', context: 'reports/sync.pdf' }];
       },
     },
-    './chatState': { appendChatEvent() {}, chatDisplayItems: () => [], chatMessagesFromEvents: () => [], finishChatTurn() {}, startChatTurn() {} },
+    './chatState': { appendChatEvent() {}, chatDisplayItems: () => [], chatMessagesFromEvents: () => [], finishChatTurn() {}, startChatTurn() {}, createChatEventQueue: (consume: Function) => ({ push: consume }) },
     './ToolCallCard': { default: 'ToolCallCard' },
     './ProcessPanel': { default: 'ProcessPanel' },
     './FileCard': { default: 'FileCard' },
@@ -101,7 +101,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
   assert.equal(streamCalls[0].text, '生成对话框文件');
   assert.deepEqual(Array.from(streamCalls[0].files), [first, second]);
   assert.equal(streamCalls[0].options.sessionId, 'first');
-  assert.match((await command('send')).error, /正在回复/);
+  assert.match((await command('send')).error, /不能为空/);
   await Promise.all([...listeners].map(receive => receive({
     source: parent, origin: 'https://portal.test',
     data: { type: 'xpeech:request', method: 'chatSync', text: '生成 sync 文件', request_id: 'sync-1', session_id: 'first' },

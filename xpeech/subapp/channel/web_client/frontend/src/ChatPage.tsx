@@ -19,7 +19,7 @@ import {
 import { chatSync, downloadFile, getFile, historyApi, stopChat, streamChat } from './api';
 import { collectReplies, connectEmbedBridge, postToParent } from './embedBridge';
 import type { SyncOptions } from './embedBridge';
-import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn, startChatTurn } from './chatState';
+import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn, createChatEventQueue } from './chatState';
 import ToolCallCard from './ToolCallCard';
 import ProcessPanel from './ProcessPanel';
 import FileCard from './FileCard';
@@ -247,7 +247,15 @@ export default function ChatPage({
   const [userPrefixExpanded, setUserPrefixExpanded] = useState(false);
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
   const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
-  const requestRef = useRef<AbortController | null>(null);
+  const requests = useRef(new Map<AbortController, 'pending' | 'executing' | 'queued'>());
+  const runningRef = useRef(false);
+  const historyRevision = useRef(0);
+  const eventQueue = useRef<ReturnType<typeof createChatEventQueue> | null>(null);
+  if (!eventQueue.current) {
+    eventQueue.current = createChatEventQueue((event) => {
+      setMessages((current) => appendChatEvent(current, event));
+    });
+  }
   const stoppingRef = useRef(false);
   const syncRequests = useRef(new Set<AbortController>());
   const sendRef = useRef(send);
@@ -277,7 +285,7 @@ export default function ChatPage({
         return newConversationRef.current();
       },
       send() {
-        if (requestRef.current || stoppingRef.current) throw new Error('正在回复，请稍后再发送');
+        if (stoppingRef.current) throw new Error('正在停止，请稍后再发送');
         const { value: text, files } = composerRef.current;
         if (!text.trim() && !files.length) throw new Error('消息不能为空');
         void sendRef.current(text);
@@ -289,22 +297,24 @@ export default function ChatPage({
   }, [active, embedded, sessionId]);
 
   useEffect(() => () => {
-    requestRef.current?.abort();
+    requests.current.forEach((_phase, controller) => controller.abort());
+    requests.current.clear();
     syncRequests.current.forEach((controller) => controller.abort());
     syncRequests.current.clear();
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
+    const revision = historyRevision.current;
     setMessages([]);
     setHistoryLoading(true);
     historyApi.get(sessionId, controller.signal).then((history) => {
-      if (!controller.signal.aborted && !requestRef.current) {
+      if (!controller.signal.aborted && revision === historyRevision.current) {
         setMessages(chatMessagesFromEvents(history.events));
       }
     }).catch((error) => {
       if (!controller.signal.aborted) {
-        if (!requestRef.current) setMessages([]);
+        if (revision === historyRevision.current) setMessages([]);
         message.error(`历史消息加载失败：${String(error)}`);
       }
     }).finally(() => {
@@ -327,17 +337,28 @@ export default function ChatPage({
   }, [active, loading, messages]);
 
   function appendEvent(event: ChatEvent) {
-    setMessages((current) => appendChatEvent(current, event));
+    eventQueue.current!.push(event);
+  }
+
+  function updateRunning() {
+    // A queued submission has already been accepted by the original execution.
+    // Its transport can stay open without keeping the process running.
+    const running = Array.from(requests.current.values()).some((phase) => phase !== 'queued');
+    if (running === runningRef.current) return;
+    runningRef.current = running;
+    setLoading(running);
+    onRunningChange?.(running);
+    if (!running) setMessages(finishChatTurn);
   }
 
   async function stop() {
-    const controller = requestRef.current;
-    if (!controller || stoppingRef.current) return;
+    if (!requests.current.size || stoppingRef.current) return;
+    const controllers = Array.from(requests.current.keys());
     stoppingRef.current = true;
     setStopping(true);
     try {
       await stopChat(sessionId);
-      controller.abort();
+      controllers.forEach((controller) => controller.abort());
     } catch (error) {
       message.error(`停止失败：${String(error)}`);
     } finally {
@@ -348,24 +369,25 @@ export default function ChatPage({
 
   async function send(text: string, sync?: SyncOptions): Promise<ChatEvent[]> {
     // 同步调用可与对话框手动聊天、其他同步调用并发；后端每次同步执行使用独立生成的会话。
-    if (!sync && (!active || requestRef.current || stoppingRef.current)) return [];
+    if (!sync && (!active || stoppingRef.current)) return [];
     const sentFiles = sync ? sync.files ?? [] : composerRef.current.files;
     if (!text.trim() && sentFiles.length === 0) return [];
     const controller = new AbortController();
+    const continuation = !sync && runningRef.current;
     // 同步交互纯后台执行：不写入对话、不影响输入框和加载状态，
     // 结果只经 Promise 与 onReply（xpeech:reply）回传主页面。
     if (sync) {
       syncRequests.current.add(controller);
     } else {
-      requestRef.current = controller;
+      historyRevision.current++;
+      requests.current.set(controller, 'pending');
       const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
-      setMessages((current) => startChatTurn(current, display));
+      appendEvent({ event: 'user', context: display, continuation });
       composerRef.current = { value: '', files: [] };
       setValue('');
       setFiles([]);
       setAttachmentsOpen(false);
-      setLoading(true);
-      onRunningChange?.(true);
+      updateRunning();
     }
     const replies = collectReplies((content) => {
       if (embedded) postToParent({
@@ -378,7 +400,11 @@ export default function ChatPage({
       const requestText = pendingUserPrefix ? `${pendingUserPrefix}\n\n===\n\n${text}` : text;
       const receive = (event: ChatEvent) => {
         if (!controller.signal.aborted) {
-          if (!sync) appendEvent(event);
+          if (!sync) {
+            requests.current.set(controller, event.event === 'queued' ? 'queued' : 'executing');
+            appendEvent(event);
+            updateRunning();
+          }
           replies.push(event);
           if (embedded && !sync && event.event === 'send_file') postToParent({
             type: 'xpeech:file', session_id: sessionId, path: event.context,
@@ -396,13 +422,13 @@ export default function ChatPage({
           if (event.event === 'assistant') replies.finish();
         }
       } else {
-        await streamChat(requestText, sentFiles, receive, { sessionId, signal: controller.signal });
+        await streamChat(requestText, sentFiles, receive, { sessionId, signal: controller.signal, continuation });
       }
       if (!controller.signal.aborted) replies.finish();
       return events;
     } catch (error) {
       if (!controller.signal.aborted && !sync) {
-        setMessages((current) => appendChatEvent(current, { event: 'error', context: String(error) }));
+        appendEvent({ event: 'error', context: String(error) });
         message.error(String(error));
       }
       if (sync) throw error;
@@ -411,10 +437,8 @@ export default function ChatPage({
       if (sync) {
         syncRequests.current.delete(controller);
       } else {
-        setMessages(finishChatTurn);
-        if (requestRef.current === controller) requestRef.current = null;
-        setLoading(false);
-        onRunningChange?.(false);
+        requests.current.delete(controller);
+        updateRunning();
         onHistoryUpdated?.();
       }
     }
@@ -429,8 +453,7 @@ export default function ChatPage({
         content = <ToolCallCard tool={item.toolCall} />;
       } else if (item.role === 'question') {
         const previous = messages.slice(0, messages.indexOf(item));
-        const turn = previous.slice(previous.findLastIndex(entry => entry.role === 'user') + 1);
-        const tool = turn.find(entry => entry.toolCall?.id === item.questionToolId)?.toolCall;
+        const tool = previous.findLast(entry => entry.toolCall?.id === item.questionToolId)?.toolCall;
         content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} readOnly={item.historical} tool={tool} /></Suspense>;
       } else if (item.role === 'file') {
         content = <FileCard path={item.content} active={active} />;
@@ -460,7 +483,7 @@ export default function ChatPage({
       key: item.key,
       role: item.role,
       content: item.role === 'process' ? (
-        <ProcessPanel running={item.running} tokenUsage={item.tokenUsage}>
+        <ProcessPanel running={item.running} tokenUsage={item.tokenUsage} showDuration={item.showDuration}>
           {item.messages.filter((entry) => !entry.transient).map((entry) => (
             <div key={entry.key} className={`process-entry process-entry-${entry.role}`}>
               {renderMessage(entry)}
@@ -548,7 +571,8 @@ export default function ChatPage({
           onChange={setValue}
           onSubmit={(text) => { void send(text); }}
           onCancel={() => { void stop(); }}
-          loading={loading || historyLoading || stopping}
+          loading={loading && !value.trim() && files.length === 0}
+          disabled={historyLoading || stopping}
           header={header}
           placeholder="输入消息，Enter 发送，Shift + Enter 换行；输入 / 搜索技能或指令，@ 搜索文件名"
           autoSize={{ minRows: 2, maxRows: 6 }}
