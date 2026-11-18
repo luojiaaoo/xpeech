@@ -137,7 +137,7 @@ async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
                 ), timeout=2)
                 assert queued.status_code == 200
                 [ack] = [json.loads(line[6:]) for line in queued.text.splitlines() if line.startswith("data: ")]
-                assert ack["event"] == "queued"
+                assert ack["event"] == "command"
         resume.set()
         events = await asyncio.wait_for(owner, timeout=2)
     finally:

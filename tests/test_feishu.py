@@ -1213,7 +1213,7 @@ async def test_stop_requires_an_exact_standalone_command(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_queued_submission_does_not_wait_for_output_or_clean_up_the_original_execution(monkeypatch):
+async def test_concurrent_command_responses_use_the_existing_output_order(monkeypatch):
     bridge = _bridge_with_channel(SimpleNamespace(add_reaction=AsyncMock()))
     bridge.tools.finish_tool_progress = AsyncMock()
     started = asyncio.Event()
@@ -1233,7 +1233,7 @@ async def test_queued_submission_does_not_wait_for_output_or_clean_up_the_origin
             yield ChatEvent(event=ChatEventType.QUESTION, context='{"fields":[]}')
             yield ChatEvent(event=ChatEventType.ASSISTANT, context=chunks())
         elif name == "queued":
-            yield ChatEvent(event=ChatEventType.QUEUED, context="消息已加入当前会话")
+            yield ChatEvent(event=ChatEventType.COMMAND, context="消息已加入当前会话")
         else:
             yield ChatEvent(event=ChatEventType.COMMAND, context=name)
 
@@ -1251,11 +1251,14 @@ async def test_queued_submission_does_not_wait_for_output_or_clean_up_the_origin
                        content=[TextData(text=text)], timestamp=0, session_metadata={})
 
     first = asyncio.create_task(bridge.consume([message("first")]))
+    queued = None
     later = None
     try:
         await asyncio.wait_for(started.wait(), timeout=1)
         bridge.delivery.session_update_message_id["E1001"] = "progress"
-        await asyncio.wait_for(bridge.consume([message("queued")]), timeout=1)
+        queued = asyncio.create_task(bridge.consume([message("queued")]))
+        await asyncio.sleep(0)
+        assert not queued.done()
         assert "question" in bridge.questions.question_cards
         assert bridge.delivery.session_update_message_id["E1001"] == "progress"
         bridge.tools.finish_tool_progress.assert_not_awaited()
@@ -1267,9 +1270,11 @@ async def test_queued_submission_does_not_wait_for_output_or_clean_up_the_origin
     finally:
         release.set()
         await asyncio.wait_for(first, timeout=1)
+        if queued is not None:
+            await asyncio.wait_for(queued, timeout=1)
         if later is not None:
             await asyncio.wait_for(later, timeout=1)
-    assert deliveries == ["E1002", "E1001", "E1001"]
+    assert deliveries == ["E1002", "E1001", "E1001", "E1001"]
     assert "question" not in bridge.questions.question_cards
     assert "E1001" not in bridge.delivery.session_update_message_id
     assert not bridge.conversation._output_locks

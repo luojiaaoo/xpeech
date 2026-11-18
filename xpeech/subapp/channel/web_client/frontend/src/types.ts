@@ -155,7 +155,6 @@ export interface ChatHistory {
 }
 
 export type ChatEventType =
-  | 'queued'
   | 'user'
   | 'assistant'
   | 'assistant_end'

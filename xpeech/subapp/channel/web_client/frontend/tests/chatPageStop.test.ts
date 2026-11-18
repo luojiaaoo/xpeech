@@ -303,7 +303,7 @@ test('typing during a reply enables sending and queued streams do not finish the
   const process = page.items().filter((item: any) => item.role === 'process');
   assert.equal(process[0].content.props.showDuration, true);
   assert.equal(process[1].content.props.showDuration, false);
-  page.streams[1].receive({ event: 'queued', context: 'queued' });
+  page.streams[1].receive({ event: 'command', context: 'queued' });
   page.streams[1].finish();
   await tick();
   assert.equal(page.render().loading, true);
@@ -332,20 +332,21 @@ test('stopping a session aborts every pending stream and ignores their late even
   page.cleanupHistory();
 });
 
-test('an acknowledged inbox socket cannot keep the process running after the original execution ends', async () => {
+test('a command response completes independently and the session finishes when all requests end', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('first');
   page.render().onSubmit('inserted');
-  page.streams[1].receive({ event: 'queued', context: 'queued' });
+  page.streams[1].receive({ event: 'command', context: 'queued' });
   // Leave the queued socket open while the execution completes.
   page.streams[0].receive({ event: 'assistant', context: 'answer' });
   page.streams[0].finish();
   await tick();
-  assert.equal(page.render().loading, false);
-  assert.deepEqual(page.running, [true, false]);
-  assert.ok(page.messages().every((item: any) => !item.streaming && !item.transient));
+  assert.equal(page.render().loading, true);
+  assert.deepEqual(page.running, [true]);
   page.streams[1].finish();
   await tick();
+  assert.equal(page.render().loading, false);
+  assert.ok(page.messages().every((item: any) => !item.streaming && !item.transient));
   assert.deepEqual(page.running, [true, false]);
   page.render().onSubmit('new turn');
   assert.equal(page.messages().filter((item: any) => item.role === 'user').at(-1).continuation, undefined);

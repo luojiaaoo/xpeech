@@ -78,7 +78,7 @@ test('queued acknowledgement can finish independently of the original stream', a
     .then(() => { firstDone = true; });
   const second = state.api.streamChat('second', [], () => {}, { sessionId });
   await tick();
-  state.sockets[1].emit({ type: 'event', event: { event: 'queued', context: 'queued' } });
+  state.sockets[1].emit({ type: 'event', event: { event: 'command', context: 'queued' } });
   state.sockets[1].emit({ type: 'done' });
   await second;
   assert.equal(firstDone, false);
@@ -89,14 +89,15 @@ test('queued acknowledgement can finish independently of the original stream', a
   assert.equal(state.queries.length, 0);
 });
 
-test('a queued message remains accepted if its socket closes without a done frame', async () => {
+test('a command notification does not hide a connection interrupted before the done frame', async () => {
   const state = await setup();
   const chat = state.api.streamChat('inserted', [], () => {}, { sessionId, continuation: true });
+  const rejected = assert.rejects(chat, /中断/);
   await tick();
   assert.equal(state.starts[0].continuation, true);
-  state.sockets[0].emit({ type: 'event', event: { event: 'queued', context: 'queued' } });
+  state.sockets[0].emit({ type: 'event', event: { event: 'command', context: 'queued' } });
   state.sockets[0].close();
-  await chat;
+  await rejected;
   assert.equal(state.starts.length, 1);
   assert.equal(state.queries.length, 0);
 });

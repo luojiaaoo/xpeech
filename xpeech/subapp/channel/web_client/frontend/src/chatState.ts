@@ -161,9 +161,6 @@ export function chatDisplayItems(messages: ChatMessage[], running = false): Chat
 }
 
 export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[] {
-  // Acknowledgements can arrive after later user messages; they must not change
-  // the last visible segment. Insertion metadata belongs to the user event.
-  if (event.event === 'queued') return messages;
   if (event.event === 'user') return startChatTurn(messages, event.context, event.continuation);
   const next = messages.filter((item) => !item.transient);
   if (event.event === 'assistant' || event.event === 'thinking') {

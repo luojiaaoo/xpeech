@@ -72,8 +72,6 @@ class FeishuConversation:
                 "feishu",
                 session_id=DEFAULT_SESSION_ID,
             ):
-                if event.event == ChatEventType.QUEUED:
-                    continue
                 received_output = True
                 async with output_lock:
                     if event.event in {ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT}:

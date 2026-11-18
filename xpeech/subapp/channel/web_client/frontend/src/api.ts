@@ -356,7 +356,6 @@ export async function streamChat(
     const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${scheme}//${window.location.host}/api/chat/ws`);
     let settled = false;
-    let queued = false;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
@@ -393,7 +392,6 @@ export async function streamChat(
       }
       if (settled || message.session_id !== sessionId) return;
       if (message.type === 'event' && message.event) {
-        if (message.event.event === 'queued') queued = true;
         onEvent(message.event);
       } else if (message.type === 'done') {
         finish();
@@ -408,9 +406,7 @@ export async function streamChat(
       }
     };
     socket.onclose = () => {
-      // A queued acknowledgement commits the submission. Losing its short-lived
-      // socket afterwards must not suggest resending an already accepted message.
-      finish(queued ? undefined : new Error('聊天连接已中断，请重新发送'));
+      finish(new Error('聊天连接已中断，请重新发送'));
     };
   });
   await streaming;

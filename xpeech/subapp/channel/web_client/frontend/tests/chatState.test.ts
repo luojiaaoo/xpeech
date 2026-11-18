@@ -57,7 +57,7 @@ test('user insertions split the process without interrupting tools and suppress 
 test('inserting a user message keeps pending tools available for later results and history replay', () => {
   const events = [
     event('user', 'first'), tools('tool_call', [['a', 'read_file', {}]]),
-    event('user', 'second'), event('queued', 'queued'),
+    event('user', 'second'), event('command', 'queued'),
     toolResult({ id: 'a', name: 'read_file', result: 'ok', duration_seconds: 1 }),
     event('assistant', 'answer'),
   ];

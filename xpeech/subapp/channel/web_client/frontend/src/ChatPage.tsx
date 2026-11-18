@@ -247,7 +247,7 @@ export default function ChatPage({
   const [userPrefixExpanded, setUserPrefixExpanded] = useState(false);
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
   const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
-  const requests = useRef(new Map<AbortController, 'pending' | 'executing' | 'queued'>());
+  const requests = useRef(new Set<AbortController>());
   const runningRef = useRef(false);
   const historyRevision = useRef(0);
   const eventQueue = useRef<ReturnType<typeof createChatEventQueue> | null>(null);
@@ -297,7 +297,7 @@ export default function ChatPage({
   }, [active, embedded, sessionId]);
 
   useEffect(() => () => {
-    requests.current.forEach((_phase, controller) => controller.abort());
+    requests.current.forEach((controller) => controller.abort());
     requests.current.clear();
     syncRequests.current.forEach((controller) => controller.abort());
     syncRequests.current.clear();
@@ -341,9 +341,7 @@ export default function ChatPage({
   }
 
   function updateRunning() {
-    // A queued submission has already been accepted by the original execution.
-    // Its transport can stay open without keeping the process running.
-    const running = Array.from(requests.current.values()).some((phase) => phase !== 'queued');
+    const running = requests.current.size > 0;
     if (running === runningRef.current) return;
     runningRef.current = running;
     setLoading(running);
@@ -353,7 +351,7 @@ export default function ChatPage({
 
   async function stop() {
     if (!requests.current.size || stoppingRef.current) return;
-    const controllers = Array.from(requests.current.keys());
+    const controllers = Array.from(requests.current);
     stoppingRef.current = true;
     setStopping(true);
     try {
@@ -380,7 +378,7 @@ export default function ChatPage({
       syncRequests.current.add(controller);
     } else {
       historyRevision.current++;
-      requests.current.set(controller, 'pending');
+      requests.current.add(controller);
       const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
       appendEvent({ event: 'user', context: display, continuation });
       composerRef.current = { value: '', files: [] };
@@ -400,11 +398,7 @@ export default function ChatPage({
       const requestText = pendingUserPrefix ? `${pendingUserPrefix}\n\n===\n\n${text}` : text;
       const receive = (event: ChatEvent) => {
         if (!controller.signal.aborted) {
-          if (!sync) {
-            requests.current.set(controller, event.event === 'queued' ? 'queued' : 'executing');
-            appendEvent(event);
-            updateRunning();
-          }
+          if (!sync) appendEvent(event);
           replies.push(event);
           if (embedded && !sync && event.event === 'send_file') postToParent({
             type: 'xpeech:file', session_id: sessionId, path: event.context,

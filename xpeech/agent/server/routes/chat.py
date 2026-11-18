@@ -99,7 +99,7 @@ async def chat_events(
 async def chat(
     events: Annotated[AsyncGenerator[dict[str, Any], None], Depends(chat_events)],
 ):
-    """启动会话或插入活跃 loop；插入请求仅返回 queued，输出沿原 SSE 返回。"""
+    """启动会话或插入活跃 loop；插入请求返回 command 确认，输出沿原 SSE 返回。"""
     async for event in events:
         yield event
 
