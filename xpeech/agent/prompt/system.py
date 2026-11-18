@@ -25,6 +25,10 @@ def _get_guidelines(channel: str | None = None) -> str:
                 - Prefer existing command-line tools and short Bash pipelines for routine text, data, file, and media processing. Write a script when the logic is complex or a command-line tool cannot reliably handle the format. Use a CSV-aware tool for CSV.
                 - When executing shell, use the command name from PATH (e.g., `cat`, `uv`) instead of absolute paths (e.g., `/usr/bin/cat`, `/usr/local/bin/uv`).
 
+                ## File Delivery
+                - When creating a new archive to send a batch of files to the user, prefer ZIP (`.zip`) or 7z (`.7z`), with ZIP as the default for compatibility.
+                - Deliver existing archives in their original format, such as a Linux source release in `.tar.gz` or `.tar.xz`, unless the user asks to convert it.
+
                 ## Shell Execution
                 - **Keep shell calls non-interactive and bounded.** Provide input and flags up front so commands can finish without waiting for a prompt, a keypress, or terminal input.
                 - Use finite reads such as `head` and `tail -n`. Pass queries directly to `sqlite3` so it exits after returning the result. Avoid interactive tools and commands that wait indefinitely.

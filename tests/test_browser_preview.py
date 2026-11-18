@@ -74,8 +74,10 @@ def test_download_api_resolves_tilde_against_user_home(file_roots, tmp_path, mon
     assert response.content == b"user data"
 
 
+@pytest.mark.parametrize("trailing_slash", ["", "/"])
 def test_preview_directory_is_public_and_recursively_navigable(
     file_roots: tuple[Path, Path],
+    trailing_slash: str,
 ):
     _, preview_root = file_roots
     preview_id = uuid4()
@@ -92,7 +94,7 @@ def test_preview_directory_is_public_and_recursively_navigable(
 
     client = TestClient(app)
     root_url = f"{settings.tool.browser_preview.route_path}/{preview_id}/"
-    response = client.get(root_url)
+    response = client.get(root_url.rstrip("/") + trailing_slash, follow_redirects=False)
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html; charset=utf-8")
@@ -106,7 +108,7 @@ def test_preview_directory_is_public_and_recursively_navigable(
     assert f'href="{nested_url}"' in unescape(response.text)
     assert f'href="{special_file_url}"' in unescape(response.text)
 
-    nested_response = client.get(nested_url)
+    nested_response = client.get(nested_url.rstrip("/") + trailing_slash, follow_redirects=False)
     assert nested_response.status_code == 200
     assert f'href="{root_url}"' in unescape(nested_response.text)
     assert "child.txt" in nested_response.text
@@ -122,7 +124,10 @@ def test_preview_directory_is_public_and_recursively_navigable(
     assert f'href="{root_url}"' in unescape(empty_response.text)
 
 
-def test_preview_directory_redirects_to_single_html(file_roots: tuple[Path, Path]):
+@pytest.mark.parametrize("trailing_slash", ["", "/"])
+def test_preview_directory_redirects_to_single_html(
+    file_roots: tuple[Path, Path], trailing_slash: str,
+):
     _, preview_root = file_roots
     preview_id = uuid4()
     directory = preview_root / str(preview_id)
@@ -133,12 +138,38 @@ def test_preview_directory_redirects_to_single_html(file_roots: tuple[Path, Path
 
     client = TestClient(app)
     root_url = f"{settings.tool.browser_preview.route_path}/{preview_id}/"
-    response = client.get(root_url, follow_redirects=False)
+    request_url = root_url.rstrip("/") + trailing_slash
+    response = client.get(request_url, follow_redirects=False)
 
     assert response.status_code == 307
     assert response.headers["location"] == root_url + quote(html_name, safe="")
     assert response.headers["cache-control"] == "no-store"
-    assert client.get(root_url).content == b"<h1>preview</h1>"
+    assert client.get(request_url).content == b"<h1>preview</h1>"
+
+
+@pytest.mark.parametrize("trailing_slash", ["", "/"])
+@pytest.mark.parametrize("directory_name", ["", "nested & 目录"])
+def test_preview_directory_prefers_index_html(
+    file_roots: tuple[Path, Path], trailing_slash: str, directory_name: str,
+):
+    _, preview_root = file_roots
+    preview_id = uuid4()
+    directory = preview_root / str(preview_id) / directory_name
+    directory.mkdir(parents=True)
+    (directory / "index.html").write_text("<h1>Home</h1>", encoding="utf-8")
+    (directory / "another.html").write_text("<h1>Another</h1>", encoding="utf-8")
+
+    client = TestClient(app)
+    directory_url = f"{settings.tool.browser_preview.route_path}/{preview_id}/"
+    if directory_name:
+        directory_url += quote(directory_name, safe="") + "/"
+    request_url = directory_url.rstrip("/") + trailing_slash
+    response = client.get(request_url, follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == directory_url + "index.html"
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get(request_url).content == b"<h1>Home</h1>"
 
 
 @pytest.mark.asyncio

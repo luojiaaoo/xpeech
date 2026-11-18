@@ -63,10 +63,14 @@ async def _render_directory_navigation(preview_id: UUID, directory: Path, relati
 
 
 @router.get(
+    f"{settings.tool.browser_preview.route_path}/{{preview_id}}",
+    include_in_schema=False,
+)
+@router.get(
     f"{settings.tool.browser_preview.route_path}/{{preview_id}}/{{file_path:path}}",
     include_in_schema=False,
 )
-async def preview_file(preview_id: UUID, file_path: str):
+async def preview_file(preview_id: UUID, file_path: str = ""):
     """返回浏览器预览目录内经过路径校验的文件或目录导航。"""
     relative_path = Path(file_path)
     if relative_path.is_absolute() or ".." in relative_path.parts:
@@ -84,10 +88,13 @@ async def preview_file(preview_id: UUID, file_path: str):
             async for entry in anyio.Path(preview_file_path).iterdir()
             if entry.suffix.lower() == ".html" and await entry.is_file()
         ]
-        if len(html_files) == 1:
+        target_html = next((entry for entry in html_files if entry.name == "index.html"), None)
+        if target_html is None and len(html_files) == 1:
+            target_html = html_files[0]
+        if target_html is not None:
             html_url = _preview_url_path(
                 preview_id,
-                relative_path / html_files[0].name,
+                relative_path / target_html.name,
                 is_directory=False,
             )
             return RedirectResponse(html_url, headers=_NO_STORE_HEADERS)
