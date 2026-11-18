@@ -56,7 +56,6 @@ def turn(monkeypatch, tmp_path):
     agent.chat = AsyncMock(return_value=response(("content", "answer")))
     agent.records = SimpleNamespace(append=AsyncMock())
     agent.tools = []
-    agent.max_iterations = 3
     agent.max_accept_token = 1000
     agent._input_tokens = agent._output_tokens = agent._model_call_count = 0
     agent._count_context_tokens = AsyncMock(return_value=10)
@@ -165,7 +164,6 @@ async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
 async def test_queued_messages_preserve_tool_context_and_json_output(turn, monkeypatch, json_output):
     agent, message = turn
     monkeypatch.setattr(loop_module, "build_user_prompt", build_user_prompt)
-    agent.max_iterations = 6
     message.session_metadata = {"open_id": "alice-open-id", "initial_only": "value"}
     message.json_output = json_output
     inbox = SessionInbox(message)
@@ -208,6 +206,47 @@ async def test_queued_messages_preserve_tool_context_and_json_output(turn, monke
     assert not any(event["event"] == "user" for event in events)
     assert agent.records.append.await_args.args[0].sender_name == "Alice"
     assert message.session_metadata == {"open_id": "alice-open-id", "initial_only": "value"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inbox_mode", ["none", "empty", "pending"])
+async def test_tool_chain_continues_until_no_tools_and_no_pending_messages(turn, inbox_mode):
+    agent, message = turn
+    inbox = None if inbox_mode == "none" else SessionInbox(message)
+    calls = 0
+
+    async def lookup():
+        return "tool result"
+
+    agent.tool_executor = ToolExecutor(
+        workspace=agent.workspace, max_result_chars=1000, mapping_tool_call_funcs={"lookup": lookup},
+    )
+
+    async def model_call(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1 and inbox_mode == "pending":
+            assert inbox.enqueue(message)
+        # Continue past the previous default of 40, including without an inbox.
+        if calls <= 45 or calls == 47:
+            return response(("tool_calls", ToolCallChunk(
+                index=0, id=f"call-{calls}", name="lookup", arguments="{}",
+            )))
+        return response(("content", f"answer {calls}"))
+
+    agent.chat = model_call
+    events = [event async for event in agent.run(message, inbox=inbox)]
+
+    expected_calls = 48 if inbox_mode == "pending" else 46
+    assert calls == expected_calls
+    assert (await saved_turn(agent, message))[-1] == {
+        "role": "assistant", "content": f"answer {expected_calls}",
+    }
+    answers = [event["context"] for event in events if event["event"] == "assistant"]
+    assert answers == (["answer 46", "answer 48"] if inbox_mode == "pending" else ["answer 46"])
+    if inbox is not None:
+        assert not inbox.enqueue(message)
+        assert inbox.drain() == []
 
 
 @pytest.mark.asyncio

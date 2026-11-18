@@ -75,7 +75,6 @@ async def test_context_commands_continue_with_trailing_prompt(
     agent_loop.chat = AsyncMock(return_value=make_response("continued result"))
     agent_loop.records = SimpleNamespace(append=AsyncMock())
     agent_loop.tools = []
-    agent_loop.max_iterations = 2
     agent_loop.max_accept_token = 100_000
     agent_loop._input_tokens = 0
     agent_loop._output_tokens = 0

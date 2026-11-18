@@ -67,7 +67,6 @@ class QuestionEvent:
 class AgentLoop:
     """Agent循环处理逻辑。"""
 
-    ITERATION_STOP_PROMPT = "You have reached the maximum number of iterations and MUST stop calling tools."
     SESSION_QUESTION_EVENT: ClassVar[dict[tuple[str, str], QuestionEvent]] = {}
 
     def __init__(
@@ -75,7 +74,6 @@ class AgentLoop:
         provider: LiteLLMProvider,
         workspace: Path,
         tools: list[str],
-        max_iterations: int,
         channel: str | None = None,
         user_organization: str | None = None,
         mapping_tool_call_funcs: dict[str, Any] | None = None,
@@ -84,7 +82,6 @@ class AgentLoop:
         self.provider = provider
         self.workspace = workspace
         self.tools = tools
-        self.max_iterations = max_iterations
         self.channel = channel
         self.user_organization = user_organization
         self.mapping_tool_call_funcs = mapping_tool_call_funcs if mapping_tool_call_funcs is not None else {}
@@ -431,26 +428,6 @@ class AgentLoop:
             final_content = None
             final_content_error = False
             for loop_count in count():
-                # 达到最大迭代次数，强制停止循环
-                if self.max_iterations is not None and loop_count >= self.max_iterations:
-                    if inbox is not None:
-                        inbox.close()
-                        for incoming in inbox.drain():
-                            _append_turn_message(
-                                messages_yaml, turn_messages,
-                                await build_user_prompt(message=incoming, workspace=self.workspace),
-                            )
-                    final_content = (
-                        f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
-                    )
-                    final_content_error = True
-                    logger.warning(
-                        "Agent loop reached max iterations loop_count={} max_iterations={}",
-                        loop_count,
-                        self.max_iterations,
-                    )
-                    break
-
                 # 判断是否需要压缩
                 if await self.compressor.should_compress(messages_yaml):
                     yield {"event": "command", "context": "♻️ 压缩上下文中，请稍等..."}
@@ -538,21 +515,6 @@ class AgentLoop:
                             await build_user_prompt(message=incoming, workspace=self.workspace),
                         )
                     continue
-
-                # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
-                if self.max_iterations is not None and loop_count == self.max_iterations - 2:
-                    logger.warning(
-                        "Approaching max iterations loop_count={} max_iterations={}",
-                        loop_count,
-                        self.max_iterations,
-                    )
-                    _append_turn_message(
-                        messages_yaml, turn_messages,
-                        {
-                            "role": "user",
-                            "content": self.ITERATION_STOP_PROMPT,
-                        }
-                    )
 
             if final_content is None:
                 final_content = "I've completed processing but have no response to give."

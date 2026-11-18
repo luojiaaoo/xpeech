@@ -83,7 +83,6 @@ def test_example_uses_nested_llm_parameters():
         "repetition_penalty": 1.0,
         "reasoning_effort": None,
     }
-    assert config.max_iterations == 40
     assert config.max_history_days == 30
 
 

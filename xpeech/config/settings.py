@@ -201,7 +201,6 @@ class LLMConfig(BaseModel):
     support_video: bool = False
     support_json_output: bool = False
     parallel: int = Field(default=4)
-    max_iterations: int = Field(default=40, ge=1)
     max_history_days: int = Field(default=30, ge=1)
 
     @field_validator("parameters")
