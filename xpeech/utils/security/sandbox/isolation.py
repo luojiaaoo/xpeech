@@ -122,6 +122,11 @@ async def wrap_sandbox_command(
         # Headless LibreOffice resolves shared registry links through /etc.
         "/etc/libreoffice",
         "/etc/papersize",
+        # TeX Live stores configuration, generated formats and symlink targets here.
+        "/etc/texmf",
+        "/var/lib/texmf",
+        # ImageMagick resolves system policies, fonts and delegates here.
+        "/etc/ImageMagick-6",
         # Fontconfig needs its configuration as well as fonts under /usr.
         "/etc/fonts",
         "/var/cache/fontconfig",

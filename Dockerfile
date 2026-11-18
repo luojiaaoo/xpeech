@@ -63,9 +63,15 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
         /etc/apt/sources.list && \
     apt-get -o Acquire::https::Verify-Peer=false update && \
     apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates && \
-    # 基础工具：定时清理、网络下载、Git 仓库操作、JSON 处理、归档和时区支持。
+    # 补充文件检索、格式识别和文本处理工具。
     apt-get install -y --no-install-recommends \
-        cron curl git jq zip tzdata xz-utils && \
+        ripgrep fd-find tree file less moreutils dos2unix && \
+    # 数据处理：JSON、CSV/TSV、XML 和 SQLite，优先通过命令行组合处理。
+    apt-get install -y --no-install-recommends \
+        jq miller xmlstarlet sqlite3 && \
+    # 下载、仓库、归档、定时清理和时区支持。
+    apt-get install -y --no-install-recommends \
+        cron curl git zip unzip bzip2 xz-utils p7zip-full tzdata && \
     # Shell 沙盒：bubblewrap 隔离进程和文件系统，slirp4netns 提供出站网络。
     apt-get install -y --no-install-recommends \
         bubblewrap slirp4netns && \
@@ -84,9 +90,18 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     # Office 文档：无界面处理和转换文字文档、演示文稿、表格及绘图文件。
     apt-get install -y --no-install-recommends \
         libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-draw && \
-    # PDF 与文档转换：PDF 文本提取、页面渲染，以及 Markdown/HTML 等格式转换。
+    # 邮件附件：从本地 MIME 邮件文件提取附件。
     apt-get install -y --no-install-recommends \
-        poppler-utils pandoc && \
+        ripmime && \
+    # PDF 与文档转换：检索、渲染、OCR 和格式转换。
+    apt-get install -y --no-install-recommends \
+        poppler-utils qpdf pdfgrep img2pdf ocrmypdf pandoc weasyprint wkhtmltopdf && \
+    # LaTeX：XeLaTeX、中文支持和 Pandoc 默认模板所需的字体。
+    apt-get install -y --no-install-recommends \
+        texlive-xetex texlive-lang-chinese texlive-fonts-recommended lmodern && \
+    # 图片处理：裁剪、拼接、HEIC 转换、SVG 渲染及 EXIF 元数据。
+    apt-get install -y --no-install-recommends \
+        imagemagick libimage-exiftool-perl libheif-examples librsvg2-bin && \
     # OCR：识别图片和扫描件中的英文、简体中文文字。
     apt-get install -y --no-install-recommends \
         tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim && \
