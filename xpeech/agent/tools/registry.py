@@ -19,7 +19,7 @@ from .mcp_client import (
     register_mcp_bindings,
 )
 from .research import build_research_tools
-from .schedule import feishu_schedule, feishu_schedule_cancel, feishu_schedule_list
+from .schedule import feishu_schedule_cancel, feishu_schedule_cron, feishu_schedule_list, feishu_schedule_once
 from .sessions import build_session_tools
 from .shell import build_shell_tools
 from .web import baidu_search, bing_search, web_fetch
@@ -82,9 +82,9 @@ async def register_tools(
         max_history_days=settings.llm.max_history_days,
     ):
         provider.register_function_tool(tool)
-    # if not not_interactive:
-    #     for tool in (feishu_schedule, feishu_schedule_list, feishu_schedule_cancel):
-    #         provider.register_function_tool(tool)
+    if channel == "feishu" and not not_interactive:
+        for tool in (feishu_schedule_cron, feishu_schedule_once, feishu_schedule_list, feishu_schedule_cancel):
+            provider.register_function_tool(tool)
 
     registrations: dict[str, MCPServerRegistration] = {}
     filter_context = FilterContext(channel=channel, org=user_organization)

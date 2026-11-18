@@ -1,13 +1,12 @@
 function userId(r) {
-    // Internal requests pass user IDs in headers; external APIs ignore this header.
-    const fallback = r.headersIn['X-User-Id'] || '';
+    // User affinity comes only from JWT sub; verification stays in the backend.
     const bearer = (r.headersIn.Authorization || '').match(/^Bearer\s+(\S+)$/i);
-    if (!bearer) return fallback;
+    if (!bearer) return '';
     try {
         const claims = JSON.parse(Buffer.from(bearer[1].split('.')[1], 'base64url').toString());
-        return typeof claims.sub === 'string' ? claims.sub : fallback;
+        return typeof claims.sub === 'string' ? claims.sub : '';
     } catch (_) {
-        return fallback;
+        return '';
     }
 }
 

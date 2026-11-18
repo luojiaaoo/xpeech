@@ -87,7 +87,7 @@ uv run python -c "import secrets; print(secrets.token_hex(32))"
 
 ```toml
 [jwt]
-# 仅供 backend、scheduler、Web 统计代理等内部服务互信
+# 仅供 backend、飞书任务 API、Web 统计代理等内部服务互信
 secret_key = "replace-with-an-internal-random-value"
 algorithm = "HS256"
 access_token_expire_seconds = 60
@@ -104,9 +104,8 @@ secret_key = "replace-with-a-different-feishu-random-value"
 内部 token 不携带 `kid`，直接使用 `secret_key` 验签。channel token 的 header
 使用 `kid` 从 `jwt.channels` 选择同名通道的 `secret_key`，包括 `web_client` 和 `feishu`。
 聊天、追问、文件、技能接口必须使用同时带 channel `kid` 和用户 `sub` 的 JWT；
-后台消息接口只需带 `kid` 的 channel JWT。对外接口忽略 `x-user-id` 请求头；
-`/statistics` 及其子接口、`/internal/scheduled-run` 和 scheduler
-服务的接口使用内部 JWT，通过 `jwt.secret_key` 验签。
+对外接口忽略 `x-user-id` 请求头；
+`/statistics` 及其子接口、飞书任务管理 API 使用内部 JWT，通过 `jwt.secret_key` 验签。
 
 自定义系统接入可在 `jwt.channels` 下配置独立通道，通道名就是 JWT header 的 `kid`：
 
@@ -184,13 +183,10 @@ uv run -m xpeech api
 # API 服务（省略服务名时的等价写法）
 uv run -m xpeech
 
-# 调度服务（单实例；到期后通过 HTTP 请求 API 执行）
-uv run -m xpeech scheduler
-
 # Web 客户端（依赖 API 服务）
 uv run -m xpeech web_client
 
-# 飞书桥接（依赖 API 服务）
+# 飞书渠道（包含任务管理 API 和调度器；单实例）
 uv run -m xpeech feishu
 
 # Lark 令牌管理
@@ -282,8 +278,7 @@ xpeech/
 ├── agent/                   # Agent、工具、后端 API 和共享 HTTP 协议/客户端
 ├── subapp/
 │   ├── channel/             # 飞书、Web 客户端和共享通道逻辑
-│   ├── lark_token_manager/  # Lark 设备授权与令牌管理
-│   └── scheduler/           # 定时任务 API、后台调度和结果队列
+│   └── lark_token_manager/  # Lark 设备授权与令牌管理
 ├── config/
 ├── provider/
 └── utils/
@@ -291,19 +286,18 @@ xpeech/
 
 依赖方向为 `subapp → 核心`；`agent`、`config`、`provider`、`utils` 等核心代码不导入
 `subapp`。调度工具、共享协议和 HTTP 客户端统一位于 `agent/tools/schedule/`，
-后台 Agent 执行位于 `agent/background.py`。
+飞书任务管理、调度与结果投递位于 `subapp/channel/feishu/`，执行复用 `/chat_sync`。
 所有服务统一使用 `uv run -m xpeech <服务名>` 启动；不指定服务名时默认启动 API。
 Compose 已配置相同入口。
 
 ## Docker Compose 部署
 
-Compose 会启动六类容器：
+Compose 会启动以下容器：
 
 - `lark-token-manager`：飞书用户令牌管理服务
 - `backend`：Xpeech API、Agent 和工具执行服务，默认启动 8 个副本
-- `scheduler`：单实例调度服务，独占 `schedule.db`，通过 Nginx 调用 backend 执行到期任务
 - `nginx`：后端 API 入口，按 JWT `sub` 将同一用户稳定分配到同一 backend
-- `feishu`：飞书长连接桥接服务，通过 Docker 内网访问后端
+- `feishu`：单实例飞书长连接、任务管理和调度服务，通过 Docker 内网访问后端
 - `web_client`：Web 客户端及认证代理，默认暴露在 `http://localhost:7939`
 
 Nginx 使用普通 `hash $user_id` 直接选择 DNS 解析出的副本。这里不能使用
@@ -373,17 +367,18 @@ docker compose up -d --build --no-deps --force-recreate backend
 BACKEND_REPLICAS=8 BACKEND_PORT=8080 WEB_CLIENT_PORT=8081 docker compose up -d --build
 ```
 
-Nginx 按 JWT `sub`（对外请求）或 `x-user-id`（内部请求）做一致性哈希分流；两者都没有时正常轮询。
+Nginx 仅按 JWT `sub` 做普通哈希分流；没有 `sub` 时正常轮询，不使用 `x-user-id` 参与路由。
 JWT 验签由 backend 负责。
 `/chat`、`/answer_question`、文件和技能请求必须使用用户 JWT，且 `sub` 保持一致；对外接口忽略 `x-user-id` 请求头。
-内部 JWT 仅用于服务鉴权，用户参数通过 `x-user-id` 直接传递。调整副本数或替换 backend 容器可能改变用户的映射，操作前应先等待
+内部 JWT 仅用于服务鉴权；飞书任务管理 API 通过 `x-user-id` 传递用户身份，该请求直接访问飞书进程。
+调整副本数或替换 backend 容器可能改变用户的映射，操作前应先等待
 正在进行的 SSE 会话结束。
 
 查看运行状态和日志：
 
 ```bash
 docker compose ps
-docker compose logs -f lark-token-manager backend scheduler nginx feishu web_client
+docker compose logs -f lark-token-manager backend nginx feishu web_client
 ```
 
 持久化数据统一映射到宿主机
@@ -395,26 +390,27 @@ docker compose logs -f lark-token-manager backend scheduler nginx feishu web_cli
 lark-cli-auth：
 
 ```bash
-docker compose up -d --force-recreate lark-token-manager backend scheduler nginx feishu web_client
+docker compose up -d --force-recreate lark-token-manager backend nginx feishu web_client
 
 # lark-cli 构建配置发生变化时
 docker compose up -d --build --force-recreate backend
 ```
 
-后台定时任务由单实例 `scheduler` 管理，backend 使用内部 JWT 通过 HTTP 创建、查询和取消任务。
-到期后 scheduler 携带内部 JWT 和 `x-user-id` 请求 `http://nginx:7878/internal/scheduled-run`，
-由用户对应的 backend 使用 `background=True` 执行，结果返回 scheduler 供飞书轮询。
-`/background_message` 经 Nginx 到达任意 backend，backend 校验通道 JWT 并限制仅 Feishu 通道可领取，
-再使用内部 JWT 向 scheduler 领取消息，不需要绑定特定实例。
-Nginx 对所有 API 使用同一条哈希转发规则。
+飞书进程内管理和持久化定时任务。backend 的飞书交互聊天通过内部 JWT 调用飞书任务 API，
+到期后由飞书携带用户 JWT 请求网关的 `/chat_sync`，并将结果直接发送到创建者的飞书私聊。
+任务保存在 PostgreSQL 的 `feishu_scheduled_jobs` 表，飞书进程必须保持单实例、单 worker。
 
-数据库使用 `data/session/schedule.db`。scheduler 以单实例运行，独占该数据库。
-调度期间需保持 Nginx/backend 可用，执行 HTTP 请求失败时会发送失败提示，不自动重试；
-停机期间错过的任务会被跳过。待发送结果保存在 scheduler 内存中，重启会丢失未发送结果。
+本地启动 API 可通过 `--feishu-url` 指定飞书管理地址，默认 `http://127.0.0.1:8090`；
+飞书通过 `--host`、`--port` 配置内部监听地址，通过 `--chat-url` 配置后端网关地址，默认
+`http://127.0.0.1:7878`。Compose 不向宿主机开放飞书管理端口，也不要求飞书启动时等待后端就绪。
 
-本地运行 API 时，也需要在另一个终端执行 `uv run -m xpeech scheduler`。
-API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backend-url` 指定 backend
-网关地址；两者默认分别为 `http://127.0.0.1:8090` 和 `http://127.0.0.1:7878`。
+执行超时为 1 小时，不自动重试执行；执行失败会尝试发送失败提示。结果直接投递，不提供持久化补发；
+发送失败会记录日志。取消任务只阻止后续触发，已经开始的任务继续完成。
+
+从旧部署切换：先执行 `docker compose stop scheduler` 停止旧服务，再部署新代码并执行
+`docker compose up -d --build --remove-orphans`。旧任务不会迁移，需要重新创建。
+确认旧服务停止后，可在配置的数据库内执行 `DROP TABLE IF EXISTS apscheduler_jobs;` 清理旧表；
+应用启动不会读取、迁移或自动删除旧表。
 
 ## 自我改进与经验学习
 
@@ -460,8 +456,8 @@ API 使用 `--scheduler-url` 指定 scheduler 地址，scheduler 使用 `--backe
 省略、空值或其他格式均返回 HTTP 422。
 Web 客户端为新会话生成 UUIDv7，不提供默认会话；只有飞书桥接使用其 channel 内定义的固定
 `DEFAULT_SESSION_ID`，并在聊天和答题请求中显式传入。
-流式交互会话均向模型提供后台任务工具
-`feishu_schedule`、`feishu_schedule_list` 和 `feishu_schedule_cancel`；`/chat_sync` 等非交互执行不提供这些工具。
+飞书流式交互会话向模型提供后台任务工具
+`feishu_schedule_cron`、`feishu_schedule_once`、`feishu_schedule_list` 和 `feishu_schedule_cancel`；`/chat_sync` 等非交互执行不提供这些工具。
 对外用户身份只使用 JWT `sub`；仅内部请求通过 `x-user-id` 传递用户。代码字段使用 `user_id`，Shell 环境变量使用 `SHELL_USER_ID`，
 OAuth2 用户标识配置使用 `user_id_claim`。
 
@@ -577,7 +573,7 @@ YAML 包含本轮用户消息、工具调用、工具结果和最终回答，不
 `Session`，异步服务使用异步 engine 和 SQLModel `AsyncSession`，驱动为 psycopg 3。
 同步与异步连接统一显式使用 `READ COMMITTED`（读已提交）隔离级别。
 Web 用户及登录会话表为 `users`、`sessions`，飞书令牌表为 `lark_token_sessions`、
-`lark_device_authorizations`，定时任务表为 `apscheduler_jobs`。
+`lark_device_authorizations`，定时任务表为 `feishu_scheduled_jobs`。
 
 ```toml
 [database]
@@ -623,21 +619,36 @@ XPEECH_TEST_DATABASE_URL='postgresql://test_user:test_password@127.0.0.1:5432/xp
 ## 飞书定时任务
 
 在飞书会话中可以直接用自然语言要求 Agent 创建、查看或取消定时任务，例如“明天上午 9 点提醒我
-提交周报”或“每天上午 9 点发送一份行业简报”。Agent 会分别调用 `feishu_schedule`、
-`feishu_schedule_list` 和 `feishu_schedule_cancel`。创建任务仅支持飞书会话；查看和取消操作只会
+提交周报”或“每天上午 9 点发送一份行业简报”。Agent 使用 `feishu_schedule_once` 创建单次任务，
+使用 `feishu_schedule_cron` 创建周期任务，使用 `feishu_schedule_list` 查看、`feishu_schedule_cancel` 取消任务。
+这四个工具仅在飞书交互聊天中提供；查看和取消操作只会
 作用于当前用户拥有的任务。每个用户最多同时保留 4 个定时任务。
 
-创建任务时，`run_at` 和 `cron` 只能有一个有效值：
+创建任务时，两个工具都需要 `prompt`，并且只接收各自的时间字段：
 
-- `run_at`：单次任务的 ISO 8601 时间，例如 `2026-09-08T09:00:00+08:00`。时区可以省略；
+- `feishu_schedule_once` 的 `run_at`：单次任务的 ISO 8601 时间，例如 `2099-01-01T09:00:00+08:00`，调用时按当前日期计算未来时间。时区可以省略；
   省略时按服务端系统本地时区解释。建议显式携带时区偏移，避免部署环境变化产生歧义。
-- `cron`：周期任务的标准 5 段 cron 表达式，例如 `0 9 * * *` 表示每天 9:00。分钟字段不能
-  包含 `*`，因此 `* * * * *`、`*/5 * * * *` 等表达式会被拒绝。
-- 空字符串和纯空白字段按未提供处理；如果两个字段都有有效值，或两个字段都没有有效值，任务创建失败。
+- `feishu_schedule_cron` 的 `cron`：周期任务的标准 5 段 cron 表达式，例如 `0 9 * * *` 表示每天 9:00。
+  分钟字段允许单个 `0–59` 的分钟值，或两个相差 30 分钟的值，如 `0,30`、`11,41`、`15,45`。
+  不允许 `*`、步长、范围及其他组合，每小时最多执行两次。
+  用户未指定具体分钟时，建议避开整点、半点等常见时间，以避免并发高峰；指定时间则按用户要求执行。
+- 时间字段必填且不能为 `null`、空字符串或纯空白；不要向工具传入另一种任务的时间字段。
 
-独立的 scheduler 服务启动时会读取 `[database]` 指定的 PostgreSQL 数据库中的 `apscheduler_jobs` 表。
-backend 通过 `api --scheduler-url` 管理任务，scheduler 通过 `scheduler --backend-url` 触发执行；
+飞书渠道启动时读取 `[database]` 指定的 PostgreSQL 数据库中的 `feishu_scheduled_jobs` 表。
+backend 通过 `api --feishu-url` 管理任务，飞书通过 `feishu --chat-url` 调用 `/chat_sync` 执行。
 Compose 将后者设置为 Nginx 地址。
+
+任务管理接口只接受内部 JWT，使用 `x-user-id` 指定当前用户；请求响应是结构化 JSON 对象：
+
+| 接口 | 请求 / 响应 |
+| --- | --- |
+| `POST /schedules` | 请求包含 `prompt`、`run_at`、`cron`、`sender_name`、`session_metadata`（必须包含 `open_id`）；两个时间字段都必填，未使用者传 `null`；返回 `{"task": {...}}` |
+| `GET /schedules` | 返回 `{"tasks": [...]}`，仅列出当前用户任务 |
+| `DELETE /schedules/{job_id}` | 返回 `{"job_id": "...", "cancelled": true}`；不存在或非当前用户任务返回 404 |
+| `GET /health` | 无需鉴权，调度器运行返回 200，否则返回 503 |
+
+`task` 包含 `job_id`、`prompt`、`schedule_type`、`schedule_value`、`next_run_time`。
+业务参数不合法或超过每用户 4 个任务的限制返回 400，请求结构错误返回 422，错误位于 `detail`。
 
 任务会跨服务重启持久化，但不会补跑停机期间错过的任务：过期的单次任务会被删除，周期任务会推进到
 下一次未来执行时间。任务触发后会随机等待 0～3 分钟以分散并发，然后在独立的后台 Agent 运行中执行；
@@ -832,7 +843,8 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `ask_user_question` | 向用户发送表单提问 |
 | `list_sessions` | 分页查看当前用户的普通会话和后台执行历史，包含各自的渠道名 |
 | `read_session` | 按会话 ID 分页读取历史消息 |
-| `feishu_schedule` | 为当前飞书会话创建单次或周期后台定时任务 |
+| `feishu_schedule_cron` | 为当前飞书会话创建周期后台定时任务 |
+| `feishu_schedule_once` | 为当前飞书会话创建单次后台定时任务 |
 | `feishu_schedule_list` | 查看当前用户的定时任务 |
 | `feishu_schedule_cancel` | 取消当前用户拥有的定时任务 |
 

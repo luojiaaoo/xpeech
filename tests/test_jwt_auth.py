@@ -438,7 +438,6 @@ def test_token_endpoint_issues_channel_jwt_for_docs(channel):
         ("POST", "/chat"),
         ("POST", "/chat_sync"),
         ("POST", "/answer_question"),
-        ("GET", "/background_message"),
         ("GET", "/files?path=result.txt"),
         ("GET", "/skills"),
         ("POST", "/skills/import"),

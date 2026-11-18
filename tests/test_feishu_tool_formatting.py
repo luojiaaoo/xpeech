@@ -3,12 +3,28 @@ from html import unescape
 
 import pytest
 
-from xpeech.subapp.channel.feishu.formatting import OUTPUT_EVENT_TYPES, FeishuEventFormatter
+from xpeech.subapp.channel.feishu.formatting import OUTPUT_EVENT_TYPES, FeishuEventFormatter, ensure_markdown
 from xpeech.subapp.channel.schema import ChatEvent, ChatEventType
 
 
 def tool_event(event_type, entries):
     return ChatEvent(event=event_type, context=json.dumps(entries, ensure_ascii=False))
+
+
+def test_token_usage_shows_summary_metrics_with_model_call_count():
+    usage = {
+        "上下文使用率": "13.61% (20k / 147k)",
+        "上下文明细": {
+            "系统提示词": {"词元数": 2000, "占比": 2000 / 147000},
+            "对话消息": {"词元数": 18000, "占比": 18000 / 147000},
+            "剩余空间": {"词元数": 127000, "占比": 127000 / 147000},
+        },
+        "总 Token": "1k",
+        "会话时长": "2秒",
+        "输入 Token": "0k", "输出 Token": "0k", "大模型请求次数": "1",
+    }
+    formatted = FeishuEventFormatter()._format_token_usage(json.dumps(usage))
+    assert formatted == "上下文使用率：13.61% (20k / 147k) | 总 Token：1k | 会话时长：2秒 | 大模型请求次数：1"
 
 
 @pytest.mark.parametrize("event_type", [ChatEventType.THINKING, ChatEventType.TOOL_CALL])
@@ -30,8 +46,8 @@ def test_collapsed_streaming_card_uses_shared_output_configuration(monkeypatch, 
     assert panel["tag"] == "collapsible_panel"
     assert panel["expanded"] is True
     assert panel["header"] == {
-        "title": {"tag": "plain_text", "content": "自定义标题"},
-        "expanded_title": {"tag": "plain_text", "content": "自定义展开标题"},
+        "title": {"tag": "plain_text", "content": "> 自定义标题"},
+        "expanded_title": {"tag": "plain_text", "content": "∨ 自定义标题"},
     }
     [body] = panel["elements"]
     assert body["text_size"] == "normal"
@@ -43,11 +59,11 @@ def test_tool_results_are_stream_data_without_a_separate_card_format():
     formatter = FeishuEventFormatter()
     event = tool_event(
         ChatEventType.TOOL_CALL_RESULT,
-        {"id": "id", "name": "shell", "result": "result", "duration_seconds": 0},
+        {"tool_call_id": "id", "name": "shell", "result": "result", "duration_seconds": 0},
     )
     assert ChatEventType.TOOL_CALL_RESULT not in OUTPUT_EVENT_TYPES
     assert formatter._format_chat_event(event) is None
-    assert formatter._format_tool_event(event) == "**shell**\nresult"
+    assert formatter._format_tool_result("result") == "result"
 
 
 @pytest.mark.parametrize("raw", [
@@ -59,10 +75,10 @@ def test_tool_card_displays_markup_as_text_without_changing_tool_results(raw):
     formatter = FeishuEventFormatter()
     event = tool_event(
         ChatEventType.TOOL_CALL_RESULT,
-        {"id": "id", "name": "web_fetch", "result": raw, "duration_seconds": 0},
+        {"tool_call_id": "id", "name": "web_fetch", "result": raw, "duration_seconds": 0},
     )
-    result_text = formatter._format_tool_event(event)
-    assert result_text == "**web_fetch**\n" + raw
+    result_text = formatter._format_tool_result(raw)
+    assert result_text == raw
     message, _ = formatter._format_chat_event(ChatEvent(event=ChatEventType.TOOL_CALL, context=result_text))
     content = message["card"]["body"]["elements"][0]["elements"][0]["content"]
     assert "<" not in content and ">" not in content
@@ -82,11 +98,43 @@ def test_tool_card_truncation_keeps_html_entities_complete(monkeypatch):
     assert content == "&lt;…"
 
 
+@pytest.mark.parametrize("fence", ["```", "````", "~~~"])
+@pytest.mark.parametrize("closed", [False, True])
+def test_xml_code_blocks_preserve_source_while_surrounding_text_is_escaped(fence, closed):
+    code = f'{fence}xml\n<root value="a & b">&amp; <at id="all" /></root>\n'
+    suffix = ""
+    if closed:
+        code += fence + "\n"
+        suffix = "正文 <outside>&"
+    raw = "**标题** <outside>&\n" + code + suffix
+    assert ensure_markdown(raw) == (
+        "**标题** &lt;outside&gt;&amp;\n" + code
+        + ("正文 &lt;outside&gt;&amp;" if closed else "")
+    )
+
+
+def test_shorter_or_mismatched_fences_do_not_end_a_code_block():
+    code = "````xml\n<one/>\n```\n<two/>\n~~~~\n<three/>\n````\n"
+    assert ensure_markdown(code + "<outside/>") == code + "&lt;outside/&gt;"
+
+
+def test_multiple_code_blocks_and_crlf_line_endings_are_preserved():
+    raw = "```xml\r\n<first/>&\r\n```\r\n<outside/>\r\n```html\r\n<div/>\r\n```"
+    assert ensure_markdown(raw) == raw.replace("<outside/>", "&lt;outside/&gt;")
+
+
+def test_truncation_preserves_literal_ampersands_inside_code_and_complete_entities_outside():
+    code = "```xml\n<root>&literal</root>\n```\n"
+    limit = len("```xml\n<root>&lit") + 1
+    assert ensure_markdown(code, limit) == "```xml\n<root>&lit…"
+    assert ensure_markdown(code + "<&" * 10, len(code) + 8) == code + "&lt;…"
+
+
 @pytest.mark.parametrize("event_type", [ChatEventType.ERROR, ChatEventType.COMMAND, ChatEventType.TOKEN_USAGE])
 def test_non_streaming_card_escapes_dynamic_markup_and_preserves_markdown(event_type):
     formatter = FeishuEventFormatter()
     raw = '**标题**\n[链接](https://example.test)\n<rss>甲 &amp; 乙</rss>'
-    context = json.dumps({"tokens": raw}) if event_type == ChatEventType.TOKEN_USAGE else raw
+    context = json.dumps({"总 Token": raw}) if event_type == ChatEventType.TOKEN_USAGE else raw
     event = ChatEvent(event=event_type, context=context)
     message, _ = formatter._format_chat_event(event)
     content = message["card"]["body"]["elements"][0]["content"]
@@ -105,13 +153,10 @@ def test_truncation_limits_are_configured_in_output_event_types(monkeypatch):
     }
     monkeypatch.setitem(OUTPUT_EVENT_TYPES, ChatEventType.TOOL_CALL, output)
     formatter = FeishuEventFormatter()
-    summary = formatter._format_tool_event(tool_event(ChatEventType.TOOL_CALL, [["id", "echo", "参" * 30]]))
-    text = formatter._format_tool_event(tool_event(
-        ChatEventType.TOOL_CALL_RESULT,
-        {"id": "id", "name": "echo", "result": "果" * 30, "duration_seconds": 0},
-    ))
+    summary = formatter._format_tool_title({"name": "echo", "arguments": "参" * 30})
+    text = formatter._format_tool_result("果" * 30)
     assert summary == "echo " + "参" * 9 + "…"
-    assert text == "**echo**\n" + "果" * 19 + "…"
+    assert text == "果" * 19 + "…"
     message, _ = formatter._format_chat_event(
         ChatEvent(event=ChatEventType.TOOL_CALL, context=text * 10),
         title=summary * 10,
@@ -125,14 +170,9 @@ def test_truncation_limits_are_configured_in_output_event_types(monkeypatch):
 
 @pytest.mark.parametrize("value", ["", None, ["item"], {"found": [1, 2]}])
 def test_empty_and_structured_results_are_preserved(value):
-    text = FeishuEventFormatter()._format_tool_event(
-        tool_event(
-            ChatEventType.TOOL_CALL_RESULT,
-            {"id": "id", "name": "search", "result": value, "duration_seconds": 0},
-        ),
-    )
+    text = FeishuEventFormatter()._format_tool_result(value)
     expected = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
-    assert text == "**search**\n" + expected
+    assert text == expected
 
 
 def test_default_limits_bound_a_large_unicode_card():
@@ -141,12 +181,3 @@ def test_default_limits_bound_a_large_unicode_card():
         title="😃" * 5_000,
     )
     assert len(json.dumps(message, ensure_ascii=False).encode("utf-8")) < 30_000
-
-
-@pytest.mark.parametrize("raw", [
-    "not JSON", '{"unexpected":true}', '[["id"]]', '["id","echo","old format",0]',
-    '{"id":"id","name":"echo","duration_seconds":0}',
-])
-@pytest.mark.parametrize("event_type", [ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT])
-def test_malformed_tool_events_remain_visible(raw, event_type):
-    assert FeishuEventFormatter()._format_tool_event(ChatEvent(event=event_type, context=raw)) == raw

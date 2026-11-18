@@ -103,7 +103,7 @@ def _feishu_options(
     return feishu_options
 
 
-def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
+def _feishu_field(field: dict[str, Any], *, disabled: bool = False, value: Any = None) -> list[dict[str, Any]]:
     placeholder = {
         "tag": "plain_text",
         "content": field.get("placeholder") or "请选择",
@@ -177,74 +177,114 @@ def _feishu_field(field: dict[str, Any]) -> list[dict[str, Any]]:
     else:
         raise ValueError(f"Unsupported question field type: {field_type}")
 
+    component = elements[-1]
+    component["disabled"] = disabled
+    if value is not None:
+        match field_type:
+            case "input":
+                component["default_value"] = value
+            case "select":
+                if value:
+                    component["initial_option"] = value
+            case "multi_select":
+                component["selected_values"] = value
+            case "date":
+                if value:
+                    component["initial_date"] = value[:10]
+            case "datetime":
+                if value:
+                    component["initial_datetime"] = value[:16]
     return elements
 
 
-def build_feishu_question_card(question_context: str) -> dict[str, Any]:
+def build_feishu_question_card(
+    question_context: str, *, disabled: bool = False,
+    answers: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     try:
         question = json.loads(question_context)
     except json.JSONDecodeError as exc:
         raise ValueError(f"JSON 格式错误: {exc}") from exc
-    confirmation = isinstance(question, dict) and question.get("type") == "confirm"
-    if confirmation:
-        form = validate_confirm_question_json(question)
-    else:
-        form = validate_question_form_json(question)
+    if not isinstance(question, dict):
+        raise ValueError("问题 JSON 必须是对象")
+    match question.get("type", "form"):
+        case "confirm":
+            confirmation = validate_confirm_question_json(question)
+            return FINISH_CARD_CONTENT if disabled else _build_feishu_confirm_card(confirmation)
+        case "form":
+            return _build_feishu_form_card(validate_question_form_json(question), disabled=disabled, answers=answers)
+        case question_type:
+            raise ValueError(f"Unsupported question type: {question_type}")
+
+
+def _build_feishu_confirm_card(question: dict[str, Any]) -> dict[str, Any]:
+    """沿用原有确认卡片：完整执行说明与参数正文，以及确认 / 取消按钮。"""
     elements: list[dict[str, Any]] = []
-    for field in form.get("fields", []):
-        elements.extend(_feishu_field(field))
-
-    if confirmation:
-        if form["description"]:
-            elements.append(
-                {
-                    "tag": "div",
-                    "text": {
-                        "tag": "plain_text",
-                        "content": form["description"],
-                        "text_size": "normal",
-                        "text_align": "left",
-                        "text_color": "default",
-                    },
-                    "margin": "0px 0px 0px 0px",
-                }
-            )
-        buttons = [
-            {
-                "tag": "button",
-                "text": plain_text(label),
-                "type": "primary" if decision == "confirm" else "default",
-                "width": "default",
-                "behaviors": [{"type": "callback", "value": {"decision": decision}}],
-            }
-            for label, decision in (("确认", "confirm"), ("取消", "cancel"))
-        ]
-    else:
-        buttons = [{
-            "tag": "button",
-            "text": plain_text(form.get("submit_label") or "提交"),
-            "type": "primary",
-            "width": "default",
-            "form_action_type": "submit",
-            "name": "submit_question",
-        }]
-
-    elements.append(
+    if question["description"]:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "plain_text", "content": question["description"],
+                "text_size": "normal", "text_align": "left", "text_color": "default",
+            },
+            "margin": "0px 0px 0px 0px",
+        })
+    elements.append(_feishu_question_actions([
         {
-            "tag": "column_set",
-            "horizontal_align": "left",
-            "columns": [
-                {
-                    "tag": "column",
-                    "width": "auto",
-                    "elements": [button],
-                    "vertical_align": "top",
-                }
-                for button in buttons
-            ],
+            "tag": "button", "text": plain_text(label),
+            "type": "primary" if decision == "confirm" else "default",
+            "width": "default",
+            "behaviors": [{"type": "callback", "value": {"decision": decision}}],
         }
-    )
+        for label, decision in (("确认", "confirm"), ("取消", "cancel"))
+    ]))
+    return _feishu_question_card(question["title"], "", elements)
 
+
+def _build_feishu_form_card(
+    form: dict[str, Any], *, disabled: bool = False, answers: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    elements: list[dict[str, Any]] = []
+    for field in form["fields"]:
+        elements.extend(_feishu_field(field, disabled=disabled, value=(answers or {}).get(field["name"])))
+    elements.append(_feishu_question_actions([{
+        "tag": "button",
+        "text": plain_text(form.get("submit_label") or "提交"),
+        "type": "primary",
+        "width": "default",
+        "disabled": disabled,
+        "form_action_type": "submit",
+        "name": "submit_question",
+    }]))
+    return _feishu_question_card(form["title"], form["subtitle"], [{
+        "tag": "form",
+        "elements": elements,
+        "direction": "vertical",
+        "padding": "4px 0px 4px 0px",
+        "margin": "0px 0px 0px 0px",
+        "name": "question_form",
+    }])
+
+
+def _feishu_question_actions(buttons: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "tag": "column_set",
+        "horizontal_align": "left",
+        "columns": [
+            {
+                "tag": "column",
+                "width": "auto",
+                "elements": [button],
+                "vertical_align": "top",
+            }
+            for button in buttons
+        ],
+    }
+
+
+def _feishu_question_card(
+    title: str, subtitle: str, elements: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "schema": "2.0",
         "config": {
@@ -262,20 +302,11 @@ def build_feishu_question_card(question_context: str) -> dict[str, Any]:
         "body": {
             "direction": "vertical",
             "padding": "12px 12px 12px 12px",
-            "elements": elements if confirmation else [
-                {
-                    "tag": "form",
-                    "elements": elements,
-                    "direction": "vertical",
-                    "padding": "4px 0px 4px 0px",
-                    "margin": "0px 0px 0px 0px",
-                    "name": "question_form",
-                }
-            ],
+            "elements": elements,
         },
         "header": {
-            "title": plain_text(form["title"]),
-            "subtitle": plain_text("" if confirmation else form["subtitle"]),
+            "title": plain_text(title),
+            "subtitle": plain_text(subtitle),
             "template": "blue",
             "padding": "12px 12px 12px 12px",
         },

@@ -1,4 +1,4 @@
-"""HTTP calls between API workers and the single scheduler service."""
+"""HTTP calls from Agent tools to the Feishu channel task API."""
 
 from typing import Any
 
@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from ....utils.internal_jwt import create_internal_access_token
 
 
-async def scheduler_request(
+async def feishu_request(
     method: str,
     path: str,
     *,
@@ -16,14 +16,14 @@ async def scheduler_request(
 ) -> Any:
     from ...server.server import app
 
-    scheduler_url = app.state.scheduler_url
+    feishu_url = app.state.feishu_url
     headers = {"Authorization": f"Bearer {create_internal_access_token()}"}
     if user_id is not None:
         headers["x-user-id"] = user_id
     async with AsyncClient(timeout=60) as client:
         response = await client.request(
             method,
-            f"{scheduler_url}{path}",
+            f"{feishu_url}{path}",
             headers=headers,
             json=payload,
         )

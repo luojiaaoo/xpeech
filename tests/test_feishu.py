@@ -1,4 +1,5 @@
 import asyncio
+import json
 from html import unescape
 from pathlib import Path
 from time import time
@@ -25,16 +26,22 @@ from lark_channel import (
 from lark_channel.channel.safety.pipeline import SafetyPipeline
 
 import xpeech.subapp.channel.feishu.bridge as feishu_bridge
+import xpeech.subapp.channel.feishu.conversation as feishu_conversation
 import xpeech.subapp.channel.feishu.delivery as feishu_delivery
 import xpeech.subapp.channel.feishu.inbound as feishu_inbound
+import xpeech.subapp.channel.feishu.questions as feishu_questions
 from xpeech.subapp.channel.feishu.bridge import FeishuBridge
 from xpeech.subapp.channel.feishu.cards import (
     FINISH_CARD_CONTENT,
     build_feishu_background_task_card,
+    build_feishu_question_card,
 )
 from xpeech.subapp.channel.feishu.channel import XpeechFeishuChannel
 from xpeech.subapp.channel.feishu.config import DEFAULT_SESSION_ID
+from xpeech.subapp.channel.feishu.formatting import FeishuEventFormatter
+from xpeech.subapp.channel.feishu.inbound import FeishuInbound
 from xpeech.subapp.channel.schema import ChatEvent, ChatEventType, FileData, Message, TextData
+from xpeech.utils.question import build_execution_question
 
 
 def _inbound_message(
@@ -58,14 +65,18 @@ def _bridge_with_channel(
     employee_no: str = "E1001",
     email: str | None = "alice@example.com",
 ) -> FeishuBridge:
-    bridge = object.__new__(FeishuBridge)
-    bridge.chat_url = "http://backend.test"
-    bridge.channel = channel
+    channel.on = MagicMock()
     channel.block_batch_scope = MagicMock()
     channel.unblock_batch_scope = MagicMock()
-    bridge.session_update_message_id = {}
-    bridge.get_user_identity = AsyncMock(return_value=(employee_no, email))
+    bridge = FeishuBridge("http://backend.test", "cli_test", "secret", channel=channel)
+    bridge.inbound.get_user_identity = AsyncMock(return_value=(employee_no, email))
     return bridge
+
+
+def _remember_question(bridge, message_id, question):
+    card = feishu_questions.QuestionCard(message_id, json.dumps(question))
+    bridge.questions.question_cards[message_id] = card
+    return card
 
 
 def test_channel_uses_expected_compatibility_configuration():
@@ -88,9 +99,12 @@ async def test_sdk_batches_busy_messages_and_card_answer_unblocks_agent(tmp_path
     bridge = FeishuBridge("http://backend.test", "cli_test", "secret")
     channel = bridge.channel
     channel._bg_loop = asyncio.get_running_loop()
-    bridge.get_user_identity = AsyncMock(return_value=("E1001", "alice@example.com"))
+    bridge.inbound.get_user_identity = AsyncMock(return_value=("E1001", "alice@example.com"))
     channel.download_resource_to_file = AsyncMock(return_value=tmp_path / "report.txt")
     channel.update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_question"))
+    question_card = _remember_question(bridge, "om_question", {
+        "type": "form", "fields": [{"type": "input", "name": "answer", "label": "回答"}],
+    })
     first_started = asyncio.Event()
     answered = asyncio.Event()
     batches = []
@@ -106,7 +120,7 @@ async def test_sdk_batches_busy_messages_and_card_answer_unblocks_agent(tmp_path
 
     bridge.consume = consume
     notify_question = AsyncMock(side_effect=answer)
-    monkeypatch.setattr(feishu_bridge, "notify_question", notify_question)
+    monkeypatch.setattr(feishu_questions, "notify_question", notify_question)
     safety = channel.config.safety
     pipeline = SafetyPipeline(
         loop=asyncio.get_running_loop(),
@@ -164,7 +178,9 @@ async def test_sdk_batches_busy_messages_and_card_answer_unblocks_agent(tmp_path
         "feishu",
         session_id=DEFAULT_SESSION_ID,
     )
-    channel.update_card.assert_awaited_once_with("om_question", FINISH_CARD_CONTENT)
+    channel.update_card.assert_awaited_once_with(
+        "om_question", build_feishu_question_card(question_card.context, disabled=True, answers={"answer": "yes"}),
+    )
 
 
 @pytest.mark.parametrize(
@@ -236,112 +252,6 @@ def test_background_task_card_escapes_dynamic_markup():
 
 
 @pytest.mark.asyncio
-async def test_background_poll_immediately_sends_markdown_card():
-    request = httpx.Request("GET", "http://backend.test/background_message")
-    response = httpx.Response(
-        200,
-        request=request,
-        json={
-            "channel": "feishu",
-            "open_id": "ou_receiver",
-            "content": "**scheduled result**",
-            "schedule_type": "cron",
-            "schedule_value": "0 9 * * *",
-        },
-    )
-    client = SimpleNamespace(get=AsyncMock(return_value=response))
-    send = AsyncMock(return_value=SendResult(success=True, message_id="om_background"))
-    bridge = _bridge_with_channel(SimpleNamespace(send=send))
-
-    assert await bridge.poll_background_message_once(client) is True
-
-    client.get.assert_awaited_once()
-    assert client.get.await_args.args == ("http://backend.test/background_message",)
-    assert client.get.await_args.kwargs["headers"]["authorization"].startswith("Bearer ")
-    send.assert_awaited_once_with(
-        to="ou_receiver",
-        message={
-            "card": build_feishu_background_task_card(
-                "**scheduled result**",
-                schedule_type="cron",
-                schedule_value="0 9 * * *",
-            ),
-        },
-    )
-
-
-@pytest.mark.asyncio
-async def test_background_poll_treats_no_content_as_empty():
-    request = httpx.Request("GET", "http://backend.test/background_message")
-    client = SimpleNamespace(
-        get=AsyncMock(return_value=httpx.Response(204, request=request)),
-    )
-    send = AsyncMock()
-    bridge = _bridge_with_channel(SimpleNamespace(send=send))
-
-    assert await bridge.poll_background_message_once(client) is False
-    send.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_background_poll_retries_failures_and_remains_cancellable(monkeypatch):
-    class ClientContext:
-        async def __aenter__(self):
-            return object()
-
-        async def __aexit__(self, *_args):
-            return None
-
-    monkeypatch.setattr(
-        feishu_bridge.httpx,
-        "AsyncClient",
-        lambda **_kwargs: ClientContext(),
-    )
-    sleep = AsyncMock()
-    monkeypatch.setattr(feishu_bridge.asyncio, "sleep", sleep)
-    bridge = _bridge_with_channel(SimpleNamespace())
-    bridge.poll_background_message_once = AsyncMock(
-        side_effect=[RuntimeError("backend unavailable"), asyncio.CancelledError()],
-    )
-
-    with pytest.raises(asyncio.CancelledError):
-        await bridge.poll_background_messages()
-
-    assert bridge.poll_background_message_once.await_count == 2
-    sleep.assert_awaited_once_with(feishu_bridge.BACKGROUND_MESSAGE_RETRY_SECONDS)
-
-
-@pytest.mark.asyncio
-async def test_bridge_lifecycle_runs_background_poll_task():
-    started = set()
-    cancelled = set()
-
-    async def wait_until_cancelled(name):
-        started.add(name)
-        try:
-            await asyncio.Event().wait()
-        finally:
-            cancelled.add(name)
-
-    async def connect():
-        await asyncio.sleep(0)
-
-    bridge = _bridge_with_channel(
-        SimpleNamespace(
-            connect=connect,
-            disconnect=AsyncMock(),
-        )
-    )
-    bridge.poll_background_messages = lambda: wait_until_cancelled("background")
-
-    await bridge.start()
-
-    assert started == {"background"}
-    assert cancelled == {"background"}
-    bridge.channel.disconnect.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_get_user_identity_queries_contact_api_and_caches_result():
     response = SimpleNamespace(
         success=lambda: True,
@@ -349,11 +259,10 @@ async def test_get_user_identity_queries_contact_api_and_caches_result():
     )
     get_user = AsyncMock(return_value=response)
     client = SimpleNamespace(contact=SimpleNamespace(v3=SimpleNamespace(user=SimpleNamespace(aget=get_user))))
-    bridge = object.__new__(FeishuBridge)
-    bridge.channel = SimpleNamespace(client=client)
+    bridge = SimpleNamespace(inbound=FeishuInbound(SimpleNamespace(client=client)))
 
-    first = await bridge.get_user_identity("ou_sender")
-    second = await bridge.get_user_identity("ou_sender")
+    first = await bridge.inbound.get_user_identity("ou_sender")
+    second = await bridge.inbound.get_user_identity("ou_sender")
 
     assert first == second == ("E1001", "alice@example.com")
     get_user.assert_awaited_once()
@@ -384,11 +293,10 @@ async def test_get_user_identity_queries_contact_api_and_caches_result():
 async def test_get_user_identity_rejects_api_failure_or_missing_fields(response, error_message: str):
     get_user = AsyncMock(return_value=response)
     client = SimpleNamespace(contact=SimpleNamespace(v3=SimpleNamespace(user=SimpleNamespace(aget=get_user))))
-    bridge = object.__new__(FeishuBridge)
-    bridge.channel = SimpleNamespace(client=client)
+    bridge = SimpleNamespace(inbound=FeishuInbound(SimpleNamespace(client=client)))
 
     with pytest.raises(RuntimeError, match=error_message):
-        await FeishuBridge.get_user_identity.__wrapped__(bridge, "ou_missing")
+        await FeishuInbound.get_user_identity.__wrapped__(bridge.inbound, "ou_missing")
 
 
 @pytest.mark.parametrize(
@@ -407,10 +315,9 @@ async def test_get_user_identity_supports_enterprise_or_missing_email(email, ent
     )
     get_user = AsyncMock(return_value=response)
     client = SimpleNamespace(contact=SimpleNamespace(v3=SimpleNamespace(user=SimpleNamespace(aget=get_user))))
-    bridge = object.__new__(FeishuBridge)
-    bridge.channel = SimpleNamespace(client=client)
+    bridge = SimpleNamespace(inbound=FeishuInbound(SimpleNamespace(client=client)))
 
-    identity = await FeishuBridge.get_user_identity.__wrapped__(bridge, "ou_sender")
+    identity = await FeishuInbound.get_user_identity.__wrapped__(bridge.inbound, "ou_sender")
 
     assert identity == ("E1001", expected_email)
 
@@ -419,7 +326,7 @@ async def test_get_user_identity_supports_enterprise_or_missing_email(email, ent
 async def test_parse_text_message_uses_employee_number_and_feishu_user_metadata():
     bridge = _bridge_with_channel(SimpleNamespace())
 
-    message = await bridge._parse_msg(_inbound_message(TextContent(text="hello")))
+    message = await bridge.inbound.parse_message(_inbound_message(TextContent(text="hello")))
 
     assert message.message_id == "om_message"
     assert message.chat_id == "oc_chat"
@@ -437,7 +344,7 @@ async def test_parse_text_message_uses_employee_number_and_feishu_user_metadata(
 async def test_parse_text_message_allows_missing_email():
     bridge = _bridge_with_channel(SimpleNamespace(), email=None)
 
-    message = await bridge._parse_msg(_inbound_message(TextContent(text="hello")))
+    message = await bridge.inbound.parse_message(_inbound_message(TextContent(text="hello")))
 
     assert message.user_id == "E1001"
     assert message.session_metadata == {
@@ -459,7 +366,7 @@ async def test_on_message_waits_for_consumption_and_releases_busy_scope(cancelle
         timestamp=123,
         session_metadata={},
     )
-    bridge._parse_msg = AsyncMock(return_value=message)
+    bridge.inbound.parse_message = AsyncMock(return_value=message)
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -475,7 +382,7 @@ async def test_on_message_waits_for_consumption_and_releases_busy_scope(cancelle
         assert not task.done()
         channel.block_batch_scope.assert_called_once_with("oc_chat")
         channel.unblock_batch_scope.assert_not_called()
-        bridge.session_update_message_id["E1001"] = "om_progress"
+        bridge.delivery.session_update_message_id["E1001"] = "om_progress"
         if cancelled:
             task.cancel()
         else:
@@ -483,7 +390,7 @@ async def test_on_message_waits_for_consumption_and_releases_busy_scope(cancelle
 
     assert task.cancelled() is cancelled
     channel.unblock_batch_scope.assert_called_once_with("oc_chat")
-    assert bridge.session_update_message_id == {}
+    assert bridge.delivery.session_update_message_id == {}
 
 
 @pytest.mark.asyncio
@@ -505,11 +412,11 @@ async def test_on_message_ignores_unsupported_message(monkeypatch: pytest.Monkey
 async def test_channel_send_logs_message_type(monkeypatch: pytest.MonkeyPatch):
     send_result = SendResult(success=True, message_id="om_sent")
     bridge = _bridge_with_channel(SimpleNamespace())
-    bridge.send = AsyncMock(return_value=send_result)
+    bridge.delivery.send = AsyncMock(return_value=send_result)
     info = MagicMock()
     monkeypatch.setattr(feishu_delivery, "logger", SimpleNamespace(info=info))
 
-    await bridge.channel_send(
+    await bridge.delivery.channel_send(
         to="oc_chat",
         message={"text": "hello"},
         opts={"reply_to": "om_parent"},
@@ -519,7 +426,7 @@ async def test_channel_send_logs_message_type(monkeypatch: pytest.MonkeyPatch):
         iter_content=None,
     )
 
-    bridge.send.assert_awaited_once_with(
+    bridge.delivery.send.assert_awaited_once_with(
         to="oc_chat",
         message={"text": "hello"},
         iter_content=None,
@@ -555,7 +462,7 @@ async def test_parse_resource_message_uses_channel_download_helper(
     download_resource = AsyncMock(return_value=downloaded_path)
     bridge = _bridge_with_channel(SimpleNamespace(download_resource_to_file=download_resource))
 
-    message = await bridge._parse_msg(_inbound_message(content))
+    message = await bridge.inbound.parse_message(_inbound_message(content))
 
     expected_kwargs = {
         "resource_type": resource_type,
@@ -591,7 +498,7 @@ async def test_parse_post_reads_content_v2_document_and_preserves_attachment_ord
         }
     )
 
-    message = await bridge._parse_msg(_inbound_message(post))
+    message = await bridge.inbound.parse_message(_inbound_message(post))
 
     assert message.content == [
         TextData(text="before\n[link](https://example.com)"),
@@ -610,48 +517,181 @@ async def test_parse_post_reads_content_v2_document_and_preserves_attachment_ord
 @pytest.mark.asyncio
 async def test_card_action_uses_typed_form_value(monkeypatch: pytest.MonkeyPatch):
     notify_question = AsyncMock()
-    monkeypatch.setattr(feishu_bridge, "notify_question", notify_question)
+    monkeypatch.setattr(feishu_questions, "notify_question", notify_question)
     update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_message"))
     bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    question_card = _remember_question(bridge, "om_message", {
+        "type": "form", "fields": [
+            {"type": "input", "name": "answer", "label": "回答", "default_value": "initial"},
+            {"type": "select", "name": "choice", "label": "单选", "options": [{"label": "A", "value": "a"}]},
+            {"type": "multi_select", "name": "tags", "label": "多选", "options": [{"label": "B", "value": "b"}]},
+            {"type": "date", "name": "day", "label": "日期"},
+            {"type": "datetime", "name": "when", "label": "时间"},
+        ],
+    })
+    answers = {
+        "answer": "typed", "choice": "a", "tags": ["b"],
+        "day": "2026-11-12 +0800", "when": "2026-11-12 09:30 +0800",
+    }
     event = CardActionEvent(
         message_id="om_message",
         chat_id="oc_chat",
         operator=EventOperator(open_id="ou_sender"),
-        action=CardActionPayload(form_value={"answer": "typed"}),
+        action=CardActionPayload(form_value=answers),
         raw={"event": {"action": {"form_value": {"answer": "raw"}}}},
     )
 
-    await bridge._on_card_action(event)
+    await bridge.questions.handle_action(event)
 
     notify_question.assert_awaited_once_with(
         "E1001",
-        {"answer": "typed"},
+        answers,
         "http://backend.test",
         "feishu",
         session_id=DEFAULT_SESSION_ID,
     )
-    bridge.get_user_identity.assert_awaited_once_with("ou_sender")
-    update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
+    bridge.inbound.get_user_identity.assert_awaited_once_with("ou_sender")
+    update_card.assert_awaited_once_with(
+        "om_message", build_feishu_question_card(question_card.context, disabled=True, answers=answers),
+    )
+    elements = update_card.await_args.args[1]["body"]["elements"][0]["elements"]
+    fields = {element["name"]: element for element in elements if "name" in element}
+    assert all(field["disabled"] for field in fields.values())
+    assert fields["answer"]["default_value"] == "typed"
+    assert fields["choice"]["initial_option"] == "a"
+    assert fields["tags"]["selected_values"] == ["b"]
+    assert fields["day"]["initial_date"] == "2026-11-12"
+    assert fields["when"]["initial_datetime"] == "2026-11-12 09:30"
+    submit = elements[-1]["columns"][0]["elements"][0]
+    assert submit["disabled"] is True
+    assert submit["text"]["content"] == "提交"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("decision", ["confirm", "cancel"])
 async def test_confirmation_button_callback_submits_decision(monkeypatch, decision):
     notify_question = AsyncMock()
-    monkeypatch.setattr(feishu_bridge, "notify_question", notify_question)
+    monkeypatch.setattr(feishu_questions, "notify_question", notify_question)
     update_card = AsyncMock(return_value=SendResult(success=True, message_id="om_message"))
     bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    question_card = _remember_question(bridge, "om_message", {"type": "confirm", "description": "继续执行？"})
     event = CardActionEvent(
         message_id="om_message",
         chat_id="oc_chat",
         operator=EventOperator(open_id="ou_sender"),
         action=CardActionPayload(tag="button", value={"decision": decision}),
     )
-    await bridge._on_card_action(event)
+    await bridge.questions.handle_action(event)
     notify_question.assert_awaited_once_with(
         "E1001", {"decision": decision}, "http://backend.test", "feishu", session_id=DEFAULT_SESSION_ID,
     )
-    update_card.assert_awaited_once_with("om_message", FINISH_CARD_CONTENT)
+    update_card.assert_awaited_once_with(
+        "om_message", build_feishu_question_card(question_card.context, disabled=True),
+    )
+    card = update_card.await_args.args[1]
+    assert card == FINISH_CARD_CONTENT
+    await bridge.questions.handle_action(event)
+    assert notify_question.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [SendResult(success=False), RuntimeError("Feishu unavailable")])
+async def test_card_update_failure_does_not_block_answer_submission(monkeypatch, failure):
+    notify = AsyncMock()
+    monkeypatch.setattr(feishu_questions, "notify_question", notify)
+
+    async def update(*_args, **_kwargs):
+        notify.assert_awaited_once()
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    update_card = AsyncMock(side_effect=update)
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    card = _remember_question(bridge, "om_message", {"type": "confirm"})
+    event = CardActionEvent(
+        message_id="om_message", chat_id="oc_chat", operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(tag="button", value={"decision": "confirm"}),
+    )
+
+    await bridge.questions.handle_action(event)
+    await bridge.questions.handle_action(event)
+
+    notify.assert_awaited_once_with(
+        "E1001", {"decision": "confirm"}, bridge.chat_url, "feishu", session_id=DEFAULT_SESSION_ID,
+    )
+    assert card.disabled is True
+    assert update_card.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmation", [False, True])
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+async def test_failed_answer_does_not_disable_card_and_allows_retry(monkeypatch, confirmation, error_type):
+    update_card = AsyncMock(return_value=SendResult(success=True))
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    question = {"type": "confirm"} if confirmation else {
+        "type": "form", "fields": [{"type": "input", "name": "answer", "label": "回答"}],
+    }
+    card = _remember_question(bridge, "om_message", question)
+    answers = {"decision": "confirm"} if confirmation else {"answer": "保留我的回答"}
+    error = error_type("submission interrupted")
+    notify = AsyncMock(side_effect=[error, None])
+    monkeypatch.setattr(feishu_questions, "notify_question", notify)
+    event = CardActionEvent(
+        message_id="om_message", chat_id="oc_chat", operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(form_value=answers),
+    )
+
+    with pytest.raises(error_type) as exc:
+        await bridge.questions.handle_action(event)
+    assert exc.value is error
+    assert card.disabled is False
+    assert card.submitting is False
+    update_card.assert_not_awaited()
+
+    await bridge.questions.handle_action(event)
+    await bridge.questions.handle_action(event)
+    assert card.disabled is True
+    assert notify.await_count == 2
+    update_card.assert_awaited_once_with(
+        "om_message", build_feishu_question_card(card.context, disabled=True, answers=answers),
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_submission_ignores_duplicate_clicks_without_disabling_card(monkeypatch):
+    update_card = AsyncMock(return_value=SendResult(success=True))
+    bridge = _bridge_with_channel(SimpleNamespace(update_card=update_card))
+    card = _remember_question(bridge, "om_message", {"type": "confirm"})
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def submit(*_args, **_kwargs):
+        update_card.assert_not_awaited()
+        started.set()
+        await release.wait()
+
+    notify = AsyncMock(side_effect=submit)
+    monkeypatch.setattr(feishu_questions, "notify_question", notify)
+    event = CardActionEvent(
+        message_id="om_message", chat_id="oc_chat", operator=EventOperator(open_id="ou_sender"),
+        action=CardActionPayload(tag="button", value={"decision": "confirm"}),
+    )
+    callback = asyncio.create_task(bridge.questions.handle_action(event))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert card.submitting is True
+        assert card.disabled is False
+        await asyncio.wait_for(bridge.questions.handle_action(event), timeout=1)
+        notify.assert_awaited_once()
+        update_card.assert_not_awaited()
+    finally:
+        release.set()
+        await asyncio.wait_for(callback, timeout=1)
+    assert card.submitting is False
+    assert card.disabled is True
+    update_card.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -667,7 +707,7 @@ async def test_failed_progress_send_does_not_cache_invalid_message_id(result: Se
     bridge = _bridge_with_channel(SimpleNamespace(send=send))
 
     with pytest.raises(RuntimeError, match="Feishu send progress card"):
-        await bridge.channel_send(
+        await bridge.delivery.channel_send(
             to="oc_chat",
             message={"card": {}},
             opts=None,
@@ -677,7 +717,7 @@ async def test_failed_progress_send_does_not_cache_invalid_message_id(result: Se
             iter_content=None,
         )
 
-    assert "feishu_oc_chat" not in bridge.session_update_message_id
+    assert "feishu_oc_chat" not in bridge.delivery.session_update_message_id
 
 
 @pytest.mark.asyncio
@@ -685,7 +725,7 @@ async def test_successful_progress_send_caches_message_id():
     send = AsyncMock(return_value=SendResult(success=True, message_id="om_progress"))
     bridge = _bridge_with_channel(SimpleNamespace(send=send))
 
-    await bridge.channel_send(
+    await bridge.delivery.channel_send(
         to="oc_chat",
         message={"card": {}},
         opts=None,
@@ -695,7 +735,7 @@ async def test_successful_progress_send_caches_message_id():
         iter_content=None,
     )
 
-    assert bridge.session_update_message_id == {"feishu_oc_chat": "om_progress"}
+    assert bridge.delivery.session_update_message_id == {"feishu_oc_chat": "om_progress"}
 
 
 def test_thinking_card_wraps_content_in_collapsible_panel():
@@ -703,9 +743,9 @@ def test_thinking_card_wraps_content_in_collapsible_panel():
         yield "thinking"
 
     content = chunks()
-    bridge = object.__new__(FeishuBridge)
+    bridge = SimpleNamespace(formatter=FeishuEventFormatter())
 
-    message, iter_content = bridge._format_chat_event(ChatEvent(event=ChatEventType.THINKING, context=content))
+    message, iter_content = bridge.formatter._format_chat_event(ChatEvent(event=ChatEventType.THINKING, context=content))
 
     assert iter_content is content
     panel = message["card"]["body"]["elements"][0]
@@ -714,8 +754,8 @@ def test_thinking_card_wraps_content_in_collapsible_panel():
         "element_id": "panel",
         "expanded": False,
         "header": {
-            "title": {"tag": "plain_text", "content": "查看思考过程"},
-            "expanded_title": {"tag": "plain_text", "content": "收起思考过程"},
+            "title": {"tag": "plain_text", "content": "> 查看思考过程"},
+            "expanded_title": {"tag": "plain_text", "content": "∨ 查看思考过程"},
         },
         "elements": [
             {
@@ -752,7 +792,7 @@ async def test_streaming_thinking_uses_custom_card(monkeypatch: pytest.MonkeyPat
             update_card=update_card,
         )
     )
-    await bridge.channel_send(
+    await bridge.delivery.channel_send(
         to="oc_chat",
         message={"card": card},
         opts=None,
@@ -772,7 +812,7 @@ async def test_streaming_thinking_uses_custom_card(monkeypatch: pytest.MonkeyPat
     )
     finish_streaming_card.assert_awaited_once_with("card_thinking", sequence=2)
     update_card.assert_not_awaited()
-    assert "feishu_oc_chat" not in bridge.session_update_message_id
+    assert "feishu_oc_chat" not in bridge.delivery.session_update_message_id
 
 
 @pytest.mark.asyncio
@@ -794,8 +834,8 @@ async def test_streaming_cards_escape_split_markup_in_updates_and_final_flush(mo
         finish_streaming_card=AsyncMock(),
     )
     bridge = _bridge_with_channel(channel)
-    message, iter_content = bridge._format_chat_event(ChatEvent(event=event_type, context=chunks()))
-    await bridge.send("oc_chat", message, iter_content)
+    message, iter_content = bridge.formatter._format_chat_event(ChatEvent(event=event_type, context=chunks()))
+    await bridge.delivery.send("oc_chat", message, iter_content)
 
     updates = [call.args[2] for call in channel.update_card_element_content.await_args_list]
     assert len(updates) == (len(tokens) if interval == 0 else 1)
@@ -828,7 +868,7 @@ async def test_consume_sends_one_sdk_batch_as_one_prompt(monkeypatch):
         if False:
             yield
 
-    monkeypatch.setattr(feishu_bridge, "iter_chat_events", chat_events)
+    monkeypatch.setattr(feishu_conversation, "iter_chat_events", chat_events)
     channel = SimpleNamespace(add_reaction=AsyncMock())
     bridge = _bridge_with_channel(channel)
 
@@ -852,7 +892,7 @@ async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.Mon
     async def streaming_chat_events(*_args, **_kwargs):
         yield ChatEvent(event=ChatEventType.ASSISTANT, context=chunks())
 
-    monkeypatch.setattr(feishu_bridge, "iter_chat_events", streaming_chat_events)
+    monkeypatch.setattr(feishu_conversation, "iter_chat_events", streaming_chat_events)
     monkeypatch.setattr(feishu_delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
     create_card_instance = AsyncMock(return_value="card_assistant")
     send_card_by_reference = AsyncMock(return_value=SendResult(success=True, message_id="om_stream"))
@@ -875,7 +915,7 @@ async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.Mon
         timestamp=0,
         session_metadata={},
     )
-    bridge.session_update_message_id["E1001"] = "om_progress"
+    bridge.delivery.session_update_message_id["E1001"] = "om_progress"
 
     await bridge.consume([message])
 
@@ -896,7 +936,7 @@ async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.Mon
         "hello world",
     ]
     finish_streaming_card.assert_awaited_once_with("card_assistant", sequence=4)
-    assert "E1001" not in bridge.session_update_message_id
+    assert "E1001" not in bridge.delivery.session_update_message_id
 
 
 @pytest.mark.asyncio
@@ -919,7 +959,7 @@ async def test_consume_returns_backend_http_error_to_user(
         raise httpx.HTTPStatusError("Conflict", request=request, response=response)
         yield
 
-    monkeypatch.setattr(feishu_bridge, "iter_chat_events", busy_chat_events)
+    monkeypatch.setattr(feishu_conversation, "iter_chat_events", busy_chat_events)
     send = AsyncMock(return_value=SendResult(success=True, message_id="om_busy"))
     channel = SimpleNamespace(add_reaction=AsyncMock(), send=send)
     bridge = _bridge_with_channel(channel)
@@ -948,3 +988,37 @@ async def test_consume_returns_backend_http_error_to_user(
         "color": "red",
     }
     assert "streaming_mode" not in sent_message["card"].get("config", {})
+
+
+@pytest.mark.asyncio
+async def test_bridge_lifecycle_disconnects_on_cancellation():
+    started = asyncio.Event()
+    async def connect():
+        started.set()
+        await asyncio.Event().wait()
+    bridge = _bridge_with_channel(SimpleNamespace(connect=connect, disconnect=AsyncMock()))
+    task = asyncio.create_task(bridge.start())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    bridge.channel.disconnect.assert_awaited_once()
+
+
+def test_execution_confirmation_preserves_legacy_card_layout():
+    context = build_execution_question("shell", {"command": "echo hello"}, "输出 hello")
+    question = json.loads(context)
+    assert set(question) == {"type", "title", "description"}
+    card = build_feishu_question_card(context)
+    assert card["header"]["title"]["content"] == "执行确认：shell"
+    assert card["header"]["template"] == "blue"
+    description, actions = card["body"]["elements"]
+    assert description["text"]["content"] == question["description"]
+    assert '"command": "echo hello"' in description["text"]["content"]
+    assert "300 秒" in description["text"]["content"]
+    buttons = [column["elements"][0] for column in actions["columns"]]
+    assert [button["behaviors"][0]["value"] for button in buttons] == [
+        {"decision": "confirm"}, {"decision": "cancel"},
+    ]
+    assert all("disabled" not in button for button in buttons)
+    assert build_feishu_question_card(context, disabled=True) == FINISH_CARD_CONTENT
