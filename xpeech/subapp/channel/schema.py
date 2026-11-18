@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ChatEventType(StrEnum):
+    QUEUED = "queued"
     ASSISTANT = "assistant"
     THINKING = "thinking"
     ERROR = "error"

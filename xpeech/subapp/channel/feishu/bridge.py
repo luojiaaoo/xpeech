@@ -1,12 +1,24 @@
 from __future__ import annotations
 
-from lark_channel import DedupConfig, Events, InboundMessage, OutboundConfig, PolicyConfig, RetryConfig, SafetyConfig
+from lark_channel import (
+    ChatQueueConfig,
+    DedupConfig,
+    Events,
+    InboundMessage,
+    OutboundConfig,
+    PolicyConfig,
+    RetryConfig,
+    SafetyConfig,
+    TextContent,
+)
 from loguru import logger
 
+from ..helper import stop_chat
 from ..schema import Message
 from .channel import XpeechFeishuChannel
+from .config import DEFAULT_SESSION_ID
 from .conversation import FeishuConversation
-from .delivery import FeishuDelivery
+from .delivery import FeishuDelivery, ensure_send_success
 from .formatting import FeishuEventFormatter
 from .inbound import FeishuInbound, UnsupportedFeishuMessageError
 from .questions import FeishuQuestions
@@ -38,7 +50,12 @@ class FeishuBridge:
                     group_policy="open",
                     require_mention=True,
                 ),
-                safety=SafetyConfig(dedup=DedupConfig(ttl_seconds=43_200)),
+                safety=SafetyConfig(
+                    dedup=DedupConfig(ttl_seconds=43_200),
+                    # The backend inbox accepts concurrent submissions. Keep SDK
+                    # admission checks, but do not batch or serialize whole chats.
+                    chat_queue=ChatQueueConfig(enabled=False),
+                ),
                 outbound=OutboundConfig(retry=RetryConfig(max_attempts=5)),
             )
         )
@@ -59,21 +76,41 @@ class FeishuBridge:
         self.channel.on(Events.CARD_ACTION, self.questions.handle_action)
 
     async def _on_message(self, inbound_message: InboundMessage) -> None:
-        scope = inbound_message.chat_id or inbound_message.message_id
-        self.channel.block_batch_scope(scope)
         messages: list[Message] = []
+        for source in inbound_message.batched_sources or [inbound_message]:
+            if (
+                source.chat_type == "p2p"
+                and isinstance(source.content, TextContent)
+                and source.content.text.strip() == "/stop"
+            ):
+                await self._stop(source)
+                continue
+            try:
+                messages.append(await self.inbound.parse_message(source))
+            except UnsupportedFeishuMessageError as exc:
+                logger.warning(str(exc))
+        if messages:
+            await self.consume(messages)
+
+    async def _stop(self, source: InboundMessage) -> None:
+        """A channel control command: never turn it into an agent message."""
         try:
-            for source in inbound_message.batched_sources or [inbound_message]:
-                try:
-                    messages.append(await self.inbound.parse_message(source))
-                except UnsupportedFeishuMessageError as exc:
-                    logger.warning(str(exc))
-            if messages:
-                await self.consume(messages)
-        finally:
-            for message in messages:
-                self.delivery.session_update_message_id.pop(message.user_id, None)
-            self.channel.unblock_batch_scope(scope)
+            user_id, _ = await self.inbound.get_user_identity(source.sender_id)
+            response = await stop_chat(user_id, self.chat_url, "feishu", session_id=DEFAULT_SESSION_ID)
+            response.raise_for_status()
+            stopped = response.json().get("stopped")
+            if not isinstance(stopped, bool):
+                raise ValueError("Backend did not acknowledge the stop request")
+            text = "已停止当前会话。" if stopped else "当前没有正在运行的会话。"
+        except Exception:  # noqa: BLE001 - 控制指令失败需反馈给发送者，不能误报成功。
+            logger.exception("Failed to stop Feishu chat message_id={}", source.message_id)
+            text = "停止失败，请稍后重试。"
+        result = await self.channel.send(
+            to=source.chat_id,
+            message={"text": text},
+            opts={"reply_to": source.message_id},
+        )
+        ensure_send_success(result, operation="send stop acknowledgement")
 
     async def consume(self, messages: list[Message]) -> None:
         await self.conversation.consume(messages)

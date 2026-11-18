@@ -271,6 +271,21 @@ async def notify_question(
     response.raise_for_status()
 
 
+async def stop_chat(
+    user_id: str,
+    chat_url: str,
+    channel: str,
+    *,
+    session_id: str,
+) -> httpx.Response:
+    """Stop a session directly, independently of its interactive message stream."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        return await client.post(
+            str(URL(chat_url) / "chat" / "stop"),
+            headers={**_backend_headers(BackendUserParams(user_id, channel)), "x-session-id": session_id},
+        )
+
+
 async def fetch_file(
     auth: BackendAuthParams,
     path: str,

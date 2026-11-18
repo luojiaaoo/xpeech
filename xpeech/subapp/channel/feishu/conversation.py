@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import random
+from weakref import WeakValueDictionary
 
 import httpx
 from loguru import logger
@@ -36,6 +38,9 @@ class FeishuConversation:
         self.formatter = formatter
         self.questions = questions
         self.tools = tools
+        # asyncio.Lock serves as a FIFO output gate. Request I/O happens outside
+        # it, so queued submissions never wait for an earlier reply to finish.
+        self._output_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
     async def add_reaction(self, msg: Message) -> None:
         await self.channel.add_reaction(msg.message_id, random.choice(EMOJI_TYPES))
@@ -46,6 +51,8 @@ class FeishuConversation:
         chat_id = message.chat_id
         reply_to = message.message_id
         sender_name = message.sender_name
+        output_lock = self._output_locks.setdefault(user_id, asyncio.Lock())
+        received_output = False
         tool_progress = ToolProgress()
         tool_question_cards: dict[str, QuestionCard] = {}
         question_message_ids: set[str] = set()
@@ -65,67 +72,72 @@ class FeishuConversation:
                 "feishu",
                 session_id=DEFAULT_SESSION_ID,
             ):
-                if event.event in {ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT}:
-                    if event.event == ChatEventType.TOOL_CALL:
-                        await self.tools.finish_tool_progress(tool_progress)
-                        tool_progress = ToolProgress()
-                    await self.tools.send_tool_progress(chat_id, event, tool_progress)
-                    if event.event == ChatEventType.TOOL_CALL_RESULT:
-                        payload = json.loads(event.context)
-                        tool_call_id = payload["tool_call_id"]
-                        if tool_call_id in tool_question_cards:
-                            await self.questions.finish_confirmation(tool_question_cards.pop(tool_call_id), payload)
+                if event.event == ChatEventType.QUEUED:
                     continue
-                if event.event == ChatEventType.SEND_FILE:
-                    downloaded_file = await download_channel_file(
-                        user_id,
-                        event.context,
-                        self.chat_url,
-                        "feishu",
-                    )
-                    result = await self.channel.send(
-                        chat_id,
-                        {
-                            "file": {
-                                "source": downloaded_file.content,
-                                "file_name": downloaded_file.filename,
-                            }
-                        },
-                    )
-                    ensure_send_success(result, operation="send file")
-                    continue
-                if event.event == ChatEventType.QUESTION:
-                    card = await self.questions.send_question(chat_id, event.context)
-                    question = json.loads(event.context)
-                    question_message_ids.add(card.message_id)
-                    if question.get("type") == "confirm" and question.get("tool_call_id"):
-                        tool_question_cards[question["tool_call_id"]] = card
-                    continue
+                received_output = True
+                async with output_lock:
+                    if event.event in {ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT}:
+                        if event.event == ChatEventType.TOOL_CALL:
+                            await self.tools.finish_tool_progress(tool_progress)
+                            tool_progress = ToolProgress()
+                        await self.tools.send_tool_progress(chat_id, event, tool_progress)
+                        if event.event == ChatEventType.TOOL_CALL_RESULT:
+                            payload = json.loads(event.context)
+                            tool_call_id = payload["tool_call_id"]
+                            if tool_call_id in tool_question_cards:
+                                await self.questions.finish_confirmation(tool_question_cards.pop(tool_call_id), payload)
+                        continue
+                    if event.event == ChatEventType.SEND_FILE:
+                        downloaded_file = await download_channel_file(
+                            user_id,
+                            event.context,
+                            self.chat_url,
+                            "feishu",
+                        )
+                        result = await self.channel.send(
+                            chat_id,
+                            {
+                                "file": {
+                                    "source": downloaded_file.content,
+                                    "file_name": downloaded_file.filename,
+                                }
+                            },
+                        )
+                        ensure_send_success(result, operation="send file")
+                        continue
+                    if event.event == ChatEventType.QUESTION:
+                        card = await self.questions.send_question(chat_id, event.context)
+                        question = json.loads(event.context)
+                        question_message_ids.add(card.message_id)
+                        if question.get("type") == "confirm" and question.get("tool_call_id"):
+                            tool_question_cards[question["tool_call_id"]] = card
+                        continue
 
-                formatted = self.formatter._format_chat_event(event)
-                if formatted:
-                    message, iter_content = formatted
-                    await self.delivery.channel_send(
-                        to=chat_id,
-                        message=message,
-                        opts=(
-                            {"reply_to": reply_to}
-                            if event.event == ChatEventType.ASSISTANT and reply_to is not None
-                            else None
-                        ),
-                        user_id=user_id,
-                        sender_name=sender_name,
-                        message_type=event.event,
-                        iter_content=iter_content,
-                    )
+                    formatted = self.formatter._format_chat_event(event)
+                    if formatted:
+                        message, iter_content = formatted
+                        await self.delivery.channel_send(
+                            to=chat_id,
+                            message=message,
+                            opts=(
+                                {"reply_to": reply_to}
+                                if event.event == ChatEventType.ASSISTANT and reply_to is not None
+                                else None
+                            ),
+                            user_id=user_id,
+                            sender_name=sender_name,
+                            message_type=event.event,
+                            iter_content=iter_content,
+                        )
         except httpx.HTTPStatusError as exc:
-            await self._send_backend_error(
-                exc,
-                chat_id=chat_id,
-                reply_to=reply_to,
-                user_id=user_id,
-                sender_name=sender_name,
-            )
+            async with output_lock:
+                await self._send_backend_error(
+                    exc,
+                    chat_id=chat_id,
+                    reply_to=reply_to,
+                    user_id=user_id,
+                    sender_name=sender_name,
+                )
         except Exception:  # noqa: BLE001 - 聊天请求的异常边界；finally 负责清理卡片。
             logger.exception(
                 "Failed to consume Feishu messages user_id={}",
@@ -134,7 +146,10 @@ class FeishuConversation:
         finally:
             for message_id in question_message_ids:
                 self.questions.question_cards.pop(message_id, None)
-            await self.tools.finish_tool_progress(tool_progress)
+            if received_output:
+                async with output_lock:
+                    await self.tools.finish_tool_progress(tool_progress)
+                    self.delivery.session_update_message_id.pop(user_id, None)
 
     async def _send_backend_error(
         self,

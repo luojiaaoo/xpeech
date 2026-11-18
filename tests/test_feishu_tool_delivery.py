@@ -12,7 +12,7 @@ from xpeech.agent.loop import AgentLoop
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import shell as shell_module
-from xpeech.agent.tools.execution_request import ExecutionDecision, build_execution_request_tool
+from xpeech.agent.tools.execution_request import ExecutionConfirmation, ExecutionDecision, build_execution_request_tool
 from xpeech.provider.schema import ToolCallRequest
 from xpeech.subapp.channel.feishu import conversation as conversation_module
 from xpeech.subapp.channel.feishu import delivery, tools
@@ -531,7 +531,7 @@ async def test_shell_command_results_color_matching_card_titles(tmp_path, monkey
     monkeypatch.setattr(shell_module.sandbox, "SandboxExecutor", lambda *_args, **_kwargs: sandbox)
     shell = build_execution_request_tool(
         shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)),
-        lambda _: ExecutionDecision.ALLOW,
+        ExecutionConfirmation(callback=lambda _: ExecutionDecision.ALLOW),
     )
     calls = [
         ToolCallRequest(id=call_id, name="shell", arguments={

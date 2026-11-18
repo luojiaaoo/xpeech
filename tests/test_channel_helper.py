@@ -66,8 +66,11 @@ async def test_backend_requests_bind_user_in_jwt_subject(monkeypatch):
     )
     await stream.aclose()
     await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL, session_id=SESSION_ID)
+    await helper.stop_chat("alice", "http://backend.test", TEST_CHANNEL, session_id=SESSION_ID)
     await helper.fetch_file(helper.BackendUserParams("alice", TEST_CHANNEL), "report.txt", "http://backend.test")
-    assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/files"]
+    assert [request.url.path for request in requests] == ["/chat", "/answer_question", "/chat/stop", "/files"]
+    assert requests[2].method == "POST"
+    assert requests[2].content == b""
     for request in requests:
         assert "x-user-id" not in request.headers
         if request.url.path == "/files":
@@ -135,6 +138,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
                 {"event": "assistant", "context": "answer"},
                 {"event": "assistant_end", "context": ""},
                 {"event": "command", "context": "/new"},
+                {"event": "queued", "context": "消息已加入当前会话"},
             ]:
                 yield SimpleNamespace(data=json.dumps(payload))
 
@@ -176,6 +180,9 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
     command = await anext(events)
     assert command.event == ChatEventType.COMMAND
     assert command.context == "/new"
+    queued = await anext(events)
+    assert queued.event == ChatEventType.QUEUED
+    assert queued.context == "消息已加入当前会话"
     await events.aclose()
 
 
