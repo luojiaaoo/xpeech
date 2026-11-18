@@ -55,65 +55,96 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN go version
 
-RUN export DEBIAN_FRONTEND=noninteractive && \
-    # 软件源与 CA 证书：供后续 apt、curl、Git 等工具校验 HTTPS 证书。
+ARG DEBIAN_FRONTEND=noninteractive
+
+# 软件源与 CA 证书：供后续 apt、curl、Git 等工具校验 HTTPS 证书。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     sed -i \
         -e 's|http://archive.ubuntu.com/ubuntu/|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
         -e 's|http://security.ubuntu.com/ubuntu/|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
         /etc/apt/sources.list && \
     apt-get -o Acquire::https::Verify-Peer=false update && \
-    apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates && \
-    # 补充文件检索、格式识别和文本处理工具。
-    apt-get install -y --no-install-recommends \
-        ripgrep fd-find tree file less moreutils dos2unix && \
-    # 数据处理：JSON、CSV/TSV、XML 和 SQLite，优先通过命令行组合处理。
-    apt-get install -y --no-install-recommends \
-        jq miller xmlstarlet sqlite3 && \
-    # 下载、仓库、归档、定时清理和时区支持。
-    apt-get install -y --no-install-recommends \
-        cron curl git zip unzip bzip2 xz-utils p7zip-full tzdata && \
-    # Shell 沙盒：bubblewrap 隔离进程和文件系统，slirp4netns 提供出站网络。
-    apt-get install -y --no-install-recommends \
-        bubblewrap slirp4netns && \
-    # C/C++ 开发：编译、构建、依赖探测、静态检查、调试与代码格式化。
-    apt-get install -y --no-install-recommends \
-        build-essential cmake ninja-build pkg-config cppcheck gdb clang-format && \
-    # 音视频处理：转码、提取音轨及媒体文件分析。
-    apt-get install -y --no-install-recommends \
-        ffmpeg && \
-    # 图形与 CAD 运行库：为依赖 OpenGL/GLU 的图形处理工具提供动态库。
-    apt-get install -y --no-install-recommends \
-        libgl1 libglu1-mesa && \
-    # 网络报文分析：解析 PCAP/PCAPNG，导出协议字段和 JSON。
-    apt-get install -y --no-install-recommends \
-        tshark && \
-    # Office 文档：无界面处理和转换文字文档、演示文稿、表格及绘图文件。
-    apt-get install -y --no-install-recommends \
-        libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-draw && \
-    # 邮件附件：从本地 MIME 邮件文件提取附件。
-    apt-get install -y --no-install-recommends \
-        ripmime && \
-    # PDF 与文档转换：检索、渲染、OCR 和格式转换。
-    apt-get install -y --no-install-recommends \
-        poppler-utils qpdf pdfgrep img2pdf ocrmypdf pandoc weasyprint wkhtmltopdf && \
-    # LaTeX：XeLaTeX、中文支持和 Pandoc 默认模板所需的字体。
-    apt-get install -y --no-install-recommends \
-        texlive-xetex texlive-lang-chinese texlive-fonts-recommended lmodern && \
-    # 图片处理：裁剪、拼接、HEIC 转换、SVG 渲染及 EXIF 元数据。
-    apt-get install -y --no-install-recommends \
-        imagemagick libimage-exiftool-perl libheif-examples librsvg2-bin && \
-    # OCR：识别图片和扫描件中的英文、简体中文文字。
-    apt-get install -y --no-install-recommends \
-        tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim && \
-    # 系统字体：常用中西文字体、楷体和 Emoji，统一通过 apt 安装。
-    apt-get install -y --no-install-recommends \
+    apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates
+
+# 各组独立成层。apt 索引由 BuildKit 缓存，每组执行时刷新。
+# 补充文件检索、格式识别和文本处理工具。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        ripgrep fd-find tree file less moreutils dos2unix
+
+# 数据处理：JSON、CSV/TSV、XML 和 SQLite，优先通过命令行组合处理。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        jq miller xmlstarlet sqlite3
+
+# 下载、仓库、归档、定时清理和时区支持。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        cron curl git zip unzip bzip2 xz-utils p7zip-full tzdata
+
+# Shell 沙盒：bubblewrap 隔离进程和文件系统，slirp4netns 提供出站网络。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        bubblewrap slirp4netns
+
+# C/C++ 开发：编译、构建、依赖探测、静态检查、调试与代码格式化。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build pkg-config cppcheck gdb clang-format
+
+# 音视频处理：转码、提取音轨及媒体文件分析。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends ffmpeg
+
+# 图形与 CAD 运行库：为依赖 OpenGL/GLU 的图形处理工具提供动态库。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends libgl1 libglu1-mesa
+
+# 网络报文分析：解析 PCAP/PCAPNG，导出协议字段和 JSON。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends tshark
+
+# Office 文档：无界面处理和转换文字文档、演示文稿、表格及绘图文件。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-draw
+
+# 邮件附件：从本地 MIME 邮件文件提取附件。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends ripmime
+
+# PDF 与文档转换：检索、渲染、OCR 和格式转换。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        poppler-utils qpdf pdfgrep img2pdf ocrmypdf pandoc weasyprint wkhtmltopdf
+
+# LaTeX：XeLaTeX、中文支持和 Pandoc 默认模板所需的字体。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        texlive-xetex texlive-lang-chinese texlive-fonts-recommended lmodern
+
+# 图片处理：裁剪、拼接、HEIC 转换、SVG 渲染及 EXIF 元数据。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        imagemagick libimage-exiftool-perl libheif-examples librsvg2-bin
+
+# OCR：识别图片和扫描件中的英文、简体中文文字。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim
+
+# 系统字体：常用中西文字体、楷体和 Emoji，统一通过 apt 安装。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
         fontconfig fonts-dejavu-core fonts-noto-cjk fonts-wqy-microhei \
-        fonts-arphic-ukai fonts-liberation2 fonts-noto-color-emoji && \
-    fc-cache -f && \
+        fonts-arphic-ukai fonts-liberation2 fonts-noto-color-emoji
+
+RUN fc-cache -f && \
     test -n "$(fc-list :lang=zh file)" && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# 安装 DCG，用于 shell 的破坏性命令保护。
 ARG DCG_VERSION=0.16.0
 RUN DCG_ARCH="$(uname -m)" && \
     case "$DCG_ARCH" in \
@@ -131,6 +162,25 @@ RUN DCG_ARCH="$(uname -m)" && \
     install -m 0755 "${DCG_TMP_DIR}/dcg" /usr/local/bin/dcg && \
     rm -rf "$DCG_TMP_DIR" && \
     dcg --version
+
+# 安装 mdBook
+RUN MDBOOK_VERSION=0.5.4 && \
+    MDBOOK_ARCH="$(uname -m)" && \
+    case "$MDBOOK_ARCH" in \
+        x86_64) MDBOOK_SHA256="5222beabd3e37dc5be0d18ff99b79058469354db5c220153a1b92db5ba12be89" ;; \
+        aarch64) MDBOOK_SHA256="753e5c5c363ee8a56972344dcf91466f005a51db84a7aeffe427ae3ef83d6d44" ;; \
+        *) echo "Unsupported mdBook architecture: $MDBOOK_ARCH" >&2; exit 1 ;; \
+    esac && \
+    MDBOOK_ASSET="mdbook-v${MDBOOK_VERSION}-${MDBOOK_ARCH}-unknown-linux-musl.tar.gz" && \
+    MDBOOK_TMP_DIR="$(mktemp -d)" && \
+    curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 \
+        "https://gitee.com/luojiaaoo/mdBook/releases/download/v${MDBOOK_VERSION}/${MDBOOK_ASSET}" \
+        -o "$MDBOOK_TMP_DIR/$MDBOOK_ASSET" && \
+    printf '%s  %s\n' "$MDBOOK_SHA256" "$MDBOOK_TMP_DIR/$MDBOOK_ASSET" | sha256sum -c - && \
+    tar -xzf "$MDBOOK_TMP_DIR/$MDBOOK_ASSET" -C "$MDBOOK_TMP_DIR" mdbook && \
+    install -m 0755 "$MDBOOK_TMP_DIR/mdbook" /usr/local/bin/mdbook && \
+    rm -rf "$MDBOOK_TMP_DIR" && \
+    mdbook --version
 
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then NODE_ARCH="arm64"; else NODE_ARCH="x64"; fi && \

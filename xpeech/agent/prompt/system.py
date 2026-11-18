@@ -39,6 +39,7 @@ def _get_guidelines(channel: str | None = None) -> str:
                 - PDF: `pdftotext` for text extraction, `pdfinfo` for metadata, `pdftoppm` and `pdftocairo` for page rendering, `pdfunite` / `pdfseparate` for merging / splitting, and `qpdf` for page selection, rotation, and structural checks.
                 - PDF search and creation: `pdfgrep` searches text by page. Use `img2pdf` to combine images into a PDF without lossy recompression.
                 - Document conversion: `pandoc` for Markdown, HTML, and other document formats. For Markdown to PDF, use `pandoc input.md --pdf-engine=weasyprint -o output.pdf`.
+                - Online manuals: Use `mdbook build <book-dir>` to turn Markdown chapters listed in `src/SUMMARY.md` into a static HTML handbook with navigation and search. The default output is `book/` inside the book project.
                 - HTML/CSS to PDF: `weasyprint input.html output.pdf` or `QT_QPA_PLATFORM=offscreen wkhtmltopdf input.html output.pdf`.
                 - LaTeX to PDF: `xelatex` with TeX Live Chinese support. For Chinese Markdown, use `pandoc input.md --pdf-engine=xelatex -V CJKmainfont="Noto Serif CJK SC" -o output.pdf`.
                 - Images: ImageMagick 6 commands `convert`, `identify`, and `montage` for raster format conversion, resizing, cropping, and composition; `exiftool` for image and media metadata.
