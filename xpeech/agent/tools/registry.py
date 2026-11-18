@@ -82,9 +82,9 @@ async def register_tools(
         max_history_days=settings.llm.max_history_days,
     ):
         provider.register_function_tool(tool)
-    if not not_interactive:
-        for tool in (feishu_schedule, feishu_schedule_list, feishu_schedule_cancel):
-            provider.register_function_tool(tool)
+    # if not not_interactive:
+    #     for tool in (feishu_schedule, feishu_schedule_list, feishu_schedule_cancel):
+    #         provider.register_function_tool(tool)
 
     registrations: dict[str, MCPServerRegistration] = {}
     filter_context = FilterContext(channel=channel, org=user_organization)
