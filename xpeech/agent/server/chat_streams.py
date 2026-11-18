@@ -1,7 +1,7 @@
 """Track cancellable SSE producer tasks inside one backend process."""
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,7 +20,7 @@ class ChatStreams:
 
     async def stream(
         self, user_id: str, session_id: str, events: AsyncGenerator[dict[str, Any], None],
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Keep Agent cancellation separate from FastAPI's SSE task group."""
         send, receive = anyio.create_memory_object_stream[dict[str, Any]](max_buffer_size=1)
 

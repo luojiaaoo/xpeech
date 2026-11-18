@@ -5,7 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from xpeech.agent.server.api import app
-from xpeech.agent.server.dependencies import CHAT_GUARD
+from xpeech.agent.server.schema import InboundMessage
+from xpeech.agent.server.session_guard import CHAT_GUARD
 from xpeech.utils.channel_jwt import UserTokenParams, create_token
 
 SESSION_ID = "018f0000-0000-7000-8000-000000000001"
@@ -22,7 +23,11 @@ async def test_chat_status_tracks_the_lease_and_isolates_users_and_sessions():
         assert idle.status_code == 200
         assert idle.json() == {"active": False}
         assert idle.headers["cache-control"] == "no-store"
-        assert await CHAT_GUARD.try_acquire("status-user", SESSION_ID)
+        inbox, owner = await CHAT_GUARD.submit(InboundMessage(
+            user_id="status-user", session_id=SESSION_ID, channel="web_client", sender_name="Alice",
+            content=[], session_metadata={}, files=[],
+        ))
+        assert owner
         try:
             busy = await client.get("/chat/status", headers=headers)
             assert busy.json() == {"active": True}
@@ -33,7 +38,7 @@ async def test_chat_status_tracks_the_lease_and_isolates_users_and_sessions():
             other_session = await client.get("/chat/status", headers={**headers, "x-session-id": OTHER_SESSION_ID})
             assert other_session.json() == {"active": False}
         finally:
-            await CHAT_GUARD.release("status-user", SESSION_ID)
+            await CHAT_GUARD.release("status-user", SESSION_ID, inbox)
         released = await client.get("/chat/status", headers=headers)
         assert released.json() == {"active": False}
 

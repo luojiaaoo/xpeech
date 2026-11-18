@@ -1,8 +1,8 @@
 import json
-from collections.abc import AsyncIterator
 from typing import Annotated
 from urllib.parse import unquote
 
+import anyio
 from fastapi import Depends, Form, Header, HTTPException, status
 
 from ...config.settings import settings
@@ -11,9 +11,7 @@ from ...utils.ids import validate_session_id
 from ...utils.channel_jwt import UserJWTAuth
 from .auth import require_user_jwt
 from .schema import InputContent
-from .session_guard import SessionChatGuard
 
-CHAT_GUARD = SessionChatGuard()
 JSON_OUTPUT_TRIGGER = "::请严格以JSON格式回复::"
 
 
@@ -29,6 +27,14 @@ def authenticated_user_id(
 ) -> str:
     """Use only the verified JWT subject as the external user identity."""
     return auth.user_id
+
+
+async def authenticated_workspace(user_id: str) -> anyio.Path:
+    """Resolve the workspace of a user whose identity has already been authenticated."""
+    try:
+        return anyio.Path(await anyio.to_thread.run_sync(settings.path.resolve_user_workspace, user_id))
+    except PathProtectionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from None
 
 
 def session_id_header(
@@ -131,19 +137,3 @@ def json_output_enabled(
             detail="The configured model does not support JSON output",
         )
     return enabled
-
-
-async def acquire_chat_session(
-    user_id: Annotated[str, Depends(authenticated_user_id)],
-    session_id: Annotated[str, Depends(session_id_header)],
-) -> AsyncIterator[None]:
-    """占用会话直至响应结束，并拒绝同一会话的并发请求。"""
-    if not await CHAT_GUARD.try_acquire(user_id, session_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Session '{session_id}' already has an active chat request",
-        )
-    try:
-        yield
-    finally:
-        await CHAT_GUARD.release(user_id, session_id)

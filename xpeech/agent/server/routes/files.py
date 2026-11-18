@@ -8,10 +8,9 @@ import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
-from ....config.settings import settings
 from ....exceptions import PathProtectionError
 from ...tools.helper import safe_resolve_workspace_path
-from ..dependencies import authenticated_user_id
+from ..dependencies import authenticated_user_id, authenticated_workspace
 
 router = APIRouter()
 
@@ -29,15 +28,6 @@ def _excluded_from_search(path: anyio.Path, workspace: anyio.Path) -> bool:
         any(part in SEARCH_EXCLUDED_NAMES for part in parts)
         or any(pair in SEARCH_EXCLUDED_PATHS for pair in zip(parts, parts[1:]))
     )
-
-
-async def _user_workspace(user_id: str) -> anyio.Path:
-    root = await anyio.Path(settings.path.workspace_base_path).resolve()
-    workspace = root / user_id
-    resolved = await workspace.resolve()
-    if resolved != workspace:
-        raise HTTPException(403, "User workspace must not redirect to another directory")
-    return resolved
 
 
 async def _search_path_allowed(path: anyio.Path, workspace: anyio.Path) -> bool:
@@ -73,7 +63,7 @@ async def search_workspace_files(
     query: Annotated[str, Query(min_length=1, max_length=512)],
 ):
     """Match entry names in the user's workspace, pruning internal directories before descent."""
-    workspace = await _user_workspace(user_id)
+    workspace = await authenticated_workspace(user_id)
     if not query.strip():
         return {"entries": [], "truncated": False}
     relative = Path(query)
@@ -108,7 +98,7 @@ async def list_workspace_files(
     initial_load: bool = False,
 ):
     """Browse only the authenticated user's workspace; never follow escaping links."""
-    workspace = await _user_workspace(user_id)
+    workspace = await authenticated_workspace(user_id)
     try:
         directory = await (workspace / path).resolve()
     except (OSError, RuntimeError, ValueError):
@@ -153,10 +143,10 @@ async def download_session_file(
     path: Annotated[str, Query(description="File path returned by a send_file event.")],
 ):
     """下载指定会话工作区内的文件。"""
-    workspace = await _user_workspace(user_id)
+    workspace = Path(await authenticated_workspace(user_id))
     try:
         file_path = await anyio.to_thread.run_sync(
-            lambda: safe_resolve_workspace_path(Path(path), Path(workspace), protect_read_only_file=False),
+            lambda: safe_resolve_workspace_path(Path(path), workspace, protect_read_only_file=False),
         )
     except PathProtectionError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File is outside the workspace")

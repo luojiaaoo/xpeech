@@ -9,8 +9,6 @@ from fastapi.testclient import TestClient
 from xpeech.agent.loop import AgentLoop, QuestionEvent
 from xpeech.agent.server.api import app
 from xpeech.agent.server.dependencies import (
-    CHAT_GUARD,
-    acquire_chat_session,
     content,
     sender_name_header,
     session_id_header,
@@ -72,7 +70,7 @@ def test_chat_initializes_all_tools_for_every_session(
 
     messages = []
 
-    async def run(*, message):
+    async def run(*, message, inbox):
         messages.append(message)
         yield {"event": "assistant", "context": "ok"}
 
@@ -92,6 +90,7 @@ def test_chat_initializes_all_tools_for_every_session(
         "/chat",
         headers=headers,
         data=data,
+        files=[("files", ("report.txt", b"report content"))],
     )
 
     assert response.status_code == 200
@@ -99,6 +98,9 @@ def test_chat_initializes_all_tools_for_every_session(
     assert messages[0].session_id == session_id
     assert messages[0].channel == channel
     assert messages[0].json_output is json_requested
+    [saved_file] = messages[0].files
+    assert saved_file.is_relative_to(tmp_path)
+    assert saved_file.read_bytes() == b"report content"
 
 
 @pytest.mark.parametrize(
@@ -169,31 +171,6 @@ def test_sender_name_header_decodes_and_rejects_blank_values():
         sender_name_header("%20")
 
     assert exc_info.value.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_chat_returns_conflict_for_active_session():
-    assert await CHAT_GUARD.try_acquire("user", "busy-session")
-    try:
-        lease = acquire_chat_session("user", "busy-session")
-        with pytest.raises(HTTPException) as exc_info:
-            await anext(lease)
-    finally:
-        await CHAT_GUARD.release("user", "busy-session")
-
-    assert exc_info.value.status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_dependency_release_clears_active_session():
-    lease = acquire_chat_session("user", "released-session")
-    assert await anext(lease) is None
-    assert await CHAT_GUARD.is_active("user", "released-session")
-
-    with pytest.raises(StopAsyncIteration):
-        await anext(lease)
-
-    assert not await CHAT_GUARD.is_active("user", "released-session")
 
 
 @pytest.mark.asyncio

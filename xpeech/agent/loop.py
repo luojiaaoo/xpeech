@@ -13,7 +13,6 @@ import anyio
 from fastapi import HTTPException, status
 from loguru import logger
 
-from ..agent.server.schema import InputText
 from ..config.settings import settings
 from ..provider.litellm_provider import LiteLLMProvider
 from ..provider.schema import LLMResponse, ToolCallRequest
@@ -33,7 +32,8 @@ from .prompt.helper import (
 from .prompt.system import build_system_prompt
 from .record import ConversationRecord, ConversationRecordRepository
 from .server.context import get_request_id
-from .server.schema import InboundMessage
+from .server.schema import InboundMessage, InputText
+from .server.session_guard import SessionInbox
 from .tool_executor import ToolExecutor
 from .token_usage import TokenUsage
 from .tools.execution_request import EXECUTION_DESCRIPTION, EXECUTION_PARAMETERS, EXECUTION_TITLE
@@ -348,8 +348,14 @@ class AgentLoop:
 
     # ----------------- agent loop run -----------------
 
-    async def run(self, message: InboundMessage, *, not_interactive: bool = False):
-        """运行一次Agent循环，处理一次用户消息。"""
+    async def run(
+        self,
+        message: InboundMessage,
+        *,
+        not_interactive: bool = False,
+        inbox: SessionInbox | None = None,
+    ):
+        """运行 Agent 循环，在无工具调用的迭代结束时接收追加消息。"""
         start_time = time.perf_counter()
         request_id = get_request_id()
         if request_id is None:
@@ -357,12 +363,7 @@ class AgentLoop:
         logger.info("Agent run started workspace={}", self.workspace)
 
         # 用户命令拦截器
-        if (
-            not not_interactive
-            and len(message.content) == 1
-            and isinstance(message.content[0], InputText)
-            and (command := message.content[0].text.strip()).startswith("/")
-        ):
+        if not not_interactive and (command := message.command_text()) is not None:
             command_parts = command.split(maxsplit=1)
             command_name = command_parts[0]
             continuation = command_parts[1].strip() if len(command_parts) == 2 else ""
@@ -418,20 +419,27 @@ class AgentLoop:
         )
         # 时间戳标记真实用户请求，压缩时按完整回合切分。
         turn_messages: list[dict[str, Any]] = []
+
         _append_turn_message(
             messages_yaml, turn_messages,
-            await build_user_prompt(
-                message=message,
-                workspace=self.workspace,
-            ),
+            await build_user_prompt(message=message, workspace=self.workspace),
         )
 
         try:
+            if inbox is not None:
+                inbox.start()
             final_content = None
             final_content_error = False
             for loop_count in count():
                 # 达到最大迭代次数，强制停止循环
                 if self.max_iterations is not None and loop_count >= self.max_iterations:
+                    if inbox is not None:
+                        inbox.close()
+                        for incoming in inbox.drain():
+                            _append_turn_message(
+                                messages_yaml, turn_messages,
+                                await build_user_prompt(message=incoming, workspace=self.workspace),
+                            )
                     final_content = (
                         f"Agent loop has reached the maximum number of iterations({self.max_iterations}) and stop."
                     )
@@ -514,9 +522,22 @@ class AgentLoop:
                         async for i in tool_events:
                             yield i
                 else:
-                    # 没有工具，结束循环
                     final_content = response.content
-                    break
+                    pending = inbox.drain_or_close() if inbox is not None else []
+                    if not pending:
+                        break
+
+                    # 先记录当前回复，再逐条写入累计的用户消息。
+                    if final_content is not None:
+                        _append_turn_message(
+                            messages_yaml, turn_messages, {"role": "assistant", "content": final_content},
+                        )
+                    for incoming in pending:
+                        _append_turn_message(
+                            messages_yaml, turn_messages,
+                            await build_user_prompt(message=incoming, workspace=self.workspace),
+                        )
+                    continue
 
                 # 即将达到最大迭代次数，添加用户消息，提示达到最大迭代次数
                 if self.max_iterations is not None and loop_count == self.max_iterations - 2:
@@ -548,6 +569,14 @@ class AgentLoop:
         finally:
             # 取消请求时也保存已经加入上下文的消息。
             with anyio.CancelScope(shield=True):
+                if inbox is not None:
+                    inbox.close()
+                    # 停止或异常时保留已接收但还没有处理的消息。
+                    for incoming in inbox.drain():
+                        _append_turn_message(
+                            messages_yaml, turn_messages,
+                            await build_user_prompt(message=incoming, workspace=self.workspace),
+                        )
                 await self.history.save(
                     message.user_id,
                     message.session_id,

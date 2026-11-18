@@ -5,39 +5,14 @@ import anyio
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from ....config.settings import settings
-from ....exceptions import PathProtectionError
-from ....utils.file_io import is_relative_path
-from ....utils.ids import validate_user_id
-from ...skills.skill import SkillInfo, SkillsLoader
 from ....utils.channel_jwt import UserJWTAuth
+from ...skills.skill import SkillInfo, SkillsLoader
 from ..auth import require_user_jwt
-from ..dependencies import authenticated_user_id
+from ..dependencies import authenticated_user_id, authenticated_workspace
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
 MAX_SKILL_FILE_SIZE = 25 * 1024 * 1024
-
-
-def _user_workspace(user_id: str) -> Path:
-    """Resolve a user workspace without allowing path traversal."""
-    try:
-        validated_user_id = validate_user_id(user_id)
-    except PathProtectionError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid user_id",
-        ) from None
-
-    workspace_root = settings.path.workspace_base_path.resolve()
-    workspace = (workspace_root / validated_user_id).resolve()
-    if workspace != workspace_root / validated_user_id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "User workspace must not redirect to another directory")
-    if not is_relative_path(workspace, workspace_root):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid user_id",
-        )
-    return workspace
 
 
 def _import_skill_file(data: bytes, workspace: Path) -> SkillInfo:
@@ -77,7 +52,7 @@ async def list_skills(
     user_id: Annotated[str, Depends(authenticated_user_id)],
 ) -> list[SkillInfo]:
     """返回内置技能，以及 JWT 用户可用的 SKILL 列表。"""
-    workspace = await anyio.to_thread.run_sync(_user_workspace, user_id)
+    workspace = Path(await authenticated_workspace(user_id))
     user_organization = await settings.extra_user_info.resolve_user_organization(user_id)
     return await SkillsLoader(
         workspace, channel=auth.channel, user_organization=user_organization,
@@ -85,26 +60,26 @@ async def list_skills(
 
 
 @router.post("/import", response_model=SkillInfo, status_code=status.HTTP_201_CREATED)
-def import_skill(
+async def import_skill(
     user_id: Annotated[str, Depends(authenticated_user_id)],
     file: Annotated[UploadFile, File(description="SKILL.md 文件")],
 ) -> SkillInfo:
     """将用户上传的 SKILL.md 导入指定用户工作区。"""
-    workspace = _user_workspace(user_id)
+    workspace = Path(await authenticated_workspace(user_id))
     if file.filename != "SKILL.md":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Uploaded file must be named SKILL.md",
         )
 
-    data = file.file.read(MAX_SKILL_FILE_SIZE + 1)
+    data = await file.read(MAX_SKILL_FILE_SIZE + 1)
     if len(data) > MAX_SKILL_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="SKILL.md exceeds the 25 MiB upload limit",
         )
     try:
-        return _import_skill_file(data, workspace)
+        return await anyio.to_thread.run_sync(_import_skill_file, data, workspace)
     except FileExistsError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

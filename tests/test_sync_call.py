@@ -7,8 +7,9 @@ from fastapi.testclient import TestClient
 
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app
-from xpeech.agent.server.dependencies import CHAT_GUARD, settings
-from xpeech.agent.server.schema import InputText
+from xpeech.agent.server.dependencies import settings
+from xpeech.agent.server.schema import InboundMessage, InputText
+from xpeech.agent.server.session_guard import CHAT_GUARD
 from xpeech.utils.channel_jwt import UserTokenParams, create_token
 
 UUID7_SESSION_ID = "018f0000-0000-7000-8000-000000000001"
@@ -187,7 +188,11 @@ def test_chat_sync_saves_attachments_to_workspace(fake_runner, tmp_path):
 
 @pytest.mark.asyncio
 async def test_chat_sync_ignores_the_session_chat_guard(fake_runner):
-    assert await CHAT_GUARD.try_acquire("user", BUSY_UUID7_SESSION_ID)
+    inbox, owner = await CHAT_GUARD.submit(InboundMessage(
+        user_id="user", session_id=BUSY_UUID7_SESSION_ID, channel="web_client", sender_name="Alice",
+        content=[], session_metadata={}, files=[],
+    ))
+    assert owner
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -195,11 +200,11 @@ async def test_chat_sync_ignores_the_session_chat_guard(fake_runner):
         ) as client:
             response = await client.post(
                 "/chat_sync",
-                headers=chat_headers(),
+                headers=chat_headers(**{"x-session-id": BUSY_UUID7_SESSION_ID}),
                 data={"content": '[{"text":"hello"}]'},
             )
     finally:
-        await CHAT_GUARD.release("user", BUSY_UUID7_SESSION_ID)
+        await CHAT_GUARD.release("user", BUSY_UUID7_SESSION_ID, inbox)
 
     # chat_sync 不占用会话并发锁：同一会话正在 /chat 时也可并发执行。
     assert response.status_code == 200

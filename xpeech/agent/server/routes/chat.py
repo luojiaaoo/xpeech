@@ -1,5 +1,6 @@
 """User-bound chat and question-answer endpoints."""
 
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
@@ -11,8 +12,6 @@ from ...loop import AgentLoop, QuestionEvent
 from ..auth import require_user_jwt
 from ..chat_streams import CHAT_STREAMS
 from ..dependencies import (
-    CHAT_GUARD,
-    acquire_chat_session,
     authenticated_user_id,
     content,
     json_output_enabled,
@@ -23,6 +22,7 @@ from ..dependencies import (
 from ..schema import (
     InputContent,
 )
+from ..session_guard import CHAT_GUARD
 
 router = APIRouter()
 
@@ -33,7 +33,7 @@ async def chat_status(
     user_id: Annotated[str, Depends(authenticated_user_id)],
     session_id: Annotated[str, Depends(session_id_header)],
 ) -> dict[str, bool]:
-    """查询会话是否仍被请求占用，包括生成结束后的响应清理阶段。"""
+    """查询会话是否仍有执行中的 loop，包括历史保存等清理阶段。"""
     response.headers["Cache-Control"] = "no-store"
     return {"active": await CHAT_GUARD.is_active(user_id, session_id)}
 
@@ -64,15 +64,7 @@ async def answer_question(
     return {"message": "Question event not found"}
 
 
-@router.post(
-    "/chat",
-    response_class=EventSourceResponse,
-    responses={400: {"description": "The configured model does not support the requested JSON output mode"}},
-    dependencies=[
-        Depends(acquire_chat_session, scope="request"),
-    ],
-)
-async def chat(
+async def chat_events(
     auth: Annotated[UserJWTAuth, Depends(require_user_jwt)],
     user_id: Annotated[str, Depends(authenticated_user_id)],
     session_id: Annotated[str, Depends(session_id_header)],
@@ -81,9 +73,9 @@ async def chat(
     content: Annotated[InputContent, Depends(content)],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
     json_output: Annotated[bool, Depends(json_output_enabled)],
-):
-    """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
-    events = execute_chat_stream(
+) -> AsyncIterator[AsyncGenerator[dict[str, Any], None]]:
+    """在请求结束时关闭 SSE 数据源，包括断连时暂停在 yield 的情况。"""
+    async with execute_chat_stream(
         user_id,
         content=content,
         sender_name=sender_name,
@@ -92,8 +84,23 @@ async def chat(
         session_metadata=session_metadata,
         files=files,
         json_output=json_output,
-    )
-    async for event in CHAT_STREAMS.stream(user_id, session_id, events):
+    ) as events:
+        yield events
+
+
+@router.post(
+    "/chat",
+    response_class=EventSourceResponse,
+    responses={
+        400: {"description": "The configured model does not support the requested JSON output mode"},
+        409: {"description": "Request identity or session context differs from the active session"},
+    },
+)
+async def chat(
+    events: Annotated[AsyncGenerator[dict[str, Any], None], Depends(chat_events)],
+):
+    """启动会话或插入活跃 loop；插入请求仅返回 queued，输出沿原 SSE 返回。"""
+    async for event in events:
         yield event
 
 
@@ -114,7 +121,7 @@ async def chat_sync(
 
     每次调用在服务端生成独立会话，不占用会话并发锁，可与 `/chat` 或其他同步调用并发。
     """
-    result = await execute_chat(
+    return await execute_chat(
         user_id,
         content=content,
         sender_name=sender_name,
@@ -123,4 +130,3 @@ async def chat_sync(
         files=files,
         json_output=json_output,
     )
-    return result

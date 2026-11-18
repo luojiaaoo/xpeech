@@ -137,7 +137,7 @@ def test_import_rejects_unsafe_skill_destination(
     )
 
     assert response.status_code == 422
-    assert not (workspace_root / "session-1").exists()
+    assert not list((workspace_root / "session-1").iterdir())
 
 
 def test_import_uses_loader_metadata_fallback(skill_api: tuple[TestClient, Path, dict[str, str]]):

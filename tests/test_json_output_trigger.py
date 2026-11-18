@@ -17,7 +17,7 @@ from xpeech.utils.channel_jwt import UserTokenParams, create_token
 def chat_requests(monkeypatch, tmp_path):
     messages = []
 
-    async def run(*, message):
+    async def run(*, message, inbox=None):
         messages.append(message)
         yield {"event": "assistant", "context": '{"ok":true}'}
 

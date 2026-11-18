@@ -27,10 +27,12 @@ from pydantic_settings import (
 )
 
 from ..agent.prompt.consolidation import SUMMARY_TOKENS
+from ..exceptions import PathProtectionError
 from ..provider.schema import LLMParameters
 from ..utils.command_template import CommandTemplateError, execute_command_template
 from ..utils.file_io import ensure_path
 from ..utils.filter_expr import validate_filter_source
+from ..utils.ids import validate_user_id
 
 conf_toml_path = "conf.toml"  # Configuration TOML file path
 
@@ -71,6 +73,17 @@ class PathConfig(BaseModel):
     session_record_yaml_path: ConfigPath = Field(
         default=Path("data/session/record"), validate_default=True,
     )
+
+    def resolve_user_workspace(self, user_id: str) -> Path:
+        """Create a missing workspace or validate the existing directory."""
+        workspace = self.workspace_base_path.resolve() / validate_user_id(user_id)
+        if workspace.is_symlink() or workspace.resolve() != workspace:
+            raise PathProtectionError("User workspace must not redirect to another directory")
+        if not workspace.exists():
+            return ensure_path(workspace)
+        if not workspace.is_dir():
+            raise PathProtectionError("User workspace must be a directory")
+        return workspace
 
 
 class DatabaseConfig(BaseModel):

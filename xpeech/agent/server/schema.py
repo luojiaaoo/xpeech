@@ -1,6 +1,6 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, RootModel
 
@@ -34,3 +34,14 @@ class InboundMessage(BaseModel):
         default=False,
         description='是否为大模型请求添加 response_format={"type":"json_object"}，不修改提示词；模型不支持时返回 HTTP 400',
     )
+
+    def inbox_context(self) -> dict[str, Any]:
+        """返回 inbox 需要校验的上下文；user_id、session_id 由查找键保证一致。"""
+        return self.model_dump(include={"sender_name", "channel", "session_metadata"})
+
+    def command_text(self) -> str | None:
+        """单个文本块以 / 开头时，返回去除首尾空白的命令文本。"""
+        if len(self.content) != 1:
+            return None
+        text = self.content[0].text.strip()
+        return text if text.startswith("/") else None

@@ -17,9 +17,10 @@ from xpeech.agent.history import YamlHistoryRepository
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.auth import require_user_jwt
-from xpeech.agent.server.dependencies import CHAT_GUARD
-from xpeech.agent.server.routes.chat import chat, router, stop_chat
+from xpeech.agent.server.session_guard import CHAT_GUARD
+from xpeech.agent.server.routes.chat import router, stop_chat
 from xpeech.agent.server.schema import InboundMessage, InputText
+from xpeech.config.settings import settings
 from xpeech.provider import helper
 from xpeech.provider.litellm_provider import LiteLLMProvider
 from xpeech.provider.schema import LLMParameters
@@ -96,7 +97,8 @@ def streaming_chat(monkeypatch, tmp_path):
     agent.max_iterations = 2
     agent.max_accept_token = 147_000
     agent.chat = call_provider
-    runner = AgentRunner("cleanup-user", config=SimpleNamespace(path=SimpleNamespace(workspace_base_path=tmp_path)))
+    monkeypatch.setattr(settings.path, "workspace_base_path", tmp_path)
+    runner = AgentRunner("cleanup-user", config=settings)
     runner._agent_loop = agent
     message = InboundMessage(
         user_id="cleanup-user",
@@ -107,20 +109,23 @@ def streaming_chat(monkeypatch, tmp_path):
         content=[InputText(text="hi")],
         files=[],
     )
-    monkeypatch.setattr(execute, "_prepare_chat", AsyncMock(return_value=(runner, message)))
+    monkeypatch.setattr(execute.AgentRunner, "create", AsyncMock(return_value=runner))
     # 测试直接调用路由函数/自建 ASGI 应用，不经过 ContextASGIMiddleware，这里补上请求上下文。
     monkeypatch.setattr(loop_module, "get_request_id", lambda: "test-request-id")
     state.auth = SimpleNamespace(user_id=message.user_id, channel="test")
-    state.stream = chat(
-        auth=state.auth,
-        user_id=message.user_id,
-        session_id=message.session_id,
-        sender_name=message.sender_name,
-        session_metadata={},
-        content=message.content,
-        files=[],
-        json_output=False,
-    )
+
+    async def stream():
+        async with execute.execute_chat_stream(
+            message.user_id,
+            channel=message.channel,
+            session_id=message.session_id,
+            sender_name=message.sender_name,
+            content=message.content,
+        ) as events:
+            async for event in events:
+                yield event
+
+    state.stream = stream()
     return state
 
 

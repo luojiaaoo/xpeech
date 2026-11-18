@@ -129,7 +129,7 @@ async def test_chat_ignores_lark_user_access_tokens(tmp_path, monkeypatch, endpo
     started = []
     observed = []
 
-    async def run(message):
+    async def run(message, *, inbox=None):
         started.append(message.user_id)
         if len(started) == 2:
             both_started.set()

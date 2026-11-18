@@ -2,12 +2,14 @@ from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from typing import Any, Self
 
+import anyio
+
 from ..config.settings import Settings, settings
 from ..provider.litellm_provider import LiteLLMProvider
-from ..utils.file_io import ensure_path_async
 from ..utils.session import create_workspace_templates
 from .loop import AgentLoop
 from .server.schema import InboundMessage
+from .server.session_guard import SessionInbox
 from .tools.registry import register_tools
 
 
@@ -27,7 +29,7 @@ class AgentRunner:
         self.not_interactive = not_interactive
         self.channel = channel
         self.user_organization: str | None = None
-        self.workspace = (config.path.workspace_base_path / self.user_id).resolve()
+        self.workspace = config.path.resolve_user_workspace(user_id)
         self._agent_loop: AgentLoop | None = None
 
     @classmethod
@@ -40,13 +42,15 @@ class AgentRunner:
         channel: str | None = None,
     ) -> Self:
         """Create a fully initialized runner for one user."""
-        runner = cls(user_id, config=config, not_interactive=not_interactive, channel=channel)
+        runner = await anyio.to_thread.run_sync(
+            lambda: cls(user_id, config=config, not_interactive=not_interactive, channel=channel),
+        )
         await runner._initialize()
         return runner
 
     async def _initialize(self) -> None:
         """Initialize the user workspace, provider, tools, and agent loop."""
-        await create_workspace_templates(await ensure_path_async(self.workspace))
+        await create_workspace_templates(self.workspace)
         self.user_organization = await self.config.extra_user_info.resolve_user_organization(self.user_id)
 
         llm_config = self.config.llm
@@ -84,8 +88,10 @@ class AgentRunner:
     async def run(
         self,
         message: InboundMessage,
+        *,
+        inbox: SessionInbox | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Run one inbound message and yield the agent's events."""
+        """Run an inbound message and any follow-ups delivered to its inbox."""
         if message.user_id != self.user_id:
             raise ValueError("Inbound message user_id does not match the runner user")
 
@@ -95,6 +101,7 @@ class AgentRunner:
         async with aclosing(self._agent_loop.run(
             message=message,
             not_interactive=self.not_interactive,
+            inbox=inbox,
         )) as events:
             async for event in events:
                 yield event

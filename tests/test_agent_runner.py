@@ -7,7 +7,7 @@ import pytest
 from xpeech.agent import runner as runner_module
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.schema import InboundMessage, InputText
-from xpeech.config.settings import ExtraUserInfoConfig
+from xpeech.config.settings import ExtraUserInfoConfig, settings
 
 
 class FakeProvider:
@@ -25,7 +25,7 @@ class FakeAgentLoop:
         self.not_interactive_values: list[bool] = []
         self.instances.append(self)
 
-    async def run(self, message: InboundMessage, *, not_interactive: bool = False):
+    async def run(self, message: InboundMessage, *, not_interactive: bool = False, inbox=None):
         self.messages.append(message)
         self.not_interactive_values.append(not_interactive)
         yield {"event": "assistant", "context": "hello"}
@@ -33,7 +33,7 @@ class FakeAgentLoop:
 
 def make_config(workspace_base_path: Path):
     return SimpleNamespace(
-        path=SimpleNamespace(workspace_base_path=workspace_base_path),
+        path=settings.path.model_copy(update={"workspace_base_path": workspace_base_path}),
         llm=SimpleNamespace(
             api_key="test-key",
             api_base="https://llm.test",
@@ -53,15 +53,13 @@ def make_config(workspace_base_path: Path):
 @pytest.fixture
 def runner_dependencies(monkeypatch: pytest.MonkeyPatch):
     FakeAgentLoop.instances.clear()
-    ensure_path = AsyncMock(side_effect=lambda path: path)
     create_templates = AsyncMock()
     register_tools = AsyncMock()
-    monkeypatch.setattr(runner_module, "ensure_path_async", ensure_path)
     monkeypatch.setattr(runner_module, "create_workspace_templates", create_templates)
     monkeypatch.setattr(runner_module, "LiteLLMProvider", FakeProvider)
     monkeypatch.setattr(runner_module, "AgentLoop", FakeAgentLoop)
     monkeypatch.setattr(runner_module, "register_tools", register_tools)
-    return ensure_path, create_templates, register_tools
+    return create_templates, register_tools
 
 
 @pytest.mark.asyncio
@@ -69,7 +67,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     tmp_path: Path,
     runner_dependencies,
 ):
-    ensure_path, create_templates, register_tools = runner_dependencies
+    create_templates, register_tools = runner_dependencies
     config = make_config(tmp_path)
     runner = await AgentRunner.create("session-1", config=config)
     message = InboundMessage(
@@ -87,7 +85,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
         {"event": "assistant", "context": "hello"}
     ]
     assert runner.workspace == (tmp_path / "session-1").resolve()
-    ensure_path.assert_awaited_once_with(runner.workspace)
+    assert runner.workspace.is_dir()
     create_templates.assert_awaited_once_with(runner.workspace)
     register_tools.assert_awaited_once()
     assert set(register_tools.await_args.kwargs) == {
@@ -112,7 +110,7 @@ async def test_runner_resolves_organization_once_before_registering_tools(
     config.extra_user_info = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup ${user_id}", timeout=2.0)
     lookup = AsyncMock(return_value="公司/研发/平台")
     monkeypatch.setattr(ExtraUserInfoConfig, "resolve_user_organization", lookup)
-    register_tools = runner_dependencies[2]
+    _, register_tools = runner_dependencies
 
     async def check_registration(**kwargs):
         lookup.assert_awaited_once_with("alice")
@@ -179,7 +177,7 @@ async def test_runner_can_run_without_interaction(tmp_path: Path, runner_depende
     _ = [event async for event in runner.run(message)]
 
     assert FakeAgentLoop.instances[0].not_interactive_values == [True]
-    register_tools = runner_dependencies[2]
+    _, register_tools = runner_dependencies
     assert register_tools.await_args.kwargs["not_interactive"] is True
     assert register_tools.await_args.kwargs["channel"] == "crm"
     assert FakeAgentLoop.instances[0].kwargs["channel"] == "crm"
@@ -190,7 +188,7 @@ async def test_run_not_interactive_preserves_events_and_merges_text_chunks(tmp_p
     runner = AgentRunner("session-1", config=make_config(tmp_path), not_interactive=True)
 
     class EventLoop:
-        async def run(self, message, *, not_interactive=False):
+        async def run(self, message, *, not_interactive=False, inbox=None):
             assert not_interactive is True
             yield {"event": "assistant", "context": "draft"}
             yield {"event": "assistant_end", "context": ""}
@@ -268,7 +266,7 @@ async def test_run_not_interactive_preserves_partial_and_non_assistant_output(tm
     runner = AgentRunner("session-1", config=make_config(tmp_path), not_interactive=True)
 
     class EventLoop:
-        async def run(self, message, *, not_interactive=False):
+        async def run(self, message, *, not_interactive=False, inbox=None):
             assert not_interactive is True
             for event in events:
                 yield event

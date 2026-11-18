@@ -140,9 +140,10 @@ def test_file_choices_limit_results_and_handle_new_workspaces(chat_command_clien
     assert client.get("/files/list", headers={"Authorization": f"Bearer {token}"}).json() == {
         "entries": [], "truncated": False,
     }
+    assert (workspace.parent / "new-user").is_dir()
 
 
-def test_file_routes_reject_workspace_roots_linked_to_another_user(chat_command_client, tmp_path):
+def test_workspace_routes_reject_workspace_roots_linked_to_another_user(chat_command_client, tmp_path):
     client, _, _ = chat_command_client
     other = tmp_path / "bob"
     other.mkdir()
@@ -155,6 +156,16 @@ def test_file_routes_reject_workspace_roots_linked_to_another_user(chat_command_
         ("/skills", {}), ("/chat_command", {}),
     ):
         assert client.get(endpoint, headers=headers, params=params).status_code == 403
+    chat_headers = {
+        **headers, "x-sender-name": "Alias", "x-session-id": "00000000-0000-7000-8000-000000000000",
+    }
+    data = {"content": '[{"text": "hello"}]'}
+    for endpoint in ("/chat", "/chat_sync"):
+        for files in (None, [("files", ("note.txt", b"attachment"))]):
+            response = client.post(endpoint, headers=chat_headers, data=data, files=files)
+            assert response.status_code == 403
+            assert response.json() == {"detail": "User workspace must not redirect to another directory"}
+    assert client.get("/chat/status", headers=chat_headers).json() == {"active": False}
 
 
 def test_file_search_matches_names_recursively_and_stays_in_user_workspace(chat_command_client, tmp_path):

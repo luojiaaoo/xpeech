@@ -204,7 +204,7 @@ def test_chat_passes_verified_channel_to_registration(
 ):
     created = []
 
-    async def run(message):
+    async def run(message, *, inbox=None):
         yield {"event": "assistant", "context": "ok"}
 
     async def run_not_interactive(message):

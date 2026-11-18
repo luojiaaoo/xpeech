@@ -1,29 +1,96 @@
 import asyncio
 
+from .schema import InboundMessage
+
+
+class SessionInbox:
+    """一个 loop 的收件箱；队列检查与关闭之间不能出现 await。"""
+
+    def __init__(self, message: InboundMessage) -> None:
+        self.user_id = message.user_id
+        self.channel = message.channel
+        self._context = message.inbox_context()
+        self.ready = asyncio.Event()
+        self.finished = asyncio.Event()
+        self._accepting = False
+        self._pending: list[InboundMessage] = []
+
+    def start(self) -> None:
+        self._accepting = True
+        self.ready.set()
+
+    def validate(self, message: InboundMessage) -> None:
+        context = message.inbox_context()
+        mismatched = [name for name, value in self._context.items() if context[name] != value]
+        if mismatched:
+            raise ValueError(f"Inbound message fields do not match the inbox: {', '.join(mismatched)}")
+
+    def enqueue(self, message: InboundMessage) -> bool:
+        self.validate(message)
+        if not self._accepting:
+            return False
+        self._pending.append(message)
+        return True
+
+    def drain(self) -> list[InboundMessage]:
+        messages = self._pending
+        self._pending = []
+        return messages
+
+    def drain_or_close(self) -> list[InboundMessage]:
+        """取出本次积累的消息，或在邮箱为空时停止接收。"""
+        messages = self.drain()
+        if not messages:
+            self.close()
+        return messages
+
+    def close(self) -> None:
+        self._accepting = False
+        self.ready.set()
+
 
 class SessionChatGuard:
-    """跟踪活跃聊天流，确保进程内每个会话同时仅有一个请求。"""
+    """每个会话只允许一个执行者，其余请求将消息投递给该执行者。"""
 
     def __init__(self) -> None:
         """初始化活跃会话集合及其并发保护锁。"""
         self._lock = asyncio.Lock()
-        self._active_sessions: set[tuple[str, str]] = set()
+        self._active_sessions: dict[tuple[str, str], SessionInbox] = {}
 
-    async def try_acquire(self, user_id: str, session_id: str) -> bool:
-        """尝试立即占用会话；会话已被占用时返回 False。"""
+    async def submit(self, message: InboundMessage) -> tuple[SessionInbox, bool]:
+        """加入仍可迭代的 loop；已进入清理时等待释放后取得执行权。"""
+        is_command = message.command_text() is not None
+        key = (message.user_id, message.session_id)
+        while True:
+            async with self._lock:
+                inbox = self._active_sessions.get(key)
+                if inbox is None:
+                    inbox = SessionInbox(message)
+                    self._active_sessions[key] = inbox
+                    return inbox, True
+                inbox.validate(message)
+                wait_for = inbox.finished
+                if not is_command:
+                    if inbox.enqueue(message):
+                        return inbox, False
+                    if not inbox.ready.is_set():
+                        wait_for = inbox.ready
+            await wait_for.wait()
+
+    async def release(self, user_id: str, session_id: str, inbox: SessionInbox) -> None:
+        """只释放当前执行者持有的会话。"""
         async with self._lock:
             key = (user_id, session_id)
-            if key in self._active_sessions:
-                return False
-            self._active_sessions.add(key)
-            return True
-
-    async def release(self, user_id: str, session_id: str) -> None:
-        """释放指定会话；会话未被占用时不报错。"""
-        async with self._lock:
-            self._active_sessions.discard((user_id, session_id))
+            active = self._active_sessions.get(key)
+            if active is inbox:
+                self._active_sessions.pop(key)
+                active.close()
+                active.finished.set()
 
     async def is_active(self, user_id: str, session_id: str) -> bool:
         """判断指定会话当前是否已被请求占用。"""
         async with self._lock:
             return (user_id, session_id) in self._active_sessions
+
+
+CHAT_GUARD = SessionChatGuard()

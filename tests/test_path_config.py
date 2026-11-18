@@ -1,6 +1,7 @@
 import pytest
 
 from xpeech.config.settings import BrowserPreviewConfig, PathConfig, WebClientConfig
+from xpeech.exceptions import PathProtectionError
 
 
 def test_config_paths_expand_using_backend_home(tmp_path, monkeypatch):
@@ -30,3 +31,17 @@ def test_default_config_paths_are_also_resolved(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert BrowserPreviewConfig().browser_preview_path == tmp_path / "data/browser_preview"
     assert WebClientConfig().session_history_path == tmp_path / "data/web_client/session_history"
+
+
+def test_resolve_user_workspace_creates_then_checks_the_existing_path(tmp_path):
+    config = PathConfig.model_validate({name: tmp_path / name for name in PathConfig.model_fields})
+    workspace = config.workspace_base_path / "alice"
+
+    assert config.resolve_user_workspace("alice") == workspace
+    assert workspace.is_dir()
+    assert config.resolve_user_workspace("alice") == workspace
+
+    workspace.rmdir()
+    workspace.write_text("not a directory")
+    with pytest.raises(PathProtectionError, match="must be a directory"):
+        config.resolve_user_workspace("alice")
