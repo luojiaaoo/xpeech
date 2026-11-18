@@ -11,6 +11,7 @@ from ...utils.file_io import LockedFile
 from ...utils.helper import token_counter
 from ..memory import MemoryStore
 from ..skills.skill import SkillsLoader
+from .helper import build_system_reminder
 
 BOOTSTRAP_FILES = ("AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md")
 
@@ -85,10 +86,7 @@ async def build_context_messages(
 
     async def add(category: str, content: str) -> None:
         if content.strip():
-            messages.append({
-                "role": "user",
-                "content": f"<system-reminder>\n{content.strip()}\n</system-reminder>",
-            })
+            messages.append(build_system_reminder(content))
             token_counts[category] = token_counts.get(category, 0) + await token_counter([messages[-1]])
 
     await add("用户上下文", _get_identity(channel))

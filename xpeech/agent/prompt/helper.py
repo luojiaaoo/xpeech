@@ -3,12 +3,31 @@ from textwrap import dedent
 from typing import Any
 
 from ...agent.server.schema import InboundMessage, InputText
-from ..helper import is_context_message
+
+
+def build_system_reminder(content: str) -> dict[str, Any]:
+    """将运行时提示包装成带 system-reminder 标签的 user 消息。"""
+    return {
+        "role": "user",
+        "content": f"<system-reminder>\n{content.strip()}\n</system-reminder>",
+    }
 
 
 def is_system_message(message: dict[str, Any]) -> bool:
-    """内部系统提示词包括 system 消息和前置 user 上下文。"""
-    return message["role"] == "system" or is_context_message(message)
+    """识别 system 消息和带 system-reminder 标签的前置 user 上下文。"""
+    if message.get("role") == "system":
+        return True
+    if message.get("role") != "user":
+        return False
+    # 原始用户请求即使包含同名标签，也不能当作运行时上下文剔除。
+    if "timestamp" in message:
+        return False
+    content = message.get("content")
+    return (
+        isinstance(content, str)
+        and content.strip().startswith("<system-reminder>")
+        and content.strip().endswith("</system-reminder>")
+    )
 
 
 def split_system_messages(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

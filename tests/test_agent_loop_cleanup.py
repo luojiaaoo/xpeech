@@ -15,6 +15,7 @@ from xpeech.agent import execute
 from xpeech.agent import loop as loop_module
 from xpeech.agent.history import YamlHistoryRepository
 from xpeech.agent.loop import AgentLoop
+from xpeech.agent.model_anomaly import ModelAnomalyGuard
 from xpeech.agent.prompt.helper import build_user_prompt
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.auth import require_user_jwt
@@ -247,6 +248,172 @@ async def test_tool_chain_continues_until_no_tools_and_no_pending_messages(turn,
     if inbox is not None:
         assert not inbox.enqueue(message)
         assert inbox.drain() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batches, expected", [
+    ([[("lookup", {})]] * 2, []),
+    ([[("lookup", {})]] * 5, [("lookup", 3)]),
+    ([[("lookup", {"x": 1, "y": 2})], [("lookup", {"y": 2, "x": 1})],
+      [("lookup", {"x": 1, "y": 2})]], [("lookup", 3)]),
+    ([[("lookup", {})]] * 2 + [[("other", {})]] + [[("lookup", {})]] * 3, [("lookup", 3)]),
+    ([[("lookup", {})]] * 2 + [[("lookup", {"x": 1})]] * 3, [("lookup", 3)]),
+    ([[("lookup", {})] * 3], [("lookup", 3)]),
+    ([[("lookup", {})] * 2] * 2, [("lookup", 3)]),
+    ([[("lookup", {})]] * 4 + [[("other", {})]] + [[("lookup", {})]] * 4,
+     [("lookup", 3), ("lookup", 3)]),
+])
+async def test_repeated_tool_calls_inject_reminders_without_splitting_results(turn, batches, expected):
+    agent, message = turn
+    calls = []
+
+    async def lookup():
+        return "result"
+
+    agent.tool_executor = ToolExecutor(
+        workspace=agent.workspace, max_result_chars=1000,
+        mapping_tool_call_funcs={"lookup": lookup, "other": lookup},
+    )
+
+    async def model_call(**kwargs):
+        calls.append(deepcopy(kwargs["messages"]))
+        index = len(calls) - 1
+        if index == len(batches):
+            return response(("content", "done"))
+        return response(*[
+            ("tool_calls", ToolCallChunk(
+                index=offset, id=f"call-{index}-{offset}", name=name, arguments=json.dumps(arguments),
+            ))
+            for offset, (name, arguments) in enumerate(batches[index])
+        ])
+
+    agent.chat = model_call
+    _ = [event async for event in agent.run(message)]
+    expected_messages = [
+        {
+            "role": "user",
+            "content": ModelAnomalyGuard.REPEATED_TOOL_CALL_PROMPT.format(tool_name=name, observed_count=count),
+        }
+        for name, count in expected
+    ]
+    await saved_turn(agent, message)
+    saved = agent.history.save.await_args.args[2]
+
+    def reminders(messages):
+        return [
+            msg for msg in messages
+            if msg["role"] == "user" and str(msg["content"]).startswith("You have called ")
+        ]
+
+    assert [msg for context in calls for msg in reminders(context)] == expected_messages
+    assert reminders(saved) == []
+    assert reminders(agent.records.append.await_args.kwargs["messages"]) == []
+    # Reminders must not split tool calls from their results, including parallel batches.
+    for context in calls[1:]:
+        outstanding = set()
+        completed_tools = 0
+        for msg in context:
+            if msg["role"] == "assistant":
+                outstanding.update(call["id"] for call in msg.get("tool_calls", []))
+            elif msg["role"] == "tool":
+                outstanding.remove(msg["tool_call_id"])
+                completed_tools += 1
+            elif msg["role"] == "user":
+                assert not outstanding
+                if str(msg["content"]).startswith("You have called "):
+                    assert completed_tools >= 3
+
+
+@pytest.mark.asyncio
+async def test_anomaly_reminder_is_used_once_after_compression_and_excluded_from_memory(turn):
+    agent, message = turn
+    agent.compressor.should_compress.side_effect = [False, False, False, True, False]
+    agent.compressor.compress = AsyncMock(return_value=[
+        {"role": "system", "content": "sys"},
+        {"role": "assistant", "content": "compressed history"},
+    ])
+    agent.memory_consolidator = SimpleNamespace(consolidate=AsyncMock())
+    calls = []
+
+    async def lookup():
+        return "result"
+
+    agent.tool_executor = ToolExecutor(
+        workspace=agent.workspace, max_result_chars=1000, mapping_tool_call_funcs={"lookup": lookup},
+    )
+
+    async def model_call(**kwargs):
+        calls.append(deepcopy(kwargs["messages"]))
+        if len(calls) == 5:
+            return response(("content", "done"))
+        return response(("tool_calls", ToolCallChunk(
+            index=0, id=f"call-{len(calls)}", name="lookup", arguments="{}",
+        )))
+
+    agent.chat = model_call
+    _ = [event async for event in agent.run(message)]
+    reminder = {
+        "role": "user",
+        "content": ModelAnomalyGuard.REPEATED_TOOL_CALL_PROMPT.format(tool_name="lookup", observed_count=3),
+    }
+    assert [reminder in messages for messages in calls] == [False, False, False, True, False]
+    assert calls[3] == [
+        {"role": "system", "content": "sys"},
+        {"role": "assistant", "content": "compressed history"},
+        reminder,
+    ]
+    agent.compressor.compress.assert_awaited_once()
+    agent.memory_consolidator.consolidate.assert_awaited_once()
+    assert reminder not in agent.compressor.compress.await_args.args[0]
+    assert reminder not in agent.memory_consolidator.consolidate.await_args.args[0]
+    assert reminder not in agent.history.save.await_args.args[2]
+    assert reminder not in agent.records.append.await_args.kwargs["messages"]
+
+
+@pytest.mark.asyncio
+async def test_inbox_message_resets_repeated_tool_call_count(turn):
+    agent, message = turn
+    inbox = SessionInbox(message)
+    calls = 0
+    contexts = []
+
+    async def lookup():
+        return "result"
+
+    agent.tool_executor = ToolExecutor(
+        workspace=agent.workspace, max_result_chars=1000, mapping_tool_call_funcs={"lookup": lookup},
+    )
+
+    async def model_call(**kwargs):
+        nonlocal calls
+        contexts.append(deepcopy(kwargs["messages"]))
+        calls += 1
+        if calls == 1:
+            assert inbox.enqueue(message)
+        if calls in (4, 8):
+            return response(("content", "done"))
+        return response(("tool_calls", ToolCallChunk(
+            index=0, id=f"call-{calls}", name="lookup", arguments="{}",
+        )))
+
+    agent.chat = model_call
+    _ = [event async for event in agent.run(message, inbox=inbox)]
+    await saved_turn(agent, message)
+    saved = agent.history.save.await_args.args[2]
+    assert not any(str(msg["content"]).startswith("You have called ") for msg in saved)
+    reminders = [
+        msg for context in contexts for msg in context
+        if str(msg["content"]).startswith("You have called ")
+    ]
+    assert not any(
+        str(msg["content"]).startswith("You have called ")
+        for msg in agent.records.append.await_args.kwargs["messages"]
+    )
+    assert calls == 8
+    assert reminders == [{
+        "role": "user",
+        "content": ModelAnomalyGuard.REPEATED_TOOL_CALL_PROMPT.format(tool_name="lookup", observed_count=3),
+    }] * 2
 
 
 @pytest.mark.asyncio

@@ -23,6 +23,7 @@ from .compression import AUTOCOMPACT_BUFFER_TOKENS, ConversationCompressor
 from .helper import strip_internal_message_metadata
 from .history import YamlHistoryRepository
 from .memory import MemoryConsolidator, MemoryStore
+from .model_anomaly import ModelAnomalyGuard
 from .prompt.consolidation import SUMMARY_TOKENS
 from .prompt.context import build_context_messages
 from .prompt.helper import (
@@ -427,6 +428,7 @@ class AgentLoop:
                 inbox.start()
             final_content = None
             final_content_error = False
+            anomaly_guard = ModelAnomalyGuard()
             for loop_count in count():
                 # 判断是否需要压缩
                 if await self.compressor.should_compress(messages_yaml):
@@ -438,7 +440,7 @@ class AgentLoop:
 
                 try:
                     response = await self.chat(
-                        messages=messages_yaml,
+                        messages=anomaly_guard.prepare_messages(messages_yaml),
                         tools=self.tools,
                         json_output=message.json_output,
                     )
@@ -514,7 +516,8 @@ class AgentLoop:
                             messages_yaml, turn_messages,
                             await build_user_prompt(message=incoming, workspace=self.workspace),
                         )
-                    continue
+
+                anomaly_guard.observe_tool_calls(response.tool_calls)
 
             if final_content is None:
                 final_content = "I've completed processing but have no response to give."

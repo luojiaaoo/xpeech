@@ -7,10 +7,11 @@ import pytest
 from xpeech.agent import loop as loop_module
 from xpeech.agent.compression import ConversationCompressor
 from xpeech.agent.history import YamlHistoryRepository
-from xpeech.agent.helper import is_context_message, strip_internal_message_metadata
+from xpeech.agent.helper import strip_internal_message_metadata
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.memory import MemoryStore
 from xpeech.agent.prompt.context import build_context_messages
+from xpeech.agent.prompt.helper import is_system_message
 from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.server.schema import InboundMessage, InputText
 from xpeech.agent.skills.skill import SkillsLoader
@@ -174,7 +175,7 @@ async def test_run_replaces_front_contexts_without_accumulating_versions(tmp_pat
     assert [item["role"] for item in saved] == ["user", "assistant", "user", "assistant"]
     assert "first question" in str(saved[0]["content"])
     assert "second question" in str(saved[2]["content"])
-    assert not any(is_context_message(item) for item in agent.records.append.await_args.kwargs["messages"])
+    assert not any(is_system_message(item) for item in agent.records.append.await_args.kwargs["messages"])
 
 
 @pytest.mark.asyncio
@@ -212,5 +213,5 @@ async def test_compression_preserves_contexts_without_summarizing_them(mode, mon
     else:
         assert len(compressed) == 4
     summary_input = summarize.await_args.kwargs["messages"]
-    assert not any(is_context_message(item) for item in summary_input)
+    assert not any(is_system_message(item) for item in summary_input if item["role"] == "user")
     assert sum(item["role"] == "system" for item in summary_input) == 1
