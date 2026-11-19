@@ -206,7 +206,7 @@ class AgentLoop:
                     }
                 )
 
-        async for execution in self.tool_executor.execute(
+        async with aclosing(self.tool_executor.execute(
             response.tool_calls,
             loop_count=loop_count,
             session_metadata=session_metadata,
@@ -214,125 +214,126 @@ class AgentLoop:
             sender_name=sender_name,
             channel=channel,
             session_id=session_id,
-        ):
-            tool_call = execution.call
-            result = execution.value
-            success = execution.succeeded
-            duration_seconds = execution.duration_seconds
+        )) as executions:
+            async for execution in executions:
+                tool_call = execution.call
+                result = execution.value
+                success = execution.succeeded
+                duration_seconds = execution.duration_seconds
 
-            if isinstance(execution.value, InteractionRequest) and success:
-                if isinstance(execution.value, ExecutionRequest):
-                    execution_function = self.mapping_tool_call_funcs[tool_call.name].execution_function
-                    arguments = {key: value for key, value in tool_call.arguments.items() if key not in EXECUTION_PARAMETERS}
-                    question = build_execution_question(
-                        tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION],
-                        tool_call_id=tool_call.id,
-                        title=tool_call.arguments.get(EXECUTION_TITLE),
-                    )
-                    # 等待用户确认本次执行。
-                    logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
-                    session_key = (user_id, session_id)
-                    question_event = QuestionEvent(event=asyncio.Event())
-                    self.SESSION_QUESTION_EVENT[session_key] = question_event
-                    question_start_time = time.perf_counter()
-                    timed_out = False
-                    try:
-                        yield {"event": "question", "context": question}
-                        await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
-                        logger.info("User answered the question {}", question_event.answer)
-                    except TimeoutError:
-                        timed_out = True
-                        logger.warning("User timeout answering the question")
-                    finally:
-                        self.SESSION_QUESTION_EVENT.pop(session_key, None)
-                    # 覆盖方法调用的时间，遵守实际用户回答耗时
-                    duration_seconds = time.perf_counter() - question_start_time
-                    decision = question_event.answer
-                    user_confirmed = not timed_out and "confirm" in decision and "cancel" not in decision
-                    if user_confirmed:
-                        execution_result = await self.tool_executor.execute_function(
-                            tool_call,
-                            execution_function,
-                            arguments,
-                            loop_count=loop_count,
-                            session_metadata=session_metadata,
-                            user_id=user_id,
-                            sender_name=sender_name,
-                            channel=channel,
-                            session_id=session_id,
+                if isinstance(execution.value, InteractionRequest) and success:
+                    if isinstance(execution.value, ExecutionRequest):
+                        execution_function = self.mapping_tool_call_funcs[tool_call.name].execution_function
+                        arguments = {key: value for key, value in tool_call.arguments.items() if key not in EXECUTION_PARAMETERS}
+                        question = build_execution_question(
+                            tool_call.name, arguments, tool_call.arguments[EXECUTION_DESCRIPTION],
+                            tool_call_id=tool_call.id,
+                            title=tool_call.arguments.get(EXECUTION_TITLE),
                         )
-                        result = execution_result.value
-                        duration_seconds += execution_result.duration_seconds
-                        success = execution_result.succeeded
-                        notice = "【用户确认后执行】用户已同意本次操作，工具随后才开始执行。以下为实际结果："
-                        result = prepend_text(result, notice)
-                    elif timed_out:
-                        success = False
-                        result = "用户确认超时，工具未执行。"
-                    elif "cancel" in decision:
-                        success = False
-                        result = "用户取消执行，工具未执行。"
-                    else:
-                        success = False
-                        result = "执行确认回复格式异常，工具未执行。"
+                        # 等待用户确认本次执行。
+                        logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
+                        session_key = (user_id, session_id)
+                        question_event = QuestionEvent(event=asyncio.Event())
+                        self.SESSION_QUESTION_EVENT[session_key] = question_event
+                        question_start_time = time.perf_counter()
+                        timed_out = False
+                        try:
+                            yield {"event": "question", "context": question}
+                            await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
+                            logger.info("User answered the question {}", question_event.answer)
+                        except TimeoutError:
+                            timed_out = True
+                            logger.warning("User timeout answering the question")
+                        finally:
+                            self.SESSION_QUESTION_EVENT.pop(session_key, None)
+                        # 覆盖方法调用的时间，遵守实际用户回答耗时
+                        duration_seconds = time.perf_counter() - question_start_time
+                        decision = question_event.answer
+                        user_confirmed = not timed_out and "confirm" in decision and "cancel" not in decision
+                        if user_confirmed:
+                            execution_result = await self.tool_executor.execute_function(
+                                tool_call,
+                                execution_function,
+                                arguments,
+                                loop_count=loop_count,
+                                session_metadata=session_metadata,
+                                user_id=user_id,
+                                sender_name=sender_name,
+                                channel=channel,
+                                session_id=session_id,
+                            )
+                            result = execution_result.value
+                            duration_seconds += execution_result.duration_seconds
+                            success = execution_result.succeeded
+                            notice = "【用户确认后执行】用户已同意本次操作，工具随后才开始执行。以下为实际结果："
+                            result = prepend_text(result, notice)
+                        elif timed_out:
+                            success = False
+                            result = "用户确认超时，工具未执行。"
+                        elif "cancel" in decision:
+                            success = False
+                            result = "用户取消执行，工具未执行。"
+                        else:
+                            success = False
+                            result = "执行确认回复格式异常，工具未执行。"
 
+                        append_tool_result_messages_yaml(
+                            tool_call, result, started_at=execution.started_at,
+                            duration_seconds=duration_seconds,
+                        )
+                        tool_result_content = result
+                    elif isinstance(execution.value, SendFileRequest):
+                        # 发送文件
+                        logger.info("Sending file {}", execution.value.source)
+                        tool_result_content = f"文件已发送：{execution.value.source}"
+                        append_tool_result_messages_yaml(
+                            tool_call, tool_result_content, started_at=execution.started_at,
+                            duration_seconds=duration_seconds,
+                        )
+                        yield {"event": "send_file", "context": execution.value.source}
+                    elif isinstance(execution.value, QuestionRequest):
+                        # 等待用户输入
+                        logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
+                        session_key = (user_id, session_id)
+                        question_event = QuestionEvent(event=asyncio.Event())
+                        self.SESSION_QUESTION_EVENT[session_key] = question_event
+                        question_start_time = time.perf_counter()
+                        try:
+                            yield {"event": "question", "context": execution.value.question}
+                            await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
+                            logger.info("User answered the question {}", question_event.answer)
+                        except TimeoutError:
+                            success = False
+                            logger.warning("User timeout answering the question")
+                        finally:
+                            self.SESSION_QUESTION_EVENT.pop(session_key, None)
+                        # 覆盖方法调用的时间，遵守实际用户回答耗时
+                        duration_seconds = time.perf_counter() - question_start_time
+                        answer = question_event.answer
+                        append_tool_result_messages_yaml(
+                            tool_call, answer, started_at=execution.started_at,
+                            duration_seconds=duration_seconds,
+                        )
+                        tool_result_content = answer
+                    else:
+                        raise TypeError(
+                            f"未处理的交互请求类型: {type(execution.value).__name__} (tool={tool_call.name})"
+                        )
+                else:
                     append_tool_result_messages_yaml(
                         tool_call, result, started_at=execution.started_at,
                         duration_seconds=duration_seconds,
                     )
                     tool_result_content = result
-                elif isinstance(execution.value, SendFileRequest):
-                    # 发送文件
-                    logger.info("Sending file {}", execution.value.source)
-                    tool_result_content = f"文件已发送：{execution.value.source}"
-                    append_tool_result_messages_yaml(
-                        tool_call, tool_result_content, started_at=execution.started_at,
-                        duration_seconds=duration_seconds,
-                    )
-                    yield {"event": "send_file", "context": execution.value.source}
-                elif isinstance(execution.value, QuestionRequest):
-                    # 等待用户输入
-                    logger.info(f"Waiting for user input, timeout={USER_TIMEOUT:.0f}s")
-                    session_key = (user_id, session_id)
-                    question_event = QuestionEvent(event=asyncio.Event())
-                    self.SESSION_QUESTION_EVENT[session_key] = question_event
-                    question_start_time = time.perf_counter()
-                    try:
-                        yield {"event": "question", "context": execution.value.question}
-                        await asyncio.wait_for(question_event.event.wait(), timeout=USER_TIMEOUT)
-                        logger.info("User answered the question {}", question_event.answer)
-                    except TimeoutError:
-                        success = False
-                        logger.warning("User timeout answering the question")
-                    finally:
-                        self.SESSION_QUESTION_EVENT.pop(session_key, None)
-                    # 覆盖方法调用的时间，遵守实际用户回答耗时
-                    duration_seconds = time.perf_counter() - question_start_time
-                    answer = question_event.answer
-                    append_tool_result_messages_yaml(
-                        tool_call, answer, started_at=execution.started_at,
-                        duration_seconds=duration_seconds,
-                    )
-                    tool_result_content = answer
-                else:
-                    raise TypeError(
-                        f"未处理的交互请求类型: {type(execution.value).__name__} (tool={tool_call.name})"
-                    )
-            else:
-                append_tool_result_messages_yaml(
-                    tool_call, result, started_at=execution.started_at,
-                    duration_seconds=duration_seconds,
-                )
-                tool_result_content = result
 
-            tool_call_result = {
-                "tool_call_id": tool_call.id,
-                "name": tool_call.name,
-                "result": tool_result_content,
-                "duration_seconds": duration_seconds,
-                "success": success,
-            }
-            yield {"event": "tool_call_result", "context": json.dumps(tool_call_result)}
+                tool_call_result = {
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "result": tool_result_content,
+                    "duration_seconds": duration_seconds,
+                    "success": success,
+                }
+                yield {"event": "tool_call_result", "context": json.dumps(tool_call_result)}
 
         # 如果包含_meta属性，则把这类消息转成user消息
         if with_metas:
@@ -549,7 +550,7 @@ class AgentLoop:
                     channel=message.channel,
                 )
 
-        # 追加本轮对话记录
+        # 整个 loop 完成后只记录一次；中途入队的请求不单独创建 record。
         user_question = "\n".join(
             input_content.text for input_content in message.content if isinstance(input_content, InputText)
         )

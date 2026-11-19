@@ -25,7 +25,7 @@ class _RecordSQLModel(SQLModel, registry=_record_registry):
 
 
 class ConversationRecord(_RecordSQLModel, table=True):
-    """一次用户对话及其模型使用量，对应 conversation_records 表。"""
+    """一次完整 Agent loop 及其模型使用量；中途插入消息共用这条记录。"""
 
     __tablename__ = TABLE_NAME
     __table_args__ = (

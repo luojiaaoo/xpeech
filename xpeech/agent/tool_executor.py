@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import anyio
 from loguru import logger
 
 from ..exceptions import PathProtectionError
@@ -239,20 +240,28 @@ class ToolExecutor:
     ) -> AsyncIterator[ToolExecutionResult]:
         """并发执行工具调用，每完成一个就立即产出对应结果。"""
 
-        async with asyncio.TaskGroup() as task_group:
-            tasks = [
-                task_group.create_task(
-                    self.execute_one(
-                        tool_call,
-                        loop_count=loop_count,
-                        session_metadata=session_metadata,
-                        user_id=user_id,
-                        sender_name=sender_name,
-                        channel=channel,
-                        session_id=session_id,
-                    )
+        # 生成器可能暂停在 yield 等待用户回答，不能跨 yield 持有 TaskGroup。
+        # aclose() 注入的 GeneratorExit 会被 TaskGroup 包装成异常组。
+        tasks = [
+            asyncio.create_task(
+                self.execute_one(
+                    tool_call,
+                    loop_count=loop_count,
+                    session_metadata=session_metadata,
+                    user_id=user_id,
+                    sender_name=sender_name,
+                    channel=channel,
+                    session_id=session_id,
                 )
-                for tool_call in tool_calls
-            ]
+            )
+            for tool_call in tool_calls
+        ]
+        try:
             for completed in asyncio.as_completed(tasks):
                 yield await completed
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(*tasks, return_exceptions=True)

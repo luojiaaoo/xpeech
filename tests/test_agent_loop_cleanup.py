@@ -19,6 +19,7 @@ from xpeech.agent.model_anomaly import ModelAnomalyGuard
 from xpeech.agent.prompt.helper import build_user_prompt
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.auth import require_user_jwt
+from xpeech.agent.server.chat_streams import ChatStreams
 from xpeech.agent.server.routes.chat import router
 from xpeech.agent.server.schema import InboundMessage, InputText
 from xpeech.agent.server.session_guard import SessionChatGuard, SessionInbox
@@ -70,6 +71,102 @@ def turn(monkeypatch, tmp_path):
 async def saved_turn(agent, message):
     agent.history.save.assert_awaited_once()
     return await agent.history.load(message.user_id, message.session_id, channel=message.channel)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmation", [False, True])
+@pytest.mark.parametrize("insert_before_question", [False, True])
+async def test_inserted_chat_and_question_share_one_loop_and_record(
+    turn, monkeypatch, confirmation, insert_before_question,
+):
+    agent, message = turn
+    monkeypatch.setattr(loop_module, "build_user_prompt", build_user_prompt)
+    monkeypatch.setattr(execute, "CHAT_GUARD", SessionChatGuard())
+    monkeypatch.setattr(execute, "CHAT_STREAMS", ChatStreams())
+    runner = SimpleNamespace(workspace=agent.workspace, run=agent.run)
+    monkeypatch.setattr(AgentRunner, "create", AsyncMock(return_value=runner))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[require_user_jwt] = lambda: SimpleNamespace(
+        user_id=message.user_id, channel=message.channel,
+    )
+    provider_started, show_question, question_received = (asyncio.Event() for _ in range(3))
+    contexts, executions, emitted = [], [], []
+
+    async def ask():
+        return ExecutionRequest() if confirmation else QuestionRequest(question='{"fields":[]}')
+
+    async def execute_confirmed():
+        executions.append("executed")
+        return "done"
+
+    ask.execution_function = execute_confirmed
+    agent.mapping_tool_call_funcs = {"ask": ask}
+    agent.tool_executor = ToolExecutor(
+        workspace=agent.workspace, max_result_chars=1000, mapping_tool_call_funcs=agent.mapping_tool_call_funcs,
+    )
+
+    async def first_response():
+        provider_started.set()
+        await show_question.wait()
+        yield "tool_calls", ToolCallChunk(
+            index=0, id="question-1", name="ask", arguments='{"' + EXECUTION_DESCRIPTION + '":"确认执行"}',
+        )
+
+    async def model_call(**kwargs):
+        contexts.append(deepcopy(kwargs["messages"]))
+        return LLMResponse(iter_mix_chunks=first_response()) if len(contexts) == 1 else response(("content", "answer"))
+
+    agent.chat = model_call
+
+    async def consume():
+        async with execute.execute_chat_stream(
+            message.user_id, channel=message.channel, session_id=message.session_id,
+            sender_name=message.sender_name, content=message.content,
+        ) as events:
+            async for event in events:
+                emitted.append(event)
+                if event["event"] == "question":
+                    question_received.set()
+
+    owner = asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(provider_started.wait(), timeout=2)
+        if not insert_before_question:
+            show_question.set()
+            await asyncio.wait_for(question_received.wait(), timeout=2)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            headers = {"x-session-id": message.session_id, "x-sender-name": message.sender_name}
+            queued = await asyncio.wait_for(client.post(
+                "/chat", headers=headers, data={"content": '[{"text":"follow-up"}]'},
+            ), timeout=2)
+            assert queued.status_code == 200
+            assert [json.loads(line[6:]) for line in queued.text.splitlines() if line.startswith("data: ")] == [
+                {"event": "command", "context": "消息已加入当前会话"},
+            ]
+            agent.records.append.assert_not_awaited()
+            show_question.set()
+            await asyncio.wait_for(question_received.wait(), timeout=2)
+            answer = await client.post(
+                "/answer_question", headers=headers, data={"answer": '{"decision":"confirm"}' if confirmation else "yes"},
+            )
+            assert answer.json() == {"message": "Answer received"}
+        await asyncio.wait_for(owner, timeout=2)
+    finally:
+        if not owner.done():
+            owner.cancel()
+        await asyncio.gather(owner, return_exceptions=True)
+
+    assert len(contexts) == 3
+    assert contexts[-1][-1]["content"][1]["text"] == "follow-up"
+    agent.records.append.assert_awaited_once()
+    record = agent.records.append.await_args.args[0]
+    assert record.user_question == "hi"
+    assert record.model_response == "answer"
+    assert [event["event"] for event in emitted].count("question") == 1
+    assert [event["event"] for event in emitted].count("tool_call_result") == 1
+    assert executions == (["executed"] if confirmation else [])
+    assert (message.user_id, message.session_id) not in AgentLoop.SESSION_QUESTION_EVENT
 
 
 @pytest.mark.asyncio
@@ -517,22 +614,36 @@ async def test_interruption_persists_existing_context(turn, exit_kind):
 async def test_closing_or_cancelling_question_clears_waiter_immediately(turn, confirmation, exit_kind):
     agent, message = turn
     executions = []
+    sibling_started = asyncio.Event()
+    sibling_closed = asyncio.Event()
+
+    async def slow():
+        sibling_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)
+            sibling_closed.set()
 
     async def execute():
         executions.append("executed")
         return "done"
 
     async def ask():
+        await sibling_started.wait()
         return ExecutionRequest() if confirmation else QuestionRequest(question='{"fields":[]}')
 
     ask.execution_function = execute
-    agent.mapping_tool_call_funcs = {"ask": ask}
+    agent.mapping_tool_call_funcs = {"ask": ask, "slow": slow}
     agent.tool_executor = ToolExecutor(
         workspace=agent.workspace, max_result_chars=1000, mapping_tool_call_funcs=agent.mapping_tool_call_funcs,
     )
-    agent.chat.return_value = response(("tool_calls", ToolCallChunk(
-        index=0, id="question-1", name="ask", arguments='{"' + EXECUTION_DESCRIPTION + '":"确认执行"}',
-    )))
+    agent.chat.return_value = response(
+        ("tool_calls", ToolCallChunk(
+            index=0, id="question-1", name="ask", arguments='{"' + EXECUTION_DESCRIPTION + '":"确认执行"}',
+        )),
+        ("tool_calls", ToolCallChunk(index=1, id="slow-1", name="slow", arguments="{}")),
+    )
     key = (message.user_id, message.session_id)
     events = agent.run(message)
     question_received = asyncio.Event()
@@ -562,6 +673,7 @@ async def test_closing_or_cancelling_question_clears_waiter_immediately(turn, co
         assert key not in AgentLoop.SESSION_QUESTION_EVENT
         assert AgentLoop.SESSION_QUESTION_EVENT[other_key] is other
         assert executions == []
+        assert sibling_closed.is_set()
         assert (await saved_turn(agent, message))[0] == {"role": "user", "content": "hi"}
     finally:
         AgentLoop.SESSION_QUESTION_EVENT.pop(key, None)

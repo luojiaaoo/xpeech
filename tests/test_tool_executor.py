@@ -440,6 +440,37 @@ class TestToolExecutor:
         assert cancelled.is_set()
 
     @pytest.mark.asyncio
+    async def test_closing_after_a_result_waits_for_pending_tool_cleanup(self, tmp_path: Path):
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def stuck_tool():
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                cancelled.set()
+
+        async def fast_tool():
+            await started.wait()
+            return "ready"
+
+        executor = ToolExecutor(
+            workspace=tmp_path, max_result_chars=10_000,
+            mapping_tool_call_funcs={"stuck_tool": stuck_tool, "fast_tool": fast_tool},
+        )
+        results = executor.execute([
+            ToolCallRequest(id="stuck", name="stuck_tool", arguments={}),
+            ToolCallRequest(id="fast", name="fast_tool", arguments={}),
+        ])
+        try:
+            assert (await anext(results)).call.id == "fast"
+        finally:
+            await results.aclose()
+        assert cancelled.is_set()
+
+    @pytest.mark.asyncio
     async def test_empty_tool_calls_end_iteration(self, tmp_path: Path):
         executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={})
         assert [result async for result in executor.execute([])] == []
