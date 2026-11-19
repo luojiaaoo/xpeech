@@ -1,6 +1,9 @@
 import type { ChatEvent } from './types';
 
 export type SyncOptions = { files?: File[] };
+export type FragmentPreview = { name: string; html: string };
+
+let fragmentRequestSequence = 0;
 
 function parentOrigin() {
   const origin = new URLSearchParams(window.location.search).get('parent_origin');
@@ -10,6 +13,30 @@ function parentOrigin() {
 function postToParent(data: Record<string, unknown>) {
   const origin = parentOrigin();
   if (origin) window.parent.postMessage(data, origin);
+}
+
+export function requestFragmentPreview(
+  sessionId: string, revision: number, text: string, onPreview: (preview: FragmentPreview | null) => void,
+) {
+  const origin = parentOrigin();
+  if (!origin) return () => {};
+  const requestId = String(++fragmentRequestSequence);
+  function receive(event: MessageEvent) {
+    if (event.origin !== origin || event.source !== window.parent) return;
+    const data = event.data;
+    if (data?.type !== 'xpeech:fragment-preview' || data.session_id !== sessionId
+      || data.revision !== revision || data.request_id !== requestId) return;
+    window.removeEventListener('message', receive);
+    const result = data.result;
+    onPreview(typeof result?.name === 'string' && typeof result.html === 'string' ? result : null);
+  }
+  window.addEventListener('message', receive);
+  postToParent({ type: 'xpeech:fragment-render', session_id: sessionId, revision, request_id: requestId, text });
+  return () => window.removeEventListener('message', receive);
+}
+
+export function activateFragment(sessionId: string, revision: number, format: string, text: string) {
+  postToParent({ type: 'xpeech:fragment-action', session_id: sessionId, revision, format, text });
 }
 
 function* fragmentTexts(event: ChatEvent): Iterable<string> {
@@ -63,6 +90,7 @@ export function connectEmbedBridge(sessionId: string, handlers: {
   newConversation: () => string;
   send: () => void;
   chatSync: (text: string, options: SyncOptions) => Promise<ChatEvent[]>;
+  setFragmentRevision: (revision: number | null) => void;
   downloadFile: (path: string, signal?: AbortSignal) => Promise<void>;
   getFile: (path: string, signal?: AbortSignal) => Promise<File>;
 }) {
@@ -73,6 +101,12 @@ export function connectEmbedBridge(sessionId: string, handlers: {
   async function receive(event: MessageEvent) {
     if (event.origin !== origin || event.source !== window.parent) return;
     const data = event.data;
+    if (data?.type === 'xpeech:fragment-formats') {
+      if (data.session_id === sessionId && (data.revision === null || Number.isSafeInteger(data.revision))) {
+        handlers.setFragmentRevision(data.revision);
+      }
+      return;
+    }
     if (!data || data.type !== 'xpeech:request' || typeof data.request_id !== 'string') return;
     const respond = (result: Record<string, unknown>) => {
       if (active) postToParent({ type: 'xpeech:response', request_id: data.request_id, session_id: sessionId, ...result });

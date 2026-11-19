@@ -21,6 +21,7 @@ import { connectEmbedBridge, postChatEvent } from './embedBridge';
 import type { SyncOptions } from './embedBridge';
 import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn } from './chatState';
 import ToolCallCard from './ToolCallCard';
+import FragmentCard from './FragmentCard';
 import ProcessPanel from './ProcessPanel';
 import FileCard from './FileCard';
 import ChatCommandInput from './ChatCommandInput';
@@ -243,6 +244,7 @@ export default function ChatPage({
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [fragmentRevision, setFragmentRevision] = useState<number | null>(null);
   const [pendingUserPrefix, setPendingUserPrefix] = useState(readPendingUserPrefix);
   const [userPrefixExpanded, setUserPrefixExpanded] = useState(false);
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
@@ -260,6 +262,7 @@ export default function ChatPage({
 
   useEffect(() => {
     if (!embedded || !active) return;
+    setFragmentRevision(null);
     return connectEmbedBridge(sessionId, {
       setInput(text) {
         composerRef.current.value = text;
@@ -283,6 +286,7 @@ export default function ChatPage({
         void sendRef.current(text);
       },
       chatSync: (text, options) => sendRef.current(text, options),
+      setFragmentRevision,
       downloadFile,
       getFile,
     });
@@ -410,7 +414,14 @@ export default function ChatPage({
       if (item.role === 'assistant' || item.role === 'thinking') {
         content = renderStreamContent(item.role, item.content, !!item.streaming);
       } else if (item.role === 'tool' && item.toolCall) {
-        content = <ToolCallCard tool={item.toolCall} />;
+        if (item.toolCall.name === 'fragment' && fragmentRevision !== null) {
+          const input = item.toolCall.input;
+          content = input && typeof input === 'object' && 'text' in input && typeof input.text === 'string'
+            ? <FragmentCard key={fragmentRevision} sessionId={sessionId} revision={fragmentRevision} text={input.text} />
+            : <Alert type="error" showIcon message="无效片段，请重试" />;
+        } else {
+          content = <ToolCallCard tool={item.toolCall} />;
+        }
       } else if (item.role === 'question') {
         const previous = messages.slice(0, messages.indexOf(item));
         const turn = previous.slice(previous.findLastIndex(entry => entry.role === 'user') + 1);
@@ -440,7 +451,7 @@ export default function ChatPage({
       return content;
     }
 
-    return chatDisplayItems(messages, loading).map((item) => ({
+    return chatDisplayItems(messages, loading, embedded && active && fragmentRevision !== null).map((item) => ({
       key: item.key,
       role: item.role,
       content: item.role === 'process' ? (
@@ -453,7 +464,7 @@ export default function ChatPage({
         </ProcessPanel>
       ) : renderMessage(item),
     }));
-  }, [active, loading, messages, sessionId]);
+  }, [active, embedded, fragmentRevision, loading, messages, sessionId]);
 
   const attachmentItems: AttachmentsProps['items'] = files.map((file, index) => ({
     uid: `${index}-${file.name}-${file.lastModified}`,

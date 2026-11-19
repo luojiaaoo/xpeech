@@ -136,7 +136,7 @@ export type ChatDisplayItem = ChatMessage | {
 };
 
 // Keep the event history intact; folding only changes how each turn is displayed.
-export function chatDisplayItems(messages: ChatMessage[], running = false): ChatDisplayItem[] {
+export function chatDisplayItems(messages: ChatMessage[], running = false, showFragments = false): ChatDisplayItem[] {
   const items: ChatDisplayItem[] = [];
   let start = 0;
   while (start < messages.length) {
@@ -151,6 +151,8 @@ export function chatDisplayItems(messages: ChatMessage[], running = false): Chat
     for (const item of turn) {
       if (item.role === 'user') {
         items.push(item);
+      } else if (item.toolCall?.name === 'fragment') {
+        if (showFragments) visible.push(item);
       } else if (item !== finalReply && (
         item.role === 'assistant' || item.role === 'thinking' || item.role === 'tool' || item.role === 'status'
       )) {

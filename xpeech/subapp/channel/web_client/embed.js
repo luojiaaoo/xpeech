@@ -24,6 +24,7 @@ var identityConfigured = false;
 var verifiedJWT = null;
 var version = 0;
 var controller = null;
+var jwtUpdateController = null;
 var refreshTimer = null;
 var frameTimer = null;
 var needsRetry = false;
@@ -38,6 +39,8 @@ var requestSequence = 0;
 var pendingRequests = new Map();
 var replyListeners = new Set();
 var chatFileListeners = new Set();
+var fragmentFormats = new Map();
+var fragmentRevision = 0;
 
 function rejectRequests(message, sentOnly = false, keepRequestId = null) {
   pendingRequests.forEach(function (pending, id) {
@@ -138,6 +141,69 @@ function onChatFile(listener) {
   if (typeof listener !== 'function') throw new TypeError('listener 必须为函数');
   chatFileListeners.add(listener);
   return function () { chatFileListeners.delete(listener); };
+}
+
+function sendFragmentFormats(sessionId) {
+  if (!frame || sessionId !== interactionSession) return;
+  var formats = fragmentFormats.get(sessionId);
+  frame.contentWindow.postMessage({
+    type: 'xpeech:fragment-formats', session_id: sessionId, revision: formats ? formats.revision : null
+  }, origin);
+}
+
+function registerFragmentFormats(sessionId, mapping) {
+  if (typeof sessionId !== 'string' || !sessionId.trim()) throw new TypeError('session_id 必须为非空字符串');
+  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) throw new TypeError('mapping 必须为对象');
+  var entries = new Map();
+  for (var [name, format] of Object.entries(mapping)) {
+    if (!name.trim() || !format || typeof format.render !== 'function' || typeof format.callback !== 'function') {
+      throw new TypeError('每种片段格式都必须提供 render 和 callback 函数');
+    }
+    entries.set(name, { render: format.render, callback: format.callback });
+  }
+  var registration = { revision: ++fragmentRevision, entries: entries };
+  if (entries.size) fragmentFormats.set(sessionId, registration);
+  else fragmentFormats.delete(sessionId);
+  sendFragmentFormats(sessionId);
+  return function () {
+    if (fragmentFormats.get(sessionId) !== registration) return;
+    fragmentFormats.delete(sessionId);
+    sendFragmentFormats(sessionId);
+  };
+}
+
+function handleFragmentMessage(data) {
+  if (data.session_id !== interactionSession || typeof data.text !== 'string') return;
+  var registration = fragmentFormats.get(data.session_id);
+  if (!registration || data.revision !== registration.revision) return;
+
+  if (data.type === 'xpeech:fragment-action') {
+    var format = registration.entries.get(data.format);
+    if (format) {
+      Promise.resolve().then(function () { return format.callback(data.text); }).catch(function (error) {
+        console.error('Xpeech fragment callback failed', error);
+      });
+    }
+    return;
+  }
+  if (typeof data.request_id !== 'string') return;
+  var result = null;
+  for (var [name, entry] of registration.entries) {
+    try {
+      var html = entry.render(data.text);
+      if (typeof html !== 'string' || !html.trim()) continue;
+      result = { name: name, html: html };
+      break;
+    } catch {
+      continue;
+    }
+  }
+  if (frame && data.session_id === interactionSession && fragmentFormats.get(data.session_id) === registration) {
+    frame.contentWindow.postMessage({
+      type: 'xpeech:fragment-preview', session_id: data.session_id, revision: data.revision,
+      request_id: data.request_id, result: result
+    }, origin);
+  }
 }
 
 function initialize() {
@@ -433,6 +499,7 @@ function onMessage(event) {
   } else if (data.type === "xpeech:interaction-ready" && typeof data.session_id === 'string') {
     if (interactionSession && interactionSession !== data.session_id) rejectRequests('会话已切换', true);
     interactionSession = data.session_id;
+    if (fragmentFormats.has(interactionSession)) sendFragmentFormats(interactionSession);
     pendingRequests.forEach(function (pending, id) {
       if (!pending.nextSessionId) return;
       clearTimeout(pending.timer);
@@ -444,6 +511,8 @@ function onMessage(event) {
   } else if (data.type === "xpeech:interaction-unavailable" && data.session_id === interactionSession) {
     interactionSession = null;
     rejectRequests('会话已切换或关闭', true);
+  } else if (data.type === 'xpeech:fragment-render' || data.type === 'xpeech:fragment-action') {
+    handleFragmentMessage(data);
   } else if (data.type === "xpeech:response") {
     var pending = pendingRequests.get(data.request_id);
     if (!pending || !pending.sent || data.session_id !== pending.sessionId) return;
@@ -480,44 +549,76 @@ function onMessage(event) {
     report(new Error(typeof data.message === "string" ? data.message : "登录失败"));
   }
 }
+function requireSameIdentity(next) {
+  if (currentId !== null && (next.userId !== currentId || next.channelName !== channelName)) {
+    throw new Error("更新 JWT 不能切换用户或通道，请先调用 destroy()");
+  }
+}
+async function verifyJWT(next, signal) {
+  var response = await fetch(endpoint, {
+    method: "GET", credentials: "omit",
+    headers: { Authorization: "Bearer " + next.token },
+    signal: signal
+  });
+  var result = await response.json();
+  if (!response.ok) throw new Error(typeof result?.detail === "string" ? result.detail : "JWT 校验失败");
+  if (result?.user_id !== next.userId || !Number.isFinite(result.expires_in) || result.expires_in <= 0) {
+    throw new Error("无效的 JWT 校验响应");
+  }
+  return result.expires_in;
+}
+function applyJWT(next, remaining) {
+  currentId = next.userId;
+  channelName = next.channelName;
+  currentJWT = verifiedJWT = next.token;
+  needsRetry = false;
+  createFrame();
+  deliver();
+  clearTimeout(refreshTimer);
+  var delay = jwtProvider ? remaining - Math.min(30, remaining / 2) : remaining;
+  refreshTimer = setTimeout(refresh, Math.min(2147483647, Math.max(1000, delay * 1000)));
+}
 async function connect(expectedVersion) {
   if (controller || (!currentJWT && !jwtProvider) || !host) return;
   var pending = new AbortController();
   controller = pending;
   try {
-    if (jwtProvider) {
-      var next = normalize(await jwtProvider());
-      if (expectedVersion !== version || !host) return;
-      if (currentId !== null && (next.userId !== currentId || next.channelName !== channelName)) {
-        throw new Error("续期 JWT 不能切换用户或通道，请先调用 destroy()");
-      }
+    var next = jwtProvider
+      ? normalize(await jwtProvider())
+      : { token: currentJWT, userId: currentId, channelName: channelName };
+    if (expectedVersion !== version || !host) return;
+    requireSameIdentity(next);
+    if (currentId === null) {
       currentId = next.userId;
       channelName = next.channelName;
-      currentJWT = next.token;
     }
-    var response = await fetch(endpoint, {
-      method: "GET", credentials: "omit",
-      headers: { Authorization: "Bearer " + currentJWT },
-      signal: pending.signal
-    });
-    var result = await response.json();
-    if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "JWT 校验失败");
+    var remaining = await verifyJWT(next, pending.signal);
     if (expectedVersion !== version || !host) return;
-    if (result.user_id !== currentId || !Number.isFinite(result.expires_in) || result.expires_in <= 0) {
-      throw new Error("无效的 JWT 校验响应");
-    }
-    verifiedJWT = currentJWT;
-    needsRetry = false;
-    createFrame();
-    deliver();
-    clearTimeout(refreshTimer);
-    var remaining = result.expires_in;
-    var delay = jwtProvider ? remaining - Math.min(30, remaining / 2) : remaining;
-    refreshTimer = setTimeout(refresh, Math.min(2147483647, Math.max(1000, delay * 1000)));
+    applyJWT(next, remaining);
   } catch (error) {
     if (expectedVersion === version && host && error.name !== "AbortError") report(error);
   } finally {
     if (controller === pending) controller = null;
+  }
+}
+async function updateJWT(value) {
+  if (!identityConfigured) throw new Error("请先调用 init()");
+  if (currentId === null) throw new Error("请等待 init() 获取初始 JWT");
+  var next = normalize(value);
+  requireSameIdentity(next);
+  if (jwtUpdateController) jwtUpdateController.abort();
+  var pending = new AbortController();
+  jwtUpdateController = pending;
+  try {
+    var remaining = await verifyJWT(next, pending.signal);
+    if (jwtUpdateController !== pending) throw new Error("JWT 更新已取消");
+    requireSameIdentity(next);
+    version += 1;
+    if (controller) controller.abort();
+    controller = null;
+    applyJWT(next, remaining);
+  } finally {
+    if (jwtUpdateController === pending) jwtUpdateController = null;
   }
 }
 function refresh() {
@@ -525,7 +626,7 @@ function refresh() {
 }
 function normalize(value) {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 16384) {
-    throw new TypeError("init 需要有效的 JWT 字符串");
+    throw new TypeError("需要有效的 JWT 字符串");
   }
   var token = value.trim();
   try {
@@ -615,6 +716,8 @@ function destroy() {
   clearTimeout(refreshTimer);
   if (controller) controller.abort();
   controller = null;
+  if (jwtUpdateController) jwtUpdateController.abort();
+  jwtUpdateController = null;
   verifiedJWT = null;
   currentId = null;
   currentJWT = null;
@@ -628,6 +731,7 @@ function destroy() {
   removeFrame();
   replyListeners.clear();
   chatFileListeners.clear();
+  fragmentFormats.clear();
   window.removeEventListener("message", onMessage);
   window.removeEventListener("resize", keepInViewport);
   if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
@@ -640,4 +744,4 @@ function destroy() {
   host = root = panel = launcher = closeButton = minimizeButton = maximizeButton = body = status = null;
 }
 
-export { init, hideButton, showButton, open, close, maximize, restore, minimize, destroy, setInput, addFiles, newConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile };
+export { init, updateJWT, hideButton, showButton, open, close, maximize, restore, minimize, destroy, setInput, addFiles, newConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile, registerFragmentFormats };

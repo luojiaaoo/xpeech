@@ -128,6 +128,30 @@ test('all command replies keep their timing panel and remain visible outside it 
   }
 });
 
+test('fragment calls are hidden unless registered and then appear outside the process panel', () => {
+  const events = [
+    event('user', '调用片段'),
+    event('tool_call', JSON.stringify([
+      { tool_call_id: 'fragment-1', name: 'fragment', arguments: { text: '原文' } },
+      { tool_call_id: 'other-1', name: 'read_file', arguments: {} },
+    ])),
+    toolResult({ tool_call_id: 'fragment-1', name: 'fragment', result: '', duration_seconds: 0, success: true }),
+    event('assistant', '完成'),
+  ];
+  for (const messages of [finishChatTurn(apply(events, [])), chatMessagesFromEvents(events)]) {
+    const hidden = chatDisplayItems(messages);
+    assert.deepEqual(hidden.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
+    const visible = chatDisplayItems(messages, false, true);
+    const process = visible[1];
+    assert.ok(process.role === 'process');
+    assert.deepEqual(process.messages.map(item => item.toolCall?.name), ['read_file']);
+    const fragment = visible[2];
+    assert.ok(fragment.role === 'tool');
+    assert.equal(fragment.toolCall?.name, 'fragment');
+    assert.deepEqual(fragment.toolCall?.input, { text: '原文' });
+  }
+});
+
 test('preserves assistant, thinking and tool order across multiple model calls', () => {
   const messages = finishChatTurn(apply([
     event('thinking', '先读技能'), event('thinking_end'),

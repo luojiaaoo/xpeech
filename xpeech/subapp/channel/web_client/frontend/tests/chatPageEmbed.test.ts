@@ -63,6 +63,7 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
     },
     './chatState': { appendChatEvent() {}, chatDisplayItems: () => [], chatMessagesFromEvents: () => [], finishChatTurn() {} },
     './ToolCallCard': { default: 'ToolCallCard' },
+    './FragmentCard': { default: 'FragmentCard' },
     './ProcessPanel': { default: 'ProcessPanel' },
     './FileCard': { default: 'FileCard' },
     './ChatCommandInput': { default: Sender },

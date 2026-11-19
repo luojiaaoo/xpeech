@@ -104,7 +104,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { init: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function };
+  const api = module.namespace as { init: Function; updateJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function; registerFragmentFormats: Function };
   return { window, context, frames, calls, hosts, sent, message, listeners, timers, api };
 }
 
@@ -117,7 +117,7 @@ test('loading the SDK creates no UI or requests until init and leaves website gl
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'restore', 'send', 'setInput', 'showButton']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'registerFragmentFormats', 'restore', 'send', 'setInput', 'showButton', 'updateJWT']);
 });
 
 test('init validates the original JWT without exchanging it and only delivers to its own iframe', async () => {
@@ -451,7 +451,123 @@ test('renewal providers cannot switch user or channel', async () => {
   }
 });
 
-test('another JWT requires destroy before initialization, even for the same user', async () => {
+test('a manual update recovers an expired static token without resetting the conversation', async () => {
+  const previous = jwtFor();
+  const replacement = jwtFor('alice', 'crm', 'manual');
+  let expired = false;
+  const app = await runtime(async (_url, init) => expired &&
+    (init.headers as Record<string, string>).Authorization === `Bearer ${previous}`
+    ? Response.json({ detail: 'JWT 已过期' }, { status: 401 })
+    : Response.json(resultFor()));
+  await assert.rejects(app.api.updateJWT(replacement), /init/);
+  app.api.init(previous, 'Alice', '客服', { source: 'portal' });
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  expired = true;
+  app.message({ type: 'xpeech:expired' });
+  await tick();
+  assert.match(app.hosts[0].ids.get('status')!.textContent, /已过期/);
+
+  await app.api.updateJWT(replacement);
+  assert.equal(app.frames.length, 1);
+  assert.equal(app.frames[0].removed, false);
+  assert.deepEqual(structuredClone(app.sent.at(-1)!.data), {
+    type: 'xpeech:credentials', jwt: replacement, user_id: 'alice',
+    sender_name: 'Alice', title: '客服', session_metadata: { source: 'portal' },
+  });
+  const call = app.calls.at(-1)!;
+  assert.equal(call.url, 'https://assistant.test/api/auth/embed');
+  assert.equal(call.init.credentials, 'omit');
+  assert.equal((call.init.headers as Record<string, string>).Authorization, `Bearer ${replacement}`);
+
+  const draft = app.api.setInput('draft');
+  const request = app.sent.at(-1)!.data;
+  assert.equal(request.session_id, 'first');
+  app.message({ type: 'xpeech:response', request_id: request.request_id, session_id: 'first', result: { session_id: 'first' } });
+  assert.equal((await draft).session_id, 'first');
+  app.api.destroy();
+});
+
+test('manual updates reject invalid tokens and identity changes without replacing credentials', async () => {
+  let fail = false;
+  const app = await runtime(async () => fail
+    ? Response.json({ detail: 'JWT 校验失败' }, { status: 401 })
+    : Response.json(resultFor()));
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  await assert.rejects(app.api.updateJWT('bad'), /JWT/);
+  await assert.rejects(app.api.updateJWT(jwtFor('bob')), /destroy/);
+  await assert.rejects(app.api.updateJWT(jwtFor('alice', 'erp')), /destroy/);
+  assert.equal(app.calls.length, 1);
+
+  fail = true;
+  await assert.rejects(app.api.updateJWT(jwtFor('alice', 'crm', 'bad-signature')), /校验失败/);
+  app.message({ type: 'xpeech:ready' });
+  assert.equal(app.sent.at(-1)!.data.jwt, jwtFor());
+  assert.equal(app.frames.length, 1);
+  app.api.destroy();
+});
+
+test('manual updates ignore superseded validations and cancel on destroy', async () => {
+  const validations = new Map<string, { resolve(response: Response): void; signal: AbortSignal }>();
+  const app = await runtime(async (_url, init) => {
+    const token = (init.headers as Record<string, string>).Authorization.slice(7);
+    if (token === jwtFor()) return Response.json(resultFor());
+    return new Promise(resolve => { validations.set(token, { resolve, signal: init.signal! }); });
+  });
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  const old = jwtFor('alice', 'crm', 'old');
+  const latest = jwtFor('alice', 'crm', 'latest');
+  const oldCheck = assert.rejects(app.api.updateJWT(old), /已取消/);
+  const update = app.api.updateJWT(latest);
+  assert.equal(validations.get(old)!.signal.aborted, true);
+  validations.get(latest)!.resolve(Response.json(resultFor()));
+  await update;
+  validations.get(old)!.resolve(Response.json(resultFor()));
+  await oldCheck;
+  assert.equal(app.sent.at(-1)!.data.jwt, latest);
+
+  const last = jwtFor('alice', 'crm', 'last');
+  const destroyed = assert.rejects(app.api.updateJWT(last), /已取消/);
+  const sentCount = app.sent.length;
+  app.api.destroy();
+  assert.equal(validations.get(last)!.signal.aborted, true);
+  validations.get(last)!.resolve(Response.json(resultFor()));
+  await destroyed;
+  assert.equal(app.sent.length, sentCount);
+});
+
+test('a manual update wins over a pending provider without disabling later automatic renewal', async () => {
+  const app = await runtime();
+  let calls = 0;
+  let finishRenewal!: (token: string) => void;
+  const fromProvider = jwtFor('alice', 'crm', 'provider');
+  const manual = jwtFor('alice', 'crm', 'manual');
+  app.api.init(() => {
+    calls++;
+    return calls === 2 ? new Promise<string>(resolve => { finishRenewal = resolve; }) : fromProvider;
+  }, 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:expired' });
+  await app.api.updateJWT(manual);
+  finishRenewal(jwtFor('alice', 'crm', 'late'));
+  await tick();
+  assert.equal(app.sent.at(-1)!.data.jwt, manual);
+  assert.equal(app.calls.length, 2);
+
+  app.message({ type: 'xpeech:expired' });
+  await tick();
+  assert.equal(calls, 3);
+  assert.equal(app.sent.at(-1)!.data.jwt, fromProvider);
+  app.api.destroy();
+});
+
+test('another init requires destroy, even for the same user', async () => {
   for (const token of [jwtFor(), jwtFor('alice', 'crm', 'rotated'), jwtFor('bob'), jwtFor('alice', 'erp')]) {
     const app = await runtime();
     app.api.init(jwtFor(), 'Alice');
@@ -535,6 +651,7 @@ test('destroy discards pending JWT provider results without sending a request', 
   const app = await runtime();
   let resolveJWT!: (token: string) => void;
   app.api.init(() => new Promise<string>((resolve) => { resolveJWT = resolve; }), 'Alice');
+  await assert.rejects(app.api.updateJWT(jwtFor('bob')), /初始 JWT/);
   app.api.destroy();
   resolveJWT(jwtFor());
   await tick();
@@ -813,6 +930,74 @@ test('getFile resolves to a File from the trusted iframe and rejects invalid pat
   const closed = assert.rejects(app.api.getFile('report.bin'), /关闭/);
   app.api.destroy();
   await closed;
+});
+
+test('fragment formats are scoped to a session, skip failed renders, and only call back on action', async () => {
+  const app = await runtime();
+  const renders: string[] = [];
+  const clicks: string[] = [];
+  const remove = app.api.registerFragmentFormats('first', {
+    broken: { render() { renders.push('broken'); throw new Error('not applicable'); }, callback() { assert.fail(); } },
+    report: {
+      render(text: string) { renders.push('report'); return text.startsWith('report') ? '<p>报告</p>' : null; },
+      callback(text: string) { clicks.push(text); },
+    },
+    later: { render() { renders.push('later'); return ''; }, callback() { assert.fail(); } },
+  });
+  assert.throws(() => app.api.registerFragmentFormats('first', { invalid: { render() {} } }), /callback/);
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const registration = app.sent.at(-1)!.data;
+  assert.deepEqual(Object.keys(registration).sort(), ['revision', 'session_id', 'type']);
+  assert.equal(registration.type, 'xpeech:fragment-formats');
+  const request = {
+    type: 'xpeech:fragment-render', session_id: 'first', revision: registration.revision,
+    request_id: 'preview-1', text: 'report 原文\n',
+  };
+  app.message(request, 'https://attacker.test');
+  app.message(request, 'https://assistant.test', {} as any);
+  app.message({ ...request, session_id: 'other' });
+  assert.deepEqual(renders, []);
+  app.message(request);
+  assert.deepEqual(renders, ['broken', 'report']);
+  assert.deepEqual(structuredClone(app.sent.at(-1)!.data), {
+    type: 'xpeech:fragment-preview', session_id: 'first', revision: registration.revision,
+    request_id: 'preview-1', result: { name: 'report', html: '<p>报告</p>' },
+  });
+  assert.deepEqual(clicks, []);
+  const action = { ...request, type: 'xpeech:fragment-action', format: 'report' };
+  app.message({ ...action, revision: 0 });
+  app.message(action);
+  await tick();
+  assert.deepEqual(clicks, [request.text]);
+  app.message({ ...request, text: 'unmatched', request_id: 'preview-2' });
+  assert.equal(app.sent.at(-1)!.data.result, null);
+  assert.deepEqual(renders, ['broken', 'report', 'broken', 'report', 'later']);
+
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'second' });
+  const sentCount = app.sent.length;
+  app.message(request);
+  app.message(action);
+  assert.equal(app.sent.length, sentCount);
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  assert.equal(app.sent.at(-1)!.data.revision, registration.revision);
+  remove();
+  assert.equal(app.sent.at(-1)!.data.revision, null);
+  app.message(action);
+  await tick();
+  assert.deepEqual(clicks, [request.text]);
+
+  app.api.registerFragmentFormats('first', { report: { render: () => '<p>old</p>', callback() {} } });
+  app.api.destroy();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  const nextCount = app.sent.length;
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  assert.equal(app.sent.length, nextCount);
+  app.api.destroy();
 });
 
 test('reply subscriptions filter frames and sessions and can be removed', async () => {

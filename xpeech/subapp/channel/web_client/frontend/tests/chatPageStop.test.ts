@@ -80,6 +80,7 @@ async function chatPage(
       connectEmbedBridge() {}, postChatEvent() {},
     },
     './ToolCallCard': { default: 'ToolCallCard' },
+    './FragmentCard': { default: 'FragmentCard' },
     './ProcessPanel': { default: 'ProcessPanel' },
     './FileCard': { default: 'FileCard' },
     './ChatCommandInput': { default: Sender },

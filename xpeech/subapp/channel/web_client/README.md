@@ -157,15 +157,14 @@ function onLogout() {
 页面刷新后，如果业务网站恢复了登录状态，在模块加载完成后调用 `onLoginSuccess(currentUser)`。
 单页应用退出时先调用 `destroy()`，下次登录再调用 `init()`；浏览器会复用同一 URL 的模块实例。
 单独导入模块不会显示组件或发起认证请求，只有调用 `init()` 才会初始化。
-必须遵循 `init(...) → destroy() → init(...)` 的顺序；初始化后再次调用 `init()`
-会抛出异常，即使用户、通道或 JWT 完全相同。切换用户或通道必须先销毁组件，不能自动切换。
-自动续期的获取函数也只能返回同一用户、同一通道的 JWT；身份变化会报错，不会替换当前会话。
+每次登录只调用一次 `init()`。同一用户、同一通道可更新 JWT；切换用户或通道须先调用 `destroy()` 再初始化。
 
 组件提供以下方法：
 
 | 方法 | 行为 |
 | --- | --- |
 | `assistant.init(jwtOrProvider, senderName, title = "AI 助手", sessionMetadata = {})` | 初始化凭证、发送者名称、助手标题和会话元数据；每次销毁前只允许设置一次 |
+| `assistant.updateJWT(jwt)` | 验证并替换同一用户和通道的 JWT，保留当前会话、草稿和注册配置，返回 `Promise<void>` |
 | `assistant.hideButton()` | 隐藏浮动按钮，不关闭已打开的聊天窗口 |
 | `assistant.showButton()` | 显示浮动按钮，不自动打开聊天窗口 |
 | `assistant.open()` | 通过代码主动展开聊天 iframe，无需用户点击浮动按钮 |
@@ -182,13 +181,16 @@ function onLogout() {
 | `assistant.getFile(path, { timeoutMs? } = {})` | 获取文件二进制，返回 `Promise<File>`，包含文件名和 MIME 类型，供主站 JS 处理，不触发浏览器保存 |
 | `assistant.onReply(callback)` | 每次 `fragment` 工具调用回传 `{ session_id, text }`，返回取消订阅函数 |
 | `assistant.onChatFile(callback)` | 对话框发送文件时回传 `{ session_id, path }`，返回取消订阅函数 |
+| `assistant.registerFragmentFormats(session_id, mapping)` | 为指定会话设置片段显示格式，返回取消本次注册的函数 |
 | `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存中的身份和 JWT，不发送服务端撤销请求 |
 
 `init()` 的无效字符串参数会同步抛出异常，
 不初始化组件；验签失败、凭证过期或获取函数失败会显示错误并触发 `xpeech:error`。
-也可以直接调用 `assistant.init(jwt, senderName, title, sessionMetadata)`，但组件无法签发新的业务 JWT；该凭证到期后
-必须先 `destroy()`，再用新 JWT 初始化。需要自动续期时应使用上述获取函数，业务后端接口
-应返回 `{ "jwt": "..." }` 并设置 `Cache-Control: no-store`。
+如果业务站自己控制续期，可用固定 JWT 初始化。业务后端签发新 JWT 后调用
+`await assistant.updateJWT(await loadAssistantJWT())`，旧 JWT 已过期也可以更新。
+校验失败会拒绝 Promise，不替换当前凭证。用获取函数初始化时，取得初始 JWT 后即可手动更新，
+原获取函数仍负责之后的自动续期。
+业务后端的凭证接口应返回 `{ "jwt": "..." }` 并设置 `Cache-Control: no-store`。
 组件尚未初始化或已经销毁时，显示、隐藏、打开、关闭操作不会创建组件；销毁可以重复调用。
 
 ### 主页面与 iframe 双向交互
@@ -235,6 +237,40 @@ try {
 // 不再需要接收片段时调用；destroy() 也会清除全部 onReply 订阅。
 unsubscribe();
 ```
+
+### 对话框片段格式
+
+`registerFragmentFormats(session_id, mapping)` 的键是卡片显示的类型名，每项提供
+`render(text)` 和 `callback(text)`。渲染函数在主站执行，按字典顺序尝试：返回非空 HTML 字符串即匹配，
+抛错或返回空值则跳过。当有匹配时，卡片显示「预览」和「使用」两个按钮；
+「预览」展开隔离的 HTML（不运行脚本、不加载外部资源），「使用」才把原始 `text` 交给回调。
+
+```javascript
+const { session_id } = await assistant.newConversation();
+const unregister = assistant.registerFragmentFormats(session_id, {
+  '报告': {
+    render(text) {
+      const report = JSON.parse(text);
+      if (report?.type !== 'report' || typeof report.title !== 'string') return null;
+      const title = document.createElement('h3');
+      title.textContent = report.title;
+      return title.outerHTML;
+    },
+    callback(text) {
+      console.log('使用报告', text);
+    },
+  },
+});
+
+// 不再显示当前会话的片段时调用。
+// unregister();
+```
+
+没有注册或传入空字典时，不显示 `fragment` 卡片。注册了但所有格式都不匹配时，显示「片段格式未匹配，请重试」。
+再次注册会替换该会话的格式。片段通知和 `chatSync()` 返回值不受注册影响；
+同步请求不在对话框显示卡片。
+
+### 同步调用与文件
 
 通过 `files` 传入浏览器 `File` 对象数组，文件随本次请求上传，无需提前上传或转 Base64：
 
@@ -396,8 +432,8 @@ assistant.init(loadAssistantJWT, "张三", "客服助手", { source: "portal", d
 交给聊天 iframe。SDK 和 iframe 均只在内存中保存凭证，不写 Cookie、URL、localStorage
 或 sessionStorage；所有嵌入请求使用 `credentials: omit`。
 使用 JWT 获取函数时，SDK 会在过期前重新调用它，并校验新 JWT 仍属于同一用户和通道；
-iframe 和当前对话保持不变。请求返回 401 时也会触发重新获取。传入固定 JWT 字符串时，
-无法自动签发新 JWT，过期后需 `destroy()` 再初始化。
+iframe 和当前对话保持不变。请求返回 401 时也会触发重新获取。使用固定 JWT 字符串时，
+由业务后端签发新凭证，再通过 `updateJWT()` 更新；无需销毁组件。
 
 `destroy()` 只销毁前端组件并清除内存凭证，不撤销已签发的 JWT；原 JWT 在 `exp` 到期前
 仍有效。普通网页登录继续使用 HttpOnly Cookie 和 `sessions` 表，其退出、停用及密码

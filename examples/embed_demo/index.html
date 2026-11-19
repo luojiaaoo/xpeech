@@ -76,12 +76,13 @@
     <p id="selected-files" class="file-hint">未选择附件</p>
     <button id="fill" class="secondary" disabled>填入对话输入框</button>
     <button id="add-chat-files" class="secondary" disabled>插入附件到对话框</button>
-    <button id="new-conversation" class="secondary" disabled>新建会话</button>
+    <button id="new-conversation" class="secondary" disabled>新建会话并注册片段格式</button>
     <button id="send-chat" disabled>发送对话框内容</button>
     <button id="sync" disabled>同步发送（纯后台）</button>
     <p class="test-notice">同步发送是纯后台交互：不展开聊天窗口，消息和回复都不渲染到对话框，
       结果只回传主页面。「插入附件到对话框」可追加所选文件，再点击「发送对话框内容」发送；有附件时文字可留空。
-      可输入「调用 fragment，text 为『报告摘要』，然后生成并发送报告文件」测试同步结果。</p>
+      可输入「调用 fragment，text 为『报告摘要』，然后生成并发送报告文件」测试同步结果。
+      对话框只有注册后才显示片段卡片，可分别点击「预览」和「使用」。</p>
     <h2 class="log-title">片段通知与同步结果</h2>
     <div class="reply-boxes">
       <section class="reply-box">
@@ -384,7 +385,22 @@
       });
       for (const [button, action, success] of [
         [addChatFiles, () => assistant.addFiles([...attachments]), '已追加附件到对话框，等待发送。'],
-        [newConversation, () => assistant.newConversation(), '已新建会话，输入框和附件已清空。'],
+        [newConversation, async () => {
+          const { session_id } = await assistant.newConversation();
+          assistant.registerFragmentFormats(session_id, {
+            '文本片段': {
+              render(text) {
+                const preview = document.createElement('pre');
+                preview.style.whiteSpace = 'pre-wrap';
+                preview.textContent = text;
+                return preview.outerHTML;
+              },
+              callback(text) {
+                log(`使用片段（会话 ${session_id}）：${text}`);
+              },
+            },
+          });
+        }, '已新建会话并注册文本片段格式。'],
         [sendChat, () => assistant.send(), '已开始发送对话框内容，回复将显示在聊天窗口。'],
       ]) {
         button.addEventListener('click', async () => {
