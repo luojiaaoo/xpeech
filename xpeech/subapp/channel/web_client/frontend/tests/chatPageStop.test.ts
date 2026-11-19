@@ -77,7 +77,7 @@ async function chatPage(
       },
     },
     './embedBridge': {
-      collectReplies: () => ({ push() {}, finish() {} }), connectEmbedBridge() {}, postToParent() {},
+      connectEmbedBridge() {}, postChatEvent() {},
     },
     './ToolCallCard': { default: 'ToolCallCard' },
     './ProcessPanel': { default: 'ProcessPanel' },

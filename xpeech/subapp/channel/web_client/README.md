@@ -177,14 +177,14 @@ function onLogout() {
 | `assistant.addFiles(files, { timeoutMs? } = {})` | 将 `File[]` 追加到当前对话框的待发送附件，显示附件列表，不自动上传或发送；返回 `Promise<{ session_id }>` |
 | `assistant.newConversation({ timeoutMs? } = {})` | 新建会话，清空对话框及草稿，等待新输入框就绪后返回 `Promise<{ session_id }>` |
 | `assistant.send({ timeoutMs? } = {})` | 发送当前输入框的文字及待发送附件，消息与流式回复显示在对话框，提交后返回 `Promise<{ session_id }>` |
-| `assistant.chatSync(text, { files?, timeoutMs? } = {})` | 在当前会话后台调用 `/api/chat_sync`，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id, events, files }>`，其中返回的 `files` 为 `{ path, url }[]` |
-| `assistant.downloadFile(path, { timeoutMs? } = {})` | 下载 `send_file` 事件 `context` 指定的文件，自动携带当前 JWT 并触发浏览器保存，返回 `Promise<{ session_id }>` |
+| `assistant.chatSync(text, { files?, timeoutMs? } = {})` | 在当前会话后台运行，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id: string, fragments: string[], files: string[] }>` |
+| `assistant.downloadFile(path, { timeoutMs? } = {})` | 按工作区路径下载文件，自动携带当前 JWT 并触发浏览器保存，返回 `Promise<{ session_id }>` |
 | `assistant.getFile(path, { timeoutMs? } = {})` | 获取文件二进制，返回 `Promise<File>`，包含文件名和 MIME 类型，供主站 JS 处理，不触发浏览器保存 |
-| `assistant.onReply(callback)` | 订阅每条完整模型回复，返回取消订阅函数 |
-| `assistant.onChatFile(callback)` | 仅订阅对话框的 `send_file`，回传 `{ session_id, path, url, request_id: null }`，返回取消订阅函数 |
+| `assistant.onReply(callback)` | 每次 `fragment` 工具调用回传 `{ session_id, text }`，返回取消订阅函数 |
+| `assistant.onChatFile(callback)` | 对话框发送文件时回传 `{ session_id, path }`，返回取消订阅函数 |
 | `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存中的身份和 JWT，不发送服务端撤销请求 |
 
-`setUserId()` 和 `setChannelName()` 已移除。`init()` 的无效字符串参数会同步抛出异常，
+`init()` 的无效字符串参数会同步抛出异常，
 不初始化组件；验签失败、凭证过期或获取函数失败会显示错误并触发 `xpeech:error`。
 也可以直接调用 `assistant.init(jwt, senderName, title, sessionMetadata)`，但组件无法签发新的业务 JWT；该凭证到期后
 必须先 `destroy()`，再用新 JWT 初始化。需要自动续期时应使用上述获取函数，业务后端接口
@@ -209,32 +209,30 @@ await assistant.send();
 
 `addFiles()` 追加附件，不替换已有附件；空数组不改变附件。附件在 `send()` 时上传，
 只发送附件时可不调用 `setInput()`。文字和附件均为空，或对话框正在停止回复时，`send()` 会拒绝 Promise。
-`send()` 返回表示已开始发送，不等待模型回复；使用 `onReply()` 接收完整回复（`request_id` 为 `null`）。
+`send()` 返回表示已开始发送，不等待模型回复。
 后续网络错误显示在对话框中，与点击发送按钮一致。
 `newConversation()` 与点击「新建会话」使用相同流程：生成新的 UUIDv7 会话 ID，隐藏当前对话并保留
 其消息、文字草稿、待发送附件和后台回复，登录凭证保持不变；切换期间的新命令排队投递到新会话。
 
 ```javascript
-// 包括用户在 iframe 手动聊天、主页面调用 chatSync 产生的回复。
-const unsubscribe = assistant.onReply(({ session_id, content, request_id }) => {
-  console.log("模型回复", session_id, content);
-  // 手动聊天的 request_id 为 null；chatSync 回复带对应交互请求 ID。
+// 对话框聊天和 chatSync 中的 fragment 调用都会通知。
+const unsubscribe = assistant.onReply(({ session_id, text }) => {
+  console.log("片段", session_id, text);
 });
 
 assistant.open();
-await assistant.setInput("请帮我分析当前订单"); // 用户可以继续编辑再发送
+await assistant.setInput("请将订单摘要作为 text 调用 fragment"); // 用户可以继续编辑再发送
 
 try {
-  const { session_id, events } = await assistant.chatSync("总结当前订单的风险", {
+  const { session_id, fragments } = await assistant.chatSync("总结当前订单的风险，并将摘要作为 text 调用 fragment", {
     timeoutMs: 300000,
   });
-  // events 是后端原始事件数组，例如 [{ event: "assistant", context: "..." }]。
-  console.log(session_id, events);
+  console.log(session_id, fragments);
 } catch (error) {
   console.error("同步交互失败", error);
 }
 
-// 不再需要接收回复时调用；destroy() 也会清除全部 onReply 订阅。
+// 不再需要接收片段时调用；destroy() 也会清除全部 onReply 订阅。
 unsubscribe();
 ```
 
@@ -242,7 +240,7 @@ unsubscribe();
 
 ```javascript
 // fileInput 是 <input type="file" multiple> 元素。
-const { events } = await assistant.chatSync('分析这些文件', {
+await assistant.chatSync('分析这些文件', {
   files: Array.from(fileInput.files),
 });
 
@@ -256,21 +254,22 @@ await assistant.chatSync('总结这些数据', {
 
 有附件时允许 `text` 为空字符串；文本和附件不能同时为空。
 
-`chatSync()` 在保留原始 `events` 的同时，将 `send_file` 事件整理到返回的 `files` 数组中：
+`chatSync()` 只返回当前嵌入会话的 `session_id`、`fragment` 工具调用的 `text` 参数列表
+和 `send_file` 指定的文件路径列表，不返回原始事件：
 
 ```javascript
-const { session_id, events, files } = await assistant.chatSync('生成报告', {
+const { session_id, fragments, files } = await assistant.chatSync('生成并发送报告，另外将摘要作为 text 调用 fragment', {
   files: Array.from(fileInput.files),
 });
-for (const file of files) {
-  console.log(file.path, file.url);
-  await assistant.downloadFile(file.path);
+console.log(session_id, fragments);
+for (const path of files) {
+  await assistant.downloadFile(path);
 }
 ```
 
-`files` 每项为 `{ path, url }`，按 `send_file` 事件顺序返回；没有文件时为 `[]`。
-它是文件信息列表，二进制内容可通过 `getFile(file.path)` 单独获取。
-输入选项的 `files` 仍是待上传的 `File[]`，与返回的文件信息列表用途不同。
+两个列表都按事件中的出现顺序返回，未产生对应内容时为 `[]`。
+可通过 `getFile(path)` 单独获取文件内容。
+输入选项的 `files` 仍是待上传的 `File[]`，与返回的文件路径列表用途不同。
 
 下载复用 `GET /api/files?path=...`，服务端只允许访问当前用户工作区中的文件。
 `downloadFile` 不展开聊天窗口；默认超时 30 秒，可通过 `timeoutMs` 调整。
@@ -280,7 +279,7 @@ Promise 在文件获取成功并触发浏览器下载后完成，不表示用户
 主站需要把文件存入自己的后台时，调用 `getFile()` 获取 `File`，再使用业务网站自己的认证上传：
 
 ```javascript
-const file = await assistant.getFile(event.context);
+const file = await assistant.getFile(path);
 const form = new FormData();
 form.append('file', file, file.name);
 const response = await fetch('/api/your-file-storage', { // 替换为主站自己的存储接口。
@@ -298,8 +297,8 @@ if (!response.ok) throw new Error('保存到业务后台失败');
 sync 的文件直接通过 `chatSync()` 返回的 `files` 接收：
 
 ```javascript
-const unsubscribeChatFiles = assistant.onChatFile(({ session_id, path, url }) => {
-  console.log('对话框文件', session_id, path, url);
+const unsubscribeChatFiles = assistant.onChatFile(({ session_id, path }) => {
+  console.log('对话框文件', session_id, path);
 });
 
 const { files } = await assistant.chatSync('生成报告');
@@ -307,38 +306,34 @@ console.log('sync 文件', files);
 // 主站可按需调用 assistant.getFile(path) 或 assistant.downloadFile(path)。
 ```
 
-`path` 原样保留事件中的文件路径；`url` 是带编码路径参数的绝对下载接口 URL，
-例如 `https://assistant.example.com/api/files?path=reports%2Freport.pdf`。
-该 URL 仍要求 JWT 认证；使用 `getFile(path)` / `downloadFile(path)` 会自动携带当前凭证。
-`onChatFile()` 只接收对话框文件，通知的 `request_id` 为 `null`。
+`path` 原样保留工作区文件路径；调用 `getFile(path)` 或 `downloadFile(path)` 时，SDK 会构造请求并自动携带当前凭证。
 也可监听主页面的 `CustomEvent('xpeech:chat-file')`，其 `detail` 与该订阅参数相同；选择一种通知方式即可。
 sync 文件只随本次调用的结果返回，不派发文件订阅或文件事件通知。
 SDK 本身收到通知不会自动下载；调用方决定如何处理。`destroy()` 会清除文件订阅。
 
-回复还会通过主页面的 `window` 派发 `CustomEvent("xpeech:reply")`，其 `detail`
+片段还会通过主页面的 `window` 派发 `CustomEvent("xpeech:reply")`，其 `detail`
 与 `onReply` 参数相同。选择一种订阅方式即可，避免重复处理。
-流式文本在一条回复结束时合并回传，一轮工具调用产生多条模型回复时分别通知；
-思考内容、工具事件、token 统计和出错时尚未完成的回复不作为模型回复通知。
-同步请求的回复在后端返回全部事件后逐条通知。
+流式对话收到 `fragment` 工具调用时逐条通知；同步请求成功后按调用顺序逐条通知。
+普通模型回复、思考内容和其他工具事件不会触发通知。若需要区分同一会话内的并发同步请求，
+直接读取每次 `chatSync()` 返回的 `fragments`。
 
 `chatSync()` 使用当前 JWT、发送者名称及初始化时的 `sessionMetadata`，
 保留输入框草稿和待发送附件，只携带调用时通过 `files` 显式传入的附件。它使用后端的非交互模式，不等待用户填写问题表单；
 后端为每次同步执行生成独立会话，不读取也不写入对话历史。
-本轮消息和回复只经 Promise 与 `onReply` 回传主页面，不渲染到对话框，窗口收起时也可执行。
+片段和文件路径通过 Promise 返回，不渲染到对话框，窗口收起时也可执行。
 需要模型输出 JSON 对象时，在消息文本中加入完整标记 `::请严格以JSON格式回复::`，例如
 `assistant.chatSync("总结当前订单的风险。::请严格以JSON格式回复::")`。仅本次请求生效，需模型配置支持；
-不支持时返回 HTTP 400。
+不支持时返回 HTTP 400。该标记控制模型回复的格式，不改变 `chatSync()` 的返回字段。
 同步调用可与对话框手动聊天、其他同步调用并发执行，互不阻塞。
-HTTP 错误会拒绝 Promise；HTTP 200 返回的 `error` 事件保留在 `events` 中，调用方应自行检查。
+请求失败或后台执行出错时，Promise 会以错误拒绝。
 
 `setInput`、`addFiles`、`newConversation`、`send` 默认等待 30 秒，`chatSync` 默认等待 5 分钟，可通过 `timeoutMs` 调整。
 超时只停止主页面等待，不代表后端执行已取消，请勿据此自动重复提交。
 未初始化、认证失败、会话切换、页面重载或销毁时，相应 Promise 会拒绝；JWT 自动续期不切换会话。
 双方都校验 `postMessage` 的 origin 和窗口来源，请求和响应还使用 `request_id`、`session_id` 关联。
 
-Web Client 提供 `POST /api/chat_sync`，使用 multipart 字段
-（`content`、`session_metadata`、`files`）和认证 / 会话请求头，
-成功时返回完整 JSON 事件数组；嵌入请求必须提供合法 UUIDv7 的 `x-session-id` 和非空的 `x-sender-name`。
+业务主站只通过嵌入 SDK 接入。同步结果和通知仅包含上文列出的字段；
+Agent 原生事件以及 Web 界面的流式和历史协议是内部实现，不属于嵌入 SDK 契约。
 
 JWT 必须由业务后端先验证网站当前用户的登录身份，再为该用户签发，不能直接采用浏览器提交的
 任意用户 ID。Header 的 `kid` 必须与服务端 `jwt.channels` 的自定义通道名一致，例如 `crm`
@@ -395,8 +390,7 @@ assistant.init(loadAssistantJWT, "张三", "客服助手", { source: "portal", d
 
 初始化和刷新 JWT 时，SDK 使用 `credentials: omit` 调用 `GET /api/auth/embed`，
 通过 `Authorization: Bearer` 传入原 JWT。此接口只校验当前凭证，返回 `user_id` 和剩余
-有效秒数 `expires_in`，不创建用户、登录会话或新 token。`/api/auth/embed/session`
-兑换及撤销接口已移除，嵌入认证不使用 `EmbeddedSession` 表。
+有效秒数 `expires_in`，不创建用户、登录会话或新 token。
 
 校验通过后，SDK 通过校验来源和窗口的 `postMessage` 将原 JWT、用户 ID 和发送者名称
 交给聊天 iframe。SDK 和 iframe 均只在内存中保存凭证，不写 Cookie、URL、localStorage
@@ -429,9 +423,6 @@ HTTPS 加载组件。`/embed.js` 作为公开模块提供跨域加载响应头�
 
 持有通道密钥的业务后端是受信任的身份签发方，必须保护密钥和 JWT 签发接口；浏览器仅接收
 签好的短期 JWT。不要把服务端密钥或管理员密码放入嵌入代码。
-
-旧的 `[web_client.embed].allowed_origins` 和
-`XPEECH_WEB_CLIENT__EMBED__ALLOWED_ORIGINS` 来源白名单配置已不再使用。
 
 验证命令（仓库根目录）：
 

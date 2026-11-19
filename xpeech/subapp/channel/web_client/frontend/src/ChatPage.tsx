@@ -17,7 +17,7 @@ import {
   RobotOutlined,
 } from '@ant-design/icons';
 import { chatSync, downloadFile, getFile, historyApi, stopChat, streamChat } from './api';
-import { collectReplies, connectEmbedBridge, postToParent } from './embedBridge';
+import { connectEmbedBridge, postChatEvent } from './embedBridge';
 import type { SyncOptions } from './embedBridge';
 import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn } from './chatState';
 import ToolCallCard from './ToolCallCard';
@@ -371,39 +371,18 @@ export default function ChatPage({
         onRunningChange?.(true);
       }
     }
-    const replies = collectReplies((content) => {
-      if (embedded) postToParent({
-        type: 'xpeech:reply', session_id: sessionId, content,
-        request_id: sync?.requestId ?? null,
-      });
-    });
     try {
       const pendingUserPrefix = sync ? null : takePendingUserPrefix();
       const requestText = pendingUserPrefix ? `${pendingUserPrefix}\n\n===\n\n${text}` : text;
+      if (sync) return await chatSync(requestText, sentFiles, { sessionId, signal: controller.signal });
+
       const receive = (event: ChatEvent) => {
-        if (!controller.signal.aborted) {
-          if (!sync) appendEvent(event);
-          replies.push(event);
-          if (embedded && !sync && event.event === 'send_file') postToParent({
-            type: 'xpeech:file', session_id: sessionId, path: event.context,
-            request_id: null,
-          });
-        }
+        if (controller.signal.aborted) return;
+        appendEvent(event);
+        if (embedded) postChatEvent(sessionId, event);
       };
-      let events: ChatEvent[] = [];
-      if (sync) {
-        events = await chatSync(requestText, sentFiles, { sessionId, signal: controller.signal });
-        // Synchronous events already contain complete assistant messages.
-        for (const event of events) {
-          if (controller.signal.aborted) break;
-          receive(event);
-          if (event.event === 'assistant') replies.finish();
-        }
-      } else {
-        await streamChat(requestText, sentFiles, receive, { sessionId, signal: controller.signal, continuation });
-      }
-      if (!controller.signal.aborted) replies.finish();
-      return events;
+      await streamChat(requestText, sentFiles, receive, { sessionId, signal: controller.signal, continuation });
+      return [];
     } catch (error) {
       if (!controller.signal.aborted && !sync) {
         appendEvent({ event: 'error', context: String(error) });

@@ -1,15 +1,59 @@
 import type { ChatEvent } from './types';
 
-export type SyncOptions = { files?: File[]; requestId?: string };
+export type SyncOptions = { files?: File[] };
 
 function parentOrigin() {
   const origin = new URLSearchParams(window.location.search).get('parent_origin');
   return window.parent !== window && origin && origin !== 'null' ? origin : null;
 }
 
-export function postToParent(data: Record<string, unknown>) {
+function postToParent(data: Record<string, unknown>) {
   const origin = parentOrigin();
   if (origin) window.parent.postMessage(data, origin);
+}
+
+function* fragmentTexts(event: ChatEvent): Iterable<string> {
+  if (event.event !== 'tool_call') return;
+  let calls: unknown;
+  try {
+    calls = JSON.parse(event.context);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(calls)) return;
+  for (const call of calls) {
+    if (call?.name === 'fragment' && typeof call.arguments?.text === 'string') {
+      yield call.arguments.text;
+    }
+  }
+}
+
+function filePath(event: ChatEvent) {
+  if (event.event === 'send_file' && typeof event.context === 'string' && event.context.trim()) {
+    return event.context;
+  }
+}
+
+function postFragment(sessionId: string, text: string) {
+  postToParent({ type: 'xpeech:reply', session_id: sessionId, text });
+}
+
+export function postChatEvent(sessionId: string, event: ChatEvent) {
+  const path = filePath(event);
+  if (path !== undefined) postToParent({ type: 'xpeech:file', session_id: sessionId, path });
+  for (const text of fragmentTexts(event)) postFragment(sessionId, text);
+}
+
+function collectSyncResult(sessionId: string, events: ChatEvent[]) {
+  const fragments: string[] = [];
+  const files: string[] = [];
+  for (const event of events) {
+    if (event.event === 'error') throw new Error(event.context || '同步交互失败');
+    const path = filePath(event);
+    if (path !== undefined) files.push(path);
+    for (const text of fragmentTexts(event)) fragments.push(text);
+  }
+  return { session_id: sessionId, fragments, files };
 }
 
 /** Mounted only after authentication and the conversation composer are ready. */
@@ -56,10 +100,11 @@ export function connectEmbedBridge(sessionId: string, handlers: {
           return;
         }
         if (!data.text.trim() && files.length === 0) throw new Error('消息不能为空');
-        const events = await handlers.chatSync(data.text, {
-          files, requestId: data.request_id,
-        });
-        respond({ result: { session_id: sessionId, events } });
+        const events = await handlers.chatSync(data.text, { files });
+        if (!active) return;
+        const result = collectSyncResult(sessionId, events);
+        for (const text of result.fragments) postFragment(sessionId, text);
+        respond({ result });
       } else if (data.method === 'downloadFile' || data.method === 'getFile') {
         if (!data.text.trim()) throw new Error('文件路径不能为空');
         const controller = new AbortController();
@@ -93,24 +138,5 @@ export function connectEmbedBridge(sessionId: string, handlers: {
     downloads.clear();
     window.removeEventListener('message', receive);
     postToParent({ type: 'xpeech:interaction-unavailable', session_id: sessionId });
-  };
-}
-
-/** Emit completed assistant messages, never thinking/tool events or individual tokens. */
-export function collectReplies(onReply: (content: string) => void) {
-  let content = '';
-  function finish() {
-    if (!content) return;
-    const reply = content;
-    content = '';
-    onReply(reply);
-  }
-  return {
-    push(event: ChatEvent) {
-      if (event.event === 'assistant') content += event.context;
-      else if (event.event === 'error') content = '';
-      else finish();
-    },
-    finish,
   };
 }

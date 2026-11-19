@@ -5,7 +5,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-test('dialog files notify the parent while sync files stay in the result, and notifications stop after unmount', async () => {
+test('the embedded page notifies fragment calls and dialog files, and stops notifications after unmount', async () => {
   const sent: any[] = [];
   const effects: Function[] = [];
   const listeners = new Set<Function>();
@@ -47,11 +47,18 @@ test('dialog files notify the parent while sync files stay in the result, and no
       async streamChat(text: string, files: File[], receive: (event: any) => void, options: any) {
         streamCalls.push({ text, files, options });
         receiveStream = receive;
+        receive({ event: 'assistant', context: '普通回答' });
+        receive({ event: 'assistant_end', context: '' });
+        receive({ event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: '对话片段' } }]) });
         receive({ event: 'send_file', context: 'reports/对话框.pdf' });
         await new Promise<void>(resolve => { finishStream = resolve; });
       },
       async chatSync() {
-        return [{ event: 'assistant', context: '完成' }, { event: 'send_file', context: 'reports/sync.pdf' }];
+        return [
+          { event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: '结果片段' } }]) },
+          { event: 'assistant', context: '完成' },
+          { event: 'send_file', context: 'reports/sync.pdf' },
+        ];
       },
     },
     './chatState': { appendChatEvent() {}, chatDisplayItems: () => [], chatMessagesFromEvents: () => [], finishChatTurn() {} },
@@ -107,12 +114,18 @@ test('dialog files notify the parent while sync files stay in the result, and no
     data: { type: 'xpeech:request', method: 'chatSync', text: '生成 sync 文件', request_id: 'sync-1', session_id: 'first' },
   })));
   const files = sent.filter(item => item.data.type === 'xpeech:file');
-  assert.equal(files.length, 1);
-  assert.equal(files[0].data.path, 'reports/对话框.pdf');
-  assert.equal(files[0].data.request_id, null);
+  assert.deepEqual(structuredClone(files.map(item => item.data)), [
+    { type: 'xpeech:file', session_id: 'first', path: 'reports/对话框.pdf' },
+  ]);
   const sync = sent.find(item => item.data.type === 'xpeech:response' && item.data.request_id === 'sync-1');
-  assert.equal(sync.data.result.events[1].event, 'send_file');
-  assert.equal(sync.data.result.events[1].context, 'reports/sync.pdf');
+  assert.deepEqual(structuredClone(sync.data.result), {
+    session_id: 'first', fragments: ['结果片段'], files: ['reports/sync.pdf'],
+  });
+  const fragments = sent.filter(item => item.data.type === 'xpeech:reply');
+  assert.deepEqual(structuredClone(fragments.map(item => item.data)), [
+    { type: 'xpeech:reply', session_id: 'first', text: '对话片段' },
+    { type: 'xpeech:reply', session_id: 'first', text: '结果片段' },
+  ]);
   assert.ok(files.every(item => item.data.session_id === 'first' && item.origin === 'https://portal.test'));
   finishStream();
   await new Promise<void>(resolve => setImmediate(resolve));
@@ -125,7 +138,9 @@ test('dialog files notify the parent while sync files stay in the result, and no
   assert.equal(newConversations, 1);
   disposeRequests();
   receiveStream({ event: 'send_file', context: 'stale.pdf' });
+  receiveStream({ event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: 'stale' } }]) });
   assert.equal(sent.filter(item => item.data.type === 'xpeech:file').length, 2);
+  assert.equal(sent.filter(item => item.data.type === 'xpeech:reply').length, 3);
   finishStream();
   await new Promise<void>(resolve => setImmediate(resolve));
   disposeBridge();

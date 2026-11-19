@@ -114,17 +114,15 @@ function addFiles(files, options = {}) {
 }
 function newConversation(options) { return requestInteraction('newConversation', '', options); }
 function send(options) { return requestInteraction('send', '', options); }
-function fileInfo(path) {
-  var url = new URL('/api/files', origin);
-  url.searchParams.set('path', path);
-  return { path: path, url: url.href };
-}
 function chatSync(text, options) {
   return requestInteraction('chatSync', text, options).then(function (result) {
-    var files = result.events
-      .filter(function (event) { return event.event === 'send_file' && typeof event.context === 'string' && event.context.trim(); })
-      .map(function (event) { return fileInfo(event.context); });
-    return Object.assign({}, result, { files: files });
+    function isStringList(values) {
+      return Array.isArray(values) && Array.from(values).every(function (value) { return typeof value === 'string'; });
+    }
+    if (!result || typeof result.session_id !== 'string' || !isStringList(result.fragments) || !isStringList(result.files)) {
+      throw new Error('无效的同步聊天响应');
+    }
+    return { session_id: result.session_id, fragments: Array.from(result.fragments), files: Array.from(result.files) };
   });
 }
 function downloadFile(path, options) { return requestInteraction('downloadFile', path, options); }
@@ -463,16 +461,15 @@ function onMessage(event) {
     if (typeof data.error === 'string') pending.reject(new Error(data.error));
     else pending.resolve(data.result);
     flushRequests();
-  } else if (data.type === "xpeech:reply" && data.session_id === interactionSession && typeof data.content === 'string') {
-    var reply = { session_id: data.session_id, content: data.content, request_id: data.request_id ?? null };
+  } else if (data.type === "xpeech:reply" && data.session_id === interactionSession && typeof data.text === 'string') {
+    var reply = { session_id: data.session_id, text: data.text };
     replyListeners.forEach(function (listener) {
       try { listener(reply); } catch (error) { console.error('Xpeech onReply callback failed', error); }
     });
     window.dispatchEvent(new CustomEvent('xpeech:reply', { detail: reply }));
   } else if (data.type === 'xpeech:file' && data.session_id === interactionSession &&
-      typeof data.path === 'string' && data.path.trim() &&
-      data.request_id == null) {
-    var file = Object.assign({ session_id: data.session_id, request_id: null }, fileInfo(data.path));
+      typeof data.path === 'string' && data.path.trim()) {
+    var file = { session_id: data.session_id, path: data.path };
     chatFileListeners.forEach(function (listener) {
       try { listener(file); } catch (error) { console.error('Xpeech file callback failed', error); }
     });

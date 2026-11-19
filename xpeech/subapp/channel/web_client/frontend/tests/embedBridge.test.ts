@@ -17,7 +17,7 @@ async function runtime() {
   const module = new vm.SourceTextModule(source, { context: vm.createContext({ window, URLSearchParams, File, AbortController }) });
   await module.link(() => { throw new Error('Only type imports expected'); });
   await module.evaluate();
-  const api = module.namespace as { connectEmbedBridge: Function; collectReplies: Function };
+  const api = module.namespace as { connectEmbedBridge: Function };
   async function message(data: any, origin = 'https://portal.test', source: any = parent) {
     await Promise.all([...listeners].map(listener => listener({ data, origin, source })));
   }
@@ -28,7 +28,21 @@ test('iframe bridge validates parent, session and payload and correlates sync re
   const app = await runtime();
   const drafts: string[] = [];
   const calls: any[] = [];
-  const events = [{ event: 'assistant', context: 'answer' }];
+  const events = [
+    { event: 'assistant', context: 'answer' },
+    { event: 'tool_call', context: JSON.stringify([
+      { name: 'fragment', arguments: { text: '  第一段\n' } },
+      { name: 'shell', arguments: { text: 'ignored' } },
+      { name: 'fragment', arguments: { text: 23 } },
+      { name: 'fragment', arguments: { text: '' } },
+    ]) },
+    { event: 'tool_call_result', context: JSON.stringify({ name: 'fragment', result: '' }) },
+    { event: 'send_file', context: 'reports/报告 #1 & 2.pdf' },
+    { event: 'tool_call', context: 'not JSON' },
+    { event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: '第二段' } }]) },
+    { event: 'send_file', context: '' },
+    { event: 'send_file', context: 'second.txt' },
+  ];
   const dispose = app.api.connectEmbedBridge('first', {
     setInput(text: string) { drafts.push(text); },
     async chatSync(text: string, options: any) { calls.push({ text, options }); return events; },
@@ -47,8 +61,18 @@ test('iframe bridge validates parent, session and payload and correlates sync re
   await app.message({ ...input, method: 'chatSync', text: 'question::请严格以JSON格式回复::' });
   assert.equal(calls[0].text, 'question::请严格以JSON格式回复::');
   assert.equal('jsonOutput' in calls[0].options, false);
-  assert.equal(calls[0].options.requestId, '1');
-  assert.deepEqual(app.sent.at(-1).data.result.events, events);
+  assert.equal(app.sent.at(-1).data.request_id, '1');
+  assert.deepEqual(structuredClone(app.sent.at(-1).data.result), {
+    session_id: 'first',
+    fragments: ['  第一段\n', '', '第二段'],
+    files: ['reports/报告 #1 & 2.pdf', 'second.txt'],
+  });
+  const notifications = app.sent.filter(item => item.data.type === 'xpeech:reply');
+  assert.deepEqual(structuredClone(notifications.map(item => item.data)), [
+    { type: 'xpeech:reply', session_id: 'first', text: '  第一段\n' },
+    { type: 'xpeech:reply', session_id: 'first', text: '' },
+    { type: 'xpeech:reply', session_id: 'first', text: '第二段' },
+  ]);
   await app.message({ ...input, method: 'chatSync', text: '' });
   assert.match(app.sent.at(-1).data.error, /不能为空/);
   assert.ok(app.sent.every(message => message.origin === 'https://portal.test'));
@@ -72,12 +96,30 @@ test('iframe bridge forwards binary attachments and rejects invalid files', asyn
   await app.message(request);
   assert.equal(calls[0].text, '');
   assert.equal(calls[0].options.files[0], file);
-  assert.deepEqual(app.sent.at(-1).data.result.events, []);
+  assert.deepEqual(structuredClone(app.sent.at(-1).data.result), { session_id: 'first', fragments: [], files: [] });
   for (const files of [null, file, ['file.txt'], [new Blob(['text'])], new Array(1)]) {
     await app.message({ ...request, text: 'hello', files });
     assert.match(app.sent.at(-1).data.error, /files/);
   }
   assert.equal(calls.length, 1);
+  dispose();
+});
+
+test('sync error events reject the interaction instead of returning a partial result', async () => {
+  const app = await runtime();
+  const dispose = app.api.connectEmbedBridge('first', {
+    async chatSync() {
+      return [
+        { event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: 'partial' } }]) },
+        { event: 'error', context: 'sync failed' },
+      ];
+    },
+  });
+  await app.message({ type: 'xpeech:request', request_id: '1', session_id: 'first', method: 'chatSync', text: 'hello' });
+  const response = app.sent.at(-1).data;
+  assert.equal(response.error, 'sync failed');
+  assert.equal(response.result, undefined);
+  assert.equal(app.sent.some(item => item.data.type === 'xpeech:reply'), false);
   dispose();
 });
 
@@ -202,23 +244,8 @@ test('StrictMode setup/cleanup only announces the surviving conversation and sta
   assert.equal(app.sent.filter(item => item.data.type === 'xpeech:interaction-ready').length, 1);
   const pending = app.message({ type: 'xpeech:request', request_id: '1', session_id: 'first', method: 'chatSync', text: 'hello' });
   dispose();
-  resolve([]);
+  resolve([{ event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: 'stale' } }]) }]);
   await pending;
   assert.equal(app.sent.filter(item => item.data.type === 'xpeech:response').length, 0);
-});
-
-test('streamed replies are merged once per message, excluding thinking and unfinished errors', async () => {
-  const app = await runtime();
-  const replies: string[] = [];
-  const collector = app.api.collectReplies((content: string) => replies.push(content));
-  for (const [event, context] of [
-    ['thinking', 'private'], ['thinking_end', ''],
-    ['assistant', '你'], ['assistant', '好'], ['assistant_end', ''],
-    ['tool_call', 'tool'], ['tool_call_result', 'result'],
-    ['assistant', 'second'], ['token_usage', '{}'],
-    ['assistant', 'unfinished'], ['error', 'failure'],
-  ]) collector.push({ event, context });
-  collector.finish();
-  collector.finish();
-  assert.deepEqual(replies, ['你好', 'second']);
+  assert.equal(app.sent.some(item => item.data.type === 'xpeech:reply'), false);
 });
