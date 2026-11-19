@@ -82,13 +82,13 @@ test('iframe bridge validates parent, session and payload and correlates sync re
   assert.equal(app.sent.length, count);
 });
 
-test('iframe bridge only accepts fragment format changes from the parent for the active session', async () => {
+test('iframe bridge only accepts fragment handler changes from the parent for the active session', async () => {
   const app = await runtime();
   const revisions: (number | null)[] = [];
   const dispose = app.api.connectEmbedBridge('first', {
     setFragmentRevision(revision: number | null) { revisions.push(revision); },
   });
-  const update = { type: 'xpeech:fragment-formats', session_id: 'first', revision: 2 };
+  const update = { type: 'xpeech:fragment-handler', session_id: 'first', revision: 2 };
   await app.message(update, 'https://untrusted.test');
   await app.message(update, 'https://portal.test', {});
   await app.message({ ...update, session_id: 'old' });

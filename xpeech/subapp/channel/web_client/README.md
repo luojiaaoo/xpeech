@@ -181,7 +181,7 @@ function onLogout() {
 | `assistant.getFile(path, { timeoutMs? } = {})` | 获取文件二进制，返回 `Promise<File>`，包含文件名和 MIME 类型，供主站 JS 处理，不触发浏览器保存 |
 | `assistant.onReply(callback)` | 每次 `fragment` 工具调用回传 `{ session_id, text }`，返回取消订阅函数 |
 | `assistant.onChatFile(callback)` | 对话框发送文件时回传 `{ session_id, path }`，返回取消订阅函数 |
-| `assistant.registerFragmentFormats(session_id, mapping)` | 为指定会话设置片段显示格式，返回取消本次注册的函数 |
+| `assistant.registerFragmentHandler(session_id, handler)` | 为指定会话注册片段按钮生成函数，返回取消本次注册的函数 |
 | `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存中的身份和 JWT，不发送服务端撤销请求 |
 
 `init()` 的无效字符串参数会同步抛出异常，
@@ -238,36 +238,37 @@ try {
 unsubscribe();
 ```
 
-### 对话框片段格式
+### 对话框片段按钮
 
-`registerFragmentFormats(session_id, mapping)` 的键是卡片显示的类型名，每项提供
-`render(text)` 和 `callback(text)`。渲染函数在主站执行，按字典顺序尝试：返回非空 HTML 字符串即匹配，
-抛错或返回空值则跳过。当有匹配时，卡片显示「预览」和「使用」两个按钮；
-「预览」展开隔离的 HTML（不运行脚本、不加载外部资源），「使用」才把原始 `text` 交给回调。
+在当前注册下，对话框每遇到一次 `fragment` 调用，主站的 `handler(text)` 就执行一次，
+并同步返回 `{ label, style, callback }[]`。SDK 按列表顺序渲染按钮。
+`label` 为非空文案。`style` 支持 `default`、`primary`、`dashed`、`text`、`link`，
+以及 `danger`（红色）、`warning`（橙色）、`success`（绿色）。样式只影响外观，不会自动弹出确认框。
+点击时才执行该按钮的 `callback(text)`，参数是原始片段文本。
 
 ```javascript
 const { session_id } = await assistant.newConversation();
-const unregister = assistant.registerFragmentFormats(session_id, {
-  '报告': {
-    render(text) {
-      const report = JSON.parse(text);
-      if (report?.type !== 'report' || typeof report.title !== 'string') return null;
-      const title = document.createElement('h3');
-      title.textContent = report.title;
-      return title.outerHTML;
-    },
+const unregister = assistant.registerFragmentHandler(session_id, () => [
+  {
+    label: '记录',
+    style: 'default',
     callback(text) {
-      console.log('使用报告', text);
+      console.log('收到片段', text);
     },
   },
-});
+  {
+    label: '填入输入框',
+    style: 'primary',
+    callback: (text) => assistant.setInput(text),
+  },
+]);
 
 // 不再显示当前会话的片段时调用。
 // unregister();
 ```
 
-没有注册或传入空字典时，不显示 `fragment` 卡片。注册了但所有格式都不匹配时，显示「片段格式未匹配，请重试」。
-再次注册会替换该会话的格式。片段通知和 `chatSync()` 返回值不受注册影响；
+未注册或返回空列表时，不显示 `fragment` 卡片。生成函数抛错或返回格式无效时，显示「片段按钮生成失败，请重试」。
+再次注册会替换该会话的处理函数。片段通知和 `chatSync()` 返回值不受注册影响；
 同步请求不在对话框显示卡片。
 
 ### 同步调用与文件

@@ -39,7 +39,8 @@ var requestSequence = 0;
 var pendingRequests = new Map();
 var replyListeners = new Set();
 var chatFileListeners = new Set();
-var fragmentFormats = new Map();
+var fragmentHandlers = new Map();
+var fragmentButtonStyles = new Set(['default', 'primary', 'dashed', 'text', 'link', 'danger', 'warning', 'success']);
 var fragmentRevision = 0;
 
 function rejectRequests(message, sentOnly = false, keepRequestId = null) {
@@ -143,65 +144,69 @@ function onChatFile(listener) {
   return function () { chatFileListeners.delete(listener); };
 }
 
-function sendFragmentFormats(sessionId) {
+function sendFragmentHandler(sessionId) {
   if (!frame || sessionId !== interactionSession) return;
-  var formats = fragmentFormats.get(sessionId);
+  var registration = fragmentHandlers.get(sessionId);
   frame.contentWindow.postMessage({
-    type: 'xpeech:fragment-formats', session_id: sessionId, revision: formats ? formats.revision : null
+    type: 'xpeech:fragment-handler', session_id: sessionId, revision: registration ? registration.revision : null
   }, origin);
 }
 
-function registerFragmentFormats(sessionId, mapping) {
+function registerFragmentHandler(sessionId, handler) {
   if (typeof sessionId !== 'string' || !sessionId.trim()) throw new TypeError('session_id 必须为非空字符串');
-  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) throw new TypeError('mapping 必须为对象');
-  var entries = new Map();
-  for (var [name, format] of Object.entries(mapping)) {
-    if (!name.trim() || !format || typeof format.render !== 'function' || typeof format.callback !== 'function') {
-      throw new TypeError('每种片段格式都必须提供 render 和 callback 函数');
-    }
-    entries.set(name, { render: format.render, callback: format.callback });
-  }
-  var registration = { revision: ++fragmentRevision, entries: entries };
-  if (entries.size) fragmentFormats.set(sessionId, registration);
-  else fragmentFormats.delete(sessionId);
-  sendFragmentFormats(sessionId);
+  if (typeof handler !== 'function') throw new TypeError('handler 必须为函数');
+  var registration = { revision: ++fragmentRevision, handler: handler, fragments: new Map() };
+  fragmentHandlers.set(sessionId, registration);
+  sendFragmentHandler(sessionId);
   return function () {
-    if (fragmentFormats.get(sessionId) !== registration) return;
-    fragmentFormats.delete(sessionId);
-    sendFragmentFormats(sessionId);
+    if (fragmentHandlers.get(sessionId) !== registration) return;
+    fragmentHandlers.delete(sessionId);
+    sendFragmentHandler(sessionId);
   };
 }
 
+function fragmentButtons(handler, text) {
+  try {
+    var result = handler(text);
+    if (!Array.isArray(result)) return null;
+    var buttons = [];
+    for (var button of result) {
+      if (!button || typeof button.label !== 'string' || !button.label.trim() ||
+          !fragmentButtonStyles.has(button.style) || typeof button.callback !== 'function') return null;
+      buttons.push({ label: button.label, style: button.style, callback: button.callback });
+    }
+    return buttons;
+  } catch {
+    return null;
+  }
+}
+
 function handleFragmentMessage(data) {
-  if (data.session_id !== interactionSession || typeof data.text !== 'string') return;
-  var registration = fragmentFormats.get(data.session_id);
+  if (data.session_id !== interactionSession || typeof data.fragment_id !== 'string') return;
+  var registration = fragmentHandlers.get(data.session_id);
   if (!registration || data.revision !== registration.revision) return;
+  var fragment = registration.fragments.get(data.fragment_id);
 
   if (data.type === 'xpeech:fragment-action') {
-    var format = registration.entries.get(data.format);
-    if (format) {
-      Promise.resolve().then(function () { return format.callback(data.text); }).catch(function (error) {
+    if (!Number.isSafeInteger(data.button_index) || data.button_index < 0) return;
+    var button = fragment?.buttons?.[data.button_index];
+    if (button) {
+      Promise.resolve().then(function () { return button.callback(fragment.text); }).catch(function (error) {
         console.error('Xpeech fragment callback failed', error);
       });
     }
     return;
   }
-  if (typeof data.request_id !== 'string') return;
-  var result = null;
-  for (var [name, entry] of registration.entries) {
-    try {
-      var html = entry.render(data.text);
-      if (typeof html !== 'string' || !html.trim()) continue;
-      result = { name: name, html: html };
-      break;
-    } catch {
-      continue;
-    }
+  if (typeof data.request_id !== 'string' || typeof data.text !== 'string') return;
+  if (!fragment || fragment.text !== data.text) {
+    fragment = { text: data.text, buttons: fragmentButtons(registration.handler, data.text) };
+    registration.fragments.set(data.fragment_id, fragment);
   }
-  if (frame && data.session_id === interactionSession && fragmentFormats.get(data.session_id) === registration) {
+  if (frame && data.session_id === interactionSession && fragmentHandlers.get(data.session_id) === registration) {
     frame.contentWindow.postMessage({
-      type: 'xpeech:fragment-preview', session_id: data.session_id, revision: data.revision,
-      request_id: data.request_id, result: result
+      type: 'xpeech:fragment-buttons', session_id: data.session_id, revision: data.revision,
+      request_id: data.request_id,
+      buttons: fragment.buttons?.map(function (button) { return { label: button.label, style: button.style }; }) ?? null
     }, origin);
   }
 }
@@ -490,6 +495,7 @@ function onMessage(event) {
   if (!data || typeof data !== "object") return;
   if (data.type === "xpeech:ready") {
     interactionSession = null;
+    fragmentHandlers.forEach(function (registration) { registration.fragments.clear(); });
     rejectRequests('聊天页面已重新加载', true);
     frameReady = true;
     clearTimeout(frameTimer);
@@ -499,7 +505,7 @@ function onMessage(event) {
   } else if (data.type === "xpeech:interaction-ready" && typeof data.session_id === 'string') {
     if (interactionSession && interactionSession !== data.session_id) rejectRequests('会话已切换', true);
     interactionSession = data.session_id;
-    if (fragmentFormats.has(interactionSession)) sendFragmentFormats(interactionSession);
+    if (fragmentHandlers.has(interactionSession)) sendFragmentHandler(interactionSession);
     pendingRequests.forEach(function (pending, id) {
       if (!pending.nextSessionId) return;
       clearTimeout(pending.timer);
@@ -511,7 +517,7 @@ function onMessage(event) {
   } else if (data.type === "xpeech:interaction-unavailable" && data.session_id === interactionSession) {
     interactionSession = null;
     rejectRequests('会话已切换或关闭', true);
-  } else if (data.type === 'xpeech:fragment-render' || data.type === 'xpeech:fragment-action') {
+  } else if (data.type === 'xpeech:fragment-request' || data.type === 'xpeech:fragment-action') {
     handleFragmentMessage(data);
   } else if (data.type === "xpeech:response") {
     var pending = pendingRequests.get(data.request_id);
@@ -731,7 +737,7 @@ function destroy() {
   removeFrame();
   replyListeners.clear();
   chatFileListeners.clear();
-  fragmentFormats.clear();
+  fragmentHandlers.clear();
   window.removeEventListener("message", onMessage);
   window.removeEventListener("resize", keepInViewport);
   if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
@@ -744,4 +750,4 @@ function destroy() {
   host = root = panel = launcher = closeButton = minimizeButton = maximizeButton = body = status = null;
 }
 
-export { init, updateJWT, hideButton, showButton, open, close, maximize, restore, minimize, destroy, setInput, addFiles, newConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile, registerFragmentFormats };
+export { init, updateJWT, hideButton, showButton, open, close, maximize, restore, minimize, destroy, setInput, addFiles, newConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile, registerFragmentHandler };

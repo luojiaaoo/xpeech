@@ -49,7 +49,7 @@ async function runtime() {
     }, { context });
   });
   await card.evaluate();
-  const props = { sessionId: 'session', revision: 2, text: ' 原始文本\n' };
+  const props = { sessionId: 'session', revision: 2, fragmentId: 'fragment-1', text: ' 原始文本\n' };
   function render() {
     stateIndex = 0;
     return (card.namespace.default as Function)(props);
@@ -61,47 +61,62 @@ async function runtime() {
     assert.equal(render(), null);
     const dispose = effect();
     const { data } = sent.at(-1);
-    assert.equal(data.type, 'xpeech:fragment-render');
+    assert.equal(data.type, 'xpeech:fragment-request');
+    assert.equal(data.fragment_id, props.fragmentId);
     assert.equal(data.text, props.text);
-    const response = { type: 'xpeech:fragment-preview', session_id: props.sessionId, revision: props.revision, request_id: data.request_id };
+    const response = { type: 'xpeech:fragment-buttons', session_id: props.sessionId, revision: props.revision, request_id: data.request_id };
     return { dispose, response };
   }
   return { message, mount, props, render, sent };
 }
 
-test('a matched fragment has separate buttons for sandboxed preview and the original-text action', async () => {
+test('a fragment renders the supplied button labels and styles and posts only the selected index', async () => {
   const app = await runtime();
   const { response } = app.mount();
-  const previewResponse = { ...response, result: { name: '报告', html: '<strong>预览内容</strong>' } };
-  app.message(previewResponse, 'https://untrusted.test');
-  app.message(previewResponse, 'https://portal.test', {});
-  app.message({ ...previewResponse, request_id: 'stale' });
-  app.message({ ...previewResponse, revision: 1 });
+  const buttonsResponse = {
+    ...response, buttons: [
+      { label: '记录', style: 'default' }, { label: '使用', style: 'primary' }, { label: '清空', style: 'danger' },
+      { label: '警告', style: 'warning' }, { label: '完成', style: 'success' },
+    ],
+  };
+  app.message(buttonsResponse, 'https://untrusted.test');
+  app.message(buttonsResponse, 'https://portal.test', {});
+  app.message({ ...buttonsResponse, request_id: 'stale' });
+  app.message({ ...buttonsResponse, revision: 1 });
   assert.equal(app.render(), null);
-  app.message(previewResponse);
-  const [header, closed] = app.render().props.children;
-  assert.equal(closed, null);
-  const [preview, action] = header.props.children[1].props.children;
-  assert.equal(preview.props.children, '预览');
-  assert.equal(action.props.children, '使用');
-  preview.props.onClick();
+  app.message(buttonsResponse);
+  const buttons = app.render().props.children;
+  assert.deepEqual(Array.from(buttons, (button: any) => {
+    const { children, type, danger, color, variant } = button.props;
+    return [children, type, danger, color, variant];
+  }), [
+    ['记录', 'default', undefined, undefined, undefined],
+    ['使用', 'primary', undefined, undefined, undefined],
+    ['清空', 'default', true, undefined, undefined],
+    ['警告', undefined, undefined, 'orange', 'outlined'],
+    ['完成', undefined, undefined, 'green', 'outlined'],
+  ]);
   assert.equal(app.sent.length, 1);
-  const [, iframe] = app.render().props.children;
-  assert.equal(iframe.type, 'iframe');
-  assert.equal(iframe.props.sandbox, '');
-  assert.match(iframe.props.srcDoc, /default-src 'none'/);
-  assert.match(iframe.props.srcDoc, /<strong>预览内容<\/strong>/);
-  action.props.onClick();
-  assert.deepEqual(structuredClone(app.sent.at(-1).data), {
-    type: 'xpeech:fragment-action', session_id: 'session', revision: 2, format: '报告', text: app.props.text,
-  });
+  for (const [index, button] of buttons.entries()) {
+    button.props.onClick();
+    assert.deepEqual(structuredClone(app.sent.at(-1).data), {
+      type: 'xpeech:fragment-action', session_id: 'session', revision: 2, fragment_id: 'fragment-1', button_index: index,
+    });
+  }
 });
 
-test('an unmatched fragment shows an error with no action', async () => {
-  const app = await runtime();
-  const { response } = app.mount();
-  app.message({ ...response, result: null });
-  assert.equal(app.render().type, 'Alert');
-  assert.match(app.render().props.message, /请重试/);
-  assert.equal(app.sent.length, 1);
+test('an empty button list hides the fragment and failed button generation shows an error', async () => {
+  for (const buttons of [[], null, [{ label: '不支持', style: 'other' }]]) {
+    const app = await runtime();
+    const { response } = app.mount();
+    app.message({ ...response, buttons });
+    const card = app.render();
+    if (buttons?.length === 0) {
+      assert.equal(card, null);
+    } else {
+      assert.equal(card.type, 'Alert');
+      assert.match(card.props.message, /请重试/);
+    }
+    assert.equal(app.sent.length, 1);
+  }
 });

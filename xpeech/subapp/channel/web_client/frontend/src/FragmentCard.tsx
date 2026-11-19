@@ -1,40 +1,38 @@
 import { useEffect, useState } from 'react';
 import { Alert, Button } from 'antd';
-import { activateFragment, requestFragmentPreview } from './embedBridge';
-import type { FragmentPreview } from './embedBridge';
+import type { ButtonProps } from 'antd';
+import { activateFragment, requestFragmentButtons } from './embedBridge';
+import type { FragmentButton } from './embedBridge';
 
-const previewDocument = '<!doctype html><meta charset="utf-8">'
-  + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; base-uri \'none\'; form-action \'none\'">'
-  + '<style>body{font:14px/1.5 system-ui,sans-serif;overflow-wrap:anywhere}</style>';
+function buttonAppearance(style: FragmentButton['style']): Pick<ButtonProps, 'type' | 'danger' | 'color' | 'variant'> {
+  if (style === 'danger') return { type: 'default', danger: true };
+  if (style === 'warning') return { color: 'orange', variant: 'outlined' };
+  if (style === 'success') return { color: 'green', variant: 'outlined' };
+  return { type: style };
+}
 
-export default function FragmentCard({ sessionId, revision, text }: {
-  sessionId: string; revision: number; text: string;
+export default function FragmentCard({ sessionId, revision, fragmentId, text }: {
+  sessionId: string; revision: number; fragmentId: string; text: string;
 }) {
-  const [format, setFormat] = useState<FragmentPreview | null>();
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [result, setResult] = useState<{ text: string; buttons: FragmentButton[] | null }>();
 
-  useEffect(() => requestFragmentPreview(sessionId, revision, text, setFormat), [sessionId, revision, text]);
+  useEffect(() => requestFragmentButtons(
+    sessionId, revision, fragmentId, text, (buttons) => setResult({ text, buttons }),
+  ), [sessionId, revision, fragmentId, text]);
 
-  if (format === undefined) return null;
-  if (!format) return <Alert type="error" showIcon message="片段格式未匹配，请重试" />;
+  if (result?.text !== text) return null;
+  const { buttons } = result;
+  if (!buttons) return <Alert type="error" showIcon message="片段按钮生成失败，请重试" />;
+  if (!buttons.length) return null;
 
   return (
-    <section className="chat-fragment-card" aria-label={`片段：${format.name}`}>
-      <div className="chat-fragment-header">
-        <strong>{format.name}</strong>
-        <div className="chat-fragment-actions">
-          <Button size="small" aria-expanded={previewOpen} onClick={() => setPreviewOpen(!previewOpen)}>
-            {previewOpen ? '收起预览' : '预览'}
-          </Button>
-          <Button size="small" type="primary" onClick={() => activateFragment(sessionId, revision, format.name, text)}>
-            使用
-          </Button>
-        </div>
-      </div>
-      {previewOpen ? (
-        <iframe className="chat-fragment-preview" title={`${format.name}预览`} sandbox="" referrerPolicy="no-referrer"
-          srcDoc={previewDocument + format.html} />
-      ) : null}
+    <section className="chat-fragment-card" aria-label="片段操作">
+      {buttons.map((button, index) => (
+        <Button key={index} size="small" {...buttonAppearance(button.style)}
+          onClick={() => activateFragment(sessionId, revision, fragmentId, index)}>
+          {button.label}
+        </Button>
+      ))}
     </section>
   );
 }

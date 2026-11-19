@@ -104,7 +104,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { init: Function; updateJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function; registerFragmentFormats: Function };
+  const api = module.namespace as { init: Function; updateJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function; registerFragmentHandler: Function };
   return { window, context, frames, calls, hosts, sent, message, listeners, timers, api };
 }
 
@@ -117,7 +117,7 @@ test('loading the SDK creates no UI or requests until init and leaves website gl
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'registerFragmentFormats', 'restore', 'send', 'setInput', 'showButton', 'updateJWT']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'registerFragmentHandler', 'restore', 'send', 'setInput', 'showButton', 'updateJWT']);
 });
 
 test('init validates the original JWT without exchanging it and only delivers to its own iframe', async () => {
@@ -932,49 +932,65 @@ test('getFile resolves to a File from the trusted iframe and rejects invalid pat
   await closed;
 });
 
-test('fragment formats are scoped to a session, skip failed renders, and only call back on action', async () => {
+test('fragment handler runs once per card and only calls back for the selected button in its session', async () => {
   const app = await runtime();
-  const renders: string[] = [];
+  const fragments: string[] = [];
   const clicks: string[] = [];
-  const remove = app.api.registerFragmentFormats('first', {
-    broken: { render() { renders.push('broken'); throw new Error('not applicable'); }, callback() { assert.fail(); } },
-    report: {
-      render(text: string) { renders.push('report'); return text.startsWith('report') ? '<p>报告</p>' : null; },
-      callback(text: string) { clicks.push(text); },
-    },
-    later: { render() { renders.push('later'); return ''; }, callback() { assert.fail(); } },
+  const remove = app.api.registerFragmentHandler('first', (text: string) => {
+    fragments.push(text);
+    if (text === 'error') throw new Error('handler failed');
+    if (text === 'invalid') return [{ label: '缺少回调', style: 'default' }];
+    if (text === 'hide') return [];
+    return [
+      { label: '查看', style: 'default', callback(value: string) { clicks.push(`first:${value}`); } },
+      { label: '使用', style: 'primary', callback(value: string) { clicks.push(`second:${value}`); } },
+      { label: '清空', style: 'danger', callback(value: string) { clicks.push(`danger:${value}`); } },
+      { label: '警告', style: 'warning', callback() { assert.fail(); } },
+      { label: '完成', style: 'success', callback() { assert.fail(); } },
+    ];
   });
-  assert.throws(() => app.api.registerFragmentFormats('first', { invalid: { render() {} } }), /callback/);
+  assert.throws(() => app.api.registerFragmentHandler('first', {}), /handler/);
   app.api.init(jwtFor(), 'Alice');
   await tick();
   app.message({ type: 'xpeech:ready' });
   app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
   const registration = app.sent.at(-1)!.data;
   assert.deepEqual(Object.keys(registration).sort(), ['revision', 'session_id', 'type']);
-  assert.equal(registration.type, 'xpeech:fragment-formats');
+  assert.equal(registration.type, 'xpeech:fragment-handler');
   const request = {
-    type: 'xpeech:fragment-render', session_id: 'first', revision: registration.revision,
-    request_id: 'preview-1', text: 'report 原文\n',
+    type: 'xpeech:fragment-request', session_id: 'first', revision: registration.revision,
+    fragment_id: 'fragment-1', request_id: 'request-1', text: ' 片段原文\n',
   };
   app.message(request, 'https://attacker.test');
   app.message(request, 'https://assistant.test', {} as any);
   app.message({ ...request, session_id: 'other' });
-  assert.deepEqual(renders, []);
+  assert.deepEqual(fragments, []);
   app.message(request);
-  assert.deepEqual(renders, ['broken', 'report']);
+  app.message({ ...request, request_id: 'repeated' });
+  assert.deepEqual(fragments, [request.text]);
   assert.deepEqual(structuredClone(app.sent.at(-1)!.data), {
-    type: 'xpeech:fragment-preview', session_id: 'first', revision: registration.revision,
-    request_id: 'preview-1', result: { name: 'report', html: '<p>报告</p>' },
+    type: 'xpeech:fragment-buttons', session_id: 'first', revision: registration.revision,
+    request_id: 'repeated', buttons: [
+      { label: '查看', style: 'default' }, { label: '使用', style: 'primary' }, { label: '清空', style: 'danger' },
+      { label: '警告', style: 'warning' }, { label: '完成', style: 'success' },
+    ],
   });
   assert.deepEqual(clicks, []);
-  const action = { ...request, type: 'xpeech:fragment-action', format: 'report' };
+  const action = {
+    type: 'xpeech:fragment-action', session_id: 'first', revision: registration.revision,
+    fragment_id: request.fragment_id, button_index: 2,
+  };
   app.message({ ...action, revision: 0 });
-  app.message(action);
+  app.message({ ...action, button_index: 9 });
+  app.message({ ...action, text: 'ignored' });
   await tick();
-  assert.deepEqual(clicks, [request.text]);
-  app.message({ ...request, text: 'unmatched', request_id: 'preview-2' });
-  assert.equal(app.sent.at(-1)!.data.result, null);
-  assert.deepEqual(renders, ['broken', 'report', 'broken', 'report', 'later']);
+  assert.deepEqual(clicks, [`danger:${request.text}`]);
+  app.message({ ...request, fragment_id: 'duplicate-text' });
+  assert.deepEqual(fragments, [request.text, request.text]);
+  for (const text of ['error', 'invalid', 'hide']) {
+    app.message({ ...request, fragment_id: text, text });
+    assert.deepEqual(structuredClone(app.sent.at(-1)!.data.buttons), text === 'hide' ? [] : null);
+  }
 
   app.message({ type: 'xpeech:interaction-ready', session_id: 'second' });
   const sentCount = app.sent.length;
@@ -983,13 +999,15 @@ test('fragment formats are scoped to a session, skip failed renders, and only ca
   assert.equal(app.sent.length, sentCount);
   app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
   assert.equal(app.sent.at(-1)!.data.revision, registration.revision);
+  app.message(request);
+  assert.deepEqual(fragments, [request.text, request.text, 'error', 'invalid', 'hide']);
   remove();
   assert.equal(app.sent.at(-1)!.data.revision, null);
   app.message(action);
   await tick();
-  assert.deepEqual(clicks, [request.text]);
+  assert.deepEqual(clicks, [`danger:${request.text}`]);
 
-  app.api.registerFragmentFormats('first', { report: { render: () => '<p>old</p>', callback() {} } });
+  app.api.registerFragmentHandler('first', () => []);
   app.api.destroy();
   app.api.init(jwtFor(), 'Alice');
   await tick();

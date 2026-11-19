@@ -417,7 +417,8 @@ export default function ChatPage({
         if (item.toolCall.name === 'fragment' && fragmentRevision !== null) {
           const input = item.toolCall.input;
           content = input && typeof input === 'object' && 'text' in input && typeof input.text === 'string'
-            ? <FragmentCard key={fragmentRevision} sessionId={sessionId} revision={fragmentRevision} text={input.text} />
+            ? <FragmentCard key={fragmentRevision} sessionId={sessionId} revision={fragmentRevision}
+                fragmentId={item.key} text={input.text} />
             : <Alert type="error" showIcon message="无效片段，请重试" />;
         } else {
           content = <ToolCallCard tool={item.toolCall} />;

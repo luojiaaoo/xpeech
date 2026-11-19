@@ -1,7 +1,8 @@
 import type { ChatEvent } from './types';
 
 export type SyncOptions = { files?: File[] };
-export type FragmentPreview = { name: string; html: string };
+const fragmentButtonStyles = ['default', 'primary', 'dashed', 'text', 'link', 'danger', 'warning', 'success'] as const;
+export type FragmentButton = { label: string; style: typeof fragmentButtonStyles[number] };
 
 let fragmentRequestSequence = 0;
 
@@ -15,8 +16,9 @@ function postToParent(data: Record<string, unknown>) {
   if (origin) window.parent.postMessage(data, origin);
 }
 
-export function requestFragmentPreview(
-  sessionId: string, revision: number, text: string, onPreview: (preview: FragmentPreview | null) => void,
+export function requestFragmentButtons(
+  sessionId: string, revision: number, fragmentId: string, text: string,
+  onButtons: (buttons: FragmentButton[] | null) => void,
 ) {
   const origin = parentOrigin();
   if (!origin) return () => {};
@@ -24,19 +26,23 @@ export function requestFragmentPreview(
   function receive(event: MessageEvent) {
     if (event.origin !== origin || event.source !== window.parent) return;
     const data = event.data;
-    if (data?.type !== 'xpeech:fragment-preview' || data.session_id !== sessionId
+    if (data?.type !== 'xpeech:fragment-buttons' || data.session_id !== sessionId
       || data.revision !== revision || data.request_id !== requestId) return;
     window.removeEventListener('message', receive);
-    const result = data.result;
-    onPreview(typeof result?.name === 'string' && typeof result.html === 'string' ? result : null);
+    const buttons = data.buttons;
+    onButtons(Array.isArray(buttons) && buttons.every(button =>
+      typeof button?.label === 'string' && button.label.trim() && fragmentButtonStyles.includes(button.style),
+    ) ? buttons : null);
   }
   window.addEventListener('message', receive);
-  postToParent({ type: 'xpeech:fragment-render', session_id: sessionId, revision, request_id: requestId, text });
+  postToParent({
+    type: 'xpeech:fragment-request', session_id: sessionId, revision, fragment_id: fragmentId, request_id: requestId, text,
+  });
   return () => window.removeEventListener('message', receive);
 }
 
-export function activateFragment(sessionId: string, revision: number, format: string, text: string) {
-  postToParent({ type: 'xpeech:fragment-action', session_id: sessionId, revision, format, text });
+export function activateFragment(sessionId: string, revision: number, fragmentId: string, buttonIndex: number) {
+  postToParent({ type: 'xpeech:fragment-action', session_id: sessionId, revision, fragment_id: fragmentId, button_index: buttonIndex });
 }
 
 function* fragmentTexts(event: ChatEvent): Iterable<string> {
@@ -101,7 +107,7 @@ export function connectEmbedBridge(sessionId: string, handlers: {
   async function receive(event: MessageEvent) {
     if (event.origin !== origin || event.source !== window.parent) return;
     const data = event.data;
-    if (data?.type === 'xpeech:fragment-formats') {
+    if (data?.type === 'xpeech:fragment-handler') {
       if (data.session_id === sessionId && (data.revision === null || Number.isSafeInteger(data.revision))) {
         handlers.setFragmentRevision(data.revision);
       }
