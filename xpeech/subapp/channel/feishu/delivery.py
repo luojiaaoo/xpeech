@@ -26,11 +26,10 @@ def ensure_send_success(
 
 
 class FeishuDelivery:
-    """发送普通卡片、流式卡片和会话进度卡片。"""
+    """直接发送独立消息和流式卡片。"""
 
     def __init__(self, channel: XpeechFeishuChannel):
         self.channel = channel
-        self.session_update_message_id: dict[str, str] = {}
 
     async def send(
         self,
@@ -96,49 +95,16 @@ class FeishuDelivery:
         message_type: ChatEventType,
         iter_content: AsyncIterator[str] | None,
     ) -> None:
-        persistence_types = (
-            ChatEventType.THINKING,
-            ChatEventType.ASSISTANT,
-            ChatEventType.ERROR,
-            ChatEventType.COMMAND,
-            ChatEventType.TOKEN_USAGE,
-            ChatEventType.QUESTION,
-        )
         logger.info(
             "Feishu message sending user_id={} sender_name={} message_type={}",
             user_id,
             sender_name,
             message_type,
         )
-        if message_type in persistence_types:
-            result = await self.send(
-                to=to,
-                message=message,
-                iter_content=iter_content,
-                opts=opts,
-            )
-            ensure_send_success(result, operation="send message")
-            self.session_update_message_id.pop(user_id, None)
-            return
-
-        message_id = self.session_update_message_id.get(user_id)
-        if message_id is None:
-            send_result = await self.send(
-                to=to,
-                message=message,
-                iter_content=iter_content,
-                opts=opts,
-            )
-            ensure_send_success(
-                send_result,
-                operation="send progress card",
-                require_message_id=True,
-            )
-            self.session_update_message_id[user_id] = send_result.message_id
-            return
-
-        if isinstance(message, AsyncIterator):
-            raise TypeError("Cannot update progress card with streaming message")
-        await asyncio.sleep(0.25)
-        result = await self.channel.update_card(message_id, message["card"])
-        ensure_send_success(result, operation="update progress card")
+        result = await self.send(
+            to=to,
+            message=message,
+            iter_content=iter_content,
+            opts=opts,
+        )
+        ensure_send_success(result, operation="send message")

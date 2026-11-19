@@ -14,7 +14,7 @@ from lark_channel import (
 from loguru import logger
 
 from ..helper import stop_chat
-from ..schema import Message
+from ..schema import ChatEvent, ChatEventType, Message
 from .channel import XpeechFeishuChannel
 from .config import DEFAULT_SESSION_ID
 from .conversation import FeishuConversation
@@ -105,9 +105,12 @@ class FeishuBridge:
         except Exception:  # noqa: BLE001 - 控制指令失败需反馈给发送者，不能误报成功。
             logger.exception("Failed to stop Feishu chat message_id={}", source.message_id)
             text = "停止失败，请稍后重试。"
+        message, _ = self.formatter._format_chat_event(
+            ChatEvent(event=ChatEventType.COMMAND, context=text),
+        )
         result = await self.channel.send(
             to=source.chat_id,
-            message={"text": text},
+            message=message,
             opts={"reply_to": source.message_id},
         )
         ensure_send_success(result, operation="send stop acknowledgement")

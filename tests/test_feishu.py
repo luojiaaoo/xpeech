@@ -409,7 +409,6 @@ async def test_on_message_keeps_request_cleanup_with_its_owner_and_does_not_bloc
         assert not task.done()
         channel.block_batch_scope.assert_not_called()
         channel.unblock_batch_scope.assert_not_called()
-        bridge.delivery.session_update_message_id["E1001"] = "om_progress"
         if cancelled:
             task.cancel()
         else:
@@ -417,7 +416,6 @@ async def test_on_message_keeps_request_cleanup_with_its_owner_and_does_not_bloc
 
     assert task.cancelled() is cancelled
     channel.unblock_batch_scope.assert_not_called()
-    assert bridge.delivery.session_update_message_id == {"E1001": "om_progress"}
 
 
 @pytest.mark.asyncio
@@ -792,48 +790,45 @@ async def test_failed_submission_does_not_change_a_finished_confirmation(monkeyp
     )
 
 
-@pytest.mark.parametrize(
-    "result",
-    [
-        SendResult(success=False),
-        SendResult(success=True, message_id=None),
-    ],
-)
+@pytest.mark.parametrize("event_type", [ChatEventType.ASSISTANT, ChatEventType.COMMAND, ChatEventType.TOKEN_USAGE])
 @pytest.mark.asyncio
-async def test_failed_progress_send_does_not_cache_invalid_message_id(result: SendResult):
-    send = AsyncMock(return_value=result)
+async def test_channel_send_reports_delivery_failure(event_type):
+    send = AsyncMock(return_value=SendResult(success=False))
     bridge = _bridge_with_channel(SimpleNamespace(send=send))
 
-    with pytest.raises(RuntimeError, match="Feishu send progress card"):
+    with pytest.raises(RuntimeError, match="Feishu send message"):
         await bridge.delivery.channel_send(
             to="oc_chat",
             message={"card": {}},
             opts=None,
             user_id="feishu_oc_chat",
             sender_name="Alice",
-            message_type=ChatEventType.TOOL_CALL,
+            message_type=event_type,
             iter_content=None,
         )
 
-    assert "feishu_oc_chat" not in bridge.delivery.session_update_message_id
-
 
 @pytest.mark.asyncio
-async def test_successful_progress_send_caches_message_id():
-    send = AsyncMock(return_value=SendResult(success=True, message_id="om_progress"))
-    bridge = _bridge_with_channel(SimpleNamespace(send=send))
+async def test_channel_send_creates_independent_messages_for_the_same_user():
+    send = AsyncMock(return_value=SendResult(success=True, message_id="om_sent"))
+    update_card = AsyncMock()
+    bridge = _bridge_with_channel(SimpleNamespace(send=send, update_card=update_card))
 
-    await bridge.delivery.channel_send(
-        to="oc_chat",
-        message={"card": {}},
-        opts=None,
-        user_id="feishu_oc_chat",
-        sender_name="Alice",
-        message_type=ChatEventType.TOOL_CALL,
-        iter_content=None,
-    )
+    messages = [{"card": {"body": {"elements": [{"tag": "markdown", "content": text}]}}}
+                for text in ("first", "second")]
+    for message in messages:
+        await bridge.delivery.channel_send(
+            to="oc_chat",
+            message=message,
+            opts=None,
+            user_id="E1001",
+            sender_name="Alice",
+            message_type=ChatEventType.COMMAND,
+            iter_content=None,
+        )
 
-    assert bridge.delivery.session_update_message_id == {"feishu_oc_chat": "om_progress"}
+    assert [call.kwargs["message"] for call in send.await_args_list] == messages
+    update_card.assert_not_awaited()
 
 
 def test_thinking_card_wraps_content_in_collapsible_panel():
@@ -910,7 +905,6 @@ async def test_streaming_thinking_uses_custom_card(monkeypatch: pytest.MonkeyPat
     )
     finish_streaming_card.assert_awaited_once_with("card_thinking", sequence=2)
     update_card.assert_not_awaited()
-    assert "feishu_oc_chat" not in bridge.delivery.session_update_message_id
 
 
 @pytest.mark.asyncio
@@ -1013,7 +1007,6 @@ async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.Mon
         timestamp=0,
         session_metadata={},
     )
-    bridge.delivery.session_update_message_id["E1001"] = "om_progress"
 
     await bridge.consume([message])
 
@@ -1034,7 +1027,6 @@ async def test_consume_streams_assistant_chunks_as_reply(monkeypatch: pytest.Mon
         "hello world",
     ]
     finish_streaming_card.assert_awaited_once_with("card_assistant", sequence=4)
-    assert "E1001" not in bridge.delivery.session_update_message_id
 
 
 @pytest.mark.asyncio
@@ -1184,9 +1176,15 @@ async def test_stop_is_a_direct_channel_api_call_without_parsing_an_agent_messag
     stop_chat.assert_awaited_once_with("E1001", bridge.chat_url, "feishu", session_id=DEFAULT_SESSION_ID)
     bridge.inbound.parse_message.assert_not_awaited()
     bridge.consume.assert_not_awaited()
-    channel.send.assert_awaited_once_with(
-        to="oc_chat", message={"text": expected}, opts={"reply_to": "om_message"},
+    command_message, _ = bridge.formatter._format_chat_event(
+        ChatEvent(event=ChatEventType.COMMAND, context=expected),
     )
+    channel.send.assert_awaited_once_with(
+        to="oc_chat", message=command_message, opts={"reply_to": "om_message"},
+    )
+    element = channel.send.await_args.kwargs["message"]["card"]["body"]["elements"][0]
+    assert element["content"] == f"**[命令]** {expected}"
+    assert element["icon"]["token"] == "command_outlined"
 
 
 @pytest.mark.asyncio
@@ -1198,7 +1196,8 @@ async def test_stop_identity_lookup_failure_never_calls_the_backend(monkeypatch)
     monkeypatch.setattr(feishu_bridge, "stop_chat", stop_chat)
     await bridge._on_message(_inbound_message(TextContent(text="/stop")))
     stop_chat.assert_not_awaited()
-    assert channel.send.await_args.kwargs["message"] == {"text": "停止失败，请稍后重试。"}
+    element = channel.send.await_args.kwargs["message"]["card"]["body"]["elements"][0]
+    assert element["content"] == "**[命令]** 停止失败，请稍后重试。"
 
 
 @pytest.mark.asyncio
@@ -1213,68 +1212,75 @@ async def test_stop_requires_an_exact_standalone_command(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_command_responses_use_the_existing_output_order(monkeypatch):
-    bridge = _bridge_with_channel(SimpleNamespace(add_reaction=AsyncMock()))
-    bridge.tools.finish_tool_progress = AsyncMock()
+async def test_same_user_commands_and_streams_send_without_waiting_for_an_active_stream(monkeypatch):
+    channel = SimpleNamespace(
+        add_reaction=AsyncMock(),
+        send=AsyncMock(return_value=SendResult(success=True, message_id="om_command")),
+        create_card_instance=AsyncMock(side_effect=["card_first", "card_later"]),
+        send_card_by_reference=AsyncMock(return_value=SendResult(success=True, message_id="om_stream")),
+        update_card_element_content=AsyncMock(),
+        finish_streaming_card=AsyncMock(),
+    )
+    bridge = _bridge_with_channel(channel)
     started = asyncio.Event()
     release = asyncio.Event()
-    deliveries = []
     bridge.questions.send_question = AsyncMock(side_effect=lambda _to, context:
         _remember_question(bridge, "question", json.loads(context)))
 
-    async def chunks():
-        started.set()
-        await release.wait()
-        yield "first reply"
+    async def chunks(name):
+        if name == "first":
+            started.set()
+            await release.wait()
+        yield f"{name} reply"
 
     async def events(messages, *_args, **_kwargs):
         name = messages[0].content[0].text
         if name == "first":
             yield ChatEvent(event=ChatEventType.QUESTION, context='{"fields":[]}')
-            yield ChatEvent(event=ChatEventType.ASSISTANT, context=chunks())
-        elif name == "queued":
+        if name == "queued":
             yield ChatEvent(event=ChatEventType.COMMAND, context="这条消息将用于引导后续回复")
         else:
-            yield ChatEvent(event=ChatEventType.COMMAND, context=name)
-
-    async def send(**kwargs):
-        if kwargs["iter_content"]:
-            async for _ in kwargs["iter_content"]:
-                pass
-        deliveries.append(kwargs["user_id"])
+            yield ChatEvent(event=ChatEventType.ASSISTANT, context=chunks(name))
 
     monkeypatch.setattr(feishu_conversation, "iter_chat_events", events)
-    bridge.delivery.channel_send = AsyncMock(side_effect=send)
+    monkeypatch.setattr(feishu_delivery, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
 
-    def message(text, user_id="E1001"):
-        return Message(message_id=text, chat_id="chat", user_id=user_id, sender_name="Alice",
+    def message(text):
+        return Message(message_id=text, chat_id="chat", user_id="E1001", sender_name="Alice",
                        content=[TextData(text=text)], timestamp=0, session_metadata={})
 
     first = asyncio.create_task(bridge.consume([message("first")]))
-    queued = None
-    later = None
     try:
         await asyncio.wait_for(started.wait(), timeout=1)
-        bridge.delivery.session_update_message_id["E1001"] = "progress"
-        queued = asyncio.create_task(bridge.consume([message("queued")]))
-        await asyncio.sleep(0)
-        assert not queued.done()
+        await asyncio.wait_for(bridge.consume([message("queued")]), timeout=1)
+        element = channel.send.await_args.kwargs["message"]["card"]["body"]["elements"][0]
+        assert element["content"] == "**[命令]** 这条消息将用于引导后续回复"
+        assert not first.done()
         assert "question" in bridge.questions.question_cards
-        assert bridge.delivery.session_update_message_id["E1001"] == "progress"
-        bridge.tools.finish_tool_progress.assert_not_awaited()
-        later = asyncio.create_task(bridge.consume([message("later")]))
-        await asyncio.sleep(0)
-        assert not later.done()
-        await asyncio.wait_for(bridge.consume([message("other", "E1002")]), timeout=1)
-        assert deliveries == ["E1002"]
+
+        await asyncio.wait_for(bridge.consume([message("later")]), timeout=1)
+        assert not first.done()
+        assert "question" in bridge.questions.question_cards
+        channel.update_card_element_content.assert_awaited_once_with(
+            "card_later", "main", "later reply", sequence=1,
+        )
+        channel.finish_streaming_card.assert_awaited_once_with("card_later", sequence=2)
     finally:
         release.set()
         await asyncio.wait_for(first, timeout=1)
-        if queued is not None:
-            await asyncio.wait_for(queued, timeout=1)
-        if later is not None:
-            await asyncio.wait_for(later, timeout=1)
-    assert deliveries == ["E1002", "E1001", "E1001", "E1001"]
+
+    assert [call.args for call in channel.send_card_by_reference.await_args_list] == [
+        ("chat", "card_first"), ("chat", "card_later"),
+    ]
+    assert [call.kwargs for call in channel.send_card_by_reference.await_args_list] == [
+        {"reply_to": "first"}, {"reply_to": "later"},
+    ]
+    assert [call.args for call in channel.update_card_element_content.await_args_list] == [
+        ("card_later", "main", "later reply"), ("card_first", "main", "first reply"),
+    ]
+    assert [call.kwargs["sequence"] for call in channel.update_card_element_content.await_args_list] == [1, 1]
+    assert [call.args for call in channel.finish_streaming_card.await_args_list] == [
+        ("card_later",), ("card_first",),
+    ]
+    assert [call.kwargs["sequence"] for call in channel.finish_streaming_card.await_args_list] == [2, 2]
     assert "question" not in bridge.questions.question_cards
-    assert "E1001" not in bridge.delivery.session_update_message_id
-    assert not bridge.conversation._output_locks
