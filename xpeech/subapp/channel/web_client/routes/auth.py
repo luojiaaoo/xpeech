@@ -95,6 +95,7 @@ async def resolve_injected_prompt(
             status_code = status.HTTP_502_BAD_GATEWAY
         else:
             raise
+        logger.warning("{} (reason={}, status_code={})", error, error.reason, status_code)
         raise HTTPException(status_code, detail) from error
     if not prompt:
         raise HTTPException(
