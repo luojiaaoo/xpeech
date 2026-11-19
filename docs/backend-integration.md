@@ -185,7 +185,7 @@ x-sender-name: %E5%BC%A0%E4%B8%89
 
 `content`、`session_metadata` 是表单里的字符串，不能把整个请求发送为 `application/json`。非法 JSON 返回 `422`；`session_metadata` 必须为对象。渠道由 JWT `kid` 决定，元数据中的 `channel` 键会被丢弃。
 
-渠道服务端可在 `[extra_user_info]` 中配置 `session_metadata_claims = { department = ".department", employee_number = ".employee_number | tostring" }`，从额外用户信息 JSON 注入字段。飞书与 Web 渠道在转发聊天请求前按已鉴权用户 ID 查询并拼接 `session_metadata`，同名字段以渠道服务端提取值为准。每个 jq 表达式必须返回唯一的字符串，空字符串会保留，数字可通过 `tostring` 转换。映射默认 `{}`，配置映射时须提供 `command_extra_user_info_template`。命令以非零状态退出时不注入这些字段，客户端同名字段也不转发；其他查询错误或字段提取失败仍会终止转发。
+渠道服务端可在 `[extra_user_info]` 中配置 `session_metadata_claims = { department = ".department", employee_number = ".employee_number | tostring" }`，从额外用户信息 JSON 注入字段。飞书与 Web 渠道在转发聊天请求前按已鉴权用户 ID 查询并拼接 `session_metadata`，同名字段以渠道服务端提取值为准。每个 jq 表达式必须返回唯一的字符串，空字符串会保留，数字可通过 `tostring` 转换。映射默认 `{}`，配置映射时须提供 `command_extra_user_info_template`。命令以非零状态退出时记录告警，并按用户缓存无结果最多一小时。这种情况下不注入这些字段，客户端同名字段也不转发；其他查询错误或字段提取失败仍会终止转发。
 
 消息时间由服务端记录，当前接口不提供 `timestamp` 表单参数。
 

@@ -3,7 +3,7 @@ import json
 import shlex
 import sys
 from importlib import import_module
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -49,7 +49,11 @@ async def test_session_metadata_preserves_strings_and_isolates_users(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_nonzero_exit_ignores_stdout_for_organization_and_metadata():
+async def test_nonzero_exit_is_logged_and_cached_without_using_stdout(monkeypatch):
+    execute = AsyncMock(wraps=settings_module.execute_command_template)
+    log = MagicMock()
+    monkeypatch.setattr(settings_module, "execute_command_template", execute)
+    monkeypatch.setattr(settings_module, "logger", log)
     script = 'import sys; print(\'{"organization":"company/admin","department":"admin"}\'); sys.exit(1)'
     config = ExtraUserInfoConfig(
         command_extra_user_info_template=shlex.join([sys.executable, "-c", script, "$user_id"]),
@@ -61,6 +65,15 @@ async def test_nonzero_exit_ignores_stdout_for_organization_and_metadata():
     )
     assert organization is None
     assert metadata == {}
+    assert await config.resolve_sender_name("alice", ".department") is None
+    assert await config.resolve_session_metadata("alice") == {}
+    execute.assert_awaited_once()
+    log.warning.assert_called_once()
+    message, *args = log.warning.call_args.args
+    assert message.format(*args) == (
+        "Extra user info lookup failed user_id='alice': "
+        "extra_user_info.command_extra_user_info_template failed with exit code 1"
+    )
 
 
 @pytest.mark.asyncio
@@ -68,6 +81,7 @@ async def test_nonzero_exit_ignores_stdout_for_organization_and_metadata():
     CommandTemplateError("timeout", operation="lookup"),
     "invalid JSON",
     "{}",
+    "null",
 ])
 async def test_session_metadata_still_rejects_other_failures(monkeypatch, failure):
     execute = AsyncMock(side_effect=[failure])
@@ -346,4 +360,4 @@ def test_oauth_login_creates_local_account_by_default(
             login = client.post("/api/auth/login", json={"user_id": "alice", "password": "password"})
             assert login.json()["username"] == expected
             assert dao.create_session.await_count == 2
-    assert execute.await_count == (3 if lookup_fails else 1)
+    execute.assert_awaited_once()

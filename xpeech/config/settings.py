@@ -448,7 +448,7 @@ class ExtraUserInfoConfig(BaseModel):
     user_organization_claim: str | None = Field(default=None, min_length=1)
     session_metadata_claims: dict[str, str] = Field(default_factory=dict)
     timeout: float = Field(default=10.0, gt=0, allow_inf_nan=False)
-    _query_extra_user_info: Callable[[str], Awaitable[object]] | None = PrivateAttr(default=None)
+    _query_extra_user_info: Callable[[str], Awaitable[tuple[object] | None]] | None = PrivateAttr(default=None)
 
     @field_validator("command_extra_user_info_template")
     @classmethod
@@ -477,60 +477,70 @@ class ExtraUserInfoConfig(BaseModel):
             raise ValueError("global claims require extra_user_info.command_extra_user_info_template")
         return self
 
-    async def _resolve_claim(self, user_id: str, claim: str) -> str:
+    async def _resolve_claim(self, user_id: str, claim: str) -> str | None:
         from ..subapp.channel.helper import extract_string_claim
 
         if self.command_extra_user_info_template is None:
             raise ValueError("extra_user_info.command_extra_user_info_template is not configured")
         if self._query_extra_user_info is None:
             @alru_cache(maxsize=4096, ttl=3600)
-            async def _query_extra_user_info(user_id: str) -> object:
-                """Share cached JSON results across claims and concurrent queries."""
-                result = await execute_command_template(
-                    self.command_extra_user_info_template,
-                    {"user_id": user_id},
-                    operation="extra_user_info.command_extra_user_info_template",
-                    timeout=self.timeout,
-                    required_variables=("user_id",),
-                )
+            async def _query_extra_user_info(user_id: str) -> tuple[object] | None:
+                """Cache a JSON payload (including null) or a nonzero exit as no result."""
+                try:
+                    result = await execute_command_template(
+                        self.command_extra_user_info_template,
+                        {"user_id": user_id},
+                        operation="extra_user_info.command_extra_user_info_template",
+                        timeout=self.timeout,
+                        required_variables=("user_id",),
+                    )
+                except CommandTemplateError as error:
+                    if error.reason != "failed":
+                        raise
+                    logger.warning("Extra user info lookup failed user_id={!r}: {}", user_id, error)
+                    return None
                 payload = json.loads(result)
                 logger.info(
                     "Extra user info lookup succeeded user_id={!r} result={}",
                     user_id,
                     json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                 )
-                return payload
+                return (payload,)
 
             self._query_extra_user_info = _query_extra_user_info
-        payload = await self._query_extra_user_info(user_id)
+        result = await self._query_extra_user_info(user_id)
+        if result is None:
+            return None
+        (payload,) = result
         return extract_string_claim(payload, claim)
 
     async def resolve_user_organization(self, user_id: str) -> str | None:
         if self.user_organization_claim is None:
             return None
         try:
-            return (await self._resolve_claim(user_id, self.user_organization_claim)).strip() or None
+            value = await self._resolve_claim(user_id, self.user_organization_claim)
+            return (value or "").strip() or None
         except (CommandTemplateError, ValueError):
             logger.warning("Extra user info organization lookup failed")
             return None
 
-    async def resolve_sender_name(self, user_id: str, claim: str) -> str:
-        value = (await self._resolve_claim(user_id, claim)).strip()
+    async def resolve_sender_name(self, user_id: str, claim: str) -> str | None:
+        value = await self._resolve_claim(user_id, claim)
+        if value is None:
+            return None
+        value = value.strip()
         if not value:
             raise ValueError("Extra user info claim must resolve to one non-empty string")
         return value
 
     async def resolve_session_metadata(self, user_id: str) -> dict[str, str]:
-        try:
-            return {
-                name: await self._resolve_claim(user_id, claim)
-                for name, claim in self.session_metadata_claims.items()
-            }
-        except CommandTemplateError as error:
-            if error.reason != "failed":
-                raise
-            logger.warning("Extra user info session metadata lookup failed: {}", error)
-            return {}
+        metadata: dict[str, str] = {}
+        for name, claim in self.session_metadata_claims.items():
+            value = await self._resolve_claim(user_id, claim)
+            if value is None:
+                return {}
+            metadata[name] = value
+        return metadata
 
     async def merge_session_metadata(self, user_id: str, metadata: dict[str, str | int]) -> None:
         claims = await self.resolve_session_metadata(user_id)

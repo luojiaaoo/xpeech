@@ -42,9 +42,14 @@ async def test_organization_cache_reuses_results_and_merges_concurrent_queries(m
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("first_organization", ["company/old", ""])
+@pytest.mark.parametrize("first_organization", ["company/old", "", None])
 async def test_organization_cache_expires_after_one_hour(monkeypatch, first_organization):
-    execute = AsyncMock(side_effect=[json.dumps({"organization": first_organization}), json.dumps({"organization": "company/new"})])
+    first_result = (
+        CommandTemplateError("failed", operation="lookup", returncode=1)
+        if first_organization is None
+        else json.dumps({"organization": first_organization})
+    )
+    execute = AsyncMock(side_effect=[first_result, json.dumps({"organization": "company/new"})])
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
     scheduled = []
     loop = asyncio.get_running_loop()
@@ -70,9 +75,8 @@ async def test_organization_cache_expires_after_one_hour(monkeypatch, first_orga
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["timeout", "failed"])
-async def test_unsuccessful_organization_queries_are_not_cached(monkeypatch, failure):
-    first = CommandTemplateError(failure, operation="organization.command_template")
+async def test_timed_out_organization_queries_are_not_cached(monkeypatch):
+    first = CommandTemplateError("timeout", operation="organization.command_template")
     execute = AsyncMock(side_effect=[first, json.dumps({"organization": "company/recovered"})])
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
     config = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup $user_id")
