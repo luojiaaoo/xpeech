@@ -884,7 +884,7 @@ MCP 工具调用后续期 20 分钟，空闲超时后自动关闭。
 
 ## 内置工具
 
-Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
+Xpeech 提供以下内置工具：
 
 | 工具 | 说明 |
 |------|------|
@@ -899,6 +899,7 @@ Xpeech 提供丰富的内置工具，Agent 可以在对话中自动调用：
 | `create_browser_preview` | 将工作区内目录或单个 HTML 复制到 UUID 预览目录，返回目录 URL 前缀或完整文件 URL |
 | `read_doc_file` | 使用 firecrawl-anydoc 读取 Word、PowerPoint、Excel（含旧版和宏格式）、OpenDocument、RTF、EPUB、CSV、PDF，输出 Markdown |
 | `send_file` | 向用户发送工作区或内置技能目录中的文件 |
+| `fragment` | 空操作；接收一个字符串 `text`，返回空字符串。工具描述要求仅在用户明确要求时调用 |
 | `ask_user_question` | 向用户发送表单提问 |
 | `list_sessions` | 分页查看当前用户的普通会话和后台执行历史，包含各自的渠道名 |
 | `read_session` | 按会话 ID 分页读取历史消息 |

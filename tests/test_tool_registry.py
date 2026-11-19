@@ -12,7 +12,7 @@ from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import mcp_client, registry
 from xpeech.agent.tools.execution_request import EXECUTION_REQUEST, ExecutionDecision
-from xpeech.agent.tools.helper import get_tool_model_cls
+from xpeech.agent.tools.helper import as_tool, get_tool_model_cls
 from xpeech.agent.tools.shell import ShellArgs
 from xpeech.config.settings import ToolConfig
 from xpeech.provider.litellm_provider import LiteLLMProvider
@@ -317,6 +317,7 @@ async def test_registers_supported_default_and_mcp_tools(
         "browser_preview",
         "read_doc_file",
         "send_file",
+        "fragment",
         "ask_user_question",
         "list_sessions",
         "read_session",
@@ -360,6 +361,30 @@ async def test_registers_supported_default_and_mcp_tools(
     loader = registration_kwargs["skills_loader"]
     assert loader.workspace_skills == tmp_path / "skills"
     assert loader.not_interactive is not_interactive
+
+
+@pytest.mark.asyncio
+async def test_fragment_accepts_only_a_text_parameter_and_returns_empty_output(tmp_path):
+    provider = FakeProvider()
+    await registry.register_tools(
+        user_id="fragment-test", provider=provider, workspace=tmp_path, config=ToolConfig(),
+    )
+    schema = as_tool(provider.function_tools["fragment"])["function"]
+    assert "仅当用户明确要求调用 fragment" in schema["description"]
+    assert schema["parameters"]["required"] == ["text"]
+    properties = schema["parameters"]["properties"]
+    assert set(properties) == {"text"}
+    assert properties["text"]["type"] == "string"
+
+    executor = ToolExecutor(
+        workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=provider.function_tools,
+    )
+    result = await executor.execute_one(
+        ToolCallRequest(id="fragment-1", name="fragment", arguments={"text": "这段文本不会被回显"}),
+    )
+    assert result.succeeded
+    assert result.value == ""
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.asyncio

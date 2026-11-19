@@ -12,6 +12,7 @@ from .document import build_document_tool
 from .execution_request import ExecutionConfirmation, build_execution_request_tool
 from .file_message import build_file_message_tools
 from .filesystem import build_file_tools
+from .fragment import fragment
 from .mcp_client import (
     MCPServerRegistration,
     build_mcp_status_tool,
@@ -40,6 +41,8 @@ async def register_tools(
     skills_loader = SkillsLoader(
         workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
     )
+
+    # 文本文件工具始终注册；图片和视频读取取决于模型能力。
     read_image, read_video, read_file, write_file, edit_file = build_file_tools(
         workspace=workspace,
         max_result_chars=config.max_result_chars,
@@ -51,6 +54,7 @@ async def register_tools(
     for tool in (read_file, write_file, edit_file):
         provider.register_function_tool(tool)
 
+    # Shell 命令在执行前经过安全检查，需要确认时走用户确认流程。
     provider.register_function_tool(
         build_execution_request_tool(
             build_shell_tools(workspace=workspace, skills_loader=skills_loader),
@@ -61,12 +65,15 @@ async def register_tools(
             not_interactive=not_interactive,
         )
     )
+
+    # 网页抓取、搜索和论文检索工具。
     provider.register_function_tool(web_fetch)
     for tool in (baidu_search, bing_search):
         provider.register_function_tool(tool)
     for tool in build_research_tools(workspace=workspace):
         provider.register_function_tool(tool)
 
+    # 工作区内容的预览、文档读取和文件发送。
     browser_preview = config.browser_preview
     provider.register_function_tool(
         build_browser_preview_tool(
@@ -77,6 +84,11 @@ async def register_tools(
     )
     provider.register_function_tool(build_document_tool(workspace=workspace))
     provider.register_function_tool(build_file_message_tools(workspace=workspace))
+
+    # fragment 是空操作；由工具描述要求模型只在用户明确请求时调用。
+    provider.register_function_tool(fragment)
+
+    # 后台执行无法等待用户回答，但仍可读取当前用户的会话历史。
     if not not_interactive:
         provider.register_function_tool(ask_user_question)
     for tool in build_session_tools(
@@ -85,10 +97,13 @@ async def register_tools(
         max_history_days=settings.llm.max_history_days,
     ):
         provider.register_function_tool(tool)
+
+    # 定时任务工具只开放给飞书交互会话。
     if channel == "feishu" and not not_interactive:
         for tool in (feishu_schedule_cron, feishu_schedule_once, feishu_schedule_list, feishu_schedule_cancel):
             provider.register_function_tool(tool)
 
+    # 按当前渠道和组织筛选允许接入的 MCP 服务。
     registrations: dict[str, MCPServerRegistration] = {}
     filter_context = FilterContext(channel=channel, org=user_organization)
     for server_name, server_config in config.mcp_servers.items():
@@ -105,6 +120,8 @@ async def register_tools(
 
     if registrations:
         provider.register_function_tool(build_mcp_status_tool(registrations=registrations))
+
+    # 不等待 MCP 工具发现；发现结束后再将工具注册给提供方。
     for server_name, registration in registrations.items():
         server_config = config.mcp_servers[server_name]
         task = registration.start_tool_discovery()
