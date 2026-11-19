@@ -43,15 +43,11 @@ class FeishuTools:
         payload = json.loads(event.context)
         if event.event == ChatEventType.TOOL_CALL:
             for entry in payload:
-                if entry["name"] == "fragment":
-                    continue
                 call_id = entry["tool_call_id"]
                 if call_id not in progress.cards:
                     await self._create_tool_progress(to, entry, progress)
             return
 
-        if payload.get("name") == "fragment":
-            return
         call_id = payload["tool_call_id"]
         state = progress.cards.get(call_id)
         if state is None:

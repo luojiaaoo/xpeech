@@ -182,7 +182,7 @@ function onLogout() {
 | `assistant.getFile(path, { timeoutMs? } = {})` | 获取文件二进制，返回 `Promise<File>`，包含文件名和 MIME 类型，供主站 JS 处理，不触发浏览器保存 |
 | `assistant.onReply(callback)` | 每次 `fragment` 工具调用回传 `{ session_id, text }`，返回取消订阅函数 |
 | `assistant.onChatFile(callback)` | 对话框发送文件时回传 `{ session_id, path }`，返回取消订阅函数 |
-| `assistant.registerFragmentHandler(session_id, handler)` | 为指定会话注册片段按钮生成函数，返回取消本次注册的函数 |
+| `assistant.registerFragmentHandler(session_id, handler)` | 为嵌入会话注册额外的片段操作卡，返回取消本次注册的函数 |
 | `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存中的身份和 JWT，不发送服务端撤销请求 |
 
 `init()` 的无效字符串参数会同步抛出异常，
@@ -243,36 +243,42 @@ try {
 unsubscribe();
 ```
 
-### 对话框片段按钮
+### 嵌入对话框片段操作卡
 
-在当前注册下，对话框每遇到一次 `fragment` 调用，主站的 `handler(text)` 就执行一次，
-并同步返回 `{ label, style, callback }[]`。SDK 按列表顺序渲染按钮。
+`fragment` 调用和结果与其他工具一样保留在对话的执行过程里。
+只有嵌入会话注册后才会额外显示操作卡：主站的 `handler(text)` 对每个 `fragment` 调用执行一次，
+同步返回 `{ title, description, buttons }`。`title` 为非空标题，`description` 为描述字符串，可为空。
+`buttons` 是 `{ label, style, callback }[]`，按列表顺序渲染。
 `label` 为非空文案。`style` 支持 `default`、`primary`、`dashed`、`text`、`link`，
 以及 `danger`（红色）、`warning`（橙色）、`success`（绿色）。样式只影响外观，不会自动弹出确认框。
 点击时才执行该按钮的 `callback(text)`，参数是原始片段文本。
 
 ```javascript
 const { session_id } = await assistant.newConversation();
-const unregister = assistant.registerFragmentHandler(session_id, () => [
-  {
-    label: '记录',
-    style: 'default',
-    callback(text) {
-      console.log('收到片段', text);
+const unregister = assistant.registerFragmentHandler(session_id, () => ({
+  title: '订单片段',
+  description: '可以记录片段，或把它填回输入框。',
+  buttons: [
+    {
+      label: '记录',
+      style: 'default',
+      callback(text) {
+        console.log('收到片段', text);
+      },
     },
-  },
-  {
-    label: '填入输入框',
-    style: 'primary',
-    callback: (text) => assistant.setInput(text),
-  },
-]);
+    {
+      label: '填入输入框',
+      style: 'primary',
+      callback: (text) => assistant.setInput(text),
+    },
+  ],
+}));
 
 // 不再显示当前会话的片段时调用。
 // unregister();
 ```
 
-未注册或返回空列表时，不显示 `fragment` 卡片。生成函数抛错或返回格式无效时，显示「片段按钮生成失败，请重试」。
+未注册或返回 `buttons: []` 时，不显示额外操作卡。生成函数抛错或返回格式无效时，显示「片段卡片生成失败，请重试」。
 再次注册会替换该会话的处理函数。片段通知和 `chatSync()` 返回值不受注册影响；
 同步请求不在对话框显示卡片。
 

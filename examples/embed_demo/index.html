@@ -378,7 +378,13 @@
           } else {
             chartEmpty.textContent = '收到的片段不是有效的折线图数据，请重试。';
           }
-          return buttons;
+          return {
+            title: data?.title ?? '文本片段',
+            description: data
+              ? `收到 ${data.labels.length} 个数据点，点击「绘制折线图」可在主页面查看。`
+              : '可记录片段原文，或将它填回对话框继续使用。',
+            buttons,
+          };
         });
         fragmentSessionId = sessionId;
         fragmentSession.textContent = sessionId;

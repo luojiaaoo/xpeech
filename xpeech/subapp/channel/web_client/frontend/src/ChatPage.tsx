@@ -422,15 +422,7 @@ export default function ChatPage({
       if (item.role === 'assistant' || item.role === 'thinking') {
         content = renderStreamContent(item.role, item.content, !!item.streaming);
       } else if (item.role === 'tool' && item.toolCall) {
-        if (item.toolCall.name === 'fragment' && fragmentRevision !== null) {
-          const input = item.toolCall.input;
-          content = input && typeof input === 'object' && 'text' in input && typeof input.text === 'string'
-            ? <FragmentCard key={fragmentRevision} sessionId={sessionId} revision={fragmentRevision}
-                fragmentId={item.key} text={input.text} />
-            : <Alert type="error" showIcon message="无效片段，请重试" />;
-        } else {
-          content = <ToolCallCard tool={item.toolCall} />;
-        }
+        content = <ToolCallCard tool={item.toolCall} />;
       } else if (item.role === 'question') {
         const previous = messages.slice(0, messages.indexOf(item));
         const turn = previous.slice(previous.findLastIndex(entry => entry.role === 'user') + 1);
@@ -462,7 +454,7 @@ export default function ChatPage({
 
     return chatDisplayItems(messages, loading, embedded && active && fragmentRevision !== null).map((item) => ({
       key: item.key,
-      role: item.role,
+      role: item.role === 'fragment-actions' ? 'tool' : item.role,
       content: item.role === 'process' ? (
         <ProcessPanel running={item.running} tokenUsage={item.tokenUsage}>
           {item.messages.filter((entry) => !entry.transient).map((entry) => (
@@ -471,6 +463,11 @@ export default function ChatPage({
             </div>
           ))}
         </ProcessPanel>
+      ) : item.role === 'fragment-actions' ? (
+        fragmentRevision !== null
+          ? <FragmentCard key={fragmentRevision} sessionId={sessionId} revision={fragmentRevision}
+              fragmentId={item.fragmentId} text={item.text} />
+          : null
       ) : renderMessage(item),
     }));
   }, [active, embedded, fragmentRevision, loading, messages, sessionId]);

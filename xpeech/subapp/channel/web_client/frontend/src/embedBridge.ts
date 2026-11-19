@@ -3,6 +3,7 @@ import type { ChatEvent } from './types';
 export type SyncOptions = { files?: File[] };
 const fragmentButtonStyles = ['default', 'primary', 'dashed', 'text', 'link', 'danger', 'warning', 'success'] as const;
 export type FragmentButton = { label: string; style: typeof fragmentButtonStyles[number] };
+export type FragmentActionCard = { title: string; description: string; buttons: FragmentButton[] };
 
 let fragmentRequestSequence = 0;
 
@@ -16,9 +17,9 @@ function postToParent(data: Record<string, unknown>) {
   if (origin) window.parent.postMessage(data, origin);
 }
 
-export function requestFragmentButtons(
+export function requestFragmentCard(
   sessionId: string, revision: number, fragmentId: string, text: string,
-  onButtons: (buttons: FragmentButton[] | null) => void,
+  onCard: (card: FragmentActionCard | null) => void,
 ) {
   const origin = parentOrigin();
   if (!origin) return () => {};
@@ -26,13 +27,14 @@ export function requestFragmentButtons(
   function receive(event: MessageEvent) {
     if (event.origin !== origin || event.source !== window.parent) return;
     const data = event.data;
-    if (data?.type !== 'xpeech:fragment-buttons' || data.session_id !== sessionId
+    if (data?.type !== 'xpeech:fragment-card' || data.session_id !== sessionId
       || data.revision !== revision || data.request_id !== requestId) return;
     window.removeEventListener('message', receive);
-    const buttons = data.buttons;
-    onButtons(Array.isArray(buttons) && buttons.every(button =>
-      typeof button?.label === 'string' && button.label.trim() && fragmentButtonStyles.includes(button.style),
-    ) ? buttons : null);
+    const card = data.card;
+    onCard(typeof card?.title === 'string' && card.title.trim() && typeof card.description === 'string'
+      && Array.isArray(card.buttons) && card.buttons.every((button: FragmentButton) =>
+        typeof button?.label === 'string' && button.label.trim() && fragmentButtonStyles.includes(button.style),
+      ) ? card : null);
   }
   window.addEventListener('message', receive);
   postToParent({

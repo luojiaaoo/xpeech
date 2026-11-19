@@ -266,7 +266,9 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .tool-card-succeeded .tool-card-name,
 .tool-card-succeeded .tool-card-status,
 .tool-card-succeeded .tool-card-chevron { color: #389e0d; }
-.chat-fragment-card { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; padding: 10px 12px; border: 1px solid #dce5f0; border-radius: 8px; background: #fff; }
+.chat-fragment-card { display: grid; gap: 8px; width: 100%; padding: 10px 12px; border: 1px solid #dce5f0; border-radius: 8px; background: #fff; overflow-wrap: anywhere; }
+.chat-fragment-description { margin: 0; color: #526075; white-space: pre-wrap; }
+.chat-fragment-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .chat-status-text { display: flex; align-items: center; gap: 7px; color: #8a94a3; font-size: 13px; overflow-wrap: anywhere; }
 .chat-command-text { display: flex; align-items: flex-start; gap: 6px; color: #526075; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-command-icon { flex: 0 0 auto; margin-top: 4px; }

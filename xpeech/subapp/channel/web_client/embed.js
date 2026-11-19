@@ -173,17 +173,18 @@ function registerFragmentHandler(sessionId, handler) {
   };
 }
 
-function fragmentButtons(handler, text) {
+function buildFragmentCard(handler, text) {
   try {
     var result = handler(text);
-    if (!Array.isArray(result)) return null;
+    if (!result || typeof result.title !== 'string' || !result.title.trim() ||
+        typeof result.description !== 'string' || !Array.isArray(result.buttons)) return null;
     var buttons = [];
-    for (var button of result) {
+    for (var button of result.buttons) {
       if (!button || typeof button.label !== 'string' || !button.label.trim() ||
           !fragmentButtonStyles.has(button.style) || typeof button.callback !== 'function') return null;
       buttons.push({ label: button.label, style: button.style, callback: button.callback });
     }
-    return buttons;
+    return { title: result.title, description: result.description, buttons: buttons };
   } catch {
     return null;
   }
@@ -197,7 +198,7 @@ function handleFragmentMessage(data) {
 
   if (data.type === 'xpeech:fragment-action') {
     if (!Number.isSafeInteger(data.button_index) || data.button_index < 0) return;
-    var button = fragment?.buttons?.[data.button_index];
+    var button = fragment?.card?.buttons[data.button_index];
     if (button) {
       Promise.resolve().then(function () { return button.callback(fragment.text); }).catch(function (error) {
         console.error('Xpeech fragment callback failed', error);
@@ -207,14 +208,18 @@ function handleFragmentMessage(data) {
   }
   if (typeof data.request_id !== 'string' || typeof data.text !== 'string') return;
   if (!fragment || fragment.text !== data.text) {
-    fragment = { text: data.text, buttons: fragmentButtons(registration.handler, data.text) };
+    fragment = { text: data.text, card: buildFragmentCard(registration.handler, data.text) };
     registration.fragments.set(data.fragment_id, fragment);
   }
   if (frame && data.session_id === interactionSession && fragmentHandlers.get(data.session_id) === registration) {
+    var card = fragment.card;
     frame.contentWindow.postMessage({
-      type: 'xpeech:fragment-buttons', session_id: data.session_id, revision: data.revision,
+      type: 'xpeech:fragment-card', session_id: data.session_id, revision: data.revision,
       request_id: data.request_id,
-      buttons: fragment.buttons?.map(function (button) { return { label: button.label, style: button.style }; }) ?? null
+      card: card ? {
+        title: card.title, description: card.description,
+        buttons: card.buttons.map(function (button) { return { label: button.label, style: button.style }; })
+      } : null
     }, origin);
   }
 }

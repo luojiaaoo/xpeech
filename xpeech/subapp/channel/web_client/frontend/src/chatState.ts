@@ -133,10 +133,15 @@ export type ChatDisplayItem = ChatMessage | {
   messages: ChatMessage[];
   running: boolean;
   tokenUsage?: string;
+} | {
+  key: string;
+  role: 'fragment-actions';
+  fragmentId: string;
+  text: string;
 };
 
 // Keep the event history intact; folding only changes how each turn is displayed.
-export function chatDisplayItems(messages: ChatMessage[], running = false, showFragments = false): ChatDisplayItem[] {
+export function chatDisplayItems(messages: ChatMessage[], running = false, showFragmentActions = false): ChatDisplayItem[] {
   const items: ChatDisplayItem[] = [];
   let start = 0;
   while (start < messages.length) {
@@ -147,16 +152,20 @@ export function chatDisplayItems(messages: ChatMessage[], running = false, showF
     // The last assistant message is only known when the request has ended.
     const finalReply = active ? undefined : turn.findLast((item) => item.role === 'assistant');
     const process: ChatMessage[] = [];
-    const visible: ChatMessage[] = [];
+    const visible: ChatDisplayItem[] = [];
     for (const item of turn) {
       if (item.role === 'user') {
         items.push(item);
-      } else if (item.toolCall?.name === 'fragment') {
-        if (showFragments) visible.push(item);
       } else if (item !== finalReply && (
         item.role === 'assistant' || item.role === 'thinking' || item.role === 'tool' || item.role === 'status'
       )) {
         process.push(item);
+        if (showFragmentActions && item.toolCall?.name === 'fragment') {
+          const input = item.toolCall.input;
+          if (input && typeof input === 'object' && 'text' in input && typeof input.text === 'string') {
+            visible.push({ key: `${item.key}_actions`, role: 'fragment-actions', fragmentId: item.key, text: input.text });
+          }
+        }
       } else {
         visible.push(item);
       }

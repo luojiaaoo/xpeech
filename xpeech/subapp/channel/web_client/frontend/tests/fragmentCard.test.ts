@@ -64,28 +64,36 @@ async function runtime() {
     assert.equal(data.type, 'xpeech:fragment-request');
     assert.equal(data.fragment_id, props.fragmentId);
     assert.equal(data.text, props.text);
-    const response = { type: 'xpeech:fragment-buttons', session_id: props.sessionId, revision: props.revision, request_id: data.request_id };
+    const response = { type: 'xpeech:fragment-card', session_id: props.sessionId, revision: props.revision, request_id: data.request_id };
     return { dispose, response };
   }
   return { message, mount, props, render, sent };
 }
 
-test('a fragment renders the supplied button labels and styles and posts only the selected index', async () => {
+test('a fragment card renders its title, description and buttons and posts only the selected index', async () => {
   const app = await runtime();
   const { response } = app.mount();
-  const buttonsResponse = {
-    ...response, buttons: [
-      { label: '记录', style: 'default' }, { label: '使用', style: 'primary' }, { label: '清空', style: 'danger' },
-      { label: '警告', style: 'warning' }, { label: '完成', style: 'success' },
-    ],
+  const cardResponse = {
+    ...response, card: {
+      title: '报告', description: '选择下一步操作',
+      buttons: [
+        { label: '记录', style: 'default' }, { label: '使用', style: 'primary' }, { label: '清空', style: 'danger' },
+        { label: '警告', style: 'warning' }, { label: '完成', style: 'success' },
+      ],
+    },
   };
-  app.message(buttonsResponse, 'https://untrusted.test');
-  app.message(buttonsResponse, 'https://portal.test', {});
-  app.message({ ...buttonsResponse, request_id: 'stale' });
-  app.message({ ...buttonsResponse, revision: 1 });
+  app.message(cardResponse, 'https://untrusted.test');
+  app.message(cardResponse, 'https://portal.test', {});
+  app.message({ ...cardResponse, request_id: 'stale' });
+  app.message({ ...cardResponse, revision: 1 });
   assert.equal(app.render(), null);
-  app.message(buttonsResponse);
-  const buttons = app.render().props.children;
+  app.message(cardResponse);
+  const card = app.render();
+  assert.equal(card.props['aria-label'], '报告');
+  const [title, description, actions] = card.props.children;
+  assert.equal(title.props.children, '报告');
+  assert.equal(description.props.children, '选择下一步操作');
+  const buttons = actions.props.children;
   assert.deepEqual(Array.from(buttons, (button: any) => {
     const { children, type, danger, color, variant } = button.props;
     return [children, type, danger, color, variant];
@@ -105,13 +113,14 @@ test('a fragment renders the supplied button labels and styles and posts only th
   }
 });
 
-test('an empty button list hides the fragment and failed button generation shows an error', async () => {
-  for (const buttons of [[], null, [{ label: '不支持', style: 'other' }]]) {
+test('an empty button list hides the extra card and invalid cards show an error', async () => {
+  const empty = { title: '报告', description: '', buttons: [] };
+  for (const result of [empty, null, { ...empty, title: '' }, { ...empty, buttons: [{ label: '不支持', style: 'other' }] }]) {
     const app = await runtime();
     const { response } = app.mount();
-    app.message({ ...response, buttons });
+    app.message({ ...response, card: result });
     const card = app.render();
-    if (buttons?.length === 0) {
+    if (result === empty) {
       assert.equal(card, null);
     } else {
       assert.equal(card.type, 'Alert');

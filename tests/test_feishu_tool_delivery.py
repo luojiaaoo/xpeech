@@ -116,7 +116,7 @@ async def test_each_tool_has_its_own_card_and_result_updates_by_id(monkeypatch, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mixed", [False, True])
-async def test_fragment_does_not_create_or_update_feishu_tool_cards(monkeypatch, mixed):
+async def test_fragment_uses_normal_feishu_tool_cards(monkeypatch, mixed):
     bridge = bridge_with_channel()
     channel = bridge.channel
     monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
@@ -137,13 +137,16 @@ async def test_fragment_does_not_create_or_update_feishu_tool_cards(monkeypatch,
     monkeypatch.setattr(conversation_module, "iter_chat_events", events)
     await bridge.consume([message()])
 
-    assert channel.create_card_instance.await_count == int(mixed)
-    assert channel.send_card_by_reference.await_count == int(mixed)
-    assert channel.finish_streaming_card.await_count == int(mixed)
+    assert channel.create_card_instance.await_count == 1 + int(mixed)
+    assert channel.send_card_by_reference.await_count == 1 + int(mixed)
+    assert channel.finish_streaming_card.await_count == 1 + int(mixed)
+    card = channel.create_card_instance.await_args_list[0].args[0]
+    title = card["body"]["elements"][0]["header"]["title"]["content"]
+    assert title == '> 工具调用 · fragment {"text":"片段原文"}'
+    assert channel.update_card_element_content.await_count == 1 + int(mixed)
+    channel.update_card_element_content.assert_any_await("card-0", "main", "（无输出）", sequence=1)
     if mixed:
-        channel.update_card_element_content.assert_awaited_once_with("card-0", "main", "ordinary result", sequence=1)
-    else:
-        channel.update_card_element_content.assert_not_awaited()
+        channel.update_card_element_content.assert_any_await("card-1", "main", "ordinary result", sequence=1)
 
 
 @pytest.mark.asyncio

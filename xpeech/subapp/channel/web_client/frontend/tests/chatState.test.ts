@@ -128,7 +128,7 @@ test('all command replies keep their timing panel and remain visible outside it 
   }
 });
 
-test('fragment calls are hidden unless registered and then appear outside the process panel', () => {
+test('fragment calls remain ordinary tools and only get an additional card when registered', () => {
   const events = [
     event('user', '调用片段'),
     event('tool_call', JSON.stringify([
@@ -139,16 +139,19 @@ test('fragment calls are hidden unless registered and then appear outside the pr
     event('assistant', '完成'),
   ];
   for (const messages of [finishChatTurn(apply(events, [])), chatMessagesFromEvents(events)]) {
-    const hidden = chatDisplayItems(messages);
-    assert.deepEqual(hidden.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
-    const visible = chatDisplayItems(messages, false, true);
-    const process = visible[1];
+    const ordinary = chatDisplayItems(messages);
+    assert.deepEqual(ordinary.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
+    const process = ordinary[1];
     assert.ok(process.role === 'process');
-    assert.deepEqual(process.messages.map(item => item.toolCall?.name), ['read_file']);
-    const fragment = visible[2];
-    assert.ok(fragment.role === 'tool');
-    assert.equal(fragment.toolCall?.name, 'fragment');
-    assert.deepEqual(fragment.toolCall?.input, { text: '原文' });
+    assert.deepEqual(process.messages.map(item => item.toolCall?.name), ['fragment', 'read_file']);
+    const tool = process.messages[0];
+    assert.deepEqual(tool.toolCall?.input, { text: '原文' });
+    assert.equal(tool.toolCall?.output, '');
+    const withActions = chatDisplayItems(messages, false, true);
+    assert.deepEqual(withActions[1], process);
+    assert.deepEqual(withActions[2], {
+      role: 'fragment-actions', key: `${tool.key}_actions`, fragmentId: tool.key, text: '原文',
+    });
   }
 });
 

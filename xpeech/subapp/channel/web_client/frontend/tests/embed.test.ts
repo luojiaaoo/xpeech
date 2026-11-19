@@ -987,15 +987,19 @@ test('fragment handler runs once per card and only calls back for the selected b
   const remove = app.api.registerFragmentHandler('first', (text: string) => {
     fragments.push(text);
     if (text === 'error') throw new Error('handler failed');
-    if (text === 'invalid') return [{ label: '缺少回调', style: 'default' }];
-    if (text === 'hide') return [];
-    return [
-      { label: '查看', style: 'default', callback(value: string) { clicks.push(`first:${value}`); } },
-      { label: '使用', style: 'primary', callback(value: string) { clicks.push(`second:${value}`); } },
-      { label: '清空', style: 'danger', callback(value: string) { clicks.push(`danger:${value}`); } },
-      { label: '警告', style: 'warning', callback() { assert.fail(); } },
-      { label: '完成', style: 'success', callback() { assert.fail(); } },
-    ];
+    if (text === 'invalid') return { title: '无效', description: '', buttons: [{ label: '缺少回调', style: 'default' }] };
+    if (text === 'hide') return { title: '无操作', description: '', buttons: [] };
+    return {
+      title: '片段操作',
+      description: '选择如何使用片段',
+      buttons: [
+        { label: '查看', style: 'default', callback(value: string) { clicks.push(`first:${value}`); } },
+        { label: '使用', style: 'primary', callback(value: string) { clicks.push(`second:${value}`); } },
+        { label: '清空', style: 'danger', callback(value: string) { clicks.push(`danger:${value}`); } },
+        { label: '警告', style: 'warning', callback() { assert.fail(); } },
+        { label: '完成', style: 'success', callback() { assert.fail(); } },
+      ],
+    };
   });
   assert.throws(() => app.api.registerFragmentHandler('first', {}), /handler/);
   app.api.init(jwtFor(), 'Alice');
@@ -1017,11 +1021,14 @@ test('fragment handler runs once per card and only calls back for the selected b
   app.message({ ...request, request_id: 'repeated' });
   assert.deepEqual(fragments, [request.text]);
   assert.deepEqual(structuredClone(app.sent.at(-1)!.data), {
-    type: 'xpeech:fragment-buttons', session_id: 'first', revision: registration.revision,
-    request_id: 'repeated', buttons: [
-      { label: '查看', style: 'default' }, { label: '使用', style: 'primary' }, { label: '清空', style: 'danger' },
-      { label: '警告', style: 'warning' }, { label: '完成', style: 'success' },
-    ],
+    type: 'xpeech:fragment-card', session_id: 'first', revision: registration.revision,
+    request_id: 'repeated', card: {
+      title: '片段操作', description: '选择如何使用片段',
+      buttons: [
+        { label: '查看', style: 'default' }, { label: '使用', style: 'primary' }, { label: '清空', style: 'danger' },
+        { label: '警告', style: 'warning' }, { label: '完成', style: 'success' },
+      ],
+    },
   });
   assert.deepEqual(clicks, []);
   const action = {
@@ -1037,7 +1044,8 @@ test('fragment handler runs once per card and only calls back for the selected b
   assert.deepEqual(fragments, [request.text, request.text]);
   for (const text of ['error', 'invalid', 'hide']) {
     app.message({ ...request, fragment_id: text, text });
-    assert.deepEqual(structuredClone(app.sent.at(-1)!.data.buttons), text === 'hide' ? [] : null);
+    assert.deepEqual(structuredClone(app.sent.at(-1)!.data.card),
+      text === 'hide' ? { title: '无操作', description: '', buttons: [] } : null);
   }
 
   app.message({ type: 'xpeech:interaction-ready', session_id: 'second' });
@@ -1055,7 +1063,7 @@ test('fragment handler runs once per card and only calls back for the selected b
   await tick();
   assert.deepEqual(clicks, [`danger:${request.text}`]);
 
-  app.api.registerFragmentHandler('first', () => []);
+  app.api.registerFragmentHandler('first', () => ({ title: '无操作', description: '', buttons: [] }));
   app.api.destroy();
   app.api.init(jwtFor(), 'Alice');
   await tick();
