@@ -115,6 +115,38 @@ async def test_each_tool_has_its_own_card_and_result_updates_by_id(monkeypatch, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_fragment_does_not_create_or_update_feishu_tool_cards(monkeypatch, mixed):
+    bridge = bridge_with_channel()
+    channel = bridge.channel
+    monkeypatch.setattr(tools, "FEISHU_STREAM_UPDATE_INTERVAL_SECONDS", 0)
+
+    async def events(*_args, **_kwargs):
+        calls = [{"tool_call_id": "fragment-id", "name": "fragment", "arguments": {"text": "片段原文"}}]
+        if mixed:
+            calls.append({"tool_call_id": "echo-id", "name": "echo", "arguments": {"text": "ordinary"}})
+        yield tool_event(ChatEventType.TOOL_CALL, calls)
+        yield tool_event(ChatEventType.TOOL_CALL_RESULT, {
+            "tool_call_id": "fragment-id", "name": "fragment", "result": "", "success": True,
+        })
+        if mixed:
+            yield tool_event(ChatEventType.TOOL_CALL_RESULT, {
+                "tool_call_id": "echo-id", "name": "echo", "result": "ordinary result", "success": True,
+            })
+
+    monkeypatch.setattr(conversation_module, "iter_chat_events", events)
+    await bridge.consume([message()])
+
+    assert channel.create_card_instance.await_count == int(mixed)
+    assert channel.send_card_by_reference.await_count == int(mixed)
+    assert channel.finish_streaming_card.await_count == int(mixed)
+    if mixed:
+        channel.update_card_element_content.assert_awaited_once_with("card-0", "main", "ordinary result", sequence=1)
+    else:
+        channel.update_card_element_content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_tool_delivery_obeys_shared_style_and_truncation_configuration(monkeypatch):
     output = {
         **OUTPUT_EVENT_TYPES[ChatEventType.TOOL_CALL],
