@@ -16,6 +16,19 @@ from xpeech.utils.filter_expr import (
 @pytest.mark.parametrize(
     ("source", "context", "expected"),
     [
+        ('user_id("alice")', FilterContext(user_id="alice"), True),
+        ('user_id("alice")', FilterContext(user_id="bob"), False),
+        ('user_id("alice")', FilterContext(), False),
+        ('user_id("alice")', FilterContext(user_id=""), False),
+        ('user_id("Alice")', FilterContext(user_id="alice"), False),
+        ('user_id("ali")', FilterContext(user_id="alice"), False),
+        ('user_id("*")', FilterContext(user_id="alice"), False),
+        ('user_id("alice", "bob")', FilterContext(user_id="bob"), True),
+        ('user_id("用户甲")', FilterContext(user_id="用户甲"), True),
+        ('not user_id("alice")', FilterContext(user_id="bob"), True),
+        ('channel("crm") or org("公司/研发/", "公司/平台/") or user_id("alice")',
+         FilterContext(channel="erp", user_id="alice"), True),
+        ('channel("crm") and user_id("alice")', FilterContext(channel="crm", user_id="bob"), False),
         ('channel("crm")', FilterContext(channel="crm"), True),
         ('channel("crm")', FilterContext(channel="erp"), False),
         ('channel("crm")', FilterContext(), False),
@@ -60,6 +73,14 @@ def test_missing_filter_is_public():
         "   ",
         "channel()",
         "org()",
+        "user_id()",
+        "user_id(1)",
+        'user_id("")',
+        'user_id(" alice")',
+        'user_id("alice ")',
+        'user_id(name="alice")',
+        'user_id(*["alice"])',
+        'user_id(channel("crm"))',
         "channel(1)",
         'channel("")',
         'channel(" a")',
@@ -111,7 +132,10 @@ def test_filter_length_limit():
     parse_filter(longest)
 
 
-@pytest.mark.parametrize("source", [None, 'channel("crm") or org("公司/")', "channel()", "import os"])
+@pytest.mark.parametrize(
+    "source",
+    [None, 'channel("crm") or org("公司/")', 'user_id("alice", "bob")', "user_id()", "channel()", "import os"],
+)
 def test_config_surfaces_validate_identically(source):
     if source is not None:
         try:

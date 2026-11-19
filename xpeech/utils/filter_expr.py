@@ -7,11 +7,12 @@
     and    := not_ ("and" not_)*
     not_   := "not" not_ | primary
     primary := "(" or ")" | call | "True" | "False"
-    call   := ("channel" | "org") "(" STRING ("," STRING)* ")"
+    call   := ("channel" | "org" | "user_id") "(" STRING ("," STRING)* ")"
 
 内置短名函数（参数为非空字符串字面量）：
 
 - ``channel("crm", ...)``：当前 JWT 通道名（kid）等于任一参数时为真。
+- ``user_id("alice", ...)``：当前已鉴权用户 ID 等于任一参数时为真。
 - ``org("公司/研发/", ...)``：用户组织字符串以任一参数为前缀时为真。
 
 未配置过滤器的资源公开；已配置的资源仅在表达式求值为真时可见。
@@ -39,6 +40,7 @@ class FilterContext:
 
     channel: str | None = None
     org: str | None = None
+    user_id: str | None = None
 
 
 def _match_channel(context: FilterContext, args: tuple[str, ...]) -> bool:
@@ -49,9 +51,14 @@ def _match_org(context: FilterContext, args: tuple[str, ...]) -> bool:
     return context.org is not None and context.org.startswith(args)
 
 
+def _match_user_id(context: FilterContext, args: tuple[str, ...]) -> bool:
+    return context.user_id is not None and context.user_id in args
+
+
 FILTER_FUNCTIONS: dict[str, Callable[[FilterContext, tuple[str, ...]], bool]] = {
     "channel": _match_channel,
     "org": _match_org,
+    "user_id": _match_user_id,
 }
 
 

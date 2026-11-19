@@ -80,7 +80,7 @@ secret_key = "replace-with-a-distinct-crm-secret-at-least-32-characters"
 
 `jwt.secret_key` 仅供 backend、飞书任务 API 等内部服务互信。内部 JWT 不带 `kid` 或 `sub`，不能调用本文的聊天、答题、文件、技能接口；`/statistics` 及其子接口、飞书内部任务管理接口也不属于外部通道的权限范围。
 
-通道名就是 JWT header 的 `kid`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能、用户工作区技能与 MCP 使用 `filter` 过滤表达式：省略 `filter` 的资源为公共资源，一律展示或注册；配置 `filter` 的资源仅在表达式求值为真时可见。表达式为 Python 布尔表达式极小子集，内置 `channel("...")`（匹配通道名）与 `org("...")`（匹配组织前缀）两个短名函数，服务端按白名单解析求值，不使用 eval。
+通道名就是 JWT header 的 `kid`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能与 MCP 使用 `filter` 过滤表达式：省略 `filter` 的资源为公共资源，一律展示或注册；配置 `filter` 的资源仅在表达式求值为真时可见。用户工作区技能由用户自己放置，不受过滤表达式限制。表达式为 Python 布尔表达式极小子集，内置 `channel("...")`（匹配通道名）、`org("...")`（匹配组织前缀）与 `user_id("alice", "bob")`（区分大小写精确匹配任一已鉴权用户 ID，对外请求为 JWT `sub`）三个短名函数，服务端按白名单解析求值，不使用 eval。
 
 `org()` 依赖服务端通过 `[extra_user_info].command_extra_user_info_template` 查询当前已鉴权 `user_id` 的额外信息，再用 `user_organization_claim` 的 jq 表达式从 stdout JSON 提取组织字符串。命令必须包含 `${user_id}` 或 `$user_id`，默认超时 10 秒，成功 JSON 结果按用户缓存 1 小时；JWT 或请求元数据不能覆盖组织。无查询命令、查询失败或空结果时组织视为未知，`org()` 不匹配任何前缀。OAuth2 的 `username_source` 为 `oauth2`（默认）时，使用服务商自己的 `username_claim`；为 `extra_user_info` 时，使用 `[extra_user_info].username_claim`。OAuth2 未提取到非空名称时，使用 `[web_client]` 下所有服务商共用的固定值 `fallback_username`，未配置固定值则登录失败。渠道创建用户并向 backend 传递非空的 `sender_name`。同一用户 ID 冲突时原子覆盖用户名。过滤表达式的完整语法与配置示例见 README。
 

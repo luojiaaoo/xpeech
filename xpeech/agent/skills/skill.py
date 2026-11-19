@@ -116,6 +116,7 @@ class SkillsLoader:
         self,
         workspace: Path | None,
         *,
+        user_id: str | None = None,
         channel: str | None = None,
         user_organization: str | None = None,
         not_interactive: bool = False,
@@ -123,6 +124,7 @@ class SkillsLoader:
         self.workspace_skills = workspace / "skills" if workspace is not None else None
         self.builtin_skills = BUILTIN_SKILLS_DIR
         self.channel = channel
+        self.user_id = user_id
         self.user_organization = user_organization
         self.not_interactive = not_interactive
 
@@ -175,7 +177,7 @@ class SkillsLoader:
                 continue
             # Workspace skills are placed by the user and are not subject to access filters.
             if source == "builtin" and not filter_allows_access(
-                metadata.filter, FilterContext(channel=self.channel, org=self.user_organization)
+                metadata.filter, FilterContext(channel=self.channel, org=self.user_organization, user_id=self.user_id)
             ):
                 continue
             if metadata.name in seen_names:

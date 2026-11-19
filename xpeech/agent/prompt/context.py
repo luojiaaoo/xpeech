@@ -76,6 +76,7 @@ def _workspace_context(workspace: Path) -> str:
 async def build_context_messages(
     workspace: Path,
     *,
+    user_id: str | None = None,
     channel: str | None,
     user_organization: str | None,
     not_interactive: bool,
@@ -102,6 +103,7 @@ async def build_context_messages(
     await add("长期记忆", await memory.get_memory_context())
     await add("用户上下文", await memory.get_self_improvement_context())
     await add("技能", await SkillsLoader(
-        workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
+        workspace, user_id=user_id, channel=channel, user_organization=user_organization,
+        not_interactive=not_interactive,
     ).build_skills_prompt())
     return messages

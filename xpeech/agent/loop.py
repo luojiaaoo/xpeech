@@ -410,6 +410,7 @@ class AgentLoop:
             system_prompt,
             await build_context_messages(
                 workspace=self.workspace,
+                user_id=message.user_id,
                 channel=self.channel,
                 user_organization=self.user_organization,
                 not_interactive=not_interactive,

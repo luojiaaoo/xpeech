@@ -55,7 +55,7 @@ async def list_skills(
     workspace = Path(await authenticated_workspace(user_id))
     user_organization = await settings.extra_user_info.resolve_user_organization(user_id)
     return await SkillsLoader(
-        workspace, channel=auth.channel, user_organization=user_organization,
+        workspace, user_id=user_id, channel=auth.channel, user_organization=user_organization,
     ).list_skill_info()
 
 

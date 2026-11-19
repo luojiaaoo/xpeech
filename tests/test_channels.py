@@ -140,6 +140,8 @@ def test_skill_api_filters_using_channel(
         ("erp-skill", 'channel("erp")'),
         ("shared", 'channel("crm", "erp")'),
         ("web-skill", 'channel("web_client")'),
+        ("my-skill", 'user_id("tag-user")'),
+        ("other-user-skill", 'user_id("other-user")'),
     ]:
         skill_file = tmp_path / "builtin" / name / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
@@ -169,15 +171,15 @@ def test_skill_api_filters_using_channel(
         assert response.status_code == 200
         return {skill["metadata"]["name"] for skill in response.json()}
 
-    # 工作区技能由用户自己放置，不受过滤表达式限制；内置技能仍按渠道过滤。
-    all_user_skills = {"user-public", "user-crm", "user-erp"}
+    # 工作区技能不受过滤表达式限制；内置技能按已鉴权的渠道和用户 ID 过滤。
+    common_skills = {"user-public", "user-crm", "user-erp", "my-skill"}
     assert visible_skills(
-        "crm", CRM_KEY, channel="erp"
-    ) == all_user_skills | {"public", "crm-skill", "shared"}
-    assert visible_skills("erp", ERP_KEY) == all_user_skills | {"public", "erp-skill", "shared"}
+        "crm", CRM_KEY, channel="erp", user_id="other-user"
+    ) == common_skills | {"public", "crm-skill", "shared"}
+    assert visible_skills("erp", ERP_KEY) == common_skills | {"public", "erp-skill", "shared"}
     assert visible_skills(
         "web_client", settings.jwt.channels["web_client"].secret_key, channel="crm"
-    ) == all_user_skills | {"public", "web-skill"}
+    ) == common_skills | {"public", "web-skill"}
 
 
 @pytest.mark.asyncio
@@ -308,12 +310,15 @@ async def test_mcp_only_registers_public_and_matching_servers(
                 "crm": {"command": "demo", "filter": 'channel("crm")'},
                 "erp": {"command": "demo", "filter": 'channel("erp")'},
                 "shared": {"command": "demo", "filter": 'channel("crm", "erp")'},
+                "other-user": {"command": "demo", "filter": 'user_id("other-user")'},
+                "my-server": {"command": "demo", "filter": 'user_id("tag-user", "alice")'},
             }
         }
     )
     if not include_public:
         config.mcp_servers.pop("public")
         expected = [name for name in expected if name != "public"]
+    expected = [*expected, "my-server"]
     requested = []
     registered = []
     function_tools = []
@@ -322,6 +327,7 @@ async def test_mcp_only_registers_public_and_matching_servers(
 
     async def get_registration(user_id, name, server_config, **kwargs):
         requested.append(name)
+        assert kwargs["skills_loader"].user_id == user_id
         async def tool():
             return name
 
@@ -360,6 +366,33 @@ async def test_mcp_only_registers_public_and_matching_servers(
     assert set(json.loads(await status_tool())["servers"]) == set(expected)
     for name in config.mcp_servers:
         assert (f"purpose-{name}" in status_tool.__doc__) is (name in expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_id", [None, "alice", "bob", "Alice"])
+@pytest.mark.parametrize("source", ["builtin", "workspace"])
+async def test_user_id_skill_filter_in_list_and_context(monkeypatch, tmp_path, user_id, source):
+    root = tmp_path / ("builtin" if source == "builtin" else "skills")
+    skill_file = root / "dedicated" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text(
+        '---\nname: dedicated\nalways: true\nfilter: user_id("alice")\n---\n# Dedicated instructions',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        skill_module, "iter_builtin_skill_dirs",
+        AsyncMock(return_value=[skill_file.parent] if source == "builtin" else []),
+    )
+    visible = source == "workspace" or user_id == "alice"
+    skills = await SkillsLoader(tmp_path, user_id=user_id).list_skill_info()
+    assert bool(skills) is visible
+    messages = await build_context_messages(
+        tmp_path, user_id=user_id, channel=None, user_organization=None,
+        not_interactive=False, token_counts={},
+    )
+    context = "\n".join(message["content"] for message in messages)
+    assert ("# Dedicated instructions" in context) is visible
+    assert ("<name>dedicated</name>" in context) is visible
 
 
 def test_mcp_preserves_filter_in_registration_and_cache_key(tmp_path):

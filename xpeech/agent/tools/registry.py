@@ -39,7 +39,8 @@ async def register_tools(
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
     workspace = workspace.resolve()
     skills_loader = SkillsLoader(
-        workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
+        workspace, user_id=user_id, channel=channel, user_organization=user_organization,
+        not_interactive=not_interactive,
     )
 
     # 文本文件工具始终注册；图片和视频读取取决于模型能力。
@@ -103,9 +104,9 @@ async def register_tools(
         for tool in (feishu_schedule_cron, feishu_schedule_once, feishu_schedule_list, feishu_schedule_cancel):
             provider.register_function_tool(tool)
 
-    # 按当前渠道和组织筛选允许接入的 MCP 服务。
+    # 按当前用户、渠道和组织筛选允许接入的 MCP 服务。
     registrations: dict[str, MCPServerRegistration] = {}
-    filter_context = FilterContext(channel=channel, org=user_organization)
+    filter_context = FilterContext(channel=channel, org=user_organization, user_id=user_id)
     for server_name, server_config in config.mcp_servers.items():
         if not filter_allows_access(server_config.filter, filter_context):
             continue
