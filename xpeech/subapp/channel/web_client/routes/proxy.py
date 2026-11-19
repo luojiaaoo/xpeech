@@ -30,6 +30,7 @@ from yarl import URL
 from .....config.settings import settings
 from .....exceptions import PathProtectionError
 from .....utils.channel_jwt import UserJWTAuth
+from .....utils.command_template import CommandTemplateError
 from .....utils.ids import validate_session_id
 from .....utils.internal_jwt import create_internal_access_token
 from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file, proxy_get
@@ -110,9 +111,18 @@ def _validated_chat_session_id(session_id: str) -> str:
         raise HTTPException(422, "x-session-id 必须是规范的小写 UUIDv7") from None
 
 
-def _validated_sender_name(user: User | UserJWTAuth, sender_name: str | None) -> str:
+async def _resolve_sender_name(user: User | UserJWTAuth, sender_name: str | None) -> str:
     if sender_name is None:
-        resolved = user.username.strip() if isinstance(user, User) else ""
+        if isinstance(user, User):
+            resolved = user.username.strip()
+        else:
+            try:
+                resolved = await settings.extra_user_info.resolve_sender_name(user.user_id)
+            except (CommandTemplateError, ValueError) as error:
+                logger.warning("Embedded sender name lookup failed: {}", type(error).__name__)
+                raise HTTPException(502, "无法从额外用户信息获取发送者名称") from None
+            if resolved is None:
+                raise HTTPException(422, "未提供发送者名称，且额外用户信息未返回用户名")
     else:
         try:
             resolved = unquote(sender_name, errors="strict").strip()
@@ -235,7 +245,7 @@ def create_proxy_router(
         session_metadata: Annotated[str, Form()] = "{}",
         files: Annotated[list[UploadFile] | None, File()] = None,
     ):
-        sender_name = _validated_sender_name(user, sender_name)
+        sender_name = await _resolve_sender_name(user, sender_name)
         try:
             metadata = json.loads(session_metadata)
         except json.JSONDecodeError:
@@ -314,7 +324,7 @@ def create_proxy_router(
                 sender_name = payload.get("sender_name")
                 if sender_name is not None and not isinstance(sender_name, str):
                     raise HTTPException(422, "sender_name 必须是字符串")
-                sender_name = _validated_sender_name(user, sender_name)
+                sender_name = await _resolve_sender_name(user, sender_name)
                 content = payload.get("content")
                 if not isinstance(content, str):
                     raise HTTPException(422, "content 必须是 JSON 字符串")

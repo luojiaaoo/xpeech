@@ -2,7 +2,7 @@
 
 业务网站通过 ES Module `embed.js` 接入聊天组件，无需对接 OAuth2。使用 `import()` 动态
 加载模块，不需要插入 `<script src>`，也不向 `window` 注册全局 API。登录成功后通过
-`init(jwtOrProvider, senderName, title, sessionMetadata)` 传入业务后端签发的 JWT、必填的发送者名称、
+`init(jwtOrProvider, senderName, title, sessionMetadata)` 传入业务后端签发的 JWT、可选的发送者名称、
 助手标题及会话元数据，组件自动初始化
 并显示浮动按钮；点击按钮展开聊天窗口。
 退出登录时调用 `destroy()`，移除按钮和窗口，并清除内存中的 JWT。
@@ -163,7 +163,7 @@ function onLogout() {
 
 | 方法 | 行为 |
 | --- | --- |
-| `assistant.init(jwtOrProvider, senderName, title = "AI 助手", sessionMetadata = {})` | 初始化凭证、发送者名称、助手标题和会话元数据；每次销毁前只允许设置一次 |
+| `assistant.init(jwtOrProvider, senderName, title = "AI 助手", sessionMetadata = {})` | 初始化凭证、可选的发送者名称、助手标题和会话元数据；每次销毁前只允许设置一次 |
 | `assistant.updateJWT(jwt)` | 验证并替换同一用户和通道的 JWT，保留当前会话、草稿和注册配置，返回 `Promise<void>` |
 | `assistant.hideButton()` | 隐藏浮动按钮，不关闭已打开的聊天窗口 |
 | `assistant.showButton()` | 显示浮动按钮，不自动打开聊天窗口 |
@@ -415,15 +415,15 @@ def issue_assistant_jwt(current_user):
     )
 ```
 
-`user_id` 由 JWT 的 `sub` 设置；`sender_name` 通过 `init` 的第二个必填参数 `senderName` 设置：
+`user_id` 由 JWT 的 `sub` 设置；`sender_name` 可以通过 `init` 的第二个参数 `senderName` 设置：
 
 ```javascript
 assistant.init(loadAssistantJWT, "张三", "客服助手", { source: "portal", department: "客服" });
+assistant.init(loadAssistantJWT, undefined, "客服助手"); // 或由服务端查询发送者名称，二选一。
 ```
 
-组件发送聊天请求时通过 `x-sender-name` 请求头传递发送者名称，自动进行 UTF-8 URL 编码，
-支持中文。名称必须为字符串，去除首尾空白后不能为空；缺失或无效值会同步抛出异常。
-名称直接使用请求中的值；自动续期保留初始化配置，`destroy()` 后清除。
+指定了名称时，组件会将其进行 UTF-8 URL 编码，通过 HTTP 的 `x-sender-name` 请求头或 WebSocket 的 `sender_name` 字段传递。支持中文；名称必须为字符串，去除首尾空白后不能为空，否则同步抛出异常。自动续期保留初始化配置，`destroy()` 后清除。
+省略名称或传 `undefined` 时，Web 服务在聊天请求中按已验证的 JWT `sub` 查询 `[extra_user_info]`，用其中的 `username_claim` 提取名字。需同时配置查询命令；查不到名字时聊天返回错误，不使用 OAuth2 的 `fallback_username`。
 `title` 默认是「AI 助手」，去除首尾空白后不能为空，用于嵌入浮窗标题、iframe 标题和欢迎文案。
 普通网页顶部只显示系统名称，不再额外显示「AI 助手」。
 `sessionMetadata` 默认是 `{}`，必须是可 JSON 序列化的对象，支持嵌套数据；每条嵌入聊天请求

@@ -23,10 +23,10 @@ class OAuth2WebConfig:
     redirect_uri: str | None
     scopes: tuple[str, ...]
     user_id_claim: str
-    username_claim: str
     use_pkce: bool
     token_auth_method: str
     extra_authorization_params: dict[str, str]
+    username_claim: str | None = None
     username_source: Literal["oauth2", "extra_user_info"] = "oauth2"
     display_type: str = "qrcode"
 

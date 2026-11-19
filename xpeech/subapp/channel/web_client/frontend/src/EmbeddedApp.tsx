@@ -38,12 +38,12 @@ export default function EmbeddedApp() {
       const data = event.data;
       if (!data || data.type !== 'xpeech:credentials' || typeof data.jwt !== 'string' || !data.jwt) return;
       if (typeof data.user_id !== 'string' || !data.user_id.trim()) return;
-      if (typeof data.sender_name !== 'string' || !data.sender_name.trim()) return;
+      if (data.sender_name != null && (typeof data.sender_name !== 'string' || !data.sender_name.trim())) return;
       if (data.title !== undefined && (typeof data.title !== 'string' || !data.title.trim())) return;
       if (data.session_metadata !== undefined && (!data.session_metadata
           || typeof data.session_metadata !== 'object' || Array.isArray(data.session_metadata))) return;
       const nextTitle = data.title?.trim() ?? 'AI 助手';
-      setEmbeddedJWT(data.jwt, data.sender_name, data.session_metadata ?? {});
+      setEmbeddedJWT(data.jwt, data.sender_name ?? null, data.session_metadata ?? {});
       setUserId(data.user_id);
       setTitle(nextTitle);
       document.title = nextTitle;

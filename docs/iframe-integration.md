@@ -108,11 +108,13 @@ assistant.init(jwtOrProvider, senderName, title = "AI 助手", sessionMetadata =
 | 参数 | 说明 |
 | --- | --- |
 | `jwtOrProvider` | 必填。返回 JWT 字符串的函数，支持异步；也接受固定 JWT 字符串，但无法自动续签 |
-| `senderName` | 必填。非空显示名称，支持中文，如 `张三` |
+| `senderName` | 可省略或传 `undefined`；聊天服务会按 JWT `sub` 使用 `[extra_user_info].username_claim` 提取名字。若提供，必须是非空字符串，支持中文 |
 | `title` | 窗口标题及欢迎文案，默认 `AI 助手`，不能为空 |
 | `sessionMetadata` | 随聊天发送的 JSON 对象，默认 `{}`；其中的 `channel` 不参与通道选择 |
 
 `init()` 立即返回，不返回认证完成的 Promise。重复初始化、非法参数会同步抛错；异步连接错误通过 `xpeech:error` 报告。修改初始化参数需先 `destroy()`。
+
+例如 `assistant.init(loadAssistantJWT, undefined, "客服助手")` 会保留指定标题，由服务端在聊天时查名字。要省略姓名，请同时配置 `[extra_user_info]` 的 `command_extra_user_info_template` 和 `username_claim`；查不到可用的名字时聊天会返回错误，不使用 OAuth2 的 `fallback_username`。
 
 | 方法 | 用途 |
 | --- | --- |

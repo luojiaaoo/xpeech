@@ -22,10 +22,11 @@ async def test_sender_name_and_organization_share_command_result(monkeypatch):
     config = ExtraUserInfoConfig(
         command_extra_user_info_template="lookup ${user_id}",
         user_organization_claim=".data.org",
+        username_claim=".data.name",
         session_metadata_claims={"department": ".data.org", "display_name": ".data.name"},
     )
     organization, sender_name, metadata = await asyncio.gather(
-        config.resolve_user_organization("alice"), config.resolve_sender_name("alice", ".data.name"),
+        config.resolve_user_organization("alice"), config.resolve_sender_name("alice"),
         config.resolve_session_metadata("alice"),
     )
     assert (organization, sender_name) == ("company/team", "Global Alice")
@@ -58,6 +59,7 @@ async def test_nonzero_exit_is_logged_and_cached_without_using_stdout(monkeypatc
     config = ExtraUserInfoConfig(
         command_extra_user_info_template=shlex.join([sys.executable, "-c", script, "$user_id"]),
         user_organization_claim=".organization",
+        username_claim=".department",
         session_metadata_claims={"department": ".department"},
     )
     organization, metadata = await asyncio.gather(
@@ -65,7 +67,7 @@ async def test_nonzero_exit_is_logged_and_cached_without_using_stdout(monkeypatc
     )
     assert organization is None
     assert metadata == {}
-    assert await config.resolve_sender_name("alice", ".department") is None
+    assert await config.resolve_sender_name("alice") is None
     assert await config.resolve_session_metadata("alice") == {}
     execute.assert_awaited_once()
     log.warning.assert_called_once()
@@ -100,34 +102,56 @@ def test_session_metadata_claims_require_command_and_valid_jq():
         ExtraUserInfoConfig(command_extra_user_info_template="lookup $user_id", session_metadata_claims={"department": "["})
 
 
+def test_extra_username_claim_requires_command_and_valid_jq():
+    with pytest.raises(ValueError, match="command_extra_user_info_template"):
+        ExtraUserInfoConfig(username_claim=".name")
+    with pytest.raises(ValueError, match="jq"):
+        ExtraUserInfoConfig(command_extra_user_info_template="lookup $user_id", username_claim="[")
+
+
 @pytest.mark.parametrize("payload", ['{}', '{"name":null}', '{"name":42}', '{"name":" "}', '{"name":["a","b"]}'])
 @pytest.mark.asyncio
 async def test_extra_sender_name_rejects_invalid_claim(monkeypatch, payload):
     monkeypatch.setattr(settings_module, "execute_command_template", AsyncMock(return_value=payload))
-    config = ExtraUserInfoConfig(command_extra_user_info_template="lookup $user_id")
+    config = ExtraUserInfoConfig(command_extra_user_info_template="lookup $user_id", username_claim=".name")
     with pytest.raises(ValueError):
-        await config.resolve_sender_name("alice", ".name")
+        await config.resolve_sender_name("alice")
 
 
 @pytest.mark.asyncio
 async def test_invalid_json_is_not_cached(monkeypatch):
     execute = AsyncMock(side_effect=['not json', '{"name":"Alice"}'])
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
-    config = ExtraUserInfoConfig(command_extra_user_info_template="lookup $user_id")
+    config = ExtraUserInfoConfig(command_extra_user_info_template="lookup $user_id", username_claim=".name")
     with pytest.raises(ValueError):
-        await config.resolve_sender_name("alice", ".name")
-    assert await config.resolve_sender_name("alice", ".name") == "Alice"
+        await config.resolve_sender_name("alice")
+    assert await config.resolve_sender_name("alice") == "Alice"
     assert execute.await_count == 2
 
 
-def test_oauth_username_claim_is_required():
+def test_oauth_username_claim_is_required_only_for_oauth2_source():
     with pytest.raises(ValueError, match="username_claim"):
         OAuth2Config()
     assert OAuth2Config(username_claim=".name").username_source == "oauth2"
     with pytest.raises(ValueError, match="username_claim"):
         OAuth2Config(username_claim=None)
+    assert OAuth2Config(username_source="extra_user_info").username_claim is None
     with pytest.raises(ValueError, match="username_source"):
         OAuth2Config(username_claim=".name", username_source="unknown")
+
+
+def test_enabled_oauth2_extra_source_requires_shared_username_claim():
+    provider = OAuth2Config(
+        enabled=True, username_source="extra_user_info", client_id="client", client_secret="secret",
+        authorization_url="https://example.test/auth", token_url="https://example.test/token",
+        userinfo_url="https://example.test/userinfo",
+    )
+    extra = ExtraUserInfoConfig(command_extra_user_info_template="lookup $user_id")
+    config = settings.model_copy(update={"web_client": WebClientConfig(oauth2=[provider]), "extra_user_info": extra})
+    with pytest.raises(ValueError, match=r"extra_user_info\.username_claim"):
+        config.validate_username_source()
+    extra.username_claim = ".name"
+    assert config.validate_username_source() is config
 
 
 def test_web_client_fallback_username_is_optional_and_stripped():
@@ -147,19 +171,20 @@ def test_global_claim_validation(claim):
         ExtraUserInfoConfig(command_extra_user_info_template="lookup $user_id", user_organization_claim=claim)
 
 
-@pytest.mark.parametrize("username_source,local_claim,fallback_username,lookup_fails,username_result", [
-    ("oauth2", ".name", "Default Alice", False, "oauth2"),
-    ("extra_user_info", ".name", "Default Alice", False, "extra_user_info"),
-    ("oauth2", ".missing", None, False, None),
-    ("oauth2", ".blank", "Default Alice", False, "static"),
-    ("extra_user_info", ".missing", "Default Alice", False, "static"),
-    ("extra_user_info", ".name", "Default Alice", True, "static"),
-    ("extra_user_info", ".name", None, True, None),
+@pytest.mark.parametrize("username_source,local_claim,extra_claim,fallback_username,lookup_fails,username_result", [
+    ("oauth2", ".name", ".name", "Default Alice", False, "oauth2"),
+    ("extra_user_info", None, ".name", "Default Alice", False, "extra_user_info"),
+    ("extra_user_info", ".ignored", ".name", "Default Alice", False, "extra_user_info"),
+    ("oauth2", ".missing", ".name", None, False, None),
+    ("oauth2", ".blank", ".name", "Default Alice", False, "static"),
+    ("extra_user_info", None, ".missing", "Default Alice", False, "static"),
+    ("extra_user_info", None, ".name", "Default Alice", True, "static"),
+    ("extra_user_info", None, ".name", None, True, None),
 ])
 @pytest.mark.parametrize("existing_user", [False, True, "disabled"])
 @pytest.mark.parametrize("display_type", ["link", "qrcode"])
 def test_oauth_login_creates_local_account_by_default(
-    monkeypatch, tmp_path, local_claim, existing_user, display_type, username_source,
+    monkeypatch, tmp_path, local_claim, extra_claim, existing_user, display_type, username_source,
     fallback_username, lookup_fails, username_result,
 ):
     from types import SimpleNamespace
@@ -179,7 +204,8 @@ def test_oauth_login_creates_local_account_by_default(
         execute.side_effect = CommandTemplateError("failed", operation="lookup", returncode=1)
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
     monkeypatch.setattr(settings, "extra_user_info", ExtraUserInfoConfig(
-        command_extra_user_info_template="lookup $user_id", session_metadata_claims={"employee_name": ".name"},
+        command_extra_user_info_template="lookup $user_id", username_claim=extra_claim,
+        session_metadata_claims={"employee_name": ".name"},
     ))
 
     class OAuthClient:

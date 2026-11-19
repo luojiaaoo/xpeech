@@ -68,6 +68,7 @@ custom_system_prompt = ""
 # [extra_user_info]
 # command_extra_user_info_template = "curl --fail --silent 'https://directory.example/userinfo?user_id=${user_id}'"
 # user_organization_claim = ".organization"
+# username_claim = ".name" # OAuth2 的 extra_user_info 来源、未传发送者名称的嵌入聊天共用。
 # session_metadata_claims = { department = ".department", employee_number = ".employee_number | tostring" }
 # 元数据值为字符串；渠道转发消息时提取并覆盖 session_metadata 中的同名字段。
 # 命令以非零状态退出时，组织未知，不注入这些元数据字段。
@@ -102,7 +103,7 @@ scopes = ["openid", "profile"]
 # Claim paths are jq queries against the userinfo JSON, e.g. ".data.items[0].id".
 user_id_claim = ".sub"
 username_source = "oauth2" # "oauth2" 或 "extra_user_info"，默认 "oauth2"。
-username_claim = ".name" # 必填；对所选来源的 JSON 执行 jq 提取名称。
+username_claim = ".name" # 仅 username_source = "oauth2" 时必填，查询 OAuth2 userinfo JSON。
 use_pkce = true
 token_auth_method = "client_secret_post"
 # extra_authorization_params = { prompt = "login" }

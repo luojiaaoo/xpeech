@@ -578,12 +578,12 @@ test('another init requires destroy, even for the same user', async () => {
   }
 });
 
-test('invalid JWT and required sender values do not create the widget', async () => {
+test('invalid JWT and invalid provided sender values do not create the widget', async () => {
   const app = await runtime();
   for (const value of [null, undefined, '', '  ', {}, 0, NaN, 'alice', 'a.b.c', 'x'.repeat(16385), jwtFor('alice', 'web_client')]) {
     assert.throws(() => app.api.init(value, 'Alice'));
   }
-  for (const sender of [undefined, null, [], {}, '', ' \t ', 123]) {
+  for (const sender of [[], {}, '', ' \t ', 123]) {
     assert.throws(() => app.api.init(jwtFor(), sender), /senderName/);
   }
   for (const title of [null, '', ' \t ', 123]) {
@@ -600,6 +600,16 @@ test('invalid JWT and required sender values do not create the widget', async ()
   await tick();
   app.message({ type: 'xpeech:ready' });
   assert.equal(app.sent[0].data.user_id, '0');
+});
+
+test('the widget can authenticate without an explicit sender name', async () => {
+  const app = await runtime();
+  const token = jwtFor();
+  app.api.init(token);
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  assert.equal(app.sent[0].data.jwt, token);
+  assert.equal(app.sent[0].data.sender_name, null);
 });
 
 test('failed JWT validation can retry on opening', async () => {

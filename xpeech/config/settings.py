@@ -317,7 +317,7 @@ class OAuth2Config(BaseModel):
     redirect_uri: str | None = None
     scopes: list[str] = Field(default_factory=lambda: ["openid", "profile"])
     user_id_claim: str = Field(default=".sub", min_length=1)
-    username_claim: str = Field(min_length=1)
+    username_claim: str | None = Field(default=None, min_length=1)
     username_source: Literal["oauth2", "extra_user_info"] = "oauth2"
     use_pkce: bool = True
     token_auth_method: Literal["client_secret_post", "client_secret_basic"] = (
@@ -360,7 +360,9 @@ class OAuth2Config(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_enabled_settings(self) -> "OAuth2Config":
+    def validate_settings(self) -> "OAuth2Config":
+        if self.username_source == "oauth2" and self.username_claim is None:
+            raise ValueError("OAuth2 username_source='oauth2' requires username_claim")
         if self.enabled:
             required = {
                 "client_id": self.client_id,
@@ -446,6 +448,7 @@ class ExtraUserInfoConfig(BaseModel):
 
     command_extra_user_info_template: str | None = None
     user_organization_claim: str | None = Field(default=None, min_length=1)
+    username_claim: str | None = Field(default=None, min_length=1)
     session_metadata_claims: dict[str, str] = Field(default_factory=dict)
     timeout: float = Field(default=10.0, gt=0, allow_inf_nan=False)
     _query_extra_user_info: Callable[[str], Awaitable[tuple[object] | None]] | None = PrivateAttr(default=None)
@@ -459,7 +462,7 @@ class ExtraUserInfoConfig(BaseModel):
                 raise ValueError("extra_user_info.command_extra_user_info_template cannot be empty")
         return value
 
-    @field_validator("user_organization_claim")
+    @field_validator("user_organization_claim", "username_claim")
     @classmethod
     def validate_claim(cls, value: str | None) -> str | None:
         return OAuth2Config.validate_jq_expressions(value)
@@ -473,7 +476,9 @@ class ExtraUserInfoConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_claim_command(self) -> "ExtraUserInfoConfig":
-        if (self.user_organization_claim or self.session_metadata_claims) and not self.command_extra_user_info_template:
+        if self.command_extra_user_info_template is None and (
+            self.user_organization_claim or self.username_claim or self.session_metadata_claims
+        ):
             raise ValueError("global claims require extra_user_info.command_extra_user_info_template")
         return self
 
@@ -524,8 +529,10 @@ class ExtraUserInfoConfig(BaseModel):
             logger.warning("Extra user info organization lookup failed")
             return None
 
-    async def resolve_sender_name(self, user_id: str, claim: str) -> str | None:
-        value = await self._resolve_claim(user_id, claim)
+    async def resolve_sender_name(self, user_id: str) -> str | None:
+        if self.username_claim is None:
+            return None
+        value = await self._resolve_claim(user_id, self.username_claim)
         if value is None:
             return None
         value = value.strip()
@@ -564,9 +571,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_username_source(self) -> "Settings":
-        if any(oauth.enabled and oauth.username_source == "extra_user_info" for oauth in self.web_client.oauth2):
-            if self.extra_user_info.command_extra_user_info_template is None:
-                raise ValueError("extra_user_info sender name source requires command_extra_user_info_template")
+        if self.extra_user_info.username_claim is None and any(
+            oauth.enabled and oauth.username_source == "extra_user_info" for oauth in self.web_client.oauth2
+        ):
+            raise ValueError("OAuth2 username_source='extra_user_info' requires extra_user_info.username_claim")
         return self
 
     @classmethod

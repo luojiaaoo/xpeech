@@ -389,13 +389,14 @@ def create_auth_router(
             attempt.error = f"OAuth2 用户信息缺少有效的 {oauth2.user_id_claim}"
             return _oauth2_result_page(False, attempt.error)
 
+        username = None
         try:
-            if oauth2.username_source == "oauth2":
+            if oauth2.username_source == "extra_user_info":
+                username = await settings.extra_user_info.resolve_sender_name(user_id)
+            elif oauth2.username_claim is not None:
                 username = extract_string_claim(userinfo, oauth2.username_claim).strip()
-            else:
-                username = await settings.extra_user_info.resolve_sender_name(user_id, oauth2.username_claim)
         except (CommandTemplateError, ValueError):
-            username = ""
+            pass
         username = username or config.fallback_username
         if not username:
             attempt.error = "Sender name lookup failed"

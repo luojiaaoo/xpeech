@@ -677,6 +677,7 @@ function ensureConnected() {
   }
 }
 function normalizeSenderName(sender) {
+  if (sender === undefined || sender === null) return null;
   if (typeof sender !== "string" || !sender.trim()) {
     throw new TypeError("senderName 必须为非空字符串");
   }

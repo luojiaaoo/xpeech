@@ -1253,24 +1253,27 @@ use_pkce = true
 token_auth_method = "client_secret_post"
 ```
 
-OAuth2 的 `username_claim` 必填。相同 `user_id` 已存在时原子更新用户名。用户名在创建和更新入口均须非空。
+相同 `user_id` 已存在时原子更新用户名。用户名在创建和更新入口均须非空。
 
-`username_source` 默认 `"oauth2"`，表示对 OAuth2 userinfo JSON 执行 `username_claim`。设为 `"extra_user_info"` 时，先按已鉴权用户 ID 执行额外信息查询命令，再对返回的 JSON 执行该表达式，与组织提取共用按用户缓存 1 小时的命令结果。该模式必须配置 `extra_user_info.command_extra_user_info_template`。
+`username_source` 默认 `"oauth2"`，此时必须配置该服务商的 `username_claim`，对 OAuth2 userinfo JSON 求值。设为 `"extra_user_info"` 时，改用 `[extra_user_info]` 的 `command_extra_user_info_template` 和 `username_claim`；原服务商下的 `username_claim` 可删除。姓名和组织共用按用户缓存 1 小时的查询结果，未传 `senderName` 的嵌入聊天也使用这套姓名配置。
 
 用户名提取失败或结果为空时，使用 `[web_client]` 下所有 OAuth2 服务商共用的可选固定值 `fallback_username`（不是 jq 表达式）；未配置该值则登录失败。`fallback_username` 不能是空字符串或纯空白。最终用户名去除首尾空白并截取前 64 个字符。
 
 例如，从额外用户信息提取名称，取不到时使用固定名称：
 
 ```toml
+[extra_user_info]
+command_extra_user_info_template = "curl --fail --silent 'https://directory.example/userinfo?user_id=${user_id}'"
+username_claim = ".data.name"
+
 [web_client]
 fallback_username = "Unknown"
 
 [[web_client.oauth2]]
 username_source = "extra_user_info"
-username_claim = ".data.name"
 ```
 
-`user_id_claim` 对 OAuth2 userinfo JSON 求值，`username_claim` 对所选来源的 JSON 求值，均使用
+`user_id_claim` 始终对 OAuth2 userinfo JSON 求值；两个 `username_claim` 分别对各自来源的 JSON 求值，均使用
 [jq](https://jqlang.github.io/jq/manual/) 查询，例如 `".data.employee_no"` 或
 `".data.items[0].id"`。
 
