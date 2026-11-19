@@ -168,7 +168,8 @@ timeout = 10.0
 `session_metadata_claims` 是“元数据字段名 → jq 表达式”的字典，默认 `{}`。
 渠道转发消息时，按已鉴权用户 ID 提取这些字段并合并到 `session_metadata`，同名字段以渠道服务端提取值为准。
 飞书与 Web 渠道的 HTTP、WebSocket 聊天入口执行注入，查询结果与组织、OAuth2 用户名提取共用缓存。
-表达式必须返回唯一的字符串，数字可使用 `tostring` 转换，空字符串会保留。配置了映射时必须配置查询命令，查询或字段提取失败会终止本次执行。
+表达式必须返回唯一的字符串，数字可使用 `tostring` 转换，空字符串会保留。配置了映射时必须配置查询命令。
+命令以非零状态退出时，本次不注入这些字段，也不转发客户端提供的同名字段；其他查询错误或字段提取失败仍会终止转发。
 每次创建 Runner 时先获取组织，同一结果用于技能提示词和 MCP 注册；`GET /skills` 也先获取当前用户的组织。
 命令的成功 JSON 结果在后端进程中按命令配置和用户 ID 缓存 1 小时（最多 4096 项），同一用户的并发查询合并，
 技能列表、Runner、MCP 和 Web 通道校验共用缓存；失败和超时不缓存。
@@ -1252,13 +1253,19 @@ use_pkce = true
 token_auth_method = "client_secret_post"
 ```
 
-OAuth2 的 `username_claim` 必填，名称提取成功并去除首尾空白后截取前 64 个字符，用于创建本地账号。提取失败或结果为空时报错。相同 `user_id` 已存在时原子更新用户名。用户名在创建和更新入口均须非空。
+OAuth2 的 `username_claim` 必填。相同 `user_id` 已存在时原子更新用户名。用户名在创建和更新入口均须非空。
 
 `username_source` 默认 `"oauth2"`，表示对 OAuth2 userinfo JSON 执行 `username_claim`。设为 `"extra_user_info"` 时，先按已鉴权用户 ID 执行额外信息查询命令，再对返回的 JSON 执行该表达式，与组织提取共用按用户缓存 1 小时的命令结果。该模式必须配置 `extra_user_info.command_extra_user_info_template`。
 
-从额外用户信息提取名称可配置为下面的形式。
+用户名提取失败或结果为空时，使用 `[web_client]` 下所有 OAuth2 服务商共用的可选固定值 `fallback_username`（不是 jq 表达式）；未配置该值则登录失败。`fallback_username` 不能是空字符串或纯空白。最终用户名去除首尾空白并截取前 64 个字符。
+
+例如，从额外用户信息提取名称，取不到时使用固定名称：
 
 ```toml
+[web_client]
+fallback_username = "Unknown"
+
+[[web_client.oauth2]]
 username_source = "extra_user_info"
 username_claim = ".data.name"
 ```

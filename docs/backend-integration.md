@@ -82,7 +82,7 @@ secret_key = "replace-with-a-distinct-crm-secret-at-least-32-characters"
 
 通道名就是 JWT header 的 `kid`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能、用户工作区技能与 MCP 使用 `filter` 过滤表达式：省略 `filter` 的资源为公共资源，一律展示或注册；配置 `filter` 的资源仅在表达式求值为真时可见。表达式为 Python 布尔表达式极小子集，内置 `channel("...")`（匹配通道名）与 `org("...")`（匹配组织前缀）两个短名函数，服务端按白名单解析求值，不使用 eval。
 
-`org()` 依赖服务端通过 `[extra_user_info].command_extra_user_info_template` 查询当前已鉴权 `user_id` 的额外信息，再用 `user_organization_claim` 的 jq 表达式从 stdout JSON 提取组织字符串。命令必须包含 `${user_id}` 或 `$user_id`，默认超时 10 秒，成功 JSON 结果按用户缓存 10 分钟；JWT 或请求元数据不能覆盖组织。无查询命令、查询失败或空结果时组织视为未知，`org()` 不匹配任何前缀。OAuth2 的 `username_claim` 必填，`username_source` 选择 `oauth2`（默认，对 OAuth2 userinfo 求值）或 `extra_user_info`（对额外信息命令返回的 JSON 求值）。渠道必须取得非空名称后创建用户，并向 backend 传递非空的 `sender_name`。同一用户 ID 冲突时原子覆盖用户名。过滤表达式的完整语法与配置示例见 README。
+`org()` 依赖服务端通过 `[extra_user_info].command_extra_user_info_template` 查询当前已鉴权 `user_id` 的额外信息，再用 `user_organization_claim` 的 jq 表达式从 stdout JSON 提取组织字符串。命令必须包含 `${user_id}` 或 `$user_id`，默认超时 10 秒，成功 JSON 结果按用户缓存 1 小时；JWT 或请求元数据不能覆盖组织。无查询命令、查询失败或空结果时组织视为未知，`org()` 不匹配任何前缀。OAuth2 的 `username_claim` 必填，`username_source` 选择 `oauth2`（默认，对 OAuth2 userinfo 求值）或 `extra_user_info`（对额外信息命令返回的 JSON 求值）。未提取到非空名称时，使用 `[web_client]` 下所有服务商共用的固定值 `fallback_username`，未配置固定值则登录失败。渠道创建用户并向 backend 传递非空的 `sender_name`。同一用户 ID 冲突时原子覆盖用户名。过滤表达式的完整语法与配置示例见 README。
 
 ### 2.2 方式 A：本地签发（业务系统推荐）
 
@@ -185,7 +185,7 @@ x-sender-name: %E5%BC%A0%E4%B8%89
 
 `content`、`session_metadata` 是表单里的字符串，不能把整个请求发送为 `application/json`。非法 JSON 返回 `422`；`session_metadata` 必须为对象。渠道由 JWT `kid` 决定，元数据中的 `channel` 键会被丢弃。
 
-渠道服务端可在 `[extra_user_info]` 中配置 `session_metadata_claims = { department = ".department", employee_number = ".employee_number | tostring" }`，从额外用户信息 JSON 注入字段。飞书与 Web 渠道在转发聊天请求前按已鉴权用户 ID 查询并拼接 `session_metadata`，同名字段以渠道服务端提取值为准。每个 jq 表达式必须返回唯一的字符串，空字符串会保留，数字可通过 `tostring` 转换。映射默认 `{}`，配置映射时须提供 `command_extra_user_info_template`，查询和提取失败会终止转发。
+渠道服务端可在 `[extra_user_info]` 中配置 `session_metadata_claims = { department = ".department", employee_number = ".employee_number | tostring" }`，从额外用户信息 JSON 注入字段。飞书与 Web 渠道在转发聊天请求前按已鉴权用户 ID 查询并拼接 `session_metadata`，同名字段以渠道服务端提取值为准。每个 jq 表达式必须返回唯一的字符串，空字符串会保留，数字可通过 `tostring` 转换。映射默认 `{}`，配置映射时须提供 `command_extra_user_info_template`。命令以非零状态退出时不注入这些字段，客户端同名字段也不转发；其他查询错误或字段提取失败仍会终止转发。
 
 消息时间由服务端记录，当前接口不提供 `timestamp` 表单参数。
 

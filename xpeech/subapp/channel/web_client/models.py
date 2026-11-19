@@ -47,6 +47,7 @@ class WebConfig:
     cookie_name: str = "xpeech_session"
     oauth2: tuple[OAuth2WebConfig, ...] = field(default_factory=tuple)
     inject_prompt: InjectPromptWebConfig = field(default_factory=InjectPromptWebConfig)
+    fallback_username: str | None = None
 
 
 class LoginBody(BaseModel):

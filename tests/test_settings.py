@@ -35,6 +35,7 @@ print(json.dumps({
     "host": settings.database.host,
     "reloaded_host": Settings().database.host,
     "constructor_host": Settings(database={"host": "constructor-host"}).database.host,
+    "fallback_username": settings.web_client.fallback_username,
     "dotenv_loaded": "XPEECH_DOTENV_ONLY" in os.environ,
 }))
 """, str(root)],
@@ -42,5 +43,5 @@ print(json.dumps({
     )
     assert json.loads(result.stdout) == {
         "host": "postgres", "reloaded_host": "postgres",
-        "constructor_host": "postgres", "dotenv_loaded": False,
+        "constructor_host": "postgres", "fallback_username": "Unknown", "dotenv_loaded": False,
     }

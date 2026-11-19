@@ -249,7 +249,7 @@ def create_proxy_router(
                 detail="session_metadata must be a JSON object",
             )
 
-        metadata.update(await settings.extra_user_info.resolve_session_metadata(user.user_id))
+        await settings.extra_user_info.merge_session_metadata(user.user_id, metadata)
         upload_data = []
         for file in files or ():
             upload_data.append(
@@ -324,7 +324,7 @@ def create_proxy_router(
                 metadata = payload.get("session_metadata", {})
                 if not isinstance(metadata, dict):
                     raise HTTPException(422, "session_metadata 必须是 JSON 对象")
-                metadata.update(await settings.extra_user_info.resolve_session_metadata(user.user_id))
+                await settings.extra_user_info.merge_session_metadata(user.user_id, metadata)
                 file_payloads = payload.get("files", [])
                 if not isinstance(file_payloads, list):
                     raise HTTPException(422, "files 必须是数组")

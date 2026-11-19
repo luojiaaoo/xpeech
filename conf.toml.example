@@ -64,12 +64,13 @@ custom_system_prompt = ""
 
 # 加载技能、MCP 和校验 Web 通道组织权限时按用户查询所属组织，此配置不绑定渠道。
 # stdout: UTF-8 JSON, e.g. {"organization":"company/engineering/platform","name":"Alice"}.
-# Successful JSON command results are cached per user for 10 minutes; all claims share this cache.
+# Successful JSON command results are cached per user for 1 hour; all claims share this cache.
 # [extra_user_info]
 # command_extra_user_info_template = "curl --fail --silent 'https://directory.example/userinfo?user_id=${user_id}'"
 # user_organization_claim = ".organization"
 # session_metadata_claims = { department = ".department", employee_number = ".employee_number | tostring" }
 # 元数据值为字符串；渠道转发消息时提取并覆盖 session_metadata 中的同名字段。
+# 命令以非零状态退出时，组织未知，不注入这些元数据字段。
 # timeout = 10.0
 
 [web_client]
@@ -77,6 +78,7 @@ custom_system_prompt = ""
 session_history_path = "data/web_client/session_history"
 max_history_days = 30
 cookie_name = "xpeech_session"
+fallback_username = "Unknown" # 所有 OAuth2 服务商共用；未配置此项且无法提取用户名时，登录失败。
 
 [web_client.inject_prompt]
 enabled = false

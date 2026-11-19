@@ -183,7 +183,7 @@ async def iter_chat_events(
             else:
                 raise TypeError(f"Unsupported message content type: {type(item)!r}")
 
-    session_metadata.update(await settings.extra_user_info.resolve_session_metadata(user_id))
+    await settings.extra_user_info.merge_session_metadata(user_id, session_metadata)
     async with stack_ensure_aclosing() as stack:
         upload_files = []
         for file_path in files:

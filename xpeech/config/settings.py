@@ -400,7 +400,7 @@ class InjectPromptConfig(BaseModel):
 
 
 class WebClientConfig(BaseModel):
-    """Web client storage settings."""
+    """Web client storage and login settings."""
 
     session_history_path: ConfigPath = Field(
         default=Path("data/web_client/session_history"),
@@ -414,6 +414,17 @@ class WebClientConfig(BaseModel):
     )
     oauth2: list[OAuth2Config] = Field(default_factory=list)
     inject_prompt: InjectPromptConfig = Field(default_factory=InjectPromptConfig)
+    fallback_username: str | None = None
+
+    @field_validator("fallback_username")
+    @classmethod
+    def validate_fallback_username(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("web_client.fallback_username cannot be empty")
+        return value
 
     @model_validator(mode="after")
     def validate_oauth2_provider_names(self) -> "WebClientConfig":
@@ -510,10 +521,22 @@ class ExtraUserInfoConfig(BaseModel):
         return value
 
     async def resolve_session_metadata(self, user_id: str) -> dict[str, str]:
-        return {
-            name: await self._resolve_claim(user_id, claim)
-            for name, claim in self.session_metadata_claims.items()
-        }
+        try:
+            return {
+                name: await self._resolve_claim(user_id, claim)
+                for name, claim in self.session_metadata_claims.items()
+            }
+        except CommandTemplateError as error:
+            if error.reason != "failed":
+                raise
+            logger.warning("Extra user info session metadata lookup failed: {}", error)
+            return {}
+
+    async def merge_session_metadata(self, user_id: str, metadata: dict[str, str | int]) -> None:
+        claims = await self.resolve_session_metadata(user_id)
+        for name in self.session_metadata_claims.keys() - claims.keys():
+            metadata.pop(name, None)
+        metadata.update(claims)
 
 
 class Settings(BaseSettings):

@@ -280,6 +280,7 @@ def run(
         static_dir=static_dir.resolve(),
         system_name=_configured_system_name(),
         cookie_name=settings.web_client.cookie_name,
+        fallback_username=settings.web_client.fallback_username,
         oauth2=oauth2_config,
         inject_prompt=InjectPromptWebConfig(
             enabled=settings.web_client.inject_prompt.enabled,

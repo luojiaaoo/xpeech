@@ -390,17 +390,17 @@ def create_auth_router(
 
         try:
             if oauth2.username_source == "oauth2":
-                username = extract_string_claim(userinfo, oauth2.username_claim)
+                username = extract_string_claim(userinfo, oauth2.username_claim).strip()
             else:
                 username = await settings.extra_user_info.resolve_sender_name(user_id, oauth2.username_claim)
-            username = username.strip()[:64]
-            if not username:
-                raise ValueError("Missing sender name")
         except (CommandTemplateError, ValueError):
+            username = ""
+        username = username or config.fallback_username
+        if not username:
             attempt.error = "Sender name lookup failed"
             return _oauth2_result_page(False, attempt.error)
         user = await dao.create_user(
-            username=username,
+            username=username[:64],
             user_id=user_id,
             password_hash=password_hash(secrets.token_urlsafe(32)),
             is_admin=False,
