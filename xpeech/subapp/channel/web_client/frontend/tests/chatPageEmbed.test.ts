@@ -54,7 +54,7 @@ test('dialog files notify the parent while sync files stay in the result, and no
         return [{ event: 'assistant', context: '完成' }, { event: 'send_file', context: 'reports/sync.pdf' }];
       },
     },
-    './chatState': { appendChatEvent() {}, chatDisplayItems: () => [], chatMessagesFromEvents: () => [], finishChatTurn() {}, startChatTurn() {}, createChatEventQueue: (consume: Function) => ({ push: consume }) },
+    './chatState': { appendChatEvent() {}, chatDisplayItems: () => [], chatMessagesFromEvents: () => [], finishChatTurn() {} },
     './ToolCallCard': { default: 'ToolCallCard' },
     './ProcessPanel': { default: 'ProcessPanel' },
     './FileCard': { default: 'FileCard' },

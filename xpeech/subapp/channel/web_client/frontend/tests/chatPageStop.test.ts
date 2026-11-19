@@ -293,6 +293,7 @@ test('a failed stop keeps the stream running and allows retrying the stop action
 test('typing during a reply enables sending and queued streams do not finish the session', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('first');
+  const initialProcess = page.items()[1];
   page.streams[0].receive({ event: 'assistant', context: 'before insertion' });
   assert.equal(page.render().loading, true);
   page.render().onChange('second');
@@ -300,9 +301,11 @@ test('typing during a reply enables sending and queued streams do not finish the
   page.render().onSubmit('second');
   assert.equal(page.streams.length, 2);
   assert.equal(page.render().loading, true);
-  const process = page.items().filter((item: any) => item.role === 'process');
-  assert.equal(process[0].content.props.showDuration, true);
-  assert.equal(process[1].content.props.showDuration, false);
+  const items = page.items();
+  assert.deepEqual(Array.from(items, (item: any) => item.role), ['user', 'user', 'process']);
+  assert.equal(items[2].key, initialProcess.key);
+  assert.equal(items[2].content.props.running, true);
+  page.streams[0].receive({ event: 'assistant', context: ' still streaming' });
   page.streams[1].receive({ event: 'command', context: '消息已加入当前会话' });
   page.streams[1].finish();
   await tick();
@@ -312,7 +315,7 @@ test('typing during a reply enables sending and queued streams do not finish the
   assert.deepEqual(page.running, [true]);
   page.streams[0].receive({ event: 'assistant', context: 'after insertion' });
   assert.deepEqual(Array.from(page.messages().filter((item: any) => ['user', 'assistant'].includes(item.role)),
-    (item: any) => item.content), ['first', 'before insertion', 'second', 'after insertion']);
+    (item: any) => item.content), ['first', 'second', 'before insertion still streaming', 'after insertion']);
   page.streams[0].finish();
   await tick();
   assert.equal(page.render().loading, false);
@@ -331,6 +334,10 @@ test('stopping a session aborts every pending stream and ignores their late even
   page.streams[0].receive({ event: 'assistant', context: 'late' });
   assert.equal(page.messages().some((item: any) => item.content === 'late'), false);
   assert.deepEqual(page.running, [true, false]);
+  page.render().onSubmit('new turn');
+  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'user', 'process', 'user', 'process']);
+  page.streams[2].finish();
+  await tick();
   page.cleanupHistory();
 });
 

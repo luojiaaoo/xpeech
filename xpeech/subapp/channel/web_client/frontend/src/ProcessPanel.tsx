@@ -3,19 +3,19 @@ import type { ReactNode } from 'react';
 import { CheckOutlined, LoadingOutlined, RightOutlined } from '@ant-design/icons';
 
 export default function ProcessPanel({
-  running, tokenUsage, showDuration = true, children,
-}: { running: boolean; tokenUsage?: string; showDuration?: boolean; children: ReactNode }) {
+  running, tokenUsage, children,
+}: { running: boolean; tokenUsage?: string; children: ReactNode }) {
   const [elapsed, setElapsed] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!running || !showDuration) return;
+    if (!running) return;
     const startedAt = Date.now();
     setElapsed(0);
     const timer = window.setInterval(() => {
       setElapsed(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [running, showDuration]);
+  }, [running]);
 
   let duration: string | undefined;
   try {
@@ -26,8 +26,7 @@ export default function ProcessPanel({
   } catch {
     // Older or incomplete history may not contain structured usage.
   }
-  const label = !showDuration ? (running ? '工作中' : '工作已结束')
-    : running ? `工作中 ${elapsed ?? 0} 秒`
+  const label = running ? `工作中 ${elapsed ?? 0} 秒`
     : duration ? `工作了 ${duration}`
       : elapsed !== null ? `工作了 ${elapsed} 秒` : '工作已结束';
 

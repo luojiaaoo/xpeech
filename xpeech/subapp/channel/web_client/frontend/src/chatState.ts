@@ -3,18 +3,19 @@ import type { ChatEvent, ChatMessage, ToolCallInfo, ToolCallResult } from './typ
 let messageId = 0;
 const key = (role: string) => `${role}_${++messageId}`;
 
-function turnStart(messages: ChatMessage[]) {
+function responseStart(messages: ChatMessage[]) {
   return messages.findLastIndex((item) => item.role === 'user') + 1;
 }
 
 function finishStreams(messages: ChatMessage[], type?: 'assistant' | 'thinking') {
-  return messages.map((item) => item.streaming && (!type || item.role === type)
+  const start = responseStart(messages);
+  return messages.map((item, index) => index >= start && item.streaming && (!type || item.role === type)
     ? { ...item, streaming: false }
     : item);
 }
 
 function summarize(messages: ChatMessage[], tokenUsage?: string): ChatMessage[] {
-  const start = turnStart(messages);
+  const start = responseStart(messages);
   const turn = messages.slice(start);
   const content = turn.filter((item) => item.role === 'assistant').map((item) => item.content).join('\n\n');
   const previous = turn.find((item) => item.role === 'summary');
@@ -28,18 +29,25 @@ function summarize(messages: ChatMessage[], tokenUsage?: string): ChatMessage[] 
 }
 
 export function startChatTurn(messages: ChatMessage[], content: string, continuation = false): ChatMessage[] {
-  // A user insertion splits the visible process, not the backend execution.
-  // Freeze the preceding text segment but keep pending tools available for results.
+  const start = responseStart(messages);
+  if (continuation && start > 0) {
+    return [
+      ...messages.slice(0, start),
+      { key: key('user'), role: 'user', content, continuation: true },
+      ...messages.slice(start),
+    ];
+  }
   return [
-    ...summarize(finishStreams(messages.filter((item) => !item.transient))),
-    { key: key('user'), role: 'user', content, ...(continuation ? { continuation: true } : {}) },
+    ...finishChatTurn(messages),
+    { key: key('user'), role: 'user', content },
     { key: key('status'), role: 'status', content: '正在思考', transient: true },
   ];
 }
 
 export function finishChatTurn(messages: ChatMessage[]): ChatMessage[] {
-  const finished = finishStreams(messages.filter((item) => !item.transient)).map((item) => (
-    item.toolCall?.status === 'running'
+  const start = responseStart(messages);
+  const finished = finishStreams(messages.filter((item) => !item.transient)).map((item, index) => (
+    index >= start && item.toolCall?.status === 'running'
       ? { ...item, toolCall: { ...item.toolCall, status: 'interrupted' as const } }
       : item
   ));
@@ -58,8 +66,7 @@ function isToolCallResult(payload: unknown): payload is ToolCallResult {
 }
 
 function updateToolCall(messages: ChatMessage[], toolCall: ToolCallInfo): void {
-  // Inbox messages can arrive between a call and its result. IDs span the session.
-  const start = toolCall.status === 'running' ? turnStart(messages) : 0;
+  const start = responseStart(messages);
   const index = messages.findLastIndex((item, i) => i >= start && item.toolCall?.id === toolCall.id);
   if (index >= 0) {
     messages[index] = { ...messages[index], toolCall: { ...messages[index].toolCall, ...toolCall } };
@@ -80,7 +87,7 @@ function applyToolEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[
   if (isResult) {
     if (isToolCallResult(payload)) {
       // TODO(remove-legacy-tool-events): 旧结果使用 id 别名、缺少 success，且允许没有调用记录的结果独立展示。
-      // 清理时直接读取 tool_call_id/success，并按 ID 更新已有调用（可以跨用户插入的分块）。
+      // 清理时直接读取 tool_call_id/success，并仅更新当前轮次中 ID 匹配的已有调用。
       updateToolCall(next, {
         id: (payload.tool_call_id ?? payload.id)!, name: payload.name, output: payload.result,
         status: 'completed', durationSeconds: payload.duration_seconds,
@@ -126,7 +133,6 @@ export type ChatDisplayItem = ChatMessage | {
   messages: ChatMessage[];
   running: boolean;
   tokenUsage?: string;
-  showDuration: boolean;
 };
 
 // Keep the event history intact; folding only changes how each turn is displayed.
@@ -135,23 +141,28 @@ export function chatDisplayItems(messages: ChatMessage[], running = false): Chat
   let start = 0;
   while (start < messages.length) {
     let end = start + 1;
-    while (end < messages.length && messages[end].role !== 'user') end++;
+    while (end < messages.length && (messages[end].role !== 'user' || messages[end].continuation)) end++;
     const turn = messages.slice(start, end);
     const active = running && end === messages.length;
     // The last assistant message is only known when the request has ended.
     const finalReply = active ? undefined : turn.findLast((item) => item.role === 'assistant');
-    const process = turn.filter((item) => item !== finalReply && (
-      item.role === 'assistant' || item.role === 'thinking' || item.role === 'tool' || item.role === 'status'
-    ));
-    const hidden = new Set(process);
-    const visible = turn.filter((item) => !hidden.has(item));
-    const user = visible[0]?.role === 'user' ? visible.shift() : undefined;
-    if (user) items.push(user);
-    if (user || process.length || active) {
+    const process: ChatMessage[] = [];
+    const visible: ChatMessage[] = [];
+    for (const item of turn) {
+      if (item.role === 'user') {
+        items.push(item);
+      } else if (item !== finalReply && (
+        item.role === 'assistant' || item.role === 'thinking' || item.role === 'tool' || item.role === 'status'
+      )) {
+        process.push(item);
+      } else {
+        visible.push(item);
+      }
+    }
+    if (turn[0].role === 'user' || process.length || active) {
       items.push({
         key: `process_${turn[0].key}`, role: 'process', messages: process, running: active,
         tokenUsage: turn.findLast((item) => item.role === 'summary')?.tokenUsage,
-        showDuration: !user?.continuation,
       });
     }
     items.push(...visible);
@@ -188,41 +199,14 @@ export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): Chat
         questionToolId = question.tool_call_id;
       } else if (question.type === 'confirm' && toolName) {
         // TODO(remove-legacy-tool-events): 旧确认卡片缺少 tool_call_id，按工具名匹配；清理时移除此分支。
-        questionToolId = next.find(item => item.toolCall?.status === 'running'
+        const turn = next.slice(responseStart(next));
+        questionToolId = turn.find(item => item.toolCall?.status === 'running'
           && item.toolCall.name === toolName
-          && !next.some(question => question.questionToolId === item.toolCall?.id))?.toolCall?.id;
+          && !turn.some(question => question.questionToolId === item.toolCall?.id))?.toolCall?.id;
       }
     } catch { /* Free-text questions have no associated tool. */ }
   }
   return [...finishStreams(next), { key: key(role), role, content: event.context,
     ...(questionToolId ? { questionToolId } : {}),
   }];
-}
-
-/** All session producers share a FIFO consumer. Sequence records local receipt
- * order, not backend execution order. No clock or cross-connection sorting is used.
- * A synchronous drain makes user insertions visible before starting request I/O.
- */
-export function createChatEventQueue(consume: (event: ChatEvent, sequence: number) => void) {
-  const pending: { event: ChatEvent; sequence: number }[] = [];
-  let sequence = 0;
-  let head = 0;
-  let draining = false;
-  return {
-    push(event: ChatEvent) {
-      pending.push({ event, sequence: sequence++ });
-      if (draining) return;
-      draining = true;
-      try {
-        while (head < pending.length) {
-          const entry = pending[head++];
-          consume(entry.event, entry.sequence);
-        }
-      } finally {
-        pending.splice(0, head);
-        head = 0;
-        draining = false;
-      }
-    },
-  };
 }
