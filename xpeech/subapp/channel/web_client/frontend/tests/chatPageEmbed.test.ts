@@ -26,12 +26,18 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
   const Sender = { Header: 'SenderHeader' };
   let receiveStream!: (event: any) => void;
   let finishStream!: () => void;
+  let finishHistory!: (history: { events: any[] }) => void;
+  let historyLoading = true;
+  let stateIndex = 0;
   const streamCalls: { text: string; files: File[]; options: any }[] = [];
   const exports: Record<string, Record<string, any>> = {
     react: {
       lazy: () => 'Lazy', Suspense: 'Suspense',
       useEffect(effect: Function) { effects.push(effect); },
-      useState(value: any) { return [typeof value === 'function' ? value() : value, () => {}]; },
+      useState(value: any) {
+        if (stateIndex++ === 1) return [historyLoading, (next: boolean) => { historyLoading = next; }];
+        return [typeof value === 'function' ? value() : value, () => {}];
+      },
       useRef(value: any) { return { current: value }; }, useMemo: (factory: Function) => factory(),
     },
     'react/jsx-runtime': { jsx: (type: any, props: any) => ({ type, props }), jsxs: (type: any, props: any) => ({ type, props }) },
@@ -43,7 +49,7 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
     ].map(name => [name, name])),
     './api': {
       getFile() {}, downloadFile() {}, stopChat() {},
-      historyApi: { async get() { return { events: [] }; } },
+      historyApi: { get() { return new Promise(resolve => { finishHistory = resolve; }); } },
       async streamChat(text: string, files: File[], receive: (event: any) => void, options: any) {
         streamCalls.push({ text, files, options });
         receiveStream = receive;
@@ -83,10 +89,24 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
   });
   await component.evaluate();
   let newConversations = 0;
-  (component.namespace.default as Function)({
-    systemName: '助手', sessionId: 'first', embedded: true,
-    onNewConversation() { newConversations++; return 'second'; },
-  });
+  const switches: string[] = [];
+  function render() {
+    stateIndex = 0;
+    effects.length = 0;
+    (component.namespace.default as Function)({
+      systemName: '助手', sessionId: 'first', embedded: true,
+      onNewConversation() { newConversations++; return 'second'; },
+      onSwitchConversation(sessionId: string) { switches.push(sessionId); },
+    });
+  }
+  render();
+  assert.equal(effects[0](), undefined);
+  const disposeHistory = effects[2]();
+  await Promise.resolve();
+  assert.equal(sent.some(item => item.data.type === 'xpeech:interaction-ready'), false);
+  finishHistory({ events: [] });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  render();
   const disposeBridge = effects[0]();
   const disposeRequests = effects[1]();
   let commandId = 0;
@@ -137,6 +157,9 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
   assert.deepEqual(Array.from(streamCalls[1].files), [first]);
   assert.equal((await command('newConversation')).result.session_id, 'second');
   assert.equal(newConversations, 1);
+  const targetId = '018f0000-0000-7000-8000-000000000002';
+  assert.equal((await command('switchConversation', { text: targetId })).result.session_id, targetId);
+  assert.deepEqual(switches, [targetId]);
   disposeRequests();
   receiveStream({ event: 'send_file', context: 'stale.pdf' });
   receiveStream({ event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: 'stale' } }]) });
@@ -145,4 +168,5 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
   finishStream();
   await new Promise<void>(resolve => setImmediate(resolve));
   disposeBridge();
+  disposeHistory();
 });

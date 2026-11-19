@@ -52,21 +52,28 @@ function rejectRequests(message, sentOnly = false, keepRequestId = null) {
     pending.reject(new Error(message));
   });
 }
+function changesConversation(method) {
+  return method === 'newConversation' || method === 'switchConversation';
+}
 function flushRequests() {
   if (!frame || !interactionSession || !verifiedJWT) return;
   for (var pending of pendingRequests.values()) {
     if (pending.sent) {
-      if (pending.data.method === 'newConversation') return;
+      if (changesConversation(pending.data.method)) return;
       continue;
     }
     pending.sent = true;
     pending.sessionId = interactionSession;
     frame.contentWindow.postMessage(Object.assign({}, pending.data, { session_id: interactionSession }), origin);
-    if (pending.data.method === 'newConversation') return;
+    if (changesConversation(pending.data.method)) return;
   }
 }
 function requestInteraction(method, text, options = {}) {
   if (!identityConfigured) return Promise.reject(new Error('请先调用 init()'));
+  if (method === 'switchConversation' && (typeof text !== 'string' || text.length !== 36 ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(text))) {
+    return Promise.reject(new TypeError('session_id 必须为规范的小写 UUIDv7'));
+  }
   var fileRequest = method === 'downloadFile' || method === 'getFile';
   if (typeof text !== 'string') {
     return Promise.reject(new TypeError(fileRequest ? 'path 必须为字符串' : 'text 必须为字符串'));
@@ -117,6 +124,7 @@ function addFiles(files, options = {}) {
   return requestInteraction('addFiles', '', Object.assign({}, options, { files: files }));
 }
 function newConversation(options) { return requestInteraction('newConversation', '', options); }
+function switchConversation(sessionId, options) { return requestInteraction('switchConversation', sessionId, options); }
 function send(options) { return requestInteraction('send', '', options); }
 function chatSync(text, options) {
   return requestInteraction('chatSync', text, options).then(function (result) {
@@ -522,8 +530,9 @@ function onMessage(event) {
   } else if (data.type === "xpeech:response") {
     var pending = pendingRequests.get(data.request_id);
     if (!pending || !pending.sent || data.session_id !== pending.sessionId) return;
-    if (pending.data.method === 'newConversation' && typeof data.error !== 'string') {
+    if (changesConversation(pending.data.method) && typeof data.error !== 'string') {
       if (!data.result || typeof data.result.session_id !== 'string' || !data.result.session_id) return;
+      if (pending.data.method === 'switchConversation' && data.result.session_id !== pending.data.text) return;
       if (data.result.session_id !== pending.sessionId) {
         pending.nextSessionId = data.result.session_id;
         interactionSession = null;
@@ -534,7 +543,7 @@ function onMessage(event) {
     clearTimeout(pending.timer);
     pendingRequests.delete(data.request_id);
     if (typeof data.error === 'string') pending.reject(new Error(data.error));
-    else pending.resolve(data.result);
+    else pending.resolve(changesConversation(pending.data.method) ? { session_id: data.result.session_id } : data.result);
     flushRequests();
   } else if (data.type === "xpeech:reply" && data.session_id === interactionSession && typeof data.text === 'string') {
     var reply = { session_id: data.session_id, text: data.text };
@@ -750,4 +759,4 @@ function destroy() {
   host = root = panel = launcher = closeButton = minimizeButton = maximizeButton = body = status = null;
 }
 
-export { init, updateJWT, hideButton, showButton, open, close, maximize, restore, minimize, destroy, setInput, addFiles, newConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile, registerFragmentHandler };
+export { init, updateJWT, hideButton, showButton, open, close, maximize, restore, minimize, destroy, setInput, addFiles, newConversation, switchConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile, registerFragmentHandler };

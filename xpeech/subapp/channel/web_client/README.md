@@ -175,6 +175,7 @@ function onLogout() {
 | `assistant.setInput(text, { timeoutMs? } = {})` | 替换当前对话输入框内容（允许空字符串清空），不自动发送；返回 `Promise<{ session_id }>` |
 | `assistant.addFiles(files, { timeoutMs? } = {})` | 将 `File[]` 追加到当前对话框的待发送附件，显示附件列表，不自动上传或发送；返回 `Promise<{ session_id }>` |
 | `assistant.newConversation({ timeoutMs? } = {})` | 新建会话，清空对话框及草稿，等待新输入框就绪后返回 `Promise<{ session_id }>` |
+| `assistant.switchConversation(session_id, { timeoutMs? } = {})` | 切换到指定会话，等待目标会话就绪后返回 `Promise<{ session_id }>` |
 | `assistant.send({ timeoutMs? } = {})` | 发送当前输入框的文字及待发送附件，消息与流式回复显示在对话框，提交后返回 `Promise<{ session_id }>` |
 | `assistant.chatSync(text, { files?, timeoutMs? } = {})` | 在当前会话后台运行，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id: string, fragments: string[], files: string[] }>` |
 | `assistant.downloadFile(path, { timeoutMs? } = {})` | 按工作区路径下载文件，自动携带当前 JWT 并触发浏览器保存，返回 `Promise<{ session_id }>` |
@@ -215,6 +216,10 @@ await assistant.send();
 后续网络错误显示在对话框中，与点击发送按钮一致。
 `newConversation()` 与点击「新建会话」使用相同流程：生成新的 UUIDv7 会话 ID，隐藏当前对话并保留
 其消息、文字草稿、待发送附件和后台回复，登录凭证保持不变；切换期间的新命令排队投递到新会话。
+
+已知会话 ID 时，可调用 `await assistant.switchConversation(savedSessionId)`。ID 必须是规范的小写
+UUIDv7。目标会话只加载当前用户和通道的历史；没有历史时显示空白会话。已打开的会话保留原有草稿和附件，
+切换不会重新登录或展开窗口。
 
 ```javascript
 // 对话框聊天和 chatSync 中的 fragment 调用都会通知。
@@ -364,7 +369,8 @@ SDK 本身收到通知不会自动下载；调用方决定如何处理。`destro
 同步调用可与对话框手动聊天、其他同步调用并发执行，互不阻塞。
 请求失败或后台执行出错时，Promise 会以错误拒绝。
 
-`setInput`、`addFiles`、`newConversation`、`send` 默认等待 30 秒，`chatSync` 默认等待 5 分钟，可通过 `timeoutMs` 调整。
+`setInput`、`addFiles`、`newConversation`、`switchConversation`、`send` 默认等待 30 秒，
+`chatSync` 默认等待 5 分钟，可通过 `timeoutMs` 调整。
 超时只停止主页面等待，不代表后端执行已取消，请勿据此自动重复提交。
 未初始化、认证失败、会话切换、页面重载或销毁时，相应 Promise 会拒绝；JWT 自动续期不切换会话。
 双方都校验 `postMessage` 的 origin 和窗口来源，请求和响应还使用 `request_id`、`session_id` 关联。

@@ -104,7 +104,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { init: Function; updateJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function; registerFragmentHandler: Function };
+  const api = module.namespace as { init: Function; updateJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; switchConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function; registerFragmentHandler: Function };
   return { window, context, frames, calls, hosts, sent, message, listeners, timers, api };
 }
 
@@ -117,7 +117,7 @@ test('loading the SDK creates no UI or requests until init and leaves website gl
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'registerFragmentHandler', 'restore', 'send', 'setInput', 'showButton', 'updateJWT']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'registerFragmentHandler', 'restore', 'send', 'setInput', 'showButton', 'switchConversation', 'updateJWT']);
 });
 
 test('init validates the original JWT without exchanging it and only delivers to its own iframe', async () => {
@@ -873,6 +873,54 @@ test('failed newConversation releases queued commands, and destroy rejects an un
   app.message({ type: 'xpeech:response', session_id: 'first', request_id: switching.request_id, result: { session_id: 'second' } });
   app.api.destroy();
   await closed;
+});
+
+test('switchConversation validates the target and queues commands until its composer is ready', async () => {
+  const app = await runtime();
+  const first = '018f0000-0000-7000-8000-000000000001';
+  const second = '018f0000-0000-7000-a000-000000000002';
+  await assert.rejects(app.api.switchConversation(second), /init/);
+  app.api.init(jwtFor(), 'Alice');
+  for (const invalid of [undefined, null, '', 'default', second.toUpperCase(), `${second}\n`,
+    second.replace('-7000-', '-4000-'), second.replace('-a000-', '-7000-')]) {
+    await assert.rejects(app.api.switchConversation(invalid), /session_id.*UUIDv7/);
+  }
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: first });
+  const switched = app.api.switchConversation(second);
+  const request = app.sent.at(-1)!.data;
+  assert.equal(request.method, 'switchConversation');
+  assert.equal(request.session_id, first);
+  assert.equal(request.text, second);
+  const queued = app.api.setInput('target draft');
+  assert.equal(app.sent.at(-1)!.data, request);
+  let settled = false;
+  switched.then(() => { settled = true; });
+  const response = { type: 'xpeech:response', request_id: request.request_id, session_id: first };
+  app.message({ ...response, result: { session_id: first } });
+  app.message({ ...response, result: { session_id: second } });
+  app.message({ type: 'xpeech:interaction-unavailable', session_id: first });
+  await tick();
+  assert.equal(settled, false);
+  assert.equal(app.sent.at(-1)!.data, request);
+
+  app.message({ type: 'xpeech:interaction-ready', session_id: second });
+  assert.equal((await switched).session_id, second);
+  const draft = app.sent.at(-1)!.data;
+  assert.equal(draft.method, 'setInput');
+  assert.equal(draft.session_id, second);
+  app.message({ type: 'xpeech:response', session_id: second, request_id: draft.request_id, result: { session_id: second } });
+  await queued;
+
+  const unchanged = app.api.switchConversation(second);
+  const unchangedRequest = app.sent.at(-1)!.data;
+  app.message({ type: 'xpeech:response', session_id: second, request_id: unchangedRequest.request_id,
+    result: { session_id: second } });
+  assert.equal((await unchanged).session_id, second);
+  assert.equal(app.frames.length, 1);
+  assert.equal(app.hosts[0].getElementById('panel').classList.contains('open'), false);
+  app.api.destroy();
 });
 
 test('download requests use the trusted iframe and propagate errors without opening the panel', async () => {

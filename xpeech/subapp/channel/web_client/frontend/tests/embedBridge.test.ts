@@ -176,6 +176,30 @@ test('composer commands validate the parent and session, preserve files and repo
   dispose();
 });
 
+test('iframe bridge validates the target and only dispatches switchConversation for a different session', async () => {
+  const app = await runtime();
+  const currentId = '018f0000-0000-7000-8000-000000000001';
+  const targetId = '018f0000-0000-7000-a000-000000000002';
+  const switches: string[] = [];
+  const dispose = app.api.connectEmbedBridge(currentId, {
+    switchConversation(sessionId: string) { switches.push(sessionId); },
+  });
+  const request = { type: 'xpeech:request', request_id: '1', session_id: currentId, method: 'switchConversation', text: targetId };
+  await app.message(request, 'https://untrusted.test');
+  await app.message({ ...request, session_id: 'old' });
+  assert.match(app.sent.at(-1).data.error, /会话已切换/);
+  await app.message({ ...request, text: 'not a session' });
+  assert.match(app.sent.at(-1).data.error, /UUIDv7/);
+  await app.message({ ...request, text: currentId });
+  assert.equal(app.sent.at(-1).data.result.session_id, currentId);
+  assert.deepEqual(switches, []);
+  await app.message(request);
+  assert.deepEqual(switches, [targetId]);
+  assert.equal(app.sent.at(-1).data.session_id, currentId);
+  assert.equal(app.sent.at(-1).data.result.session_id, targetId);
+  dispose();
+});
+
 test('iframe bridge downloads event paths and reports download errors', async () => {
   const app = await runtime();
   const paths: string[] = [];

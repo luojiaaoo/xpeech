@@ -94,6 +94,7 @@ export function connectEmbedBridge(sessionId: string, handlers: {
   setInput: (text: string) => void;
   addFiles: (files: File[]) => void;
   newConversation: () => string;
+  switchConversation: (sessionId: string) => void;
   send: () => void;
   chatSync: (text: string, options: SyncOptions) => Promise<ChatEvent[]>;
   setFragmentRevision: (revision: number | null) => void;
@@ -125,6 +126,14 @@ export function connectEmbedBridge(sessionId: string, handlers: {
         respond({ result: { session_id: sessionId } });
       } else if (data.method === 'newConversation') {
         const nextSessionId = handlers.newConversation();
+        respond({ result: { session_id: nextSessionId } });
+      } else if (data.method === 'switchConversation') {
+        const nextSessionId = data.text;
+        if (nextSessionId.length !== 36 ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(nextSessionId)) {
+          throw new Error('session_id 必须为规范的小写 UUIDv7');
+        }
+        if (nextSessionId !== sessionId) handlers.switchConversation(nextSessionId);
         respond({ result: { session_id: nextSessionId } });
       } else if (data.method === 'send') {
         handlers.send();

@@ -156,6 +156,7 @@ export default function ChatWorkspace({ systemName, recommendedQuestions, embedd
                 active={id === sessionId}
                 embedded={embedded}
                 onNewConversation={newConversation}
+                onSwitchConversation={openSession}
                 onHistoryUpdated={refreshSessions}
                 onRunningChange={(running) => setSessionRunning(id, running)}
               />

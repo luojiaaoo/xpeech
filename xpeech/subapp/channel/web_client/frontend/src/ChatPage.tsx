@@ -226,7 +226,8 @@ function renderStreamContent(type: StreamEventType, content: string, streaming: 
 }
 
 export default function ChatPage({
-  systemName, recommendedQuestions, sessionId, active = true, embedded = false, onNewConversation, onHistoryUpdated, onRunningChange,
+  systemName, recommendedQuestions, sessionId, active = true, embedded = false,
+  onNewConversation, onSwitchConversation, onHistoryUpdated, onRunningChange,
 }: {
   systemName: string;
   recommendedQuestions?: string[];
@@ -234,6 +235,7 @@ export default function ChatPage({
   active?: boolean;
   embedded?: boolean;
   onNewConversation?: () => string;
+  onSwitchConversation?: (sessionId: string) => void;
   onHistoryUpdated?: () => void;
   onRunningChange?: (running: boolean) => void;
 }) {
@@ -259,9 +261,11 @@ export default function ChatPage({
   composerRef.current = { value, files };
   const newConversationRef = useRef(onNewConversation);
   newConversationRef.current = onNewConversation;
+  const switchConversationRef = useRef(onSwitchConversation);
+  switchConversationRef.current = onSwitchConversation;
 
   useEffect(() => {
-    if (!embedded || !active) return;
+    if (!embedded || !active || historyLoading) return;
     setFragmentRevision(null);
     return connectEmbedBridge(sessionId, {
       setInput(text) {
@@ -279,6 +283,10 @@ export default function ChatPage({
         if (!newConversationRef.current) throw new Error('无法新建会话');
         return newConversationRef.current();
       },
+      switchConversation(nextSessionId) {
+        if (!switchConversationRef.current) throw new Error('无法切换会话');
+        switchConversationRef.current(nextSessionId);
+      },
       send() {
         if (stoppingRef.current) throw new Error('正在停止，请稍后再发送');
         const { value: text, files } = composerRef.current;
@@ -290,7 +298,7 @@ export default function ChatPage({
       downloadFile,
       getFile,
     });
-  }, [active, embedded, sessionId]);
+  }, [active, embedded, historyLoading, sessionId]);
 
   useEffect(() => () => {
     requests.current.forEach((controller) => controller.abort());
