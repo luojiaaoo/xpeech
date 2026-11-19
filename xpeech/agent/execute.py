@@ -84,8 +84,16 @@ async def execute_chat_stream(
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
     if not owner:
+        acknowledgement = "这条消息将用于引导后续回复"
+        text = " ".join(" ".join(block.text for block in message.content).split())
+        if text:
+            preview = text[:40]
+            if len(text) > len(preview):
+                preview = f"{preview.rstrip()}…"
+            acknowledgement += f"：「{preview}」"
+
         async def acknowledge():
-            yield {"event": "command", "context": "这条消息将用于引导后续回复"}
+            yield {"event": "command", "context": acknowledgement}
 
         async with aclosing(acknowledge()) as events:
             yield events

@@ -1238,7 +1238,7 @@ async def test_same_user_commands_and_streams_send_without_waiting_for_an_active
         if name == "first":
             yield ChatEvent(event=ChatEventType.QUESTION, context='{"fields":[]}')
         if name == "queued":
-            yield ChatEvent(event=ChatEventType.COMMAND, context="这条消息将用于引导后续回复")
+            yield ChatEvent(event=ChatEventType.COMMAND, context="这条消息将用于引导后续回复：「queued」")
         else:
             yield ChatEvent(event=ChatEventType.ASSISTANT, context=chunks(name))
 
@@ -1254,7 +1254,7 @@ async def test_same_user_commands_and_streams_send_without_waiting_for_an_active
         await asyncio.wait_for(started.wait(), timeout=1)
         await asyncio.wait_for(bridge.consume([message("queued")]), timeout=1)
         element = channel.send.await_args.kwargs["message"]["card"]["body"]["elements"][0]
-        assert element["content"] == "**[命令]** 这条消息将用于引导后续回复"
+        assert element["content"] == "**[命令]** 这条消息将用于引导后续回复：「queued」"
         assert not first.done()
         assert "question" in bridge.questions.question_cards
 
