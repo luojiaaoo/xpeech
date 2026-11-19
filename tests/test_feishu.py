@@ -1233,7 +1233,7 @@ async def test_concurrent_command_responses_use_the_existing_output_order(monkey
             yield ChatEvent(event=ChatEventType.QUESTION, context='{"fields":[]}')
             yield ChatEvent(event=ChatEventType.ASSISTANT, context=chunks())
         elif name == "queued":
-            yield ChatEvent(event=ChatEventType.COMMAND, context="消息已加入当前会话")
+            yield ChatEvent(event=ChatEventType.COMMAND, context="这条消息将用于引导后续回复")
         else:
             yield ChatEvent(event=ChatEventType.COMMAND, context=name)
 

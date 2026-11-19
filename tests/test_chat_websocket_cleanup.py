@@ -39,7 +39,7 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
                 yield b'data: {"event":"assistant","context":"hello"}\n\n'
             elif phase == "queued":
                 yield ('data: ' + json.dumps({
-                    "event": "command", "context": "消息已加入当前会话",
+                    "event": "command", "context": "这条消息将用于引导后续回复",
                 }) + '\n\n').encode()
             ready.set()
             if phase not in {"complete", "queued"}:
@@ -111,13 +111,13 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
             if phase in {"partial", "complete"}:
                 expected.append({"event": "assistant", "context": "hello"})
             elif phase == "queued":
-                expected.append({"event": "command", "context": "消息已加入当前会话"})
+                expected.append({"event": "command", "context": "这条消息将用于引导后续回复"})
             assert saved == expected
         replies = [json.loads(message["text"]) for message in sent if message["type"] == "websocket.send"]
         assert any(reply["type"] == "done" for reply in replies) is (phase in {"complete", "queued"})
         if phase == "queued":
             assert {"type": "event", "session_id": SESSION_ID, "event": {
-                "event": "command", "context": "消息已加入当前会话",
+                "event": "command", "context": "这条消息将用于引导后续回复",
             }} in replies
     finally:
         task.cancel()

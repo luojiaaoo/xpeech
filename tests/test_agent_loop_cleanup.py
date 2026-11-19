@@ -142,7 +142,7 @@ async def test_inserted_chat_and_question_share_one_loop_and_record(
             ), timeout=2)
             assert queued.status_code == 200
             assert [json.loads(line[6:]) for line in queued.text.splitlines() if line.startswith("data: ")] == [
-                {"event": "command", "context": "消息已加入当前会话"},
+                {"event": "command", "context": "这条消息将用于引导后续回复"},
             ]
             agent.records.append.assert_not_awaited()
             show_question.set()

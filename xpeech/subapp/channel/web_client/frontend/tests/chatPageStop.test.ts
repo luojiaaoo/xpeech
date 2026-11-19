@@ -306,11 +306,11 @@ test('typing during a reply enables sending and queued streams do not finish the
   assert.equal(items[2].key, initialProcess.key);
   assert.equal(items[2].content.props.running, true);
   page.streams[0].receive({ event: 'assistant', context: ' still streaming' });
-  page.streams[1].receive({ event: 'command', context: '消息已加入当前会话' });
+  page.streams[1].receive({ event: 'command', context: '这条消息将用于引导后续回复' });
   page.streams[1].finish();
   await tick();
   const acknowledgement = page.items().find((item: any) => item.role === 'command');
-  assert.equal(acknowledgement.content.props.children[1].props.children, '消息已加入当前会话');
+  assert.equal(acknowledgement.content.props.children[1].props.children, '这条消息将用于引导后续回复');
   assert.equal(page.render().loading, true);
   assert.deepEqual(page.running, [true]);
   page.streams[0].receive({ event: 'assistant', context: 'after insertion' });

@@ -138,7 +138,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
                 {"event": "assistant", "context": "answer"},
                 {"event": "assistant_end", "context": ""},
                 {"event": "command", "context": "/new"},
-                {"event": "command", "context": "消息已加入当前会话"},
+                {"event": "command", "context": "这条消息将用于引导后续回复"},
             ]:
                 yield SimpleNamespace(data=json.dumps(payload))
 
@@ -182,7 +182,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
     assert command.context == "/new"
     queued = await anext(events)
     assert queued.event == ChatEventType.COMMAND
-    assert queued.context == "消息已加入当前会话"
+    assert queued.context == "这条消息将用于引导后续回复"
     await events.aclose()
 
 

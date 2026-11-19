@@ -85,7 +85,7 @@ async def execute_chat_stream(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
     if not owner:
         async def acknowledge():
-            yield {"event": "command", "context": "消息已加入当前会话"}
+            yield {"event": "command", "context": "这条消息将用于引导后续回复"}
 
         async with aclosing(acknowledge()) as events:
             yield events
