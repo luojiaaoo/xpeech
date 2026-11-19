@@ -19,7 +19,13 @@
     button { border: 0; border-radius: 9px; padding: 10px 18px; background: #3370ff; color: white; cursor: pointer; font: inherit; margin: 4px 6px 4px 0; }
     button.secondary { color: #18213d; background: #edf1f8; }
     button:disabled { opacity: .5; cursor: wait; }
-    #status { font-size: 14px; margin-top: 20px; }
+    #status { margin: 10px 0 16px; font-size: 14px; overflow-wrap: anywhere; }
+    .demo-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 10px; background: #f4f7fb; }
+    .demo-tabs button { margin: 0; padding: 6px 12px; color: #475872; background: transparent; }
+    .demo-tabs button[aria-selected="true"] { color: #2459cb; background: #fff; box-shadow: 0 1px 3px #152c6720; font-weight: 600; }
+    .demo-panel { margin-top: 20px; }
+    .demo-panel > h2 { margin: 0 0 8px; font-size: 20px; }
+    .demo-panel > label { display: block; margin-top: 12px; }
     textarea, input { width: 100%; padding: 12px; border: 1px solid #dfe5ef; border-radius: 9px; font: inherit; }
     #replies { white-space: pre-wrap; overflow-wrap: anywhere; }
     #replies p { margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: #f4f7fb; }
@@ -28,7 +34,6 @@
     #replies .log-error { background: #fdeeee; color: #a12622; }
     #replies pre { margin: 8px 0; padding: 12px; border-radius: 8px; background: #f4f7fb; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
     .log-title { margin: 24px 0 8px; font-size: 15px; }
-    .reply-boxes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .reply-box { padding: 14px 16px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
     .reply-box h3 { margin: 0 0 8px; font-size: 13px; color: #5b6578; }
     .reply-content { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 3.2em; }
@@ -37,87 +42,153 @@
     .file-box ul { padding-left: 22px; }
     .file-box li { margin: 8px 0; overflow-wrap: anywhere; }
     .file-meta { display: block; color: #5b6578; font-size: 12px; overflow-wrap: anywhere; }
+    .chart-figure { margin: 16px 0 0; }
+    .chart-figure figcaption { font-weight: 600; overflow-wrap: anywhere; }
+    .fragment-chart { display: block; width: 100%; }
+    .fragment-chart text { fill: #5b6578; font-size: 15px; }
+    .fragment-chart line { stroke: #e3ebf6; }
+    .fragment-chart polyline { fill: none; stroke: #3370ff; stroke-width: 3; stroke-linejoin: round; }
+    .fragment-chart circle { fill: #fff; stroke: #3370ff; stroke-width: 3; }
     .test-notice { padding: 16px; border: 1px solid #f2cc7a; border-radius: 9px; background: #fff8e6; color: #775414; }
-    @media (max-width: 600px) { main { margin: 24px auto; padding: 16px; } article { padding: 24px; } .reply-boxes { grid-template-columns: 1fr; } }
+    @media (max-width: 600px) { main { margin: 24px auto; padding: 16px; } article { padding: 24px; } }
   </style>
 </head>
 <body>
   <main><article>
     <span class="tag">XPEECH · 本地接入演示</span>
     <h1>你的 AI 助手已接入</h1>
-    <p>点击右下角的聊天按钮，或使用下方按钮展开对话。关闭窗口后，再次打开可继续当前会话。</p>
-    <p class="test-notice"><strong>仅供本地测试：正式接入必须从业务后端获取 JWT，签名密钥只能保存在后端，不能放在前端。</strong>
-      这里开放通道和 Key 输入只是为了方便测试；填写的 Key 会通过 POST 发送到本地演示后端，由后端签发 JWT 后返回，浏览器不签名。</p>
-    <form id="connection">
-    <dl>
-      <dt><label for="service">聊天前端 URL</label></dt>
-      <dd>
-          <input id="service" type="url" required placeholder="http://localhost:7939/" disabled>
-      </dd>
-      <dt><label for="channel">通道（JWT kid）</label></dt>
-      <dd><input id="channel" required maxlength="64" placeholder="crm" disabled></dd>
-      <dt><label for="secret-key">签名 Key（仅供测试）</label></dt>
-      <dd><input id="secret-key" type="password" autocomplete="off" placeholder="留空使用后端配置的原通道密钥；更换通道时请填写" disabled></dd>
-      <dt>演示用户</dt><dd id="user">—</dd>
-      <dt>发送者名称</dt><dd id="sender">—</dd>
-      <dt>助手标题</dt><dd id="assistant-title">—</dd>
-      <dt>会话元数据</dt><dd id="metadata">—</dd>
-    </dl>
-    <button id="connect" type="submit" disabled>连接 / 重新连接</button>
-    </form>
     <button id="open" disabled>打开聊天</button>
     <button id="toggle" class="secondary" disabled>退出演示登录</button>
-    <label for="prompt">主页面交互内容</label>
-    <textarea id="prompt" rows="3">请调用 fragment，text 为「你好」</textarea>
-    <label for="files">请求附件（可多选）</label>
-    <input id="files" type="file" multiple disabled>
-    <button id="generate-file" class="secondary" disabled>添加 JS 示例文件</button>
-    <button id="clear-files" class="secondary" disabled>清空附件</button>
-    <p id="selected-files" class="file-hint">未选择附件</p>
-    <button id="fill" class="secondary" disabled>填入对话输入框</button>
-    <button id="add-chat-files" class="secondary" disabled>插入附件到对话框</button>
-    <button id="new-conversation" class="secondary" disabled>新建会话并注册片段按钮</button>
-    <button id="send-chat" disabled>发送对话框内容</button>
-    <button id="sync" disabled>同步发送（纯后台）</button>
-    <p class="test-notice">同步发送是纯后台交互：不展开聊天窗口，消息和回复都不渲染到对话框，
-      结果只回传主页面。「插入附件到对话框」可追加所选文件，再点击「发送对话框内容」发送；有附件时文字可留空。
-      可输入「调用 fragment，text 为『报告摘要』，然后生成并发送报告文件」测试同步结果。
-      对话框只有注册后才显示片段按钮，可点击「记录」「填入输入框」或红色的「清空输入框」。</p>
-    <h2 class="log-title">片段通知与同步结果</h2>
-    <div class="reply-boxes">
+    <p id="status" role="status">正在加载聊天组件…</p>
+    <div class="demo-tabs" role="tablist" aria-label="演示功能">
+      <button id="tab-connection" type="button" role="tab" aria-controls="panel-connection" aria-selected="true">连接</button>
+      <button id="tab-chat" type="button" role="tab" aria-controls="panel-chat" aria-selected="false" tabindex="-1">对话</button>
+      <button id="tab-sessions" type="button" role="tab" aria-controls="panel-sessions" aria-selected="false" tabindex="-1">会话</button>
+      <button id="tab-fragments" type="button" role="tab" aria-controls="panel-fragments" aria-selected="false" tabindex="-1">注册片段</button>
+      <button id="tab-sync" type="button" role="tab" aria-controls="panel-sync" aria-selected="false" tabindex="-1">同步</button>
+      <button id="tab-files" type="button" role="tab" aria-controls="panel-files" aria-selected="false" tabindex="-1">文件</button>
+      <button id="tab-log" type="button" role="tab" aria-controls="panel-log" aria-selected="false" tabindex="-1">日志</button>
+    </div>
+
+    <section class="demo-panel" id="panel-connection" role="tabpanel" aria-labelledby="tab-connection" tabindex="0">
+      <h2>连接设置</h2>
+      <p class="test-notice"><strong>仅供本地测试：正式接入必须从业务后端获取 JWT，签名密钥只能保存在后端，不能放在前端。</strong>
+        此处输入的 Key 会发送到本地演示后端，浏览器不签名。</p>
+      <form id="connection">
+        <dl>
+          <dt><label for="service">聊天前端 URL</label></dt>
+          <dd><input id="service" type="url" required placeholder="http://localhost:7939/" disabled></dd>
+          <dt><label for="channel">通道（JWT kid）</label></dt>
+          <dd><input id="channel" required maxlength="64" placeholder="crm" disabled></dd>
+          <dt><label for="secret-key">签名 Key（仅供测试）</label></dt>
+          <dd><input id="secret-key" type="password" autocomplete="off" placeholder="留空使用配置密钥；更换通道时请填写" disabled></dd>
+          <dt>演示用户</dt><dd id="user">—</dd>
+          <dt>发送者名称</dt><dd id="sender">—</dd>
+          <dt>助手标题</dt><dd id="assistant-title">—</dd>
+          <dt>会话元数据</dt><dd id="metadata">—</dd>
+        </dl>
+        <button id="connect" type="submit" disabled>连接 / 重新连接</button>
+      </form>
+    </section>
+
+    <section class="demo-panel" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="0" hidden>
+      <h2>对话框操作</h2>
+      <label for="prompt">要填入的消息</label>
+      <textarea id="prompt" rows="3">请调用 fragment，text 为「你好」</textarea>
+      <label for="chat-files-input">对话附件（可多选）</label>
+      <input id="chat-files-input" type="file" multiple disabled>
+      <button id="chat-generate-file" type="button" class="secondary" disabled>添加 JS 示例文件</button>
+      <button id="chat-clear-files" type="button" class="secondary" disabled>清空附件</button>
+      <p id="chat-selected-files" class="file-hint">未选择附件</p>
+      <button id="fill" class="secondary" disabled>填入对话输入框</button>
+      <button id="add-chat-files" class="secondary" disabled>插入附件到对话框</button>
+      <button id="send-chat" disabled>发送对话框内容</button>
+      <p class="file-hint">先填入文字或插入附件，再发送。片段按钮和折线图可在「注册片段」页测试。</p>
       <section class="reply-box">
         <h3>最近的片段通知（onReply）</h3>
         <div id="latest-fragment" class="reply-content" aria-live="polite">—</div>
       </section>
+    </section>
+
+    <section class="demo-panel" id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" hidden>
+      <h2>新建和切换会话</h2>
+      <button id="new-conversation" class="secondary" disabled>新建会话</button>
+      <form id="switch-conversation-form">
+        <label for="target-session">目标会话 ID</label>
+        <input id="target-session" list="known-sessions" required spellcheck="false" autocomplete="off"
+          placeholder="输入或选择会话的 UUIDv7" disabled>
+        <datalist id="known-sessions"></datalist>
+        <button id="switch-conversation" type="submit" class="secondary" disabled>切换会话</button>
+        <p class="file-hint">本次登录用过的会话 ID 会出现在候选列表中。切换不会展开聊天窗口。</p>
+      </form>
+    </section>
+
+    <section class="demo-panel" id="panel-fragments" role="tabpanel" aria-labelledby="tab-fragments" tabindex="0" hidden>
+      <h2>注册片段 · 折线图</h2>
+      <p class="file-hint">注册后发送测试提示词。模型通过 fragment 返回测试数据，再点击对话框里的「绘制折线图」。</p>
+      <button id="register-fragment" type="button" class="secondary" disabled>注册片段按钮</button>
+      <p class="file-hint">演示会话：<code id="fragment-session">未注册</code></p>
+      <label for="fragment-prompt">测试提示词</label>
+      <textarea id="fragment-prompt" rows="5">请生成一组 6 个月的网站访问量测试数据（非负整数，走势有起伏），并调用 fragment 工具。把数据序列化成 JSON 作为 text 参数，不要加 Markdown 代码围栏。格式示例：
+{"type":"line_chart","title":"月度访问量（测试数据）","labels":["1月","2月","3月","4月","5月","6月"],"values":[120,165,145,220,205,280]}</textarea>
+      <button id="fill-fragment" type="button" class="secondary" disabled>仅填入对话框</button>
+      <button id="send-fragment" type="button" disabled>填入并发送</button>
+      <figure class="reply-box chart-figure">
+        <figcaption id="fragment-chart-title">折线图结果</figcaption>
+        <p id="fragment-chart-empty" class="file-hint">等待模型返回测试数据并点击「绘制折线图」。</p>
+        <div id="fragment-chart-output" hidden>
+          <svg id="fragment-chart" class="fragment-chart" viewBox="0 0 640 280" role="img"
+            aria-labelledby="fragment-chart-title"></svg>
+        </div>
+      </figure>
+    </section>
+
+    <section class="demo-panel" id="panel-sync" role="tabpanel" aria-labelledby="tab-sync" tabindex="0" hidden>
+      <h2>后台同步调用</h2>
+      <p class="file-hint">同步请求不展开聊天窗口，也不改变对话框的消息、草稿或附件。</p>
+      <label for="sync-prompt">同步请求内容</label>
+      <textarea id="sync-prompt" rows="3">请调用 fragment，text 为「报告摘要」</textarea>
+      <label for="sync-files-input">同步附件（可多选）</label>
+      <input id="sync-files-input" type="file" multiple disabled>
+      <button id="sync-generate-file" type="button" class="secondary" disabled>添加 JS 示例文件</button>
+      <button id="sync-clear-files" type="button" class="secondary" disabled>清空附件</button>
+      <p id="sync-selected-files" class="file-hint">未选择附件</p>
+      <button id="sync" disabled>同步发送（纯后台）</button>
       <section class="reply-box">
         <h3>同步调用片段（fragment 参数）</h3>
         <div id="sync-fragments" class="reply-content" aria-live="polite">—</div>
       </section>
-    </div>
-    <section class="reply-box file-box" aria-live="polite">
-      <h2 class="log-title">发现的 sync 文件</h2>
-      <p class="file-hint">按 chatSync 返回的文件路径自动尝试下载；可点击按钮重新下载。</p>
-      <p id="sync-files-empty" class="file-hint">尚未发现 sync 文件</p>
-      <ul id="sync-files"></ul>
+      <section class="reply-box file-box" aria-live="polite">
+        <h2 class="log-title">发现的同步文件</h2>
+        <p class="file-hint">按 chatSync 返回的文件路径自动尝试下载；可点击按钮重新下载。</p>
+        <p id="sync-files-empty" class="file-hint">尚未发现同步文件</p>
+        <ul id="sync-files"></ul>
+      </section>
     </section>
-    <section class="reply-box file-box" aria-live="polite">
-      <h2 class="log-title">发现的对话框文件</h2>
-      <p class="file-hint">在对话框中让助手生成并发送文件，主站通过 onChatFile 收到文件路径。</p>
-      <p id="chat-files-empty" class="file-hint">尚未发现对话框 send_file</p>
-      <ul id="chat-files"></ul>
+
+    <section class="demo-panel" id="panel-files" role="tabpanel" aria-labelledby="tab-files" tabindex="0" hidden>
+      <h2>文件下载</h2>
+      <section class="reply-box file-box" aria-live="polite">
+        <h2 class="log-title">发现的对话框文件</h2>
+        <p class="file-hint">对话框发送的文件由 onChatFile 通知主站；同步文件在「同步」页查看。</p>
+        <p id="chat-files-empty" class="file-hint">尚未发现对话框文件</p>
+        <ul id="chat-files"></ul>
+      </section>
+      <section class="reply-box file-box">
+        <h2 class="log-title">按路径下载</h2>
+        <form id="file-download-form">
+          <label for="file-path">文件路径</label>
+          <input id="file-path" required placeholder="粘贴文件路径" disabled>
+          <button id="download-path" type="submit" disabled>获取 File 并下载</button>
+        </form>
+        <p class="file-hint">先调用 getFile() 将二进制交给主站 JS，再由主站触发浏览器下载。</p>
+      </section>
     </section>
-    <section class="reply-box file-box">
-      <h2 class="log-title">填写文件路径下载</h2>
-      <form id="file-download-form">
-        <label for="file-path">send_file 事件里的文件路径</label>
-        <input id="file-path" required placeholder="粘贴上面展示的文件路径" disabled>
-        <button id="download-path" type="submit" disabled>获取 File 并下载</button>
-      </form>
-      <p class="file-hint">先调用 getFile() 将二进制交给主站 JS，再由主站触发浏览器下载。文件也可放进 FormData 上传业务后台。</p>
+
+    <section class="demo-panel" id="panel-log" role="tabpanel" aria-labelledby="tab-log" tabindex="0" hidden>
+      <h2>主页面交互记录</h2>
+      <div id="replies" aria-live="polite"></div>
     </section>
-    <h2 class="log-title">主页面交互记录</h2>
-    <div id="replies" aria-live="polite"></div>
-    <p id="status" role="status">正在加载聊天组件…</p>
   </article></main>
   <script type="module">
     const status = document.querySelector('#status');
@@ -126,9 +197,23 @@
     const fill = document.querySelector('#fill');
     const addChatFiles = document.querySelector('#add-chat-files');
     const newConversation = document.querySelector('#new-conversation');
+    const fragmentTab = document.querySelector('#tab-fragments');
+    const registerFragment = document.querySelector('#register-fragment');
+    const fragmentSession = document.querySelector('#fragment-session');
+    const fragmentPrompt = document.querySelector('#fragment-prompt');
+    const fillFragment = document.querySelector('#fill-fragment');
+    const sendFragment = document.querySelector('#send-fragment');
+    const chartTitle = document.querySelector('#fragment-chart-title');
+    const chartEmpty = document.querySelector('#fragment-chart-empty');
+    const chartOutput = document.querySelector('#fragment-chart-output');
+    const chart = document.querySelector('#fragment-chart');
+    const targetSession = document.querySelector('#target-session');
+    const knownSessions = document.querySelector('#known-sessions');
+    const switchConversation = document.querySelector('#switch-conversation');
     const sendChat = document.querySelector('#send-chat');
     const sync = document.querySelector('#sync');
     const prompt = document.querySelector('#prompt');
+    const syncPrompt = document.querySelector('#sync-prompt');
     const replies = document.querySelector('#replies');
     const service = document.querySelector('#service');
     const connect = document.querySelector('#connect');
@@ -136,23 +221,44 @@
     const secretKey = document.querySelector('#secret-key');
     const latestFragment = document.querySelector('#latest-fragment');
     const syncFragments = document.querySelector('#sync-fragments');
-    const fileInput = document.querySelector('#files');
-    const generateFile = document.querySelector('#generate-file');
-    const clearFiles = document.querySelector('#clear-files');
-    const selectedFiles = document.querySelector('#selected-files');
     const syncFiles = document.querySelector('#sync-files');
     const chatFiles = document.querySelector('#chat-files');
     const syncFilesEmpty = document.querySelector('#sync-files-empty');
     const chatFilesEmpty = document.querySelector('#chat-files-empty');
     const filePath = document.querySelector('#file-path');
     const downloadPath = document.querySelector('#download-path');
-    let attachments = [];
     let assistant;
     let senderName;
     let assistantTitle;
     let sessionMetadata;
     let loggedIn = false;
     let connectionVersion = 0;
+    let fragmentSessionId = null;
+    const tabs = Array.from(document.querySelectorAll('.demo-tabs [role="tab"]'));
+    function activateTab(selected) {
+      for (const tab of tabs) {
+        const active = tab === selected;
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        document.getElementById(tab.getAttribute('aria-controls')).hidden = !active;
+      }
+    }
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => activateTab(tab));
+      tab.addEventListener('keydown', event => {
+        let nextIndex;
+        switch (event.key) {
+          case 'ArrowLeft': nextIndex = (index + tabs.length - 1) % tabs.length; break;
+          case 'ArrowRight': nextIndex = (index + 1) % tabs.length; break;
+          case 'Home': nextIndex = 0; break;
+          case 'End': nextIndex = tabs.length - 1; break;
+          default: return;
+        }
+        event.preventDefault();
+        activateTab(tabs[nextIndex]);
+        tabs[nextIndex].focus();
+      });
+    });
     window.addEventListener('xpeech:error', event => {
       status.textContent = `连接失败：${event.detail.message}`;
     });
@@ -162,16 +268,196 @@
       if (className) entry.className = className;
       replies.appendChild(entry);
     }
-    function showAttachments() {
-      selectedFiles.textContent = attachments.length
-        ? attachments.map(file => `${file.name}（${file.size} 字节）`).join('、')
-        : '未选择附件';
-      clearFiles.disabled = !loggedIn || attachments.length === 0;
+    function rememberSession(sessionId) {
+      if (Array.from(knownSessions.options).some(option => option.value === sessionId)) return;
+      const option = document.createElement('option');
+      option.value = sessionId;
+      knownSessions.appendChild(option);
     }
+    function resetSessions() {
+      targetSession.value = '';
+      knownSessions.replaceChildren();
+    }
+    function readLineChart(text) {
+      try {
+        const data = JSON.parse(text);
+        if (data?.type !== 'line_chart' || typeof data.title !== 'string' || !data.title.trim() ||
+            !Array.isArray(data.labels) || !Array.isArray(data.values) ||
+            data.labels.length < 2 || data.labels.length > 12 || data.labels.length !== data.values.length ||
+            !data.labels.every(label => typeof label === 'string' && label.trim() && label.length <= 12) ||
+            !data.values.every(value => Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000)) return null;
+        return data;
+      } catch {
+        return null;
+      }
+    }
+    function resetChart() {
+      chart.replaceChildren();
+      chartTitle.textContent = '折线图结果';
+      chartEmpty.textContent = '等待模型返回测试数据并点击「绘制折线图」。';
+      chartEmpty.hidden = false;
+      chartOutput.hidden = true;
+    }
+    function drawLineChart(data) {
+      function add(tag, attributes, text, parent = chart) {
+        const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, String(value));
+        if (text !== undefined) element.textContent = text;
+        parent.appendChild(element);
+        return element;
+      }
+      const left = 72;
+      const right = 614;
+      const top = 22;
+      const bottom = 234;
+      const steps = 4;
+      const stepValue = Math.max(1, Math.ceil(Math.max(...data.values) / steps));
+      const max = stepValue * steps;
+      const formatValue = new Intl.NumberFormat('zh-CN', { notation: 'compact' });
+      const points = data.values.map((value, index) => [
+        left + (right - left) * index / (data.values.length - 1),
+        bottom - (bottom - top) * value / max,
+      ]);
+      chart.replaceChildren();
+      for (let step = 0; step <= steps; step++) {
+        const y = bottom - (bottom - top) * step / steps;
+        add('line', { x1: left, x2: right, y1: y, y2: y });
+        add('text', { x: left - 12, y, 'text-anchor': 'end', 'dominant-baseline': 'middle' },
+          formatValue.format(step * stepValue));
+      }
+      add('polyline', { points: points.map(point => point.join(',')).join(' ') });
+      const labelStep = Math.ceil(points.length / 6);
+      points.forEach(([x, y], index) => {
+        const label = data.labels[index];
+        const marker = add('circle', { cx: x, cy: y, r: 5 });
+        add('title', {}, `${label}：${data.values[index]}`, marker);
+        if (index % labelStep === 0) {
+          add('text', { x, y: bottom + 26, 'text-anchor': 'middle' }, label);
+        }
+      });
+      chartTitle.textContent = data.title;
+      chartEmpty.hidden = true;
+      chartOutput.hidden = false;
+    }
+    function updateFragmentControls(busy = false) {
+      registerFragment.disabled = !loggedIn || busy;
+      fillFragment.disabled = sendFragment.disabled = !loggedIn || busy || !fragmentSessionId;
+    }
+    function resetFragmentDemo() {
+      fragmentSessionId = null;
+      fragmentSession.textContent = '未注册';
+      resetChart();
+      updateFragmentControls();
+    }
+    async function registerFragmentDemo() {
+      if (registerFragment.disabled) return;
+      const version = connectionVersion;
+      updateFragmentControls(true);
+      try {
+        const sessionId = fragmentSessionId ?? (await assistant.newConversation()).session_id;
+        if (version !== connectionVersion) return;
+        assistant.registerFragmentHandler(sessionId, (text) => {
+          const data = readLineChart(text);
+          const buttons = [
+            { label: '记录原文', style: 'default', callback: (value) => log(`记录片段（会话 ${sessionId}）：${value}`) },
+            { label: '填入输入框', style: 'default', callback: (value) => assistant.setInput(value) },
+            { label: '清空输入框', style: 'danger', callback: () => assistant.setInput('') },
+          ];
+          if (data) {
+            buttons.unshift({
+              label: '绘制折线图',
+              style: 'primary',
+              callback() {
+                if (version !== connectionVersion || !loggedIn) return;
+                drawLineChart(data);
+                activateTab(fragmentTab);
+                status.textContent = `已绘制折线图：${data.title}`;
+                log(status.textContent);
+              },
+            });
+          } else {
+            chartEmpty.textContent = '收到的片段不是有效的折线图数据，请重试。';
+          }
+          return buttons;
+        });
+        fragmentSessionId = sessionId;
+        fragmentSession.textContent = sessionId;
+        rememberSession(sessionId);
+        status.textContent = '片段按钮已注册，可以发送测试提示词。';
+      } catch (error) {
+        if (version === connectionVersion) status.textContent = `注册片段失败：${error.message}`;
+      } finally {
+        if (version === connectionVersion) updateFragmentControls();
+      }
+    }
+    async function submitFragmentPrompt(send) {
+      if ((send ? sendFragment : fillFragment).disabled) return;
+      const text = fragmentPrompt.value.trim();
+      if (!text) { status.textContent = '请填写测试提示词'; return; }
+      const version = connectionVersion;
+      updateFragmentControls(true);
+      try {
+        await assistant.switchConversation(fragmentSessionId);
+        if (version !== connectionVersion) return;
+        assistant.open();
+        await assistant.setInput(text);
+        if (version !== connectionVersion) return;
+        if (send) {
+          resetChart();
+          await assistant.send();
+          if (version !== connectionVersion) return;
+        }
+        status.textContent = send ? '测试提示词已发送，等待折线图片段。' : '测试提示词已填入对话框。';
+      } catch (error) {
+        if (version === connectionVersion) status.textContent = `片段测试失败：${error.message}`;
+      } finally {
+        if (version === connectionVersion) updateFragmentControls();
+      }
+    }
+    function createAttachmentPicker(prefix) {
+      const input = document.querySelector(`#${prefix}-files-input`);
+      const generate = document.querySelector(`#${prefix}-generate-file`);
+      const clear = document.querySelector(`#${prefix}-clear-files`);
+      const selected = document.querySelector(`#${prefix}-selected-files`);
+      let files = [];
+      function render() {
+        selected.textContent = files.length
+          ? files.map(file => `${file.name}（${file.size} 字节）`).join('、')
+          : '未选择附件';
+        clear.disabled = input.disabled || files.length === 0;
+      }
+      function reset() {
+        files = [];
+        input.value = '';
+        render();
+      }
+      input.addEventListener('change', () => {
+        files = Array.from(input.files);
+        render();
+      });
+      generate.addEventListener('click', () => {
+        const data = { orders: [{ id: 'DEMO-001', amount: 128 }, { id: 'DEMO-002', amount: 256 }] };
+        const sample = new File([JSON.stringify(data, null, 2)], 'demo-orders.json', { type: 'application/json' });
+        files = [...files.filter(file => file.name !== sample.name), sample];
+        render();
+      });
+      clear.addEventListener('click', reset);
+      return {
+        reset,
+        snapshot: () => [...files],
+        setEnabled(enabled) {
+          input.disabled = generate.disabled = !enabled;
+          render();
+        },
+      };
+    }
+    const chatAttachments = createAttachmentPicker('chat');
+    const syncAttachments = createAttachmentPicker('sync');
     function resetFiles() {
-      attachments = [];
-      fileInput.value = '';
-      showAttachments();
+      for (const picker of [chatAttachments, syncAttachments]) {
+        picker.setEnabled(false);
+        picker.reset();
+      }
       syncFiles.replaceChildren();
       chatFiles.replaceChildren();
       syncFilesEmpty.hidden = chatFilesEmpty.hidden = false;
@@ -267,17 +553,22 @@
       const version = connectionVersion;
       assistant.onChatFile(file => {
         if (version !== connectionVersion || !loggedIn) return;
+        rememberSession(file.session_id);
         addDownload(file, version, false);
         log(`发现对话框文件：${file.path}`);
       });
       assistant.onReply(({ session_id, text }) => {
         if (version !== connectionVersion || !loggedIn) return;
+        rememberSession(session_id);
         latestFragment.textContent = text || '（空字符串）';
         log(`收到片段（会话 ${session_id}）：${text}`);
       });
       loggedIn = true;
-      fileInput.disabled = generateFile.disabled = filePath.disabled = downloadPath.disabled = false;
-      showAttachments();
+      updateFragmentControls();
+      filePath.disabled = downloadPath.disabled = false;
+      targetSession.disabled = switchConversation.disabled = false;
+      chatAttachments.setEnabled(true);
+      syncAttachments.setEnabled(true);
       open.disabled = false;
       fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = false;
       toggle.textContent = '退出演示登录';
@@ -295,9 +586,12 @@
       connectionVersion++;
       service.disabled = channel.disabled = secretKey.disabled = connect.disabled = true;
       open.disabled = fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = toggle.disabled = true;
+      targetSession.disabled = switchConversation.disabled = true;
       loggedIn = false;
-      fileInput.disabled = generateFile.disabled = filePath.disabled = downloadPath.disabled = true;
+      filePath.disabled = downloadPath.disabled = true;
       resetFiles();
+      resetSessions();
+      resetFragmentDemo();
       assistant?.destroy();
       assistant = undefined;
       replies.replaceChildren();
@@ -334,6 +628,32 @@
         void connectService();
       });
       open.addEventListener('click', () => assistant.open());
+      registerFragment.addEventListener('click', registerFragmentDemo);
+      fillFragment.addEventListener('click', () => submitFragmentPrompt(false));
+      sendFragment.addEventListener('click', () => submitFragmentPrompt(true));
+      document.querySelector('#switch-conversation-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!loggedIn || switchConversation.disabled) return;
+        const target = targetSession.value.trim();
+        if (!target) { status.textContent = '请填写目标会话 ID'; return; }
+        const version = connectionVersion;
+        switchConversation.disabled = true;
+        status.textContent = '正在切换会话…';
+        try {
+          const { session_id } = await assistant.switchConversation(target);
+          if (version !== connectionVersion) return;
+          rememberSession(session_id);
+          status.textContent = `已切换到会话 ${session_id}`;
+          log(status.textContent);
+        } catch (error) {
+          if (version === connectionVersion) {
+            status.textContent = `切换会话失败：${error.message}`;
+            log(status.textContent, 'log-error');
+          }
+        } finally {
+          if (version === connectionVersion) switchConversation.disabled = !loggedIn;
+        }
+      });
       document.querySelector('#file-download-form').addEventListener('submit', async event => {
         event.preventDefault();
         if (!loggedIn || downloadPath.disabled) return;
@@ -357,57 +677,31 @@
           if (version === connectionVersion) downloadPath.disabled = !loggedIn;
         }
       });
-      fileInput.addEventListener('change', () => {
-        attachments = Array.from(fileInput.files);
-        showAttachments();
-      });
-      generateFile.addEventListener('click', () => {
-        // 业务数据可直接在 JS 中生成 File，无需提前上传或转 Base64。
-        const data = { orders: [{ id: 'DEMO-001', amount: 128 }, { id: 'DEMO-002', amount: 256 }] };
-        const file = new File([JSON.stringify(data, null, 2)], 'demo-orders.json', {
-          type: 'application/json',
-        });
-        attachments = [...attachments.filter(item => item.name !== file.name), file];
-        showAttachments();
-      });
-      clearFiles.addEventListener('click', () => {
-        attachments = [];
-        fileInput.value = '';
-        showAttachments();
-      });
       fill.addEventListener('click', async () => {
         const version = connectionVersion;
         try {
           assistant.open();
-          await assistant.setInput(prompt.value);
-          if (version === connectionVersion) status.textContent = '已填入输入框，等待用户发送。';
+          const { session_id } = await assistant.setInput(prompt.value);
+          if (version === connectionVersion) {
+            rememberSession(session_id);
+            status.textContent = '已填入输入框，等待用户发送。';
+          }
         } catch (error) { if (version === connectionVersion) status.textContent = error.message; }
       });
       for (const [button, action, success] of [
-        [addChatFiles, () => assistant.addFiles([...attachments]), '已追加附件到对话框，等待发送。'],
+        [addChatFiles, () => assistant.addFiles(chatAttachments.snapshot()), '已追加附件到对话框，等待发送。'],
         [newConversation, async () => {
+          const version = connectionVersion;
           const { session_id } = await assistant.newConversation();
-          assistant.registerFragmentHandler(session_id, () => [
-            {
-              label: '记录',
-              style: 'default',
-              callback(text) {
-                log(`记录片段（会话 ${session_id}）：${text}`);
-              },
-            },
-            {
-              label: '填入输入框',
-              style: 'primary',
-              callback: (text) => assistant.setInput(text),
-            },
-            {
-              label: '清空输入框',
-              style: 'danger',
-              callback: () => assistant.setInput(''),
-            },
-          ]);
-        }, '已新建会话并注册片段按钮。'],
-        [sendChat, () => assistant.send(), '已开始发送对话框内容，回复将显示在聊天窗口。'],
+          if (version !== connectionVersion) return;
+          rememberSession(session_id);
+          log(`已打开会话 ${session_id}`);
+        }, '已新建会话。'],
+        [sendChat, async () => {
+          const version = connectionVersion;
+          const { session_id } = await assistant.send();
+          if (version === connectionVersion) rememberSession(session_id);
+        }, '已开始发送对话框内容，回复将显示在聊天窗口。'],
       ]) {
         button.addEventListener('click', async () => {
           const version = connectionVersion;
@@ -425,15 +719,16 @@
       }
       sync.addEventListener('click', async () => {
         const version = connectionVersion;
-        const uploadFiles = attachments.slice();
+        const uploadFiles = syncAttachments.snapshot();
+        const text = syncPrompt.value;
         sync.disabled = true;
         const started = Date.now();
-        log(`发起后台同步请求：${prompt.value}`, 'sync-call');
+        log(`发起后台同步请求：${text}`, 'sync-call');
         if (uploadFiles.length) log(`本次上传附件：${uploadFiles.map(file => file.name).join('、')}`, 'sync-call');
         status.textContent = '正在后台同步调用，不会显示在对话框…';
         try {
           // 纯后台交互：不展开聊天窗口，消息和回复都不渲染到对话框。
-          const result = await assistant.chatSync(prompt.value, { files: uploadFiles });
+          const result = await assistant.chatSync(text, { files: uploadFiles });
           if (version !== connectionVersion) return;
           const { session_id, fragments, files } = result;
           for (const path of files) {
@@ -460,8 +755,11 @@
           connectionVersion++;
           assistant.destroy();
           loggedIn = false;
-          fileInput.disabled = generateFile.disabled = filePath.disabled = downloadPath.disabled = true;
+          filePath.disabled = downloadPath.disabled = true;
+          targetSession.disabled = switchConversation.disabled = true;
           resetFiles();
+          resetSessions();
+          resetFragmentDemo();
           open.disabled = true;
           fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = true;
           toggle.textContent = '重新登录演示';
