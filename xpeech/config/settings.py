@@ -1,20 +1,16 @@
 import json
 import re
-from collections.abc import Awaitable, Callable
 from pathlib import Path
-from threading import Lock
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import jq
-from async_lru import alru_cache
 from loguru import logger
 from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
-    PrivateAttr,
     SecretStr,
     field_validator,
     model_validator,
@@ -42,23 +38,6 @@ def _resolve_config_path(path: Path) -> Path:
 
 
 ConfigPath = Annotated[Path, AfterValidator(_resolve_config_path)]
-
-
-class _RoundRobinApiKeySelector:
-    """Select LLM API keys in round-robin order within this server process."""
-
-    def __init__(self) -> None:
-        self._index = 0
-        self._lock = Lock()
-
-    def next(self, api_keys: list[str]) -> str:
-        if len(api_keys) == 1:
-            return api_keys[0]
-
-        with self._lock:
-            api_key = api_keys[self._index % len(api_keys)]
-            self._index += 1
-            return api_key
 
 
 class PathConfig(BaseModel):
@@ -197,9 +176,7 @@ class LLMConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    _api_key_selector: _RoundRobinApiKeySelector = PrivateAttr(default_factory=_RoundRobinApiKeySelector)
-    _api_keys: list[str] = PrivateAttr(default_factory=list)
-    api_key_config: str = Field(validation_alias="api_key", exclude=True, repr=False)
+    api_key: str = Field(exclude=True, repr=False)
 
     api_base: str
     default_model: str
@@ -212,7 +189,7 @@ class LLMConfig(BaseModel):
     support_image: bool = False
     support_video: bool = False
     support_json_output: bool = False
-    parallel: int = Field(default=4)
+    parallel: int = Field(default=4, ge=1)
     max_history_days: int = Field(default=30, ge=1)
 
     @field_validator("parameters")
@@ -222,22 +199,16 @@ class LLMConfig(BaseModel):
             raise ValueError(f"max_tokens must be greater than the summary budget ({SUMMARY_TOKENS})")
         return value
 
-    @field_validator("api_key_config")
+    @field_validator("api_key")
     @classmethod
     def validate_api_key(cls, value: str) -> str:
-        api_keys = [key.strip() for key in value.split(",") if key.strip()]
-        if not api_keys:
+        value = value.strip()
+        if not value:
             raise ValueError("LLM api_key cannot be empty")
-        return value.strip()
+        if "," in value:
+            raise ValueError("LLM api_key must contain a single key; key rotation is no longer supported")
+        return value
 
-    def model_post_init(self, __context: object) -> None:
-        self._api_keys = [key.strip() for key in self.api_key_config.split(",") if key.strip()]
-
-    @property
-    def api_key(self) -> str:
-        """Return the next API key for an LLM request."""
-
-        return self._api_key_selector.next(self._api_keys)
 
 class WebExtraChannelConfig(BaseModel):
     """A custom channel available through the web login page."""
@@ -440,7 +411,6 @@ class ExtraUserInfoConfig(BaseModel):
     username_claim: str | None = Field(default=None, min_length=1)
     session_metadata_claims: dict[str, str] = Field(default_factory=dict)
     timeout: float = Field(default=10.0, gt=0, allow_inf_nan=False)
-    _query_extra_user_info: Callable[[str], Awaitable[tuple[object] | None]] | None = PrivateAttr(default=None)
 
     @field_validator("command_extra_user_info_template")
     @classmethod
@@ -476,33 +446,32 @@ class ExtraUserInfoConfig(BaseModel):
 
         if self.command_extra_user_info_template is None:
             raise ValueError("extra_user_info.command_extra_user_info_template is not configured")
-        if self._query_extra_user_info is None:
-            @alru_cache(maxsize=4096, ttl=3600)
-            async def _query_extra_user_info(user_id: str) -> tuple[object] | None:
-                """Cache a JSON payload (including null) or a nonzero exit as no result."""
-                try:
-                    result = await execute_command_template(
-                        self.command_extra_user_info_template,
-                        {"user_id": user_id},
-                        operation="extra_user_info.command_extra_user_info_template",
-                        timeout=self.timeout,
-                        required_variables=("user_id",),
-                    )
-                except CommandTemplateError as error:
-                    if error.reason != "failed":
-                        raise
-                    logger.warning("Extra user info lookup failed user_id={!r}: {}", user_id, error)
-                    return None
-                payload = json.loads(result)
-                logger.info(
-                    "Extra user info lookup succeeded user_id={!r} result={}",
-                    user_id,
-                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                )
-                return (payload,)
+        from ..utils.redis_state import cached_query, state_key
 
-            self._query_extra_user_info = _query_extra_user_info
-        result = await self._query_extra_user_info(user_id)
+        async def query() -> tuple[object] | None:
+            try:
+                result = await execute_command_template(
+                    self.command_extra_user_info_template,
+                    {"user_id": user_id},
+                    operation="extra_user_info.command_extra_user_info_template",
+                    timeout=self.timeout,
+                    required_variables=("user_id",),
+                )
+            except CommandTemplateError as error:
+                if error.reason != "failed":
+                    raise
+                logger.warning("Extra user info lookup failed user_id={!r}: {}", user_id, error)
+                return None
+            payload = json.loads(result)
+            logger.info(
+                "Extra user info lookup succeeded user_id={!r} result={}",
+                user_id,
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            )
+            return (payload,)
+
+        key = state_key("extra-user-info", [self.model_dump(mode="json"), user_id])
+        result = await cached_query(key, 3600, query, cache_none=False)
         if result is None:
             return None
         (payload,) = result

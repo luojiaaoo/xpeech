@@ -31,6 +31,7 @@ Xpeech 提供 `/chat` HTTP API 和 SSE 流式响应，支持文本、图片、�
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 - PostgreSQL
+- Redis 6.2+（模型全局并发控制和共享缓存）
 - Linux 下使用 Shell 和 stdio MCP 时，需要 bubblewrap 和 slirp4netns
 
 安装依赖并创建配置：
@@ -40,7 +41,7 @@ uv sync
 cp conf.toml.example conf.toml
 ```
 
-编辑 `conf.toml`，配置模型、数据库及 JWT 密钥。完整配置说明见 [AGENTS.md](AGENTS.md)。
+编辑 `conf.toml`，配置模型、PostgreSQL、Redis 及 JWT 密钥。完整配置说明见 [AGENTS.md](AGENTS.md)。
 
 启动 API 服务：
 
@@ -67,6 +68,16 @@ docker compose up -d --build
 启动前请填写 `conf.toml` 中的模型密钥、数据库连接、三组 JWT 密钥和所需的飞书配置，并按需修改 `.env` 中的初始化参数和端口。
 
 Compose 包含后端、Nginx、Web 客户端、飞书渠道、Lark 令牌管理器、PostgreSQL 和 Redis。副本数、端口、数据目录及升级注意事项见[部署文档](AGENTS.md#docker-compose-部署)。
+
+## Redis 共享状态
+
+静态配置继续保存在 `conf.toml`。backend、Web 和飞书应连接同一个 `[redis]` 数据库：
+
+- `llm.parallel` 限制全集群所有模型调用的总并发，例如 8 个 backend、`parallel = 4` 时总上限为 4。本地信号量与 Redis 租约配合，覆盖整个流消费过程；租约 60 秒，每 15 秒续租，进程崩溃后自动过期。Redis 不可用时拒绝新模型请求，续租失败则停止对应请求。
+- 用户组织、姓名和元数据共用原始 JSON 查询缓存，TTL 为 3600 秒，按用户 ID、命令及 claim 配置的哈希隔离。查询失败、超时和无效 JSON 不缓存。
+- 统计查询按数据库身份、方法及完整参数共享缓存，TTL 为 5 秒。两类缓存通过 Redis 租约合并相同查询；Redis 故障时记录告警并直接查询数据源。
+
+`llm.api_key` 只接受一个 Key，逗号分隔的多 Key 配置会报错，不再轮询。Nginx 按用户粘性路由继续保留，用户绑定实例的状态仍由所属实例管理。
 
 ## Web 客户端
 

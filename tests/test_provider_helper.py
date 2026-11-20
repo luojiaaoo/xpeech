@@ -73,7 +73,7 @@ async def test_stream_retries_rate_limit_raised_during_iteration(monkeypatch):
 
     monkeypatch.setattr(helper, "RateLimitError", FakeRateLimitError)
     monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(helper, "retry_sleep", fake_sleep)
     monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", asyncio.Semaphore(1))
 
     client = LiteLLMRetryClient(max_retries=1, jitter=0)

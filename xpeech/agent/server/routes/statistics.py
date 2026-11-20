@@ -2,13 +2,14 @@ import csv
 import io
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from functools import wraps
+from inspect import signature
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from async_lru import alru_cache
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from sqlalchemy import Integer, String, asc, cast, desc, distinct, extract, func
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import aliased
@@ -17,11 +18,29 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ....config.settings import settings
 from ....utils.database import get_async_database_engine
+from ....utils.redis_state import cached_query, state_key
 from ...record import ConversationRecord, record_yaml_path
 
 STATISTICS_CACHE_TTL_S = 5
 
 Granularity = Literal["hour", "day", "week", "month"]
+
+
+def statistics_cache(function):
+    parameters = signature(function)
+    adapter = TypeAdapter(parameters.return_annotation)
+
+    @wraps(function)
+    async def wrapped(self, *args, **kwargs):
+        bound = parameters.bind(self, *args, **kwargs)
+        bound.apply_defaults()
+        values = dict(bound.arguments)
+        values.pop("self")
+        key = state_key("statistics", [self._engine.url.render_as_string(hide_password=False), function.__name__, values])
+        result = await cached_query(key, STATISTICS_CACHE_TTL_S, lambda: function(self, *args, **kwargs))
+        return adapter.validate_python(result)
+
+    return wrapped
 
 
 class ConversationStatisticsRepository:
@@ -60,7 +79,7 @@ class ConversationStatisticsRepository:
             statement = statement.where(ConversationRecord.id > after_id)
         return statement
 
-    @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
+    @statistics_cache
     async def overview(
         self,
         *,
@@ -87,7 +106,7 @@ class ConversationStatisticsRepository:
             row = (await session.exec(statement)).one()
         return dict(row._mapping)
 
-    @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
+    @statistics_cache
     async def timeseries(
         self,
         *,
@@ -164,7 +183,7 @@ class ConversationStatisticsRepository:
             .label("sender_name")
         )
 
-    @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
+    @statistics_cache
     async def users(
         self,
         *,
@@ -213,7 +232,7 @@ class ConversationStatisticsRepository:
             total = (await session.exec(total_statement)).one()
         return [dict(row._mapping) for row in rows], int(total)
 
-    @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
+    @statistics_cache
     async def sessions(
         self,
         *,
@@ -259,7 +278,7 @@ class ConversationStatisticsRepository:
             total = (await session.exec(total_statement)).one()
         return [dict(row._mapping) for row in rows], int(total)
 
-    @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
+    @statistics_cache
     async def channels(self) -> list[str]:
         async with AsyncSession(self._engine) as session:
             return list((await session.exec(select(distinct(ConversationRecord.channel)))).all())
@@ -283,13 +302,13 @@ class ConversationStatisticsRepository:
             async for record in result.scalars():
                 yield record
 
-    @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
+    @statistics_cache
     async def latest_records(self, *, limit: int = 20) -> list[ConversationRecord]:
         statement = select(ConversationRecord).order_by(desc(ConversationRecord.id)).limit(limit)
         async with AsyncSession(self._engine) as session:
             return list((await session.exec(statement)).all())
 
-    @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
+    @statistics_cache
     async def latest_data_at(
         self,
         *,
@@ -302,7 +321,7 @@ class ConversationStatisticsRepository:
         async with AsyncSession(self._engine) as session:
             return (await session.exec(statement)).first()
 
-    @alru_cache(maxsize=256, ttl=STATISTICS_CACHE_TTL_S)
+    @statistics_cache
     async def records(
         self,
         *,

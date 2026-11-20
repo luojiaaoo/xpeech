@@ -124,7 +124,8 @@ custom_system_prompt = ""
 support_image = true
 support_video = true
 support_json_output = true
-parallel = 4
+parallel = 80
+
 # 历史文件保留天数，按文件修改时间计算；加载/列表时清理超期文件和非法文件名。
 max_history_days = 30
 

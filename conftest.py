@@ -40,3 +40,22 @@ def postgres_database(monkeypatch, tmp_path):
         with admin_engine.connect() as connection:
             connection.exec_driver_sql(f'DROP SCHEMA "{schema}" CASCADE')
         admin_engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def isolated_redis(monkeypatch):
+    """Exercise Redis commands/Lua without accessing application Redis data."""
+    import fakeredis
+    from fakeredis.aioredis import FakeRedis
+
+    from xpeech.provider import helper
+    from xpeech.utils import redis_state
+
+    server = fakeredis.FakeServer()
+
+    def client(*args, **kwargs):
+        return FakeRedis(server=server, decode_responses=True)
+
+    monkeypatch.setattr(redis_state, "redis_client", client)
+    monkeypatch.setattr(helper, "redis_client", client)
+    return server

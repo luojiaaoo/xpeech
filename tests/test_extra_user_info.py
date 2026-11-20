@@ -50,7 +50,7 @@ async def test_session_metadata_preserves_strings_and_isolates_users(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_nonzero_exit_is_logged_and_cached_without_using_stdout(monkeypatch):
+async def test_nonzero_exit_is_logged_without_caching_or_using_stdout(monkeypatch):
     execute = AsyncMock(wraps=settings_module.execute_command_template)
     log = MagicMock()
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
@@ -69,8 +69,8 @@ async def test_nonzero_exit_is_logged_and_cached_without_using_stdout(monkeypatc
     assert metadata == {}
     assert await config.resolve_sender_name("alice") is None
     assert await config.resolve_session_metadata("alice") == {}
-    execute.assert_awaited_once()
-    log.warning.assert_called_once()
+    assert execute.await_count == 4
+    assert log.warning.call_count == 4
     message, *args = log.warning.call_args.args
     assert message.format(*args) == (
         "Extra user info lookup failed user_id='alice': "
@@ -386,4 +386,7 @@ def test_oauth_login_creates_local_account_by_default(
             login = client.post("/api/auth/login", json={"user_id": "alice", "password": "password"})
             assert login.json()["username"] == expected
             assert dao.create_session.await_count == 2
-    execute.assert_awaited_once()
+    if lookup_fails:
+        assert execute.await_count > 1
+    else:
+        execute.assert_awaited_once()

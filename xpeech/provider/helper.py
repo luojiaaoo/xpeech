@@ -1,6 +1,7 @@
 import asyncio
 import random
 import time
+from asyncio import sleep as retry_sleep
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -10,6 +11,7 @@ from loguru import logger
 from openai import APIStatusError
 
 from ..config.settings import settings
+from ..utils.redis_state import redis_client, redis_permit
 
 LLM_PARALLEL_SEMAPHORE = asyncio.Semaphore(settings.llm.parallel)
 STREAM_CLOSE_TIMEOUT = 5.0
@@ -79,9 +81,13 @@ class LiteLLMRetryClient:
                 await semaphore.acquire()
                 response = None
                 try:
-                    response = await acompletion(**kwargs)
-                    async for chunk in response:
-                        yield chunk
+                    async with (
+                        redis_client() as redis,
+                        redis_permit(redis, "xpeech:llm:permits:v1", settings.llm.parallel),
+                    ):
+                        response = await acompletion(**kwargs)
+                        async for chunk in response:
+                            yield chunk
                 finally:
                     semaphore.release()
                     if response is not None:
@@ -105,7 +111,7 @@ class LiteLLMRetryClient:
                     attempt + 1,
                     self.max_retries,
                 )
-                await asyncio.sleep(delay)
+                await retry_sleep(delay)
             except APIStatusError as exc:
                 raise RuntimeError(_format_error(exc)) from exc
             except Exception:

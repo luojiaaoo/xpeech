@@ -87,6 +87,8 @@ services:
     deploy:
       replicas: ${BACKEND_REPLICAS:-8}
     depends_on:
+      redis:
+        condition: service_healthy
       lark-token-manager:
         condition: service_healthy
     expose:
@@ -151,6 +153,8 @@ services:
     deploy:
       replicas: 1
     depends_on:
+      redis:
+        condition: service_healthy
       postgres:
         condition: service_healthy
     expose:

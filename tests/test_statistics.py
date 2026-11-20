@@ -108,27 +108,12 @@ async def _seed_statistics_database() -> AsyncEngine:
     return engine
 
 
-def _clear_statistics_caches() -> None:
-    for method_name in (
-        "overview",
-        "timeseries",
-        "users",
-        "sessions",
-        "latest_records",
-        "latest_data_at",
-        "records",
-        "channels",
-    ):
-        getattr(ConversationStatisticsRepository, method_name).cache_clear()
-
-
 def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     engine = asyncio.run(_seed_statistics_database())
     repository = ConversationStatisticsRepository(engine)
-    _clear_statistics_caches()
     app.dependency_overrides[get_statistics_repository] = lambda: repository
     token = create_internal_access_token()
     headers = {"Authorization": f"Bearer {token}"}
@@ -175,18 +160,14 @@ def test_statistics_api_exposes_dashboard_aggregates_and_complete_latest_records
                 ],
                 headers=headers,
             )
-        cache_info = ConversationStatisticsRepository.overview.cache_info()
     finally:
         app.dependency_overrides.pop(get_statistics_repository, None)
-        _clear_statistics_caches()
         asyncio.run(engine.dispose())
 
     assert unauthorized.status_code == 401
     assert overview.status_code == 200
     assert cached_overview.json() == overview.json()
     assert STATISTICS_CACHE_TTL_S == 5
-    assert cache_info.hits == 1
-    assert cache_info.misses == 1
     assert overview.json() == {
         "question_count": 3,
         "active_user_count": 2,
@@ -273,7 +254,6 @@ def test_statistics_api_rejects_invalid_filters(tmp_path: Path):
             )
     finally:
         app.dependency_overrides.pop(get_statistics_repository, None)
-        _clear_statistics_caches()
         asyncio.run(engine.dispose())
 
     assert invalid_period.status_code == 422
@@ -309,7 +289,6 @@ def test_statistics_deduplicates_users_across_names_and_channels(tmp_path: Path)
             records = client.get("/statistics/records", params={"user_id": "session-alice"}, headers=headers).json()
     finally:
         app.dependency_overrides.pop(get_statistics_repository, None)
-        _clear_statistics_caches()
         asyncio.run(engine.dispose())
 
     assert overview["active_user_count"] == 2
@@ -365,7 +344,6 @@ def test_channel_queries_and_export_include_all_matching_records(tmp_path: Path)
             empty_export = client.get("/statistics/records/export", params={"channel": "nonexistent"}, headers=headers)
     finally:
         app.dependency_overrides.pop(get_statistics_repository, None)
-        _clear_statistics_caches()
         asyncio.run(engine.dispose())
 
     assert channels.status_code == 200
@@ -414,7 +392,6 @@ def test_statistics_downloads_the_yaml_for_one_record(tmp_path: Path):
             linked_file = client.get(path, headers=headers)
     finally:
         app.dependency_overrides.pop(get_statistics_repository, None)
-        _clear_statistics_caches()
         asyncio.run(engine.dispose())
 
     assert downloaded.status_code == 200
