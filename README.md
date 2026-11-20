@@ -649,8 +649,9 @@ max_overflow = 5
 `database.py` 在每个进程中各创建一个同步、异步 engine，通过获取函数复用；
 仓库和建表函数显式接收 engine。连接池上限按每个进程、每个 engine 计算，
 多副本部署时需要相应设置 PostgreSQL 的连接数。
-Compose 自带 PostgreSQL 服务，数据持久化到项目的 `data/postgres` 目录，使用 `.env` 中的
-`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD` 初始化数据库。
+Compose 自带 PostgreSQL 服务，数据持久化到项目的 `data/postgres` 目录，数据库、用户和
+密码默认均为 `xpeech`，可在 `.env` 中通过 `POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`
+覆盖，仅用于初始化数据库。
 PostgreSQL 默认通过宿主机的 `7890` 端口对外提供连接，可在 `.env` 中设置
 `POSTGRES_PORT` 调整对外端口；Compose 内部仍使用 `postgres:5432`。
 Compose 将 PostgreSQL 最大连接数默认设为 `256`，可通过 `.env` 中的
@@ -1181,27 +1182,55 @@ https://assistant.example.com/?oauth2provider=飞书
 
 ### 登录提示词注入
 
-`web_client.inject_prompt` 可以根据入口地址中的随机 `state`，调用任意命令取得下一条用户
-消息的前缀，因此不依赖特定的 Redis、数据库或 HTTP 服务。账号密码、二维码和 OAuth2 链接
-三种登录方式均支持：
+Web 客户端默认根据入口随机 `state` 从 Redis 读取内容并填入聊天输入框。
+账号密码、二维码和 OAuth2 链接三种登录方式均支持。Compose 已包含 `redis:7.4-alpine`
+服务及带密码认证的健康检查；Web 服务等待 Redis 就绪后启动。Redis 关闭 RDB 和 AOF
+持久化，重启后提示词会清空。Redis 仅通过容器内网访问，默认监听并 `expose` 端口
+`6379`（Redis 默认端口），不映射宿主机端口。Redis 服务的启动参数在 `.env` 中配置，参见 `.env.example`：
+
+```sh
+cp .env.example .env
+```
+
+在 `.env` 中设置 `REDIS_USERNAME` 和 `REDIS_PASSWORD`（默认值均为 `xpeech`），
+仅用于启动 Redis 服务。其使用默认端口 6379，仅在容器内网暴露，无需配置。
+Web 客户端仅从 `conf.toml` 读取连接配置和账号密码，
+Compose 将该文件挂载到 `/app/conf.toml`，不向 Web 客户端传递 Redis 环境变量。
+两处的账号密码须保持一致。使用外部 Redis 时修改以下连接参数；内置 Redis
+不启用 TLS，`ssl = true` 仅用于连接外部 TLS Redis：
 
 ```toml
-[web_client.inject_prompt]
-enabled = true
-command_template = "curl --fail --silent 'https://prompt.example.com/get?state=${state}'"
+[redis]
+host = "redis"
+port = 6379
+db = 0
+username = "xpeech"
+password = "replace-with-a-database-password"
+ssl = false
+timeout = 10.0
 ```
 
-`command_template` 必须包含 `${state}` 或 `$state`，占位符可以出现在任意参数中，也可以重复
-使用。服务端会将其替换为入口随机码，但不会启动 shell，而是把替换后的内容作为可执行文件
-及参数运行。例如 `state = "fR7p2mN9kL4qT8vX"` 时，上述配置实际执行：
+调用方通过无需认证的 `POST /api/auth/inject-prompt` 传入内容，服务端在写入时自动生成随机 `state`：
 
-```text
-curl --fail --silent https://prompt.example.com/get?state=fR7p2mN9kL4qT8vX
+```sh
+curl -X POST 'http://localhost:7939/api/auth/inject-prompt' \
+  -H 'Content-Type: application/json' \
+  -d '{"user_prefix":"请根据客户资料回答问题"}'
 ```
 
-命令须在 10 秒内成功退出，并通过 stdout 输出 UTF-8 提示词；输出内容不限制长度。服务端不
-解释输出格式，只去除首尾空白后将文本返回给 Web 客户端。`state` 长度为 16～128 个字符，
-并须匹配 `^[A-Za-z0-9._~-]+$`；调用方应生成不可预测且只可消费一次的随机值。
+成功返回 HTTP 201：
+
+```json
+{"state":"fR7p2mN9kL4qT8vXmN2cR9sW6jH0aB5dZ1oU3eG8yK4","expires_in":60,"login_url":"/?state=fR7p2mN9kL4qT8vXmN2cR9sW6jH0aB5dZ1oU3eG8yK4"}
+```
+
+返回的 `login_url` 为相对 URL，基于 Web 客户端地址打开，登录后内容会直接填入输入框，
+用户可编辑后发送。调用方只需提供非空文本 `user_prefix`，有效期固定为 60 秒（`expires_in`）。服务端使用 32 字节安全随机数生成 `state`，遇到已有 key 时重新
+生成，不覆盖原内容。服务启动后即可通过 API 写入和获取内容，无需额外开启配置。
+
+服务端使用 Redis `GETDEL` 原子读取并删除 key（需要 Redis 6.2+），并去除文本首尾空白。
+同一 `state` 只可消费一次；不存在、已过期、已消费或空白值返回 404，读取失败返回 502，
+超时返回 504。`state` 长度为 16～128 个字符，并须匹配 `^[A-Za-z0-9._~-]+$`。
 
 使用账号密码登录或在登录页手动选择登录方式时，可以直接访问：
 
@@ -1216,22 +1245,14 @@ https://assistant.example.com/?oauth2provider=飞书&state=fR7p2mN9kL4qT8vX
 ```
 
 账号密码登录成功后，Web 客户端会直接使用当前地址中的 `state` 请求提示词。回调定位登录记录后，链接登录只把原始入口 `state`
-带回 Web 首页；二维码登录则继续使用原页面地址中的原始 `state`。命令占位符注入的也始终是
-原始入口 `state`。
+带回 Web 首页；二维码登录则继续使用原页面地址中的原始 `state`。OAuth2 每次登录使用独立
+生成的随机 `state`，不再拼接入口随机码；入口 `state` 原样保存在登录记录中并用于 Redis 查询。
 
-三种方式都会在登录成功后通过受认证的 Web 接口执行命令，并将命令输出保存在当前标签页的
-`sessionStorage` 中，同时从地址栏移除 `state`。发送前，输入框上方会显示提示词的前 100
-个字符，并可展开查看全文。用户下一次发送消息时，实际请求内容会按以下格式拼接；消息气泡
-仍只显示用户输入的原始消息。发送后该前缀立即从 `sessionStorage` 清除，提示栏随之消失，
-且仅生效一次。
-
-```text
-<命令输出的提示词>
-
-===
-
-<用户消息>
-```
+三种方式都会在登录成功后通过受认证的 `GET /api/auth/inject-prompt?state=...` 读取内容，
+并从地址栏移除 `state`。内容经当前标签页的 `sessionStorage` 暂存，填入当前活动会话的
+输入框后立即清除暂存；若输入框已有草稿，注入内容置于草稿前并以空行分隔。用户可以编辑、
+删除或直接发送，消息气泡和实际发送内容一致。页面不显示额外卡片，不自动发送，也不在
+发送时隐藏拼接任何前缀。每个 Redis key 只可读取一次。
 
 ### OAuth2 配置
 

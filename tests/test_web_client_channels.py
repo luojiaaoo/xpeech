@@ -170,7 +170,6 @@ def channel_client(postgres_database, configured_channels, monkeypatch, tmp_path
     app = web.create_app(web.WebConfig(
         backend_url="http://backend.test", static_dir=static, system_name="默认助手",
         session_history_path=tmp_path / "history",
-        inject_prompt=web.InjectPromptWebConfig(enabled=True, command_template="printf ${state}"),
         oauth2=(web.OAuth2WebConfig(
             provider_name="test", display_type=oauth_display_type, client_id="client", client_secret="secret",
             authorization_url="https://oauth.test/authorize", token_url="https://oauth.test/token",

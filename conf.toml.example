@@ -23,6 +23,15 @@ connect_timeout = 10
 pool_size = 5
 max_overflow = 5
 
+[redis]
+host = "redis"
+port = 6379 # Redis 默认端口；仅容器内网访问。
+db = 0
+username = "xpeech"
+password = "replace-with-a-database-password"
+ssl = false
+timeout = 10.0
+
 [logging]
 retention_days = 7
 max_file_size_mb = 10
@@ -80,11 +89,6 @@ session_history_path = "data/web_client/session_history"
 max_history_days = 30
 cookie_name = "xpeech_session"
 fallback_username = "Unknown" # 所有 OAuth2 服务商共用；未配置此项且无法提取用户名时，登录失败。
-
-[web_client.inject_prompt]
-enabled = false
-# ${state} 或 $state 会替换为入口随机码；命令的 stdout 将作为下一条用户消息的前缀。
-command_template = "curl --fail --silent 'http://prompt-service.example/prompt?state=${state}'"
 
 # Repeat this array table to configure more OAuth2 providers. provider_name must be unique.
 [[web_client.oauth2]]

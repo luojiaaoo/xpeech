@@ -61,7 +61,7 @@ function StandaloneApp() {
   }, []);
 
   useEffect(() => {
-    if (!user || !appConfig?.inject_prompt.enabled) return;
+    if (!user) return;
 
     const url = new URL(window.location.href);
     const state = url.searchParams.get('state');
@@ -85,7 +85,7 @@ function StandaloneApp() {
     return () => {
       cancelled = true;
     };
-  }, [appConfig?.inject_prompt.enabled, user]);
+  }, [user]);
 
   if (configError) return <Alert type="error" showIcon message="无法打开系统" description={configError} />;
   if (user === undefined || appConfig === undefined) return <PageFallback />;
@@ -98,7 +98,6 @@ function StandaloneApp() {
           systemName={systemName}
           channel={channel}
           oauth2={appConfig.oauth2}
-          injectPromptEnabled={appConfig.inject_prompt.enabled}
           onLogin={setUser}
         />
       </Suspense>

@@ -24,6 +24,28 @@ x-xpeech-service: &xpeech-service
   restart: unless-stopped
 
 services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    environment: *common-environment
+    command:
+      - sh
+      - -c
+      - >-
+        exec redis-server
+        --requirepass "${REDIS_PASSWORD:-xpeech}"
+        --user "${REDIS_USERNAME:-xpeech}" on ">${REDIS_PASSWORD:-xpeech}" "~*" "&*" "+@all"
+        --save ""
+        --appendonly no
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"${REDIS_PASSWORD:-xpeech}\" redis-cli --user \"${REDIS_USERNAME:-xpeech}\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   postgres:
     image: postgres:17-alpine
     command: ["postgres", "-c", "max_connections=256"]
@@ -144,6 +166,8 @@ services:
     <<: *xpeech-service
     command: ["web_client", "--host", "0.0.0.0", "--port", "${WEB_CLIENT_PORT:-7939}", "--backend-url", "http://nginx:${BACKEND_PORT:-7878}"]
     depends_on:
+      redis:
+        condition: service_healthy
       nginx:
         condition: service_healthy
     ports:

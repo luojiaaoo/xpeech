@@ -100,6 +100,18 @@ class DatabaseConfig(BaseModel):
     max_overflow: int = Field(default=5, ge=0)
 
 
+class RedisConfig(BaseModel):
+    """Redis connection and credentials loaded from conf.toml."""
+
+    host: str = Field(default="redis", min_length=1)
+    port: int = Field(default=6379, ge=1, le=65535)
+    db: int = Field(default=0, ge=0)
+    username: str | None = "xpeech"
+    password: SecretStr = SecretStr("")
+    ssl: bool = False
+    timeout: float = Field(default=10.0, gt=0, allow_inf_nan=False)
+
+
 class BrowserPreviewConfig(BaseModel):
     """Browser preview URL and file storage settings."""
 
@@ -379,28 +391,6 @@ class OAuth2Config(BaseModel):
         return self
 
 
-class InjectPromptConfig(BaseModel):
-    """Resolve a one-shot user-message prefix by invoking a configured command."""
-
-    enabled: bool = False
-    command_template: str = ""
-
-    @model_validator(mode="after")
-    def validate_enabled_settings(self) -> "InjectPromptConfig":
-        self.command_template = self.command_template.strip()
-        if self.enabled and not self.command_template:
-            raise ValueError("enabled inject_prompt requires command_template")
-        if (
-            self.enabled
-            and "${state}" not in self.command_template
-            and "$state" not in self.command_template
-        ):
-            raise ValueError(
-                "inject_prompt.command_template requires ${state} or $state"
-            )
-        return self
-
-
 class WebClientConfig(BaseModel):
     """Web client storage and login settings."""
 
@@ -415,7 +405,6 @@ class WebClientConfig(BaseModel):
         pattern=r"^[A-Za-z0-9_-]+$",
     )
     oauth2: list[OAuth2Config] = Field(default_factory=list)
-    inject_prompt: InjectPromptConfig = Field(default_factory=InjectPromptConfig)
     fallback_username: str | None = None
 
     @field_validator("fallback_username")
@@ -561,6 +550,7 @@ class Settings(BaseSettings):
 
     path: PathConfig
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    redis: RedisConfig = Field(default_factory=RedisConfig)
     tool: ToolConfig = ToolConfig()
     llm: LLMConfig
     feishu: FeishuConfig

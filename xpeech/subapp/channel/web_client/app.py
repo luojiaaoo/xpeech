@@ -17,13 +17,13 @@ from ....utils.database import get_async_database_engine
 from .dao import User, WebClientDAO
 from .history import JsonlEventHistoryRepository
 from .models import (
-    InjectPromptWebConfig,
     OAuth2WebConfig,
     WebConfig,
 )
 from .routes.admin import create_admin_router
 from .routes.auth import create_auth_router
 from .routes.embed import create_embed_router
+from .routes.inject_prompt import create_inject_prompt_router
 from .routes.proxy import create_proxy_router
 from .session import authorize_web_channel, require_embedded_jwt, web_channel, web_channel_config
 
@@ -149,7 +149,6 @@ def create_app(config: WebConfig) -> FastAPI:
             "system_name": custom.system_name if custom else config.system_name,
             "channel": channel,
             "recommended_questions": custom.recommended_questions if custom else None,
-            "inject_prompt": {"enabled": config.inject_prompt.enabled},
             "oauth2": [
                 {
                     "enabled": True,
@@ -196,6 +195,7 @@ def create_app(config: WebConfig) -> FastAPI:
             _password_matches,
         )
     )
+    app.include_router(create_inject_prompt_router(config.redis, current_user))
     app.include_router(create_admin_router(dao, admin_user, _password_hash))
     app.include_router(
         create_proxy_router(
@@ -282,10 +282,7 @@ def run(
         cookie_name=settings.web_client.cookie_name,
         fallback_username=settings.web_client.fallback_username,
         oauth2=oauth2_config,
-        inject_prompt=InjectPromptWebConfig(
-            enabled=settings.web_client.inject_prompt.enabled,
-            command_template=settings.web_client.inject_prompt.command_template,
-        ),
+        redis=settings.redis,
     )
     uvicorn.run(create_app(config), host=host, port=port)
 

@@ -13,7 +13,7 @@ async function appHarness(search: string, currentUser: any = null, configError?:
   let effects: Function[] = [];
   let lazyIndex = 0;
   const channel = initialURL.searchParams.get('channel') ?? 'web_client';
-  const config = { system_name: channel === 'crm' ? '客户服务助手' : '默认助手', channel, recommended_questions: channel === 'crm' ? ['查询客户'] : null, oauth2: [], inject_prompt: { enabled: false } };
+  const config = { system_name: channel === 'crm' ? '客户服务助手' : '默认助手', channel, recommended_questions: channel === 'crm' ? ['查询客户'] : null, oauth2: [] };
   const user = { id: 1, user_id: 'admin', username: 'Admin', channel: 'crm', is_admin: false };
   const document = { title: '' };
   const context = vm.createContext({
@@ -59,9 +59,13 @@ async function appHarness(search: string, currentUser: any = null, configError?:
     ].map(name => [name, name])),
     './api': {
       appApi: { async config(channel?: string) { calls.push(['config', channel]); if (configError) throw configError; return config; } },
-      authApi: { async me() { return currentUser; }, async logout() { calls.push(['logout']); } },
+      authApi: {
+        async me() { return currentUser; },
+        async logout() { calls.push(['logout']); },
+        async injectPrompt(state: string) { calls.push(['injectPrompt', state]); return { user_prefix: '注入内容' }; },
+      },
     },
-    './pendingUserPrefix': { savePendingUserPrefix() {} },
+    './pendingUserPrefix': { savePendingUserPrefix(text: string) { calls.push(['draft', text]); } },
     './ChatWorkspace': { default: 'ChatWorkspace' },
     './ChatLoading': { EmbeddedLoading: 'EmbeddedLoading' },
   };
@@ -99,7 +103,7 @@ function find(tree: any, type: string): any {
   return Object.values(tree.props ?? {}).flat().map(child => find(child, type)).find(Boolean);
 }
 
-test('custom login updates the title, passes channel and questions, and preserves the channel URL through login and logout', async () => {
+test('custom login preserves the channel and fills the state draft without a feature switch', async () => {
   const app = await appHarness('?channel=crm&state=preserved#chat');
   app.render();
   await app.flush();
@@ -113,7 +117,9 @@ test('custom login updates the title, passes channel and questions, and preserve
   tree = app.render();
   await app.flush();
   assert.equal(new URL(app.location.href).searchParams.get('channel'), 'crm');
-  assert.equal(new URL(app.location.href).searchParams.get('state'), 'preserved');
+  assert.equal(new URL(app.location.href).searchParams.has('state'), false);
+  assert.ok(app.calls.some(call => call[0] === 'injectPrompt' && call[1] === 'preserved'));
+  assert.ok(app.calls.some(call => call[0] === 'draft' && call[1] === '注入内容'));
   assert.equal(new URL(app.location.href).hash, '#chat');
   const workspace = find(tree, 'ChatWorkspace');
   assert.equal(workspace.props.systemName, '客户服务助手');

@@ -1,5 +1,6 @@
 from importlib import import_module
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,21 +8,20 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.usefixtures("postgres_database")
 
 web_client_app = import_module("xpeech.subapp.channel.web_client.app")
-InjectPromptWebConfig = web_client_app.InjectPromptWebConfig
 WebConfig = web_client_app.WebConfig
 create_app = web_client_app.create_app
 
 
-def test_password_login_can_resolve_injected_prompt(tmp_path: Path):
+def test_password_login_can_resolve_injected_prompt(tmp_path: Path, monkeypatch):
+    redis = AsyncMock()
+    redis.__aenter__.return_value = redis
+    redis.getdel.return_value = "account-prefix-state-token-1234567890"
+    monkeypatch.setattr("xpeech.subapp.channel.web_client.routes.inject_prompt.Redis", MagicMock(return_value=redis))
     app = create_app(
         WebConfig(
             backend_url="http://backend.test",
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
-            inject_prompt=InjectPromptWebConfig(
-                enabled=True,
-                command_template="printf account-prefix-${state}",
-            ),
         )
     )
     state = "state-token-1234567890"

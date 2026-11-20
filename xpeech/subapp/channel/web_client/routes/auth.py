@@ -11,21 +11,17 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from yarl import URL
 
 from .....config.settings import settings
-from .....utils.command_template import CommandTemplateError, execute_command_template
+from .....utils.command_template import CommandTemplateError
 from ...helper import extract_string_claim
 from ..dao import User, WebClientDAO
 from ..models import (
-    INJECT_PROMPT_STATE_MAX_LENGTH,
-    INJECT_PROMPT_STATE_MIN_LENGTH,
-    INJECT_PROMPT_STATE_PATTERN,
     USER_ID_PATTERN,
-    InjectPromptWebConfig,
     LoginBody,
     OAuth2CreateBody,
     OAuth2PollBody,
@@ -57,52 +53,6 @@ class OAuth2LoginAttempt:
     inject_prompt_state: str | None = None
     user_id: str | None = None
     error: str | None = None
-
-
-async def resolve_injected_prompt(
-    config: InjectPromptWebConfig,
-    state: str,
-) -> str:
-    try:
-        prompt = await execute_command_template(
-            config.command_template,
-            {"state": state},
-            operation="inject_prompt.command_template",
-            timeout=10,
-            required_variables=("state",),
-        )
-    except CommandTemplateError as error:
-        if error.reason == "invalid":
-            detail = "inject_prompt.command_template 格式无效"
-            status_code = status.HTTP_502_BAD_GATEWAY
-        elif error.reason == "empty":
-            detail = "inject_prompt.command_template 不能为空"
-            status_code = status.HTTP_502_BAD_GATEWAY
-        elif error.reason == "missing_variable":
-            detail = "inject_prompt.command_template 缺少 ${state} 或 $state"
-            status_code = status.HTTP_502_BAD_GATEWAY
-        elif error.reason == "start":
-            detail = "提示词命令无法启动"
-            status_code = status.HTTP_502_BAD_GATEWAY
-        elif error.reason == "timeout":
-            detail = "提示词命令执行超时"
-            status_code = status.HTTP_504_GATEWAY_TIMEOUT
-        elif error.reason == "failed":
-            detail = "提示词命令执行失败"
-            status_code = status.HTTP_502_BAD_GATEWAY
-        elif error.reason == "non_utf8":
-            detail = "提示词命令必须输出 UTF-8 文本"
-            status_code = status.HTTP_502_BAD_GATEWAY
-        else:
-            raise
-        logger.warning("{} (reason={}, status_code={})", error, error.reason, status_code)
-        raise HTTPException(status_code, detail) from error
-    if not prompt:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            "未找到对应的提示词",
-        )
-    return prompt
 
 
 def _oauth2_result_page(success: bool, detail: str) -> HTMLResponse:
@@ -216,31 +166,6 @@ def create_auth_router(
         await create_login_session(user, response, channel)
         return public_user(user)
 
-    @router.get("/inject-prompt")
-    async def inject_prompt(
-        state_value: Annotated[
-            str,
-            Query(
-                alias="state",
-                min_length=INJECT_PROMPT_STATE_MIN_LENGTH,
-                max_length=INJECT_PROMPT_STATE_MAX_LENGTH,
-                pattern=INJECT_PROMPT_STATE_PATTERN,
-            ),
-        ],
-        response: Response,
-        user: CurrentUser,
-    ):
-        del user
-        if not config.inject_prompt.enabled:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "提示词注入未启用")
-        response.headers["Cache-Control"] = "no-store"
-        return {
-            "user_prefix": await resolve_injected_prompt(
-                config.inject_prompt,
-                state_value,
-            )
-        }
-
     @router.post("/oauth2/qr")
     async def create_oauth2_qr(
         request: Request,
@@ -257,15 +182,8 @@ def create_auth_router(
             )
             discard_oauth2_attempt(oldest_login_id)
         inject_prompt_state = body.state
-        if inject_prompt_state is not None and not config.inject_prompt.enabled:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "提示词注入未启用")
-        # 入口 state 只用于查询提示词；随机 token 后缀保证每次 OAuth2 授权都有唯一的回调 state。
-        state_value = (
-            f"{inject_prompt_state}_-_{secrets.token_urlsafe(32)}"
-            if inject_prompt_state is not None
-            else secrets.token_urlsafe(32)
-        )
 
+        state_value = secrets.token_urlsafe(32)
         login_id = secrets.token_urlsafe(24)
         poll_token = secrets.token_urlsafe(32)
         code_verifier = secrets.token_urlsafe(64) if oauth2.use_pkce else None

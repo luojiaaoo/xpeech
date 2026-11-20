@@ -2,7 +2,7 @@ import json
 import re
 from importlib import import_module
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -14,12 +14,13 @@ web_client_app = import_module("xpeech.subapp.channel.web_client.app")
 oauth_routes = import_module("xpeech.subapp.channel.web_client.routes.auth")
 settings_module = import_module("xpeech.config.settings")
 OAuth2WebConfig = web_client_app.OAuth2WebConfig
-InjectPromptWebConfig = web_client_app.InjectPromptWebConfig
+RedisConfig = settings_module.RedisConfig
 WebConfig = web_client_app.WebConfig
 OAuth2SettingsConfig = settings_module.OAuth2Config
 WebClientSettingsConfig = settings_module.WebClientConfig
 create_app = web_client_app.create_app
-resolve_injected_prompt = oauth_routes.resolve_injected_prompt
+prompt_routes = import_module("xpeech.subapp.channel.web_client.routes.inject_prompt")
+resolve_injected_prompt = prompt_routes.resolve_injected_prompt
 
 
 class FakeOAuthResponse:
@@ -70,17 +71,15 @@ def test_web_client_oauth2_settings_are_a_list_with_unique_provider_names(
 
 
 @pytest.mark.asyncio
-async def test_injected_prompt_command_replaces_state_without_length_limit():
+async def test_injected_prompt_redis_has_no_length_limit(monkeypatch):
     state = "state-token-1234567890"
     prompt_prefix = "前缀" * 300
 
-    prompt = await resolve_injected_prompt(
-        InjectPromptWebConfig(
-            enabled=True,
-            command_template=f"printf {prompt_prefix}${{state}}",
-        ),
-        state,
-    )
+    redis = AsyncMock()
+    redis.__aenter__.return_value = redis
+    redis.getdel.return_value = f"{prompt_prefix}{state}"
+    monkeypatch.setattr(prompt_routes, "Redis", MagicMock(return_value=redis))
+    prompt = await resolve_injected_prompt(RedisConfig(), state)
 
     assert prompt == f"{prompt_prefix}{state}"
     assert len(prompt) > 512
@@ -129,10 +128,6 @@ def test_oauth2_login_maps_to_an_existing_web_user(
             static_dir=tmp_path / "missing-static",
             system_name="Test Assistant",
             cookie_name="xpeech_session_oauth",
-            inject_prompt=InjectPromptWebConfig(
-                enabled=True,
-                command_template="printf unused-$state",
-            ),
             oauth2=(
                 OAuth2WebConfig(
                     provider_name="XX",
@@ -163,7 +158,7 @@ def test_oauth2_login_maps_to_an_existing_web_user(
                 "display_type": display_type,
             }
         ]
-        assert public_config["inject_prompt"] == {"enabled": True}
+        assert "redis" not in public_config
 
         assert client.post(
             "/api/auth/login",
@@ -181,6 +176,10 @@ def test_oauth2_login_maps_to_an_existing_web_user(
         client.post("/api/auth/logout")
 
         entry_state = "state.token_~1234-567890"
+        prompt_client = AsyncMock()
+        prompt_client.__aenter__.return_value = prompt_client
+        prompt_client.getdel.return_value = f"unused-{entry_state}"
+        monkeypatch.setattr(prompt_routes, "Redis", MagicMock(return_value=prompt_client))
         qr_response = client.post(
             "/api/auth/oauth2/qr",
             json={"provider_name": "XX", "state": entry_state},
@@ -202,10 +201,8 @@ def test_oauth2_login_maps_to_an_existing_web_user(
         expected_redirect_uri = "https://assistant.example.test/api/auth/oauth2/callback"
         assert authorization_query["redirect_uri"] == [expected_redirect_uri]
         oauth2_state = authorization_query["state"][0]
-        state_prefix = f"{entry_state}_-_"
-        assert oauth2_state.startswith(state_prefix)
-        state_token = oauth2_state[len(state_prefix) :]
-        assert re.fullmatch(r"[A-Za-z0-9_-]{43}", state_token)
+        assert re.fullmatch(r"[A-Za-z0-9_-]{43}", oauth2_state)
+        assert entry_state not in oauth2_state
         assert authorization_query["scope"] == ["openid profile"]
         assert authorization_query["prompt"] == ["login"]
         assert authorization_query["code_challenge_method"] == ["S256"]

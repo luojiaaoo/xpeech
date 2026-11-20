@@ -10,13 +10,16 @@ const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 async function chatPage(
   stopChat: (sessionId: string) => Promise<{ stopped: boolean }>,
   transport?: { WebSocket: any; fetch: Function },
+  initialPrompt: string | null = null,
 ) {
   const slots: any[] = [];
   const effects: Function[] = [];
   let cursor = 0;
   const errors: string[] = [];
   const running: boolean[] = [];
-  const streams: { signal: AbortSignal; receive: Function; finish: () => void }[] = [];
+  const streams: { text: string; signal: AbortSignal; receive: Function; finish: () => void }[] = [];
+  let pendingPrompt = initialPrompt;
+  let promptListener: ((value: string | null) => void) | undefined;
   const context = vm.createContext({
     AbortController, Headers, FormData, File, DOMException, btoa, setTimeout, clearTimeout,
     window: { location: { protocol: 'https:', host: 'assistant.test' } },
@@ -71,7 +74,7 @@ async function chatPage(
       streamChat(_text: string, _files: File[], receive: Function, options: { signal: AbortSignal }) {
         if (realStreamChat) return realStreamChat(_text, _files, receive, options);
         return new Promise<void>((resolve, reject) => {
-          streams.push({ signal: options.signal, receive, finish: resolve });
+          streams.push({ text: _text, signal: options.signal, receive, finish: resolve });
           options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
         });
       },
@@ -84,7 +87,19 @@ async function chatPage(
     './ProcessPanel': { default: 'ProcessPanel' },
     './FileCard': { default: 'FileCard' },
     './ChatCommandInput': { default: Sender },
-    './pendingUserPrefix': { readPendingUserPrefix: () => null, subscribePendingUserPrefix() {}, takePendingUserPrefix: () => null },
+    './pendingUserPrefix': {
+      subscribePendingUserPrefix(listener: (value: string | null) => void) {
+        promptListener = listener;
+        listener(pendingPrompt);
+        return () => { promptListener = undefined; };
+      },
+      takePendingUserPrefix() {
+        const prompt = pendingPrompt;
+        pendingPrompt = null;
+        promptListener?.(null);
+        return prompt;
+      },
+    },
   };
   const { outputText } = ts.transpileModule(readFileSync(new URL('../src/ChatPage.tsx', import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX },
@@ -108,18 +123,59 @@ async function chatPage(
       if (match) return match;
     }
   }
-  function render(type: any = Sender) {
+  function render(type: any = Sender, options = {}) {
     cursor = 0;
     return findElement((component.namespace.default as Function)({
       systemName: '助手', sessionId: 'session-one', onRunningChange: (value: boolean) => running.push(value),
+      ...options,
     }), type);
   }
   render();
   // Run only the history effect; it clears the initial loading state.
   const cleanupHistory = effects[2]();
   await tick();
-  return { render, items: () => render('BubbleList').items, streams, errors, running, messages: () => slots[0].value, cleanupHistory };
+  return {
+    render, items: () => render('BubbleList').items, streams, errors, running,
+    messages: () => slots[0].value, cleanupHistory,
+    mountInjection(options = {}) {
+      const start = effects.length;
+      render(Sender, options);
+      return effects[start + 3]();
+    },
+    injectPrompt(text: string) { pendingPrompt = text; promptListener?.(text); },
+  };
 }
+
+test('login injection fills the editable composer once and sends exactly the edited text', async () => {
+  const page = await chatPage(async () => ({ stopped: true }), undefined, '登录注入内容');
+  const unsubscribe = page.mountInjection();
+  assert.equal(page.render().value, '登录注入内容');
+  unsubscribe();
+  const unsubscribeAgain = page.mountInjection();
+  assert.equal(page.render().value, '登录注入内容');
+  page.render().onChange('编辑后的内容');
+  page.render().onSubmit('编辑后的内容');
+  assert.equal(page.streams[0].text, '编辑后的内容');
+  assert.equal(page.messages()[0].content, '编辑后的内容');
+  assert.equal(page.render().value, '');
+  page.streams[0].finish();
+  await tick();
+  unsubscribeAgain();
+  page.cleanupHistory();
+});
+
+test('late injection preserves an existing draft and inactive or embedded composers do not consume it', async () => {
+  const page = await chatPage(async () => ({ stopped: true }), undefined, '注入内容');
+  assert.equal(page.mountInjection({ active: false }), undefined);
+  assert.equal(page.mountInjection({ embedded: true }), undefined);
+  page.render().onChange('已有草稿');
+  const unsubscribe = page.mountInjection();
+  assert.equal(page.render().value, '注入内容\n\n已有草稿');
+  page.injectPrompt('新的注入内容');
+  assert.equal(page.render().value, '新的注入内容\n\n注入内容\n\n已有草稿');
+  unsubscribe();
+  page.cleanupHistory();
+});
 
 test('a disconnected stream ends locally without blocking the next send', async () => {
   const sockets: FakeWebSocket[] = [];

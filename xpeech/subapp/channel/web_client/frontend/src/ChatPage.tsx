@@ -26,7 +26,6 @@ import ProcessPanel from './ProcessPanel';
 import FileCard from './FileCard';
 import ChatCommandInput from './ChatCommandInput';
 import {
-  readPendingUserPrefix,
   subscribePendingUserPrefix,
   takePendingUserPrefix,
 } from './pendingUserPrefix';
@@ -247,8 +246,6 @@ export default function ChatPage({
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [fragmentRevision, setFragmentRevision] = useState<number | null>(null);
-  const [pendingUserPrefix, setPendingUserPrefix] = useState(readPendingUserPrefix);
-  const [userPrefixExpanded, setUserPrefixExpanded] = useState(false);
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
   const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
   const requests = useRef(new Set<AbortController>());
@@ -326,10 +323,19 @@ export default function ChatPage({
     return () => controller.abort();
   }, [sessionId]);
 
-  useEffect(() => subscribePendingUserPrefix((userPrefix) => {
-    setPendingUserPrefix(userPrefix);
-    setUserPrefixExpanded(false);
-  }), []);
+  useEffect(() => {
+    if (!active || embedded) return;
+    return subscribePendingUserPrefix((pending) => {
+      if (pending === null) return;
+      const prompt = takePendingUserPrefix();
+      if (prompt === null) return;
+      const draft = composerRef.current.value;
+      const text = draft ? `${prompt}\n\n${draft}` : prompt;
+      composerRef.current.value = text;
+      setValue(text);
+      senderRef.current?.focus();
+    });
+  }, [active, embedded]);
 
   useEffect(() => {
     if (!active) return;
@@ -384,16 +390,14 @@ export default function ChatPage({
       }
     }
     try {
-      const pendingUserPrefix = sync ? null : takePendingUserPrefix();
-      const requestText = pendingUserPrefix ? `${pendingUserPrefix}\n\n===\n\n${text}` : text;
-      if (sync) return await chatSync(requestText, sentFiles, { sessionId, signal: controller.signal });
+      if (sync) return await chatSync(text, sentFiles, { sessionId, signal: controller.signal });
 
       const receive = (event: ChatEvent) => {
         if (controller.signal.aborted) return;
         appendEvent(event);
         if (embedded) postChatEvent(sessionId, event);
       };
-      await streamChat(requestText, sentFiles, receive, { sessionId, signal: controller.signal, continuation });
+      await streamChat(text, sentFiles, receive, { sessionId, signal: controller.signal, continuation });
       return [];
     } catch (error) {
       if (!controller.signal.aborted && !sync) {
@@ -493,12 +497,6 @@ export default function ChatPage({
     </Sender.Header>
   );
 
-  const userPrefixCharacters = pendingUserPrefix ? Array.from(pendingUserPrefix) : [];
-  const userPrefixTruncated = userPrefixCharacters.length > 100;
-  const displayedUserPrefix = pendingUserPrefix && userPrefixTruncated && !userPrefixExpanded
-    ? `${userPrefixCharacters.slice(0, 100).join('')}…`
-    : pendingUserPrefix;
-
   return (
     <div className="chat-page">
       <div className="chat-content">
@@ -518,31 +516,6 @@ export default function ChatPage({
         ) : <Bubble.List ref={bubbleListRef} className="bubble-list" role={roles} items={items} />}
       </div>
       <div className="sender-wrap">
-        {pendingUserPrefix ? (
-          <Alert
-            className="pending-user-prefix"
-            type="info"
-            showIcon
-            message="对这段文字有疑问？直接问就好 ✨"
-            description={(
-              <div>
-                <div className={`pending-user-prefix-content${userPrefixExpanded ? ' expanded' : ''}`}>
-                  {displayedUserPrefix}
-                </div>
-                {userPrefixTruncated ? (
-                  <Button
-                    className="pending-user-prefix-toggle"
-                    type="link"
-                    size="small"
-                    onClick={() => setUserPrefixExpanded((expanded) => !expanded)}
-                  >
-                    {userPrefixExpanded ? '收起' : '查看完整提示词'}
-                  </Button>
-                ) : null}
-              </div>
-            )}
-          />
-        ) : null}
         <ChatCommandInput
           ref={senderRef}
           value={value}

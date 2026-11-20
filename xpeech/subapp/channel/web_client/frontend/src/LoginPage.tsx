@@ -18,13 +18,11 @@ export default function LoginPage({
   systemName,
   channel,
   oauth2,
-  injectPromptEnabled,
   onLogin,
 }: {
   systemName: string;
   channel: string;
   oauth2: AppConfig['oauth2'];
-  injectPromptEnabled: boolean;
   onLogin: (user: User) => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
@@ -36,7 +34,7 @@ export default function LoginPage({
   const searchParams = new URLSearchParams(window.location.search);
   const requestedOAuth2Provider = searchParams.get('oauth2provider')?.trim().toLowerCase();
   const stateParam = searchParams.get('state');
-  const injectPromptState = injectPromptEnabled && stateParam?.trim() ? stateParam : undefined;
+  const injectPromptState = stateParam?.trim() ? stateParam : undefined;
   const oauth2Providers = oauth2.filter((provider) => provider.enabled);
 
   // 带 oauth2provider=<provider_name> 参数访问时，跳过登录界面直接跳转授权链接。

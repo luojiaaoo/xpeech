@@ -2,7 +2,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from ....config.settings import RedisConfig
 
 from .dao import User
 
@@ -10,6 +12,8 @@ USER_ID_PATTERN = r"^[\w@+-][\w.@+-]*$"
 INJECT_PROMPT_STATE_MAX_LENGTH = 128
 INJECT_PROMPT_STATE_MIN_LENGTH = 16
 INJECT_PROMPT_STATE_PATTERN = r"^[A-Za-z0-9._~-]+$"
+INJECT_PROMPT_KEY_PREFIX = "xpeech:inject_prompt:"
+INJECT_PROMPT_EXPIRES_IN = 60
 
 
 @dataclass(frozen=True)
@@ -32,12 +36,6 @@ class OAuth2WebConfig:
 
 
 @dataclass(frozen=True)
-class InjectPromptWebConfig:
-    enabled: bool = False
-    command_template: str = ""
-
-
-@dataclass(frozen=True)
 class WebConfig:
     backend_url: str
     static_dir: Path
@@ -46,7 +44,7 @@ class WebConfig:
     max_history_days: int = 30
     cookie_name: str = "xpeech_session"
     oauth2: tuple[OAuth2WebConfig, ...] = field(default_factory=tuple)
-    inject_prompt: InjectPromptWebConfig = field(default_factory=InjectPromptWebConfig)
+    redis: RedisConfig = field(default_factory=RedisConfig)
     fallback_username: str | None = None
 
 
@@ -58,6 +56,18 @@ class LoginBody(BaseModel):
 
 class PasswordChangeBody(BaseModel):
     new_password: str = Field(min_length=8, max_length=256)
+
+
+class InjectPromptCreateBody(BaseModel):
+    user_prefix: str = Field(min_length=1)
+
+    @field_validator("user_prefix")
+    @classmethod
+    def validate_user_prefix(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("user_prefix cannot be blank")
+        return value
 
 
 class OAuth2CreateBody(BaseModel):

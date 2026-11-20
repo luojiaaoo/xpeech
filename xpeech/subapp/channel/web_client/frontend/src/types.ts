@@ -18,9 +18,6 @@ export interface AppConfig {
   system_name: string;
   channel: string;
   recommended_questions: string[] | null;
-  inject_prompt: {
-    enabled: boolean;
-  };
   oauth2: OAuth2Provider[];
 }
 
