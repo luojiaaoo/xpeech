@@ -3,19 +3,21 @@ import inspect
 import threading
 from contextlib import aclosing
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 
-from xpeech.provider import helper
-from xpeech.provider.litellm_provider import LiteLLMProvider
+from xpeech.provider.openai_provider import OpenAIProvider
 from xpeech.provider.schema import LLMParameters, RegisteredTool, ToolCallChunk, ToolCallRequest
 from xpeech.utils.helper import token_counter
+
+pytestmark = pytest.mark.usefixtures("fake_vllm_tokenizer")
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("override_mcp", [False, True])
-async def test_tool_usage_counts_only_effective_schemas(override_mcp):
+async def test_tool_usage_counts_only_effective_schemas(override_mcp, make_openai_sdk_client):
     async def local_tool() -> str:
         """Run a local operation."""
         return "local"
@@ -24,8 +26,8 @@ async def test_tool_usage_counts_only_effective_schemas(override_mcp):
         """Override the remote tool locally."""
         return "remote"
 
-    provider = LiteLLMProvider(
-        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
     )
     provider.register_function_tool(local_tool)
     provider.register_mcp_tool(remote_tool, tool_json={
@@ -44,16 +46,17 @@ async def test_tool_usage_counts_only_effective_schemas(override_mcp):
     assert counts["system_tools"] > 0
     assert (counts["mcp_tools"] == 0) is override_mcp
 
-    empty = LiteLLMProvider(
-        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    empty = OpenAIProvider(
+        client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
     )
     assert await empty.chat_count_tool_tokens() == {"system_tools": 0, "mcp_tools": 0}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exit_kind", ["break", "cancel_flush"])
-async def test_closing_parsed_model_stream_returns_permit_without_task_exit(monkeypatch, exit_kind):
-    semaphore = asyncio.Semaphore(1)
+async def test_closing_parsed_model_stream_returns_permit_without_task_exit(
+    make_openai_sdk_client, exit_kind, model_permits,
+):
     reading = asyncio.Event()
     closed = asyncio.Event()
 
@@ -67,13 +70,10 @@ async def test_closing_parsed_model_stream_returns_permit_without_task_exit(monk
 
     sdk_stream = upstream()  # 保留引用，验证关闭链不依赖 GC。
 
-    async def fake_acompletion(**_kwargs):
-        return sdk_stream
-
-    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
-    provider = LiteLLMProvider(
-        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(AsyncMock(return_value=sdk_stream)),
+        default_model="test",
+        parameters=LLMParameters(),
     )
     response = await provider.chat(messages=[])
     completed = []
@@ -82,7 +82,7 @@ async def test_closing_parsed_model_stream_returns_permit_without_task_exit(monk
         async with aclosing(response.iter_mix_chunks) as chunks:
             async for chunk in chunks:
                 assert chunk == ("content", "partial")
-                assert semaphore.locked()
+                assert await model_permits.count() == 1
                 break
     else:
         task = asyncio.create_task(response.flush())
@@ -91,9 +91,7 @@ async def test_closing_parsed_model_stream_returns_permit_without_task_exit(monk
         with pytest.raises(asyncio.CancelledError):
             await task
     assert closed.is_set()
-    await asyncio.wait_for(semaphore.acquire(), timeout=1)
-    assert semaphore.locked()
-    semaphore.release()
+    await model_permits.wait_for(0)
     assert completed == []
     with pytest.raises(ValueError, match="Content is not available"):
         _ = response.content
@@ -107,7 +105,7 @@ def stream_chunk(*, delta=None, finish_reason=None, usage=None):
 
 
 def test_chat_exposes_llm_parameter_overrides_as_one_object():
-    parameters = inspect.signature(LiteLLMProvider.chat).parameters
+    parameters = inspect.signature(OpenAIProvider.chat).parameters
 
     assert "parameters" in parameters
     assert "model" not in parameters
@@ -115,7 +113,7 @@ def test_chat_exposes_llm_parameter_overrides_as_one_object():
     assert "top_p" not in parameters
     assert "reasoning_effort" not in parameters
     assert "remove_interactive_tool" not in parameters
-    assert "is_interactive" not in inspect.signature(LiteLLMProvider.register_function_tool).parameters
+    assert "is_interactive" not in inspect.signature(OpenAIProvider.register_function_tool).parameters
 
 
 @pytest.mark.asyncio
@@ -128,11 +126,11 @@ def test_chat_exposes_llm_parameter_overrides_as_one_object():
         ({"remove_default_tools": True, "remove_all_tools": True}, []),
     ],
 )
-async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected_names):
+async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected_names, make_openai_sdk_client):
     captured_kwargs = {}
 
-    class RetryClient:
-        def acompletion(self, **kwargs):
+    class StreamClient:
+        def create(self, **kwargs):
             captured_kwargs.clear()
             captured_kwargs.update(kwargs)
 
@@ -153,9 +151,9 @@ async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected
         """An extra tool."""
         return "extra"
 
-    monkeypatch.setattr("xpeech.provider.litellm_provider.get_custom_tool_func", lambda name: search)
-    provider = LiteLLMProvider(
-        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters()
+    monkeypatch.setattr("xpeech.provider.openai_provider.get_custom_tool_func", lambda name: search)
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters()
     )
     provider.register_mcp_tool(
         search,
@@ -169,7 +167,7 @@ async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected
         },
     )
     provider.register_function_tool(default_tool)
-    provider._retry_client = RetryClient()
+    provider._stream_client = StreamClient()
     messages = [{"role": "user", "content": "hello"}]
     request = {"messages": messages, "tools": ["search", extra_tool], **options}
 
@@ -189,10 +187,9 @@ async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected
 
 
 @pytest.mark.asyncio
-async def test_registered_tools_keep_schema_and_callable():
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+async def test_registered_tools_keep_schema_and_callable(make_openai_sdk_client):
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=LLMParameters(),
     )
@@ -223,14 +220,13 @@ async def test_registered_tools_keep_schema_and_callable():
 
 
 @pytest.mark.asyncio
-async def test_mcp_tools_keep_schema_and_callable():
+async def test_mcp_tools_keep_schema_and_callable(make_openai_sdk_client):
     async def mcp_tool() -> str:
         return "ok"
 
     tool_json = {"type": "function", "function": {"name": "mcp_tool"}}
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=LLMParameters(),
     )
@@ -244,7 +240,7 @@ async def test_mcp_tools_keep_schema_and_callable():
 
 
 @pytest.mark.asyncio
-async def test_chat_uses_all_registered_tools():
+async def test_chat_uses_all_registered_tools(make_openai_sdk_client):
     captured_kwargs = None
 
     async def upstream():
@@ -253,8 +249,8 @@ async def test_chat_uses_all_registered_tools():
             finish_reason="stop",
         )
 
-    class RetryClient:
-        def acompletion(self, **kwargs):
+    class StreamClient:
+        def create(self, **kwargs):
             nonlocal captured_kwargs
             captured_kwargs = kwargs
             return upstream()
@@ -267,13 +263,12 @@ async def test_chat_uses_all_registered_tools():
         """A regular tool."""
         return "regular"
 
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=LLMParameters(),
     )
-    provider._retry_client = RetryClient()
+    provider._stream_client = StreamClient()
     provider.register_function_tool(interactive_tool)
     provider.register_function_tool(regular_tool)
 
@@ -295,7 +290,7 @@ async def test_chat_uses_all_registered_tools():
 
 
 @pytest.mark.asyncio
-async def test_parse_response_streams_text_and_assembles_tool_calls():
+async def test_parse_response_streams_text_and_assembles_tool_calls(make_openai_sdk_client):
     async def upstream():
         yield stream_chunk(delta=SimpleNamespace(reasoning_content="why ", content=None, tool_calls=None))
         yield stream_chunk(delta=SimpleNamespace(reasoning_content=None, content="hello ", tool_calls=None))
@@ -330,9 +325,8 @@ async def test_parse_response_streams_text_and_assembles_tool_calls():
             usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7, total_tokens=18),
         )
 
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=LLMParameters(),
     )
@@ -363,7 +357,7 @@ async def test_parse_response_streams_text_and_assembles_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_chat_delegates_stream_defaults_to_retry_client():
+async def test_chat_delegates_stream_defaults_to_stream_client(make_openai_sdk_client):
     captured_kwargs = None
 
     async def upstream():
@@ -372,8 +366,8 @@ async def test_chat_delegates_stream_defaults_to_retry_client():
             finish_reason="stop",
         )
 
-    class RetryClient:
-        def acompletion(self, **kwargs):
+    class StreamClient:
+        def create(self, **kwargs):
             nonlocal captured_kwargs
             captured_kwargs = kwargs
             return upstream()
@@ -389,13 +383,12 @@ async def test_chat_delegates_stream_defaults_to_retry_client():
         repetition_penalty=1.1,
         reasoning_effort="high",
     )
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=parameters,
     )
-    provider._retry_client = RetryClient()
+    provider._stream_client = StreamClient()
 
     response = await provider.chat(
         messages=[{"role": "user", "content": "hello"}],
@@ -422,7 +415,7 @@ async def test_chat_delegates_stream_defaults_to_retry_client():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("json_output,support_json_output", [(False, False), (False, True), (True, False), (True, True)])
-async def test_chat_omits_unset_optional_parameters(json_output, support_json_output):
+async def test_chat_omits_unset_optional_parameters(json_output, support_json_output, make_openai_sdk_client):
     captured_kwargs = None
 
     async def upstream():
@@ -431,20 +424,19 @@ async def test_chat_omits_unset_optional_parameters(json_output, support_json_ou
             finish_reason="stop",
         )
 
-    class RetryClient:
-        def acompletion(self, **kwargs):
+    class StreamClient:
+        def create(self, **kwargs):
             nonlocal captured_kwargs
             captured_kwargs = kwargs
             return upstream()
 
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=LLMParameters(),
         support_json_output=support_json_output,
     )
-    provider._retry_client = RetryClient()
+    provider._stream_client = StreamClient()
 
     if json_output and not support_json_output:
         with pytest.raises(HTTPException) as exc_info:

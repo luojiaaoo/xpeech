@@ -3,14 +3,14 @@ from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 from typing import Any
 
-import litellm
 from fastapi import HTTPException, status
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from ..agent.tools.helper import as_tool, get_custom_tool_func
 from ..agent.tools.interactions import InteractionRequest
 from ..utils.helper import ensure_async, token_counter
-from .helper import LiteLLMRetryClient
+from .openai_stream import OpenAIStreamClient
 from .schema import (
     LLMParameters,
     LLMResponse,
@@ -20,26 +20,19 @@ from .schema import (
     ToolRegistry,
 )
 
-# 禁用调试信息
-litellm.suppress_debug_info = True
 
-
-class LiteLLMProvider:
-    """LiteLLM的接口封装。"""
+class OpenAIProvider:
+    """OpenAI 原生 SDK 的接口封装。"""
 
     def __init__(
         self,
-        api_key: str,
-        api_base: str,
+        client: AsyncOpenAI,
         default_model: str,
         parameters: LLMParameters,
         support_image: bool = False,
         support_video: bool = False,
         support_json_output: bool = False,
-        extra_headers: dict | None = None,
     ):
-        self.api_key = api_key
-        self.api_base = api_base
         self.default_model = default_model
         self.parameters = parameters
         self.default_tools: ToolRegistry = {}
@@ -48,8 +41,7 @@ class LiteLLMProvider:
         self._support_image = support_image
         self._support_video = support_video
         self._support_json_output = support_json_output
-        self.extra_headers = extra_headers
-        self._retry_client = LiteLLMRetryClient()
+        self._stream_client = OpenAIStreamClient(client)
 
     @property
     def default_context_token(self) -> int:
@@ -157,7 +149,7 @@ class LiteLLMProvider:
         messages: list[dict[str, Any]],
         tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
     ) -> int:
-        """整包估算消息及启用的工具定义，供上下文压缩判断使用。"""
+        """整包通过 vLLM 精确计算消息及启用的工具定义，供上下文压缩判断使用。"""
         registered_tools = await self._resolve_tools(tools)
         return await token_counter(messages, tools=[tool.tool_json for tool in registered_tools.values()] or None)
 
@@ -165,7 +157,7 @@ class LiteLLMProvider:
         self,
         tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
     ) -> dict[str, int]:
-        """分别估算实际启用的系统工具和 MCP 工具定义，不包含对话消息。"""
+        """分别通过 vLLM 计算实际启用的系统工具和 MCP 工具定义。"""
         counts = {}
         registered_tools = await self._resolve_tools(tools)
         for source in ("system_tools", "mcp_tools"):
@@ -209,8 +201,6 @@ class LiteLLMProvider:
         }
         completion_kwargs = {
             "model": self.default_model,
-            "api_base": self.api_base,
-            "api_key": self.api_key,
             "messages": messages,
             "max_tokens": parameters.max_tokens,
             "temperature": parameters.temperature,
@@ -218,7 +208,6 @@ class LiteLLMProvider:
             "presence_penalty": parameters.presence_penalty,
             "extra_body": extra_body or None,
             "response_format": {"type": "json_object"} if json_output else None,
-            "extra_headers": self.extra_headers,
             "reasoning_effort": parameters.reasoning_effort,
         }
         completion_kwargs = {key: value for key, value in completion_kwargs.items() if value is not None}
@@ -227,7 +216,7 @@ class LiteLLMProvider:
         if tool_jsons:
             completion_kwargs["tools"] = tool_jsons
             completion_kwargs["tool_choice"] = "auto"
-        response = self._retry_client.acompletion(**completion_kwargs)
+        response = self._stream_client.create(**completion_kwargs)
 
         return self._parse_response(response)
 
@@ -235,7 +224,7 @@ class LiteLLMProvider:
         self,
         response: AsyncGenerator[Any, None],
     ) -> LLMResponse:
-        """将 LiteLLM 的流式响应解析为统一的混合内容流。"""
+        """将 OpenAI 的流式响应解析为统一的混合内容流。"""
         response_holder: dict[str, LLMResponse] = {}
 
         async def iter_mix_chunks() -> AsyncGenerator[StreamChunk, None]:

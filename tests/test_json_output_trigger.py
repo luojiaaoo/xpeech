@@ -14,7 +14,7 @@ from xpeech.utils.channel_jwt import UserTokenParams, create_token
 
 
 @pytest.fixture
-def chat_requests(monkeypatch, tmp_path):
+def chat_requests(monkeypatch, tmp_path, backend_openai_client):
     messages = []
 
     async def run(*, message, inbox=None):

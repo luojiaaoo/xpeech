@@ -3,7 +3,7 @@
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
 from fastapi.sse import EventSourceResponse
 
 from ....utils.channel_jwt import UserJWTAuth
@@ -65,6 +65,7 @@ async def answer_question(
 
 
 async def chat_events(
+    request: Request,
     auth: Annotated[UserJWTAuth, Depends(require_user_jwt)],
     user_id: Annotated[str, Depends(authenticated_user_id)],
     session_id: Annotated[str, Depends(session_id_header)],
@@ -77,6 +78,7 @@ async def chat_events(
     """在请求结束时关闭 SSE 数据源，包括断连时暂停在 yield 的情况。"""
     async with execute_chat_stream(
         user_id,
+        openai_client=request.app.state.openai_client,
         content=content,
         sender_name=sender_name,
         channel=auth.channel,
@@ -109,6 +111,7 @@ async def chat(
     responses={400: {"description": "The configured model does not support the requested JSON output mode"}},
 )
 async def chat_sync(
+    request: Request,
     auth: Annotated[UserJWTAuth, Depends(require_user_jwt)],
     user_id: Annotated[str, Depends(authenticated_user_id)],
     sender_name: Annotated[str, Depends(sender_name_header)],
@@ -123,6 +126,7 @@ async def chat_sync(
     """
     return await execute_chat(
         user_id,
+        openai_client=request.app.state.openai_client,
         content=content,
         sender_name=sender_name,
         channel=auth.channel,

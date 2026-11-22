@@ -203,6 +203,7 @@ def test_chat_passes_verified_channel_to_registration(
     path,
     not_interactive,
     session_id,
+    backend_openai_client,
 ):
     created = []
 
@@ -242,7 +243,9 @@ def test_chat_passes_verified_channel_to_registration(
         },
     )
     assert response.status_code == 200
-    assert created == [("tag-user", {"not_interactive": not_interactive, "channel": "crm"})]
+    assert created == [("tag-user", {
+        "openai_client": backend_openai_client, "not_interactive": not_interactive, "channel": "crm",
+    })]
 
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])

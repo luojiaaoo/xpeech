@@ -115,8 +115,8 @@ async def test_failures_are_not_cached():
 
 
 @pytest.mark.asyncio
-async def test_cache_outage_falls_back_but_model_outage_rejects(monkeypatch):
-    from xpeech.provider import helper
+async def test_cache_outage_falls_back_but_model_outage_rejects(monkeypatch, make_openai_sdk_client):
+    from xpeech.provider import openai_stream
 
     @asynccontextmanager
     async def unavailable():
@@ -124,14 +124,14 @@ async def test_cache_outage_falls_back_but_model_outage_rejects(monkeypatch):
         yield
 
     monkeypatch.setattr(state, "redis_client", unavailable)
-    monkeypatch.setattr(helper, "redis_client", unavailable)
+    monkeypatch.setattr(openai_stream, "redis_client", unavailable)
     compute = AsyncMock(return_value="source")
     assert await state.cached_query("outage", 5, compute) == "source"
     compute.assert_awaited_once()
     completion = AsyncMock()
-    monkeypatch.setattr(helper, "acompletion", completion)
+    client = openai_stream.OpenAIStreamClient(make_openai_sdk_client(completion))
     with pytest.raises(ConnectionError):
-        await anext(helper.LiteLLMRetryClient().acompletion())
+        await anext(client.create())
     completion.assert_not_awaited()
 
 
@@ -151,8 +151,8 @@ async def test_cache_write_failure_does_not_repeat_source_query(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_model_limit_is_shared_with_independent_local_semaphores(monkeypatch):
-    from xpeech.provider import helper
+async def test_model_limit_is_shared_by_stream_clients(monkeypatch, make_openai_sdk_client):
+    from xpeech.provider import openai_stream
 
     monkeypatch.setattr(settings.llm, "parallel", 1)
     started = asyncio.Event()
@@ -171,13 +171,11 @@ async def test_model_limit_is_shared_with_independent_local_semaphores(monkeypat
         return stream()
 
     async def consume():
-        return [part async for part in helper.LiteLLMRetryClient().acompletion()]
+        client = openai_stream.OpenAIStreamClient(make_openai_sdk_client(completion))
+        return [part async for part in client.create()]
 
-    monkeypatch.setattr(helper, "acompletion", completion)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", asyncio.Semaphore(1))
     first = asyncio.create_task(consume())
     await asyncio.wait_for(started.wait(), 1)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", asyncio.Semaphore(1))
     second = asyncio.create_task(consume())
     try:
         await asyncio.sleep(0.05)

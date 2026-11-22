@@ -7,6 +7,7 @@ from typing import Any
 
 import anyio
 from fastapi import HTTPException, UploadFile, status
+from openai import AsyncOpenAI
 
 from ..exceptions import PathProtectionError
 from ..utils.file_io import save_to_workspace
@@ -57,6 +58,7 @@ async def _prepare_message(
 async def execute_chat_stream(
     user_id: str,
     *,
+    openai_client: AsyncOpenAI,
     content: InputContent,
     sender_name: str,
     channel: str,
@@ -67,7 +69,9 @@ async def execute_chat_stream(
 ) -> AsyncIterator[AsyncGenerator[dict[str, Any], None]]:
     """Prepare the workspace before exposing the event stream to the caller."""
     with _workspace_http_errors():
-        runner = await AgentRunner.create(user_id, not_interactive=False, channel=channel)
+        runner = await AgentRunner.create(
+            user_id, openai_client=openai_client, not_interactive=False, channel=channel,
+        )
         message = await _prepare_message(
             user_id,
             content=content,
@@ -124,6 +128,7 @@ async def execute_chat_stream(
 async def execute_chat(
     user_id: str,
     *,
+    openai_client: AsyncOpenAI,
     content: InputContent,
     sender_name: str,
     channel: str,
@@ -133,7 +138,9 @@ async def execute_chat(
 ) -> list[dict[str, Any]]:
     """Run a non-interactive Agent call in a freshly generated session and return all events."""
     with _workspace_http_errors():
-        runner = await AgentRunner.create(user_id, not_interactive=True, channel=channel)
+        runner = await AgentRunner.create(
+            user_id, openai_client=openai_client, not_interactive=True, channel=channel,
+        )
         message = await _prepare_message(
             user_id,
             content=content,

@@ -78,6 +78,35 @@ services:
       retries: 6
       start_period: 20s
 
+  vllm-tokenizer:
+    image: vllm/vllm-openai-cpu:latest-x86_64
+    environment:
+      VLLM_USE_MODELSCOPE: "true"
+    entrypoint: ["/bin/sh", "-c", "uv pip install 'modelscope<1.38' && exec vllm \"$@\"", "--"]
+    command:
+      - launch
+      - render
+      - "${VLLM_TOKENIZER_MODEL:-Qwen/Qwen3.8-27B}"
+      - --tokenizer
+      - "${VLLM_TOKENIZER_MODEL:-Qwen/Qwen3.8-27B}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --max-tokenize-tokens
+      - "0"
+    expose:
+      - "8000"
+    volumes:
+      - ./data/modelscope:/root/.cache/modelscope
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 300s
+
   backend:
     <<: *xpeech-service
     command: ["api", "--host", "0.0.0.0", "--port", "8080", "--feishu-url", "http://feishu:8090"]
@@ -90,6 +119,8 @@ services:
       redis:
         condition: service_healthy
       lark-token-manager:
+        condition: service_healthy
+      vllm-tokenizer:
         condition: service_healthy
     expose:
       - "8080"

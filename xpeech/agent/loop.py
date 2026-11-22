@@ -14,7 +14,7 @@ from fastapi import HTTPException, status
 from loguru import logger
 
 from ..config.settings import settings
-from ..provider.litellm_provider import LiteLLMProvider
+from ..provider.openai_provider import OpenAIProvider
 from ..provider.schema import LLMResponse, ToolCallRequest
 from ..utils.database import get_async_database_engine
 from ..utils.helper import token_counter
@@ -72,7 +72,7 @@ class AgentLoop:
 
     def __init__(
         self,
-        provider: LiteLLMProvider,
+        provider: OpenAIProvider,
         workspace: Path,
         tools: list[str],
         channel: str | None = None,
@@ -86,7 +86,7 @@ class AgentLoop:
         self.channel = channel
         self.user_organization = user_organization
         self.mapping_tool_call_funcs = mapping_tool_call_funcs if mapping_tool_call_funcs is not None else {}
-        # 避免 token 预估和实际有差距，按模型窗口的 90% 扣除摘要预算和固定 buffer。
+        # 为压缩和模型输出预留空间，按模型窗口的 90% 扣除摘要预算和固定 buffer。
         self.max_accept_token = (
             int(self.provider.default_context_token * 0.9) - SUMMARY_TOKENS - AUTOCOMPACT_BUFFER_TOKENS
         )
@@ -581,7 +581,7 @@ class AgentLoop:
         logger.info("Agent run completed")
 
     async def _count_context_tokens(self, messages: list[dict[str, Any]]) -> int:
-        """按原有整包估算判断是否需要压缩，与展示用的分项统计独立。"""
+        """按 vLLM 整包计数判断是否需要压缩，与展示用的分项统计独立。"""
         return await self.provider.chat_count_tokens(messages=strip_internal_message_metadata(messages), tools=self.tools)
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs) -> LLMResponse:

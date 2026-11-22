@@ -3,9 +3,10 @@ from contextlib import aclosing
 from typing import Any, Self
 
 import anyio
+from openai import AsyncOpenAI
 
 from ..config.settings import Settings, settings
-from ..provider.litellm_provider import LiteLLMProvider
+from ..provider.openai_provider import OpenAIProvider
 from ..utils.session import create_workspace_templates
 from .loop import AgentLoop
 from .server.schema import InboundMessage
@@ -37,6 +38,7 @@ class AgentRunner:
         cls,
         user_id: str,
         *,
+        openai_client: AsyncOpenAI,
         config: Settings = settings,
         not_interactive: bool = False,
         channel: str | None = None,
@@ -45,25 +47,22 @@ class AgentRunner:
         runner = await anyio.to_thread.run_sync(
             lambda: cls(user_id, config=config, not_interactive=not_interactive, channel=channel),
         )
-        await runner._initialize()
+        await runner._initialize(openai_client)
         return runner
 
-    async def _initialize(self) -> None:
+    async def _initialize(self, openai_client: AsyncOpenAI) -> None:
         """Initialize the user workspace, provider, tools, and agent loop."""
         await create_workspace_templates(self.workspace)
         self.user_organization = await self.config.extra_user_info.resolve_user_organization(self.user_id)
 
         llm_config = self.config.llm
-        api_key = llm_config.api_key
-        provider = LiteLLMProvider(
-            api_key=api_key,
-            api_base=llm_config.api_base,
+        provider = OpenAIProvider(
+            client=openai_client,
             default_model=llm_config.default_model,
             parameters=llm_config.parameters,
             support_image=llm_config.support_image,
             support_video=llm_config.support_video,
             support_json_output=llm_config.support_json_output,
-            extra_headers={"Authorization": "Bearer " + api_key},
         )
         agent_loop = AgentLoop(
             provider=provider,

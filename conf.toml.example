@@ -84,7 +84,7 @@ custom_system_prompt = ""
 # timeout = 10.0
 
 [web_client]
-# Web 对话原始事件历史，按用户 ID 和 channel + session_id 分文件保存。
+# Web 对话原始事件历史 jsonl 文件
 session_history_path = "data/web_client/session_history"
 max_history_days = 30
 cookie_name = "xpeech_session"
@@ -115,7 +115,7 @@ token_auth_method = "client_secret_post"
 [llm]
 api_key = "xxxxxxxx"
 api_base = "http://llm-proxy.1393074507312057.cn-wulanchabu.pai-eas.aliyuncs.com/v1"
-default_model = "openai/Kimi-K2.6"
+default_model = "Kimi-K2.6"
 tools_python_package = "custom_tools"
 default_tools = ["echo", "hello"]
 system_name = "xpeech"
@@ -126,8 +126,14 @@ support_video = true
 support_json_output = true
 parallel = 80
 
-# 历史文件保留天数，按文件修改时间计算；加载/列表时清理超期文件和非法文件名。
+# 历史上下文 yaml 文件保留天数
 max_history_days = 30
+
+# 独立 vLLM render 服务，model 必须与该服务加载的模型一致。
+[llm.tokenizer]
+api_base = "http://vllm-tokenizer:8000"
+model = "Qwen/Qwen3.8-27B"
+timeout = 120.0
 
 [llm.parameters]
 max_tokens = 32768

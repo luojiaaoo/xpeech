@@ -9,7 +9,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 提供 HTTP API 和 SSE 流式响应
 - 支持文本、图片和文件输入
 - 支持多轮会话和独立工作区
-- 支持 LiteLLM 兼容的大模型服务
+- 使用 OpenAI 原生 SDK 接入 OpenAI 兼容的大模型服务
 - 支持内置工具和自定义 Python 工具
 - 支持通过 MCP Server 扩展 Agent 工具
 - 支持飞书消息桥接
@@ -176,6 +176,38 @@ timeout = 10.0
 `ask-user-question`，即使它标记为 `always: true`。交互式技能名称在代码中维护，
 无需在 Skill 中添加标记；普通交互会话仍正常加载。
 
+## 模型与 token 计数
+
+聊天通过 OpenAI 原生 `AsyncOpenAI` SDK 调用 `llm.api_base`，`llm.default_model` 直接填写上游服务接受的模型名，
+不添加提供商前缀。SDK 负责 Bearer 认证，不再手工重复注入 Authorization 请求头。
+
+所有上下文 token 计数都由独立的 vLLM render 服务完成，包括系统提示词、历史消息、工具 schema、图片和视频。
+后端将完整 OpenAI 聊天请求发送到 `POST /tokenize`，由 vLLM 使用与实际模型一致的聊天模板和多模态预处理返回
+`count`；没有本地 tokenizer、字符估算或视频时长折算，也没有服务不可用时的估算降级。
+分项展示会对各块分别发起计数，因此各块都包含该次独立聊天模板渲染的固定开销。
+系统提示词、工具定义等缺少用户消息的计数请求会附加一条空用户消息，满足聊天模板要求。
+
+```toml
+[llm]
+api_key = "xxxxxxxx"
+api_base = "https://llm.example.com/v1"
+default_model = "your-model-name"
+
+[llm.tokenizer]
+api_base = "http://vllm-tokenizer:8000"
+model = "Qwen/Qwen3.8-27B"
+timeout = 120.0
+```
+
+`llm.tokenizer.model` 必须与 vLLM 服务加载并暴露的模型名一致。需要让计数对应实际上下文时，vLLM 的模型、tokenizer、
+聊天模板和多模态预处理配置也应与推理服务一致。`llm.tokenizer.timeout` 是单次计数请求的超时秒数，包含多模态处理。
+Compose 中的 `vllm-tokenizer` 在容器启动时先安装 ModelScope，再通过魔搭下载模型文件。
+模型缓存持久化到 `data/modelscope`，并使用 `--max-tokenize-tokens 0` 关闭计数长度上限。
+backend 等待其健康检查通过后启动。
+切换 tokenizer 模型时，将 `.env` 中的 `VLLM_TOKENIZER_MODEL` 和 `conf.toml` 中的
+`llm.tokenizer.model` 设为同一个魔搭模型 ID。本地直接运行 backend 时，将 `llm.tokenizer.api_base`
+改为可访问的独立 vLLM 地址。
+
 ## 启动
 
 按需在独立终端启动各服务：
@@ -298,6 +330,7 @@ Compose 已配置相同入口。
 
 Compose 会启动以下容器：
 
+- `vllm-tokenizer`：独立 CPU vLLM render 服务，负责全部上下文 token 计数
 - `lark-token-manager`：飞书用户令牌管理服务
 - `backend`：Xpeech API、Agent 和工具执行服务，默认启动 8 个副本
 - `nginx`：后端 API 入口，按 JWT `sub` 将同一用户稳定分配到同一 backend
@@ -441,11 +474,12 @@ docker compose up -d --build --force-recreate backend
 各部分包括系统提示词、用户上下文、长期记忆、
 技能、对话消息、系统工具及 MCP 工具；空动态内容不产生分项。
 每项包含原始整数 `词元数` 和数值 `占比`（该项词元数 / 最大压缩上限，0.01 表示 1%，最大为 1），
-所有分项词元数相加等于总占用，包含本轮最终回答；这是上下文估算，与供应商返回的本轮累计输入/输出消耗分开统计。
-各块直接使用已有计数函数并累计结果，保留各次估算包含的固定开销，不再单独扣减或列出请求封装。
-系统工具和 MCP 工具分别仅按各自启用的定义独立估算，不传入对话消息。
+所有分项词元数相加等于总占用，包含本轮最终回答；这些数值由 vLLM 对相应内容执行聊天模板分词得到，
+与供应商返回的本轮累计输入/输出消耗分开统计。
+各块直接调用 vLLM 计数并累计结果，保留每次独立模板渲染包含的固定开销，不再单独扣减或列出请求封装。
+系统工具和 MCP 工具分别按各自启用的定义独立计算，只附加聊天模板要求的空用户消息。
 `xpeech/agent/token_usage.py` 独立处理展示用的分项统计、格式化和事件组装；动态上下文在组装时直接使用中文分项名。
-压缩判断保留原有消息与工具的整包估算；展示使用各块独立计数后相加的结果，两者无需严格一致。
+压缩判断使用消息与工具的 vLLM 整包计数；展示使用各块独立计数后相加的结果，两者无需严格一致。
 不展示压缩预留或安全余量。`剩余空间` 为最大压缩上限扣除实际占用后的剩余空间，最低为 0。
 总占比及各项占比最多显示 100%。所有词元数量统一换算为 `k`，向下取整；计算占比仍使用原始词元数。
 网页端在统计菜单旁提供饼图按钮，展示各块 token 和占窗口比例；飞书只展示上下文使用率、总 Token 和会话时长。
@@ -561,7 +595,7 @@ curl -N -X POST "http://localhost:7878/chat" \
 
 需要停止生成时，使用相同用户的 JWT 和会话 ID 调用 `POST /chat/stop`，无需请求体或
 `x-sender-name`。返回 `{"stopped": true}` 表示已取消该会话的生成任务，并回收它占用的
-大模型信号量名额；没有活跃任务时返回 `{"stopped": false}`。停止也适用于等待模型名额或
+大模型并发名额；没有活跃任务时返回 `{"stopped": false}`。停止也适用于等待模型名额或
 等待用户回答的任务；原 SSE 流随后结束，不保证发送 `token_usage`。
 停止或异常退出时，Agent 会在 `finally` 保存已经加入上下文的消息。停止 API 等待历史保存收尾后返回。
 Web 客户端提供对应的 `POST /api/chat/stop` 代理入口，使用现有登录 Cookie 或嵌入 JWT。

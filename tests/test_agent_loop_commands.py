@@ -38,8 +38,11 @@ async def test_context_commands_continue_with_trailing_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive, token_counts):
+    async def build_test_context_messages(
+        workspace: Path, *, user_id, channel, user_organization, not_interactive, token_counts
+    ):
         assert workspace == tmp_path
+        assert user_id == "session-1"
         assert user_organization == "公司/研发/平台"
         assert not_interactive is False
         return []
@@ -105,10 +108,11 @@ async def test_context_commands_continue_with_trailing_prompt(
         agent_loop.memory_consolidator.consolidate.assert_not_awaited()
 
     model_messages = agent_loop.chat.await_args.kwargs["messages"]
-    assert len(model_messages) == 3
+    assert [item["role"] for item in model_messages] == ["system", "user"]
     assert model_messages[0] == {"role": "system", "content": "system"}
     prompt_texts = [part["text"] for part in model_messages[1]["content"]]
     assert "continue this task" in prompt_texts
     assert command not in prompt_texts
-    assert model_messages[2] == {"role": "assistant", "content": "continued result"}
     assert all(message.get("content") != "old context" for message in model_messages)
+    saved_messages = agent_loop.history.save.await_args.args[2]
+    assert saved_messages == [*model_messages, {"role": "assistant", "content": "continued result"}]

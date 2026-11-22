@@ -1,14 +1,12 @@
 from pathlib import Path
 import asyncio
-import base64
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
-import math
-import re
 import inspect
 from asyncer import asyncify
 import anyio
+import httpx
 import yaml
 from importlib.util import spec_from_file_location, module_from_spec
 import sys
@@ -101,54 +99,39 @@ def format_now(format_string: str = "%Y-%m-%d") -> str:
     return datetime.now().astimezone().strftime(format_string)
 
 
+async def _vllm_tokenize(payload: dict) -> dict:
+    """调用独立 vLLM 服务，不在本地估算或降级。"""
+    from ..config.settings import settings
+
+    tokenizer = settings.llm.tokenizer
+    async with httpx.AsyncClient(base_url=tokenizer.api_base, timeout=tokenizer.timeout) as client:
+        response = await client.post("/tokenize", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+
 async def token_counter(messages: list[dict] | None = None, tools: list[dict] | None = None) -> int:
-    """估算消息和工具定义的词元数，支持只传工具。"""
-    from litellm import token_counter as _token_counter
+    """由 vLLM 对完整消息、工具和多模态内容执行聊天模板分词。"""
+    from ..config.settings import settings
 
-    cleaned_messages, video_tokens = await _strip_video_blocks_and_count_tokens(messages or [])
-    return _token_counter(model="gpt-4o", messages=cleaned_messages, tools=tools) + video_tokens
+    messages = messages or []
+    # Qwen3.8 的聊天模板要求有用户消息，系统提示词和工具分项需要占位。
+    if not any(message.get("role") == "user" for message in messages):
+        messages = [*messages, {"role": "user", "content": ""}]
 
-
-def _parse_base64_url(url: str):
-    match = re.match(r"data:(?P<mime>[\w/+-]+);base64,(?P<data>.+)", url)
-    if not match:
-        raise ValueError("Invalid base64 data URI format")
-    return match.group("mime"), base64.b64decode(match.group("data"))
-
-
-async def _strip_video_blocks_and_count_tokens(messages: list[dict]) -> tuple[list[dict], int]:
-    from .file_io import LockedFile
-
-    cleaned_messages = []
-    video_tokens = 0
-
-    for message in messages:
-        content = message.get("content")
-        if not isinstance(content, list):
-            cleaned_messages.append(message)
-            continue
-
-        cleaned_content = []
-        has_video = False
-        for block in content:
-            if block["type"] != "video_url":
-                cleaned_content.append(block)
-                continue
-            _, _bytes = _parse_base64_url(block["video_url"]["url"])
-            async with stack_ensure_aclosing() as stack:
-                temp_dir = await stack.enter_async_context(anyio.TemporaryDirectory(prefix="xpeech-video-"))
-                video_path = Path(temp_dir) / "video.mp4"
-                await LockedFile(video_path).write_bytes(_bytes)
-                duration = (await read_video_metadata(video_path))["duration"]
-            video_tokens += math.ceil(duration * 100)
-            has_video = True
-
-        if has_video:
-            cleaned_messages.append({**message, "content": cleaned_content})
-        else:
-            cleaned_messages.append(message)
-
-    return cleaned_messages, video_tokens
+    payload = {
+        "model": settings.llm.tokenizer.model,
+        "messages": messages,
+        "add_generation_prompt": True,
+        "return_token_strs": False,
+    }
+    if tools is not None:
+        payload["tools"] = tools
+    result = await _vllm_tokenize(payload)
+    count = result.get("count")
+    if type(count) is not int or count < 0:
+        raise RuntimeError("vLLM /tokenize returned an invalid token count")
+    return count
 
 
 def compress_image(

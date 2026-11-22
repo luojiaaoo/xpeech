@@ -17,19 +17,22 @@ from xpeech.agent.history import YamlHistoryRepository
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.auth import require_user_jwt
-from xpeech.agent.server.session_guard import CHAT_GUARD
 from xpeech.agent.server.routes.chat import router, stop_chat
 from xpeech.agent.server.schema import InboundMessage, InputText
+from xpeech.agent.server.session_guard import CHAT_GUARD
 from xpeech.config.settings import settings
-from xpeech.provider import helper
-from xpeech.provider.litellm_provider import LiteLLMProvider
+from xpeech.provider.openai_provider import OpenAIProvider
 from xpeech.provider.schema import LLMParameters
+from xpeech.utils import redis_state
+
+pytestmark = pytest.mark.usefixtures("fake_vllm_tokenizer")
 
 
 @pytest.fixture
-def streaming_chat(monkeypatch, tmp_path):
+def streaming_chat(monkeypatch, tmp_path, model_permits, make_openai_sdk_client):
+    monkeypatch.setattr(settings.llm, "parallel", 1)
     state = SimpleNamespace(
-        semaphore=asyncio.Semaphore(1),
+        permits=model_permits,
         reading=asyncio.Event(),
         provider_called=asyncio.Event(),
         closed=asyncio.Event(),
@@ -60,11 +63,10 @@ def streaming_chat(monkeypatch, tmp_path):
                 await state.close_gate.wait()
             state.closed.set()
 
-    async def fake_acompletion(**kwargs):
+    async def fake_create(**kwargs):
         return SDKStream()
 
-    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", state.semaphore)
+    state.openai_client = make_openai_sdk_client(fake_create)
     monkeypatch.setattr(
         loop_module,
         "build_system_prompt",
@@ -72,9 +74,8 @@ def streaming_chat(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(loop_module, "build_context_messages", AsyncMock(return_value=[]))
     monkeypatch.setattr(loop_module, "build_user_prompt", AsyncMock(return_value={"role": "user", "content": "hi"}))
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=state.openai_client,
         default_model="test",
         parameters=LLMParameters(),
     )
@@ -116,6 +117,7 @@ def streaming_chat(monkeypatch, tmp_path):
     async def stream():
         async with execute.execute_chat_stream(
             message.user_id,
+            openai_client=state.openai_client,
             channel=message.channel,
             session_id=message.session_id,
             sender_name=message.sender_name,
@@ -145,7 +147,7 @@ async def test_consumer_exit_while_route_paused_at_yield_returns_permit(streamin
     task = asyncio.create_task(consume())
     if cancel:
         await asyncio.wait_for(received.wait(), timeout=1)
-        assert state.semaphore.locked()
+        assert await state.permits.count() == 1
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -153,9 +155,7 @@ async def test_consumer_exit_while_route_paused_at_yield_returns_permit(streamin
         await asyncio.wait_for(task, timeout=1)
 
     await asyncio.wait_for(state.closed.wait(), timeout=1)
-    await asyncio.wait_for(state.semaphore.acquire(), timeout=1)
-    assert state.semaphore.locked()
-    state.semaphore.release()
+    await state.permits.wait_for(0)
     # 中断响应后的清理不能将响应标记为正常完成。
     with pytest.raises(ValueError, match="Content is not available"):
         _ = state.responses[0].content
@@ -166,9 +166,22 @@ async def test_consumer_exit_while_route_paused_at_yield_returns_permit(streamin
 async def test_stop_api_cancels_only_matching_stream_and_returns_permit(streaming_chat, phase):
     state = streaming_chat
     state.block = phase == "model"
+    permit_holder = None
     if phase == "permit":
-        await state.semaphore.acquire()
+        permit_acquired = asyncio.Event()
+
+        async def hold_permit():
+            async with (
+                redis_state.redis_client() as redis,
+                redis_state.redis_permit(redis, state.permits.key, settings.llm.parallel),
+            ):
+                permit_acquired.set()
+                await asyncio.Event().wait()
+
+        permit_holder = asyncio.create_task(hold_permit())
+        await asyncio.wait_for(permit_acquired.wait(), timeout=1)
     app = FastAPI()
+    app.state.openai_client = state.openai_client
     app.include_router(router)
     app.dependency_overrides[require_user_jwt] = lambda: state.auth
     body = urlencode({"content": '[{"text":"hi"}]'}).encode()
@@ -236,7 +249,7 @@ async def test_stop_api_cancels_only_matching_stream_and_returns_permit(streamin
             other_user = await client.post("/chat/stop", headers={"x-session-id": session_id})
             assert other_user.json() == {"stopped": False}
             state.auth = owner
-            assert state.semaphore.locked()
+            assert await state.permits.count() == 1
 
             stopped = await asyncio.wait_for(
                 client.post("/chat/stop", headers={"x-session-id": session_id}), timeout=2,
@@ -247,13 +260,12 @@ async def test_stop_api_cancels_only_matching_stream_and_returns_permit(streamin
             assert saved[0] == {"role": "user", "content": "hi"}
             if phase == "permit":
                 # 被取消的排队请求从未获得名额，不能误归还其他任务的名额。
-                assert state.semaphore.locked()
-                state.semaphore.release()
+                assert await state.permits.count() == 1
+                permit_holder.cancel()
+                await asyncio.gather(permit_holder, return_exceptions=True)
             else:
                 await asyncio.wait_for(state.closed.wait(), timeout=1)
-            await asyncio.wait_for(state.semaphore.acquire(), timeout=1)
-            assert state.semaphore.locked()  # 恰好归还一次。
-            state.semaphore.release()
+            await state.permits.wait_for(0)
             assert state.responses
             with pytest.raises(ValueError, match="Content is not available"):
                 _ = state.responses[0].content
@@ -267,6 +279,10 @@ async def test_stop_api_cancels_only_matching_stream_and_returns_permit(streamin
         assert not await CHAT_GUARD.is_active(owner.user_id, session_id)
     finally:
         drain.set()
+        if permit_holder is not None:
+            if not permit_holder.done():
+                permit_holder.cancel()
+            await asyncio.gather(permit_holder, return_exceptions=True)
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -289,9 +305,7 @@ async def test_repeated_stop_and_cancelled_stop_request_do_not_interrupt_cleanup
         first = asyncio.create_task(stop_chat(state.auth.user_id, "00000000-0000-7000-8000-000000000000"))
         await asyncio.wait_for(state.closing.wait(), timeout=1)
         # 关闭上游 HTTP 连接仍在等待时，并发名额已经可以复用。
-        await asyncio.wait_for(state.semaphore.acquire(), timeout=1)
-        assert state.semaphore.locked()
-        state.semaphore.release()
+        await state.permits.wait_for(0)
         first.cancel()
         with pytest.raises(asyncio.CancelledError):
             await first
@@ -302,9 +316,7 @@ async def test_repeated_stop_and_cancelled_stop_request_do_not_interrupt_cleanup
         assert await asyncio.wait_for(second, timeout=1) == {"stopped": True}
         await asyncio.wait_for(consumer, timeout=1)
         assert state.closed.is_set()
-        await asyncio.wait_for(state.semaphore.acquire(), timeout=1)
-        assert state.semaphore.locked()
-        state.semaphore.release()
+        await state.permits.wait_for(0)
     finally:
         state.close_gate.set()
         tasks = [task for task in (first, second, consumer) if task is not None]
@@ -329,14 +341,14 @@ async def test_cancel_while_waiting_for_model_returns_permit(streaming_chat, aft
         await task
 
     await asyncio.wait_for(state.closed.wait(), timeout=1)
-    await asyncio.wait_for(state.semaphore.acquire(), timeout=1)
-    state.semaphore.release()
+    await state.permits.wait_for(0)
 
 
 @pytest.mark.asyncio
 async def test_sse_disconnect_under_backpressure_returns_permit(streaming_chat):
     state = streaming_chat
     app = FastAPI()
+    app.state.openai_client = state.openai_client
     app.include_router(router)
     app.dependency_overrides[require_user_jwt] = lambda: state.auth
     disconnect = asyncio.Event()
@@ -383,7 +395,5 @@ async def test_sse_disconnect_under_backpressure_returns_permit(streaming_chat):
 
     assert disconnect.is_set()
     assert not await CHAT_GUARD.is_active(state.auth.user_id, "00000000-0000-7000-8000-000000000000")
-    await asyncio.wait_for(state.semaphore.acquire(), timeout=1)
-    assert state.semaphore.locked()
-    state.semaphore.release()
+    await state.permits.wait_for(0)
     await asyncio.wait_for(state.closed.wait(), timeout=1)

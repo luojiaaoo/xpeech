@@ -35,8 +35,6 @@ def make_config(workspace_base_path: Path):
     return SimpleNamespace(
         path=settings.path.model_copy(update={"workspace_base_path": workspace_base_path}),
         llm=SimpleNamespace(
-            api_key="test-key",
-            api_base="https://llm.test",
             default_model="test-model",
             parameters=object(),
             support_image=True,
@@ -55,7 +53,7 @@ def runner_dependencies(monkeypatch: pytest.MonkeyPatch):
     create_templates = AsyncMock()
     register_tools = AsyncMock()
     monkeypatch.setattr(runner_module, "create_workspace_templates", create_templates)
-    monkeypatch.setattr(runner_module, "LiteLLMProvider", FakeProvider)
+    monkeypatch.setattr(runner_module, "OpenAIProvider", FakeProvider)
     monkeypatch.setattr(runner_module, "AgentLoop", FakeAgentLoop)
     monkeypatch.setattr(runner_module, "register_tools", register_tools)
     return create_templates, register_tools
@@ -65,10 +63,12 @@ def runner_dependencies(monkeypatch: pytest.MonkeyPatch):
 async def test_runner_initializes_dependencies_once_and_yields_events(
     tmp_path: Path,
     runner_dependencies,
+    make_openai_sdk_client,
 ):
     create_templates, register_tools = runner_dependencies
     config = make_config(tmp_path)
-    runner = await AgentRunner.create("session-1", config=config)
+    client = make_openai_sdk_client()
+    runner = await AgentRunner.create("session-1", config=config, openai_client=client)
     message = InboundMessage(
         user_id="session-1",
         session_id="chat-1",
@@ -97,13 +97,12 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     assert FakeAgentLoop.instances[0].not_interactive_values == [False]
 
     provider = FakeAgentLoop.instances[0].kwargs["provider"]
-    assert provider.kwargs["api_key"] == "test-key"
-    assert provider.kwargs["extra_headers"] == {"Authorization": "Bearer test-key"}
+    assert provider.kwargs["client"] is client
 
 
 @pytest.mark.asyncio
 async def test_runner_resolves_organization_once_before_registering_tools(
-    monkeypatch, tmp_path, runner_dependencies,
+    monkeypatch, tmp_path, runner_dependencies, make_openai_sdk_client,
 ):
     config = make_config(tmp_path)
     config.extra_user_info = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup ${user_id}", timeout=2.0)
@@ -116,7 +115,7 @@ async def test_runner_resolves_organization_once_before_registering_tools(
         assert kwargs["user_organization"] == "公司/研发/平台"
 
     register_tools.side_effect = check_registration
-    runner = await AgentRunner.create("alice", config=config)
+    runner = await AgentRunner.create("alice", config=config, openai_client=make_openai_sdk_client())
     assert runner.user_organization == "公司/研发/平台"
     assert FakeAgentLoop.instances[0].kwargs["user_organization"] == "公司/研发/平台"
 
@@ -158,9 +157,10 @@ async def test_runner_requires_async_factory(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_runner_can_run_without_interaction(tmp_path: Path, runner_dependencies):
+async def test_runner_can_run_without_interaction(tmp_path: Path, runner_dependencies, make_openai_sdk_client):
     runner = await AgentRunner.create(
-        "session-1", config=make_config(tmp_path), not_interactive=True, channel="crm",
+        "session-1", config=make_config(tmp_path), openai_client=make_openai_sdk_client(),
+        not_interactive=True, channel="crm",
     )
     message = InboundMessage(
         user_id="session-1",

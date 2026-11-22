@@ -1,18 +1,15 @@
 import asyncio
 from contextlib import aclosing
-from types import SimpleNamespace
 
 import pytest
-from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
 
-from xpeech.provider import helper
-from xpeech.provider.helper import LiteLLMRetryClient
+from xpeech.config.settings import settings
+from xpeech.provider import openai_stream
+from xpeech.provider.openai_stream import OpenAIStreamClient
 
 
-class FakeRateLimitError(Exception):
-    def __init__(self, retry_after: str | None = None):
-        headers = {} if retry_after is None else {"retry-after": retry_after}
-        self.response = SimpleNamespace(headers=headers)
+class FakeStreamError(Exception):
+    pass
 
 
 def test_format_error_exposes_only_status_and_message():
@@ -22,17 +19,17 @@ def test_format_error_exposes_only_status_and_message():
         def __str__(self):
             return "The request payload is invalid"
 
-    detail = helper._format_error(InternalProviderFunctionName())
+    detail = openai_stream._format_error(InternalProviderFunctionName())
 
     assert detail == "error_code=400, error_message=The request payload is invalid"
     assert "InternalProviderFunctionName" not in detail
 
 
 @pytest.mark.asyncio
-async def test_acompletion_always_streams_with_usage(monkeypatch):
+async def test_create_always_streams_with_usage(make_openai_sdk_client):
     captured_kwargs = None
 
-    async def fake_acompletion(**kwargs):
+    async def fake_create(**kwargs):
         nonlocal captured_kwargs
         captured_kwargs = kwargs
 
@@ -41,77 +38,62 @@ async def test_acompletion_always_streams_with_usage(monkeypatch):
 
         return stream()
 
-    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", asyncio.Semaphore(1))
-
-    client = LiteLLMRetryClient(max_retries=0)
-    response = client.acompletion(model="test", stream=False)
+    client = OpenAIStreamClient(make_openai_sdk_client(fake_create))
+    response = client.create(model="test", stream=False)
 
     assert [chunk async for chunk in response] == ["ok"]
+    assert captured_kwargs["model"] == "test"
     assert captured_kwargs["stream"] is True
     assert captured_kwargs["stream_options"] == {"include_usage": True}
 
 
 @pytest.mark.asyncio
-async def test_stream_retries_rate_limit_raised_during_iteration(monkeypatch):
+async def test_stream_does_not_retry_errors_raised_during_iteration(make_openai_sdk_client):
     calls = 0
-    sleeps: list[float] = []
 
-    async def fake_acompletion(**kwargs):
+    async def fake_create(**_kwargs):
         nonlocal calls
         calls += 1
 
         async def stream():
-            if calls == 1:
-                raise FakeRateLimitError("0")
-            yield "ok"
+            raise FakeStreamError("stream failed")
+            yield
 
         return stream()
 
-    async def fake_sleep(delay: float):
-        sleeps.append(delay)
+    client = OpenAIStreamClient(make_openai_sdk_client(fake_create))
+    with pytest.raises(FakeStreamError, match="stream failed"):
+        await _collect(client.create())
 
-    monkeypatch.setattr(helper, "RateLimitError", FakeRateLimitError)
-    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper, "retry_sleep", fake_sleep)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", asyncio.Semaphore(1))
-
-    client = LiteLLMRetryClient(max_retries=1, jitter=0)
-    response = client.acompletion()
-
-    assert [chunk async for chunk in response] == ["ok"]
-    assert calls == 2
-    assert sleeps == [0]
+    assert calls == 1
 
 
 @pytest.mark.asyncio
-async def test_stream_propagates_non_rate_limit_errors(monkeypatch):
-    async def fake_acompletion(**_kwargs):
+async def test_stream_propagates_non_rate_limit_errors(make_openai_sdk_client):
+    async def fake_create(**_kwargs):
         async def stream():
             raise ValueError("provider rejected the request")
             yield
 
         return stream()
 
-    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", asyncio.Semaphore(1))
-
-    client = LiteLLMRetryClient(max_retries=3)
+    client = OpenAIStreamClient(make_openai_sdk_client(fake_create))
     with pytest.raises(ValueError, match="provider rejected the request") as exc_info:
-        await _collect(client.acompletion())
+        await _collect(client.create())
 
     assert str(exc_info.value) == "provider rejected the request"
 
 
 @pytest.mark.asyncio
-async def test_stream_holds_semaphore_until_consumption_finishes(monkeypatch):
+async def test_stream_holds_redis_permit_until_consumption_finishes(monkeypatch, make_openai_sdk_client):
+    monkeypatch.setattr(settings.llm, "parallel", 1)
     first_stream_started = asyncio.Event()
     release_first_stream = asyncio.Event()
     calls = 0
     active_streams = 0
     max_active_streams = 0
 
-    async def fake_acompletion(**kwargs):
+    async def fake_create(**kwargs):
         nonlocal calls
         calls += 1
         call_number = calls
@@ -130,12 +112,9 @@ async def test_stream_holds_semaphore_until_consumption_finishes(monkeypatch):
 
         return stream()
 
-    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", asyncio.Semaphore(1))
-
-    client = LiteLLMRetryClient(max_retries=0)
-    first = client.acompletion()
-    second = client.acompletion()
+    client = OpenAIStreamClient(make_openai_sdk_client(fake_create))
+    first = client.create()
+    second = client.create()
 
     first_task = asyncio.create_task(_collect(first))
     await first_stream_started.wait()
@@ -157,32 +136,26 @@ async def _collect(stream):
 
 
 @pytest.mark.asyncio
-async def test_cancel_while_opening_completion_returns_permit(monkeypatch):
+async def test_cancel_while_opening_completion_returns_permit(make_openai_sdk_client, model_permits):
     started = asyncio.Event()
-    semaphore = asyncio.Semaphore(1)
 
-    async def fake_acompletion(**kwargs):
+    async def fake_create(**kwargs):
         started.set()
         await asyncio.Event().wait()
 
-    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
-    stream = LiteLLMRetryClient().acompletion()
+    stream = OpenAIStreamClient(make_openai_sdk_client(fake_create)).create()
     task = asyncio.create_task(_collect(stream))
     await asyncio.wait_for(started.wait(), timeout=1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    await asyncio.wait_for(semaphore.acquire(), timeout=1)
-    assert semaphore.locked()
-    semaphore.release()
+    await model_permits.wait_for(0)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cleanup", ["normal", "error", "timeout"])
-async def test_close_returns_permit_before_sdk_cleanup(monkeypatch, cleanup):
-    semaphore = asyncio.Semaphore(1)
+async def test_close_returns_permit_before_sdk_cleanup(monkeypatch, cleanup, make_openai_sdk_client, model_permits):
     close_started = asyncio.Event()
     finish_close = asyncio.Event()
 
@@ -199,29 +172,24 @@ async def test_close_returns_permit_before_sdk_cleanup(monkeypatch, cleanup):
                 raise RuntimeError("HTTP cleanup failed")
             await finish_close.wait()
 
-    async def fake_acompletion(**kwargs):
+    async def fake_create(**kwargs):
         return SDKStream()
 
-    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
-    monkeypatch.setattr(helper, "STREAM_CLOSE_TIMEOUT", 0.05)
-    stream = LiteLLMRetryClient(max_retries=0).acompletion()
+    monkeypatch.setattr(openai_stream, "STREAM_CLOSE_TIMEOUT", 0.05)
+    stream = OpenAIStreamClient(make_openai_sdk_client(fake_create)).create()
     assert await anext(stream) == "chunk"
-    assert semaphore.locked()
+    assert await model_permits.count() == 1
 
     close_task = asyncio.create_task(stream.aclose())
     await asyncio.wait_for(close_started.wait(), timeout=1)
-    await asyncio.wait_for(semaphore.acquire(), timeout=1)
-    assert semaphore.locked()
-    semaphore.release()
+    await model_permits.wait_for(0)
     if cleanup == "normal":
         finish_close.set()
     await asyncio.wait_for(close_task, timeout=1)
 
 
 @pytest.mark.asyncio
-async def test_aclosing_and_later_stream_close_release_exactly_once(monkeypatch):
-    semaphore = asyncio.Semaphore(1)
+async def test_aclosing_and_later_stream_close_release_exactly_once(make_openai_sdk_client, model_permits):
     closed = asyncio.Event()
     close_count = 0
 
@@ -237,12 +205,10 @@ async def test_aclosing_and_later_stream_close_release_exactly_once(monkeypatch)
             close_count += 1
             closed.set()
 
-    async def fake_acompletion(**kwargs):
+    async def fake_create(**kwargs):
         return SDKStream()
 
-    monkeypatch.setattr(helper, "acompletion", fake_acompletion)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
-    stream = LiteLLMRetryClient().acompletion()
+    stream = OpenAIStreamClient(make_openai_sdk_client(fake_create)).create()
 
     async def consume_one_chunk():
         async with aclosing(stream):
@@ -253,23 +219,7 @@ async def test_aclosing_and_later_stream_close_release_exactly_once(monkeypatch)
     await stream.aclose()
 
     assert close_count == 1
-    await asyncio.wait_for(semaphore.acquire(), timeout=1)
-    assert semaphore.locked()
-    semaphore.release()
-
-
-@pytest.mark.asyncio
-async def test_cancel_while_waiting_for_permit_does_not_release_another_slot(monkeypatch):
-    semaphore = asyncio.Semaphore(0)
-    monkeypatch.setattr(helper, "LLM_PARALLEL_SEMAPHORE", semaphore)
-    stream = LiteLLMRetryClient().acompletion()
-    task = asyncio.create_task(_collect(stream))
-    await asyncio.sleep(0)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert semaphore.locked()
+    await model_permits.wait_for(0)
 
 
 @pytest.mark.asyncio
@@ -291,10 +241,9 @@ async def test_sdk_shield_and_suppressed_cancellation_cannot_extend_close_deadli
             finally:
                 closed.set()
 
-    wrapper = CustomStreamWrapper.__new__(CustomStreamWrapper)
-    wrapper.completion_stream = SlowStream()
-    monkeypatch.setattr(helper, "STREAM_CLOSE_TIMEOUT", 0.02)
-    task = asyncio.create_task(helper._close_stream(wrapper))
+    stream = SlowStream()
+    monkeypatch.setattr(openai_stream, "STREAM_CLOSE_TIMEOUT", 0.02)
+    task = asyncio.create_task(openai_stream._close_stream(stream))
     try:
         await asyncio.wait_for(started.wait(), timeout=1)
         done, _ = await asyncio.wait({task}, timeout=0.3)
@@ -302,19 +251,32 @@ async def test_sdk_shield_and_suppressed_cancellation_cannot_extend_close_deadli
         await task
         await asyncio.wait_for(cancelled.wait(), timeout=1)
         assert not closed.is_set()
-        assert helper._STREAM_CLOSE_TASKS  # 未结束的清理任务仍有引用。
+        assert openai_stream._STREAM_CLOSE_TASKS  # 未结束的清理任务仍有引用。
     finally:
         finish.set()
         await asyncio.wait_for(task, timeout=1)
         await asyncio.wait_for(closed.wait(), timeout=1)
-        if helper._STREAM_CLOSE_TASKS:
-            await asyncio.gather(*tuple(helper._STREAM_CLOSE_TASKS), return_exceptions=True)
+        if openai_stream._STREAM_CLOSE_TASKS:
+            await asyncio.gather(*tuple(openai_stream._STREAM_CLOSE_TASKS), return_exceptions=True)
         await asyncio.sleep(0)  # 等待 Task 的 done callback 移除保留引用。
-    assert not helper._STREAM_CLOSE_TASKS
+    assert not openai_stream._STREAM_CLOSE_TASKS
 
 
 @pytest.mark.asyncio
-async def test_cancelling_close_wait_also_cancels_sdk_cleanup(monkeypatch):
+async def test_close_stream_uses_native_openai_close():
+    closed = asyncio.Event()
+
+    class Stream:
+        async def close(self):
+            closed.set()
+
+    await openai_stream._close_stream(Stream())
+
+    assert closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_close_wait_also_cancels_sdk_cleanup():
     started = asyncio.Event()
     closed = asyncio.Event()
 
@@ -326,11 +288,11 @@ async def test_cancelling_close_wait_also_cancels_sdk_cleanup(monkeypatch):
             finally:
                 closed.set()
 
-    task = asyncio.create_task(helper._close_stream(Stream()))
+    task = asyncio.create_task(openai_stream._close_stream(Stream()))
     await asyncio.wait_for(started.wait(), timeout=1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     await asyncio.wait_for(closed.wait(), timeout=1)
     await asyncio.sleep(0)
-    assert not helper._STREAM_CLOSE_TASKS
+    assert not openai_stream._STREAM_CLOSE_TASKS

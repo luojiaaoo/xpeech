@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import os
 import platform
 from urllib.parse import urlsplit
-
-# 取消 litellm 的本地模型成本映射
-os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
 
 
 def _normalize_http_url(url: str) -> str:

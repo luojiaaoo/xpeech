@@ -18,7 +18,6 @@ dependencies = [
     "httpx-sse>=0.4.3",
     "jq>=1.8.0",
     "lark-channel-sdk>=1.4.0",
-    "litellm>=1.83.0",
     "loguru>=0.7.3",
     "mcp>=1.28.1",
     "moviepy>=1.0.3",

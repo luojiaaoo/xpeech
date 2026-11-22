@@ -11,9 +11,11 @@ from xpeech.utils import file_io, helper
 from xpeech.utils.file_io import LockedFile
 from xpeech.utils.helper import compress_image
 
+pytestmark = pytest.mark.usefixtures("fake_vllm_tokenizer")
+
 
 @pytest.mark.asyncio
-async def test_token_counter_includes_tools_alongside_video_tokens(monkeypatch):
+async def test_token_counter_sends_complete_multimodal_payload_to_vllm(monkeypatch):
     messages = [
         {
             "role": "user",
@@ -33,22 +35,34 @@ async def test_token_counter_includes_tools_alongside_video_tokens(monkeypatch):
             },
         }
     ]
+    requests = []
 
-    async def video_metadata(_path):
-        return {"duration": 1.25}
+    async def tokenize(payload):
+        requests.append(payload)
+        return {"count": 123}
 
-    monkeypatch.setattr(helper, "read_video_metadata", video_metadata)
-    text_messages = [{"role": "user", "content": [messages[0]["content"][0]]}]
-    text_tokens = await helper.token_counter(text_messages)
-    text_and_tools_tokens = await helper.token_counter(text_messages, tools=tools)
+    monkeypatch.setattr(helper, "_vllm_tokenize", tokenize)
 
-    assert text_and_tools_tokens > text_tokens
-    assert await helper.token_counter(messages, tools=tools) == text_and_tools_tokens + 125
-    assert messages[0]["content"][1]["type"] == "video_url"
-    tool_tokens = await helper.token_counter(tools=tools)
-    assert tool_tokens > await helper.token_counter()
-    assert await helper.token_counter(messages=None, tools=tools) == tool_tokens
-    assert await helper.token_counter([], tools=tools) == tool_tokens
+    assert await helper.token_counter(messages, tools=tools) == 123
+    assert requests[0]["messages"] == messages
+    assert requests[0]["tools"] == tools
+    assert requests[0]["messages"][0]["content"][1]["type"] == "video_url"
+    assert requests[0]["add_generation_prompt"] is True
+    assert requests[0]["return_token_strs"] is False
+
+    await helper.token_counter(messages=None, tools=tools)
+    assert requests[1]["messages"] == [{"role": "user", "content": ""}]
+    assert requests[1]["tools"] == tools
+    await helper.token_counter([])
+    assert "tools" not in requests[2]
+
+    system_messages = [{"role": "system", "content": "System instructions"}]
+    await helper.token_counter(system_messages)
+    assert requests[3]["messages"] == [
+        {"role": "system", "content": "System instructions"},
+        {"role": "user", "content": ""},
+    ]
+    assert len(system_messages) == 1
 
 
 def test_compress_image_returns_raw_and_mime_type():

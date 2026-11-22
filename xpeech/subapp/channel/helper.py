@@ -8,7 +8,6 @@ from urllib.parse import quote
 
 import anyio
 import httpx
-import jq
 from asyncer import asyncify
 from httpx_sse import EventSource
 from yarl import URL
@@ -17,21 +16,6 @@ from ...config.settings import settings
 from ...utils.channel_jwt import UserTokenParams, create_token
 from ...utils.helper import stack_ensure_aclosing
 from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
-
-
-class ClaimExtractionError(ValueError):
-    """A jq claim query is invalid or does not resolve to one string."""
-
-
-def extract_string_claim(payload: object, expression: str) -> str:
-    """Extract one string from JSON using a jq expression."""
-    try:
-        outputs = jq.compile(expression).input_value(payload).all()
-    except ValueError as error:
-        raise ClaimExtractionError(f"claim jq 表达式无效: {expression}") from error
-    if len(outputs) != 1 or not isinstance(outputs[0], str):
-        raise ClaimExtractionError(f"claim jq 表达式未解析到唯一的字符串: {expression}")
-    return outputs[0]
 
 
 @dataclass(frozen=True)

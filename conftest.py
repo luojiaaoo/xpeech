@@ -1,7 +1,10 @@
 """PostgreSQL integration tests use a disposable schema, never application tables."""
 
 import asyncio
+import json
 import os
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -43,12 +46,69 @@ def postgres_database(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def fake_vllm_tokenizer(monkeypatch):
+    """Keep unit tests offline while preserving payload-sensitive token counts."""
+    from xpeech.utils import helper
+
+    async def tokenize(payload):
+        serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return {"count": max(1, len(serialized) // 8)}
+
+    monkeypatch.setattr(helper, "_vllm_tokenize", tokenize)
+
+
+class _ModelPermits:
+    """Inspect the model lease set in the isolated fake Redis."""
+
+    key = "xpeech:llm:permits:v1"
+
+    async def count(self) -> int:
+        from xpeech.provider import openai_stream
+
+        async with openai_stream.redis_client() as redis:
+            return await redis.zcard(self.key)
+
+    async def wait_for(self, expected: int) -> None:
+        async def wait():
+            while await self.count() != expected:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(wait(), timeout=1)
+
+
+@pytest.fixture
+def model_permits():
+    return _ModelPermits()
+
+
+@pytest.fixture
+def make_openai_sdk_client():
+    """Build an SDK-shaped client with a test completion method."""
+    def make_client(create=None):
+        if create is None:
+            create = AsyncMock(side_effect=AssertionError("Unexpected model request"))
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    return make_client
+
+
+@pytest.fixture
+def backend_openai_client(monkeypatch, make_openai_sdk_client):
+    """Supply the SDK client for route tests that bypass the backend lifespan."""
+    from xpeech.agent.server.api import app
+
+    client = make_openai_sdk_client()
+    monkeypatch.setattr(app.state, "openai_client", client, raising=False)
+    return client
+
+
+@pytest.fixture(autouse=True)
 def isolated_redis(monkeypatch):
     """Exercise Redis commands/Lua without accessing application Redis data."""
     import fakeredis
     from fakeredis.aioredis import FakeRedis
 
-    from xpeech.provider import helper
+    from xpeech.provider import openai_stream
     from xpeech.utils import redis_state
 
     server = fakeredis.FakeServer()
@@ -57,5 +117,5 @@ def isolated_redis(monkeypatch):
         return FakeRedis(server=server, decode_responses=True)
 
     monkeypatch.setattr(redis_state, "redis_client", client)
-    monkeypatch.setattr(helper, "redis_client", client)
+    monkeypatch.setattr(openai_stream, "redis_client", client)
     return server

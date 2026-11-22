@@ -16,9 +16,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from yarl import URL
 
-from .....config.settings import settings
+from .....config.settings import extract_string_claim, settings
 from .....utils.command_template import CommandTemplateError
-from ...helper import extract_string_claim
 from ..dao import User, WebClientDAO
 from ..models import (
     USER_ID_PATTERN,

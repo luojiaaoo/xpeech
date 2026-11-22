@@ -3,8 +3,10 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, PlainTextResponse
+from openai import AsyncOpenAI
 from starlette.middleware.cors import CORSMiddleware
 
+from ...config.settings import settings
 from ...utils.database import get_async_database_engine
 from ...utils.logging import configure_logging
 from ...utils.security.sandbox import close_all_sandboxes
@@ -16,13 +18,18 @@ configure_logging()
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(app: FastAPI):
     engine = get_async_database_engine()
     await create_db_and_tables(engine)
     async with AsyncExitStack() as cleanup:
         cleanup.push_async_callback(engine.dispose)
         cleanup.push_async_callback(close_all_sandboxes)
         cleanup.push_async_callback(close_all_mcp_connections)
+        llm = settings.llm
+        app.state.openai_client = await cleanup.enter_async_context(
+            AsyncOpenAI(api_key=llm.api_key, base_url=llm.api_base, max_retries=8)
+        )
+        cleanup.callback(delattr, app.state, "openai_client")
         yield
 
 

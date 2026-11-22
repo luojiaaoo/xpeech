@@ -7,9 +7,14 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from xpeech.config.settings import ExtraUserInfoConfig, JWTChannelConfig, settings
+from xpeech.config.settings import (
+    ClaimExtractionError,
+    ExtraUserInfoConfig,
+    JWTChannelConfig,
+    extract_string_claim,
+    settings,
+)
 from xpeech.subapp.channel import helper
-from xpeech.subapp.channel.helper import ClaimExtractionError, extract_string_claim
 from xpeech.subapp.channel.schema import ChatEventType, Message, TextData
 from xpeech.utils.channel_jwt import UserJWTAuth
 

@@ -36,7 +36,9 @@ def test_embedded_sender_name_in_http_and_websocket(tmp_path, monkeypatch, provi
     )
     monkeypatch.setattr(settings, "extra_user_info", extra)
     monkeypatch.setattr(settings.jwt, "channels", {"crm": JWTChannelConfig(secret_key="test-channel-key-" * 4)})
-    execute = AsyncMock(side_effect=[lookup])
+    execute = AsyncMock(return_value=lookup)
+    if isinstance(lookup, CommandTemplateError):
+        execute.side_effect = lookup
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
     sync = AsyncMock(return_value=httpx.Response(200, json=[]))
     stream = AsyncMock(return_value=ChatStream(httpx.Response(200, content=b""), SimpleNamespace(aclose=AsyncMock())))
@@ -73,7 +75,7 @@ def test_embedded_sender_name_in_http_and_websocket(tmp_path, monkeypatch, provi
         sync.assert_not_awaited()
         stream.assert_not_awaited()
     if provided is None and lookup is not None:
-        execute.assert_awaited_once()
-        assert execute.await_args.args[1] == {"user_id": "alice"}
+        assert execute.await_count == (2 if isinstance(lookup, CommandTemplateError) else 1)
+        assert all(call.args[1] == {"user_id": "alice"} for call in execute.await_args_list)
     else:
         execute.assert_not_awaited()

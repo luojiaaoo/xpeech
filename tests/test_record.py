@@ -224,8 +224,11 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         async def chat_count_tool_tokens(self, **_kwargs):
             return {"system_tools": 0, "mcp_tools": 0}
 
-    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive, token_counts):
+    async def build_test_context_messages(
+        workspace: Path, *, user_id, channel, user_organization, not_interactive, token_counts
+    ):
         assert workspace == tmp_path / "workspace"
+        assert user_id == "session"
         assert channel == "crm"
         assert user_organization is None
         assert not_interactive is False

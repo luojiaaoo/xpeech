@@ -1,10 +1,10 @@
-"""按分项估算展示用的上下文占用，并生成 token_usage 事件。"""
+"""通过 vLLM 分项计算展示用的上下文占用，并生成 token_usage 事件。"""
 
 import json
 from dataclasses import dataclass
 from typing import Any
 
-from ..provider.litellm_provider import LiteLLMProvider
+from ..provider.openai_provider import OpenAIProvider
 from ..utils.helper import token_counter
 from .helper import strip_internal_message_metadata
 from .prompt.helper import remove_system_messages
@@ -17,9 +17,9 @@ def format_token_count(value: int) -> str:
 
 @dataclass
 class TokenUsage:
-    """保留组装时的分项统计；展示估算独立于压缩预算的整包计数。"""
+    """保留组装时的 vLLM 分项计数；展示独立于压缩预算的整包计数。"""
 
-    provider: LiteLLMProvider
+    provider: OpenAIProvider
     tools: list[str]
     compression_threshold: int
     context_tokens: dict[str, int]

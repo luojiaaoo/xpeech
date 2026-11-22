@@ -16,20 +16,22 @@ from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.server.schema import InboundMessage, InputText
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.config.settings import settings
-from xpeech.provider.litellm_provider import LiteLLMProvider
+from xpeech.provider.openai_provider import OpenAIProvider
 from xpeech.provider.schema import LLMParameters, LLMResponse
 from xpeech.utils.helper import token_counter
 
+pytestmark = pytest.mark.usefixtures("fake_vllm_tokenizer")
+
 
 @pytest.mark.asyncio
-async def test_context_breakdown_accumulates_blocks_and_leaves_messages_clean(tmp_path, monkeypatch):
+async def test_context_breakdown_accumulates_blocks_and_leaves_messages_clean(tmp_path, monkeypatch, make_openai_sdk_client):
     monkeypatch.setattr(loop_module, "get_request_id", lambda: "test-request")
     monkeypatch.setattr(SkillsLoader, "build_skills_prompt", AsyncMock(return_value="available skills"))
     (tmp_path / "AGENTS.md").write_text("workspace rules", encoding="utf-8")
     (tmp_path / "SOUL.md").write_text("", encoding="utf-8")
     await MemoryStore(tmp_path).write_long_term("user preference")
-    provider = LiteLLMProvider(
-        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
     )
     agent = AgentLoop(provider=provider, workspace=tmp_path, tools=[])
     agent.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())

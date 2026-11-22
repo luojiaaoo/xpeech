@@ -11,7 +11,7 @@ from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import research
 from xpeech.agent.tools.research import ArxivDownloadArgs, ArxivSearchArgs, build_research_tools
 from xpeech.exceptions import PathProtectionError
-from xpeech.provider.litellm_provider import LiteLLMProvider
+from xpeech.provider.openai_provider import OpenAIProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
 
 
@@ -64,7 +64,7 @@ def test_download_rejects_invalid_ids(ids):
 
 
 @pytest.mark.asyncio
-async def test_search_runs_through_provider_and_executor(tmp_path, monkeypatch, article):
+async def test_search_runs_through_provider_and_executor(tmp_path, monkeypatch, article, make_openai_sdk_client):
     searches = []
 
     def client_results(self, *, search):
@@ -72,8 +72,8 @@ async def test_search_runs_through_provider_and_executor(tmp_path, monkeypatch, 
         return iter([article])
 
     monkeypatch.setattr(research.arxiv.Client, "results", client_results)
-    provider = LiteLLMProvider(
-        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters()
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters()
     )
     for tool in build_research_tools(tmp_path):
         provider.register_function_tool(tool)

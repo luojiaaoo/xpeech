@@ -10,9 +10,9 @@ import pytest
 @pytest.mark.parametrize("with_environment", [False, True])
 def test_settings_read_toml_without_loading_environment_or_dotenv(tmp_path, with_environment):
     root = Path(__file__).resolve().parents[1]
-    (tmp_path / "conf.toml").write_text(
-        (root / "conf.toml.example").read_text(encoding="utf-8"), encoding="utf-8",
-    )
+    config = (root / "conf.toml.example").read_text(encoding="utf-8")
+    config = config.replace("http://vllm-tokenizer:8000", "https://tokenizer.test/render/")
+    (tmp_path / "conf.toml").write_text(config, encoding="utf-8")
     (tmp_path / ".env").write_text(
         "XPEECH_DATABASE__HOST=dotenv-host\nXPEECH_DOTENV_ONLY=loaded\n",
         encoding="utf-8",
@@ -36,6 +36,7 @@ print(json.dumps({
     "reloaded_host": Settings().database.host,
     "constructor_host": Settings(database={"host": "constructor-host"}).database.host,
     "fallback_username": settings.web_client.fallback_username,
+    "tokenizer": settings.llm.tokenizer.model_dump(),
     "dotenv_loaded": "XPEECH_DOTENV_ONLY" in os.environ,
 }))
 """, str(root)],
@@ -44,4 +45,5 @@ print(json.dumps({
     assert json.loads(result.stdout) == {
         "host": "postgres", "reloaded_host": "postgres",
         "constructor_host": "postgres", "fallback_username": "Unknown", "dotenv_loaded": False,
+        "tokenizer": {"api_base": "https://tokenizer.test/render", "model": "Qwen/Qwen3.8-27B", "timeout": 120.0},
     }

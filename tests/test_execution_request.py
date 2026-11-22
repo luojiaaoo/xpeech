@@ -24,7 +24,7 @@ from xpeech.agent.tools.execution_request import (
 )
 from xpeech.agent.tools.helper import as_tool, get_tool_model_cls
 from xpeech.agent.tools.mcp_client import create_mcp_registration
-from xpeech.provider.litellm_provider import LiteLLMProvider
+from xpeech.provider.openai_provider import OpenAIProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
 from xpeech.subapp.channel.feishu.cards import build_feishu_question_card
 from xpeech.utils.question import validate_confirm_question_json, validate_question_form_json
@@ -40,8 +40,8 @@ class CommandArgs(BaseModel):
 
 
 def provider():
-    return LiteLLMProvider(
-        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters()
+    return OpenAIProvider(
+        client=SimpleNamespace(), default_model="test", parameters=LLMParameters()
     )
 
 

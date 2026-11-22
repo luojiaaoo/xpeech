@@ -15,7 +15,7 @@ from xpeech.agent.tools.execution_request import EXECUTION_REQUEST, ExecutionDec
 from xpeech.agent.tools.helper import as_tool, get_tool_model_cls
 from xpeech.agent.tools.shell import ShellArgs
 from xpeech.config.settings import ToolConfig
-from xpeech.provider.litellm_provider import LiteLLMProvider
+from xpeech.provider.openai_provider import OpenAIProvider
 from xpeech.provider.schema import LLMParameters, ToolCallRequest
 from xpeech.utils.security import dcg as shell_module
 
@@ -388,7 +388,9 @@ async def test_fragment_accepts_only_a_text_parameter_and_returns_empty_output(t
 
 
 @pytest.mark.asyncio
-async def test_mcp_functions_call_the_bound_server_with_original_schema_and_arguments(tmp_path, monkeypatch):
+async def test_mcp_functions_call_the_bound_server_with_original_schema_and_arguments(
+    tmp_path, monkeypatch, make_openai_sdk_client,
+):
     calls = []
     echo_schema = {
         "type": "object",
@@ -421,9 +423,8 @@ async def test_mcp_functions_call_the_bound_server_with_original_schema_and_argu
         registration._session = FakeSession(registration.config.server_name)
 
     monkeypatch.setattr(mcp_client.MCPServerRegistration, "_connect", connect)
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=LLMParameters(),
     )
@@ -517,6 +518,7 @@ async def test_mcp_confirmation_selection_at_registration(
     not_interactive,
     requested,
     expected_confirmation,
+    make_openai_sdk_client,
 ):
     calls = []
     enabled_names = {"echo", "ping", _LONG_MCP_TOOL_NAME}
@@ -538,9 +540,8 @@ async def test_mcp_confirmation_selection_at_registration(
         registration._session = Session()
 
     monkeypatch.setattr(mcp_client.MCPServerRegistration, "_connect", connect)
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=LLMParameters(),
     )
@@ -895,7 +896,7 @@ async def test_mcp_status_tool_is_not_registered_without_servers(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeypatch):
+async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeypatch, make_openai_sdk_client):
     release = asyncio.Event()
 
     class Session:
@@ -911,11 +912,11 @@ async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeyp
             yield
 
     monkeypatch.setattr(mcp_client.MCPServerRegistration, "_connect", connect)
-    provider = LiteLLMProvider(
-        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
     )
     completion = Mock(side_effect=lambda **_kwargs: upstream())
-    monkeypatch.setattr(provider._retry_client, "acompletion", completion)
+    monkeypatch.setattr(provider._stream_client, "create", completion)
     chats_scheduled_mid_registration = []
     register_mcp_tool = provider.register_mcp_tool
 

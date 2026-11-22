@@ -120,7 +120,7 @@ def test_access_token_does_not_carry_lark_user_access_token():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["/chat", "/chat_sync"])
-async def test_chat_ignores_lark_user_access_tokens(tmp_path, monkeypatch, endpoint):
+async def test_chat_ignores_lark_user_access_tokens(tmp_path, monkeypatch, endpoint, backend_openai_client):
     monkeypatch.setattr(settings.path, "cache_path", tmp_path / "cache")
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "sandbox-home")
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))

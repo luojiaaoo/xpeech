@@ -18,6 +18,7 @@ from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import mcp_client, registry
 import xpeech.config.settings as settings_module
 from xpeech.config.settings import MCPServerSettings, ExtraUserInfoConfig, ToolConfig, settings
+from xpeech.utils import redis_state
 from xpeech.utils.command_template import CommandTemplateError
 
 
@@ -42,42 +43,35 @@ async def test_organization_cache_reuses_results_and_merges_concurrent_queries(m
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("first_organization", ["company/old", "", None])
+@pytest.mark.parametrize("first_organization", ["company/old", ""])
 async def test_organization_cache_expires_after_one_hour(monkeypatch, first_organization):
-    first_result = (
-        CommandTemplateError("failed", operation="lookup", returncode=1)
-        if first_organization is None
-        else json.dumps({"organization": first_organization})
-    )
-    execute = AsyncMock(side_effect=[first_result, json.dumps({"organization": "company/new"})])
+    execute = AsyncMock(side_effect=[
+        json.dumps({"organization": first_organization}),
+        json.dumps({"organization": "company/new"}),
+    ])
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
-    scheduled = []
-    loop = asyncio.get_running_loop()
-    call_later = loop.call_later
-
-    def capture_expiry(delay, callback, *args, **kwargs):
-        handle = call_later(delay, callback, *args, **kwargs)
-        if delay == 3600:
-            scheduled.append((callback, args, handle))
-        return handle
-
-    monkeypatch.setattr(loop, "call_later", capture_expiry)
     config = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup $user_id")
+    key = redis_state.state_key("extra-user-info", [config.model_dump(mode="json"), "alice"])
+
     assert await config.resolve_user_organization("alice") == (first_organization or None)
-    assert len(scheduled) == 1
     assert await config.resolve_user_organization("alice") == (first_organization or None)
-    assert execute.await_count == 1
-    callback, args, handle = scheduled.pop()
-    handle.cancel()
-    callback(*args)
+    execute.assert_awaited_once()
+
+    async with redis_state.redis_client() as redis:
+        assert 3590 <= await redis.ttl(key) <= 3600
+        assert await redis.expire(key, 0)
+
     assert await config.resolve_user_organization("alice") == "company/new"
     assert execute.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_timed_out_organization_queries_are_not_cached(monkeypatch):
-    first = CommandTemplateError("timeout", operation="organization.command_template")
-    execute = AsyncMock(side_effect=[first, json.dumps({"organization": "company/recovered"})])
+@pytest.mark.parametrize("error", [
+    CommandTemplateError("timeout", operation="lookup"),
+    CommandTemplateError("failed", operation="lookup", returncode=1),
+])
+async def test_failed_organization_queries_are_not_cached(monkeypatch, error):
+    execute = AsyncMock(side_effect=[error, json.dumps({"organization": "company/recovered"})])
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
     config = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup $user_id")
     assert await config.resolve_user_organization("alice") is None

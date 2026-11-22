@@ -171,6 +171,35 @@ class MCPServerSettings(BaseModel):
         return self
 
 
+class TokenizerConfig(BaseModel):
+    """vLLM render service configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_base: str = "http://vllm-tokenizer:8000"
+    model: str = Field(default="Qwen/Qwen3.8-27B", min_length=1)
+    timeout: float = Field(default=120.0, gt=0, allow_inf_nan=False)
+
+    @field_validator("api_base")
+    @classmethod
+    def validate_api_base(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("tokenizer api_base must be an absolute HTTP(S) URL")
+        if parsed.query or parsed.fragment:
+            raise ValueError("tokenizer api_base cannot contain a query or fragment")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("tokenizer model cannot be empty")
+        return value
+
+
 class LLMConfig(BaseModel):
     """LLM provider configuration settings."""
 
@@ -180,6 +209,7 @@ class LLMConfig(BaseModel):
 
     api_base: str
     default_model: str
+    tokenizer: TokenizerConfig = Field(default_factory=TokenizerConfig)
     parameters: LLMParameters
     tools_python_package: str
     default_tools: list[str]
@@ -284,6 +314,21 @@ class LoggingConfig(BaseModel):
 
     retention_days: int = Field(default=7, ge=1)
     max_file_size_mb: int = Field(default=10, ge=1)
+
+
+class ClaimExtractionError(ValueError):
+    """A jq claim query is invalid or does not resolve to one string."""
+
+
+def extract_string_claim(payload: object, expression: str) -> str:
+    """Extract one string from JSON using a configured jq expression."""
+    try:
+        outputs = jq.compile(expression).input_value(payload).all()
+    except ValueError as error:
+        raise ClaimExtractionError(f"claim jq 表达式无效: {expression}") from error
+    if len(outputs) != 1 or not isinstance(outputs[0], str):
+        raise ClaimExtractionError(f"claim jq 表达式未解析到唯一的字符串: {expression}")
+    return outputs[0]
 
 
 class OAuth2Config(BaseModel):
@@ -442,8 +487,6 @@ class ExtraUserInfoConfig(BaseModel):
         return self
 
     async def _resolve_claim(self, user_id: str, claim: str) -> str | None:
-        from ..subapp.channel.helper import extract_string_claim
-
         if self.command_extra_user_info_template is None:
             raise ValueError("extra_user_info.command_extra_user_info_template is not configured")
         from ..utils.redis_state import cached_query, state_key

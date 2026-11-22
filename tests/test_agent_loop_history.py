@@ -11,9 +11,11 @@ import xpeech.agent.loop as loop_module
 from xpeech.agent.loop import AgentLoop
 from xpeech.agent.server.schema import InboundMessage, InputText
 from xpeech.agent.tool_executor import ToolExecutor
-from xpeech.provider.litellm_provider import LiteLLMProvider
+from xpeech.provider.openai_provider import OpenAIProvider
 from xpeech.provider.schema import LLMParameters, LLMResponse, ToolCallChunk
 from xpeech.utils.helper import token_counter
+
+pytestmark = pytest.mark.usefixtures("fake_vllm_tokenizer")
 
 
 @pytest.fixture(autouse=True)
@@ -95,11 +97,11 @@ async def test_final_response_is_emitted_and_persisted_when_model_returns_no_tex
 
 
 @pytest.mark.asyncio
-async def test_token_usage_is_emitted_after_saved_record_expires(tmp_path):
+async def test_token_usage_is_emitted_after_saved_record_expires(tmp_path, make_openai_sdk_client):
     response = make_response("answer")
     response.usage.update({"prompt_tokens": 1234, "completion_tokens": 5678})
-    provider = LiteLLMProvider(
-        api_key="test", api_base="https://example.test", default_model="test", parameters=LLMParameters(),
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
     )
     provider.chat = AsyncMock(return_value=response)
     agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[])
@@ -137,13 +139,12 @@ async def test_token_usage_is_emitted_after_saved_record_expires(tmp_path):
     [(200000, 32768, 147000), (262144, 32768, 202929), (200000, 20001, 147000)],
 )
 async def test_compression_uses_90_percent_of_context_window(
-    tmp_path, monkeypatch, context_tokens, output_tokens, expected_threshold,
+    tmp_path, monkeypatch, context_tokens, output_tokens, expected_threshold, make_openai_sdk_client,
 ):
     count_tokens = AsyncMock(return_value=expected_threshold - 1)
     monkeypatch.setattr(AgentLoop, "_count_context_tokens", count_tokens)
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=LLMParameters(max_context_tokens=context_tokens, max_tokens=output_tokens),
     )
@@ -157,7 +158,7 @@ async def test_compression_uses_90_percent_of_context_window(
 
 
 @pytest.mark.asyncio
-async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path, monkeypatch):
+async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path, monkeypatch, make_openai_sdk_client):
     async def build_test_system_prompt(**_kwargs):
         return {"role": "system", "content": "system"}
 
@@ -165,9 +166,8 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
         return "found"
 
     monkeypatch.setattr(loop_module, "build_system_prompt", build_test_system_prompt)
-    provider = LiteLLMProvider(
-        api_key="test",
-        api_base="https://example.test",
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(),
         default_model="test",
         parameters=LLMParameters(max_context_tokens=200000),
     )
@@ -236,8 +236,11 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
 @pytest.mark.asyncio
 @pytest.mark.parametrize("json_output", [False, True])
 async def test_not_interactive_run_saves_yaml_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, json_output):
-    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive, token_counts):
+    async def build_test_context_messages(
+        workspace: Path, *, user_id, channel, user_organization, not_interactive, token_counts
+    ):
         assert workspace == tmp_path
+        assert user_id == "session-1"
         assert user_organization == "公司/研发/平台"
         assert not_interactive is True
         return []
@@ -316,8 +319,11 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
 ):
     expected_not_interactive = not_interactive
 
-    async def build_test_context_messages(workspace: Path, *, channel, user_organization, not_interactive, token_counts):
+    async def build_test_context_messages(
+        workspace: Path, *, user_id, channel, user_organization, not_interactive, token_counts
+    ):
         assert workspace == tmp_path
+        assert user_id == "session-1"
         assert user_organization is None
         assert not_interactive is expected_not_interactive
         return []

@@ -65,6 +65,7 @@ def test_chat_initializes_all_tools_for_every_session(
     session_id,
     channel,
     json_requested,
+    backend_openai_client,
 ):
     from xpeech.agent import execute as execute_module
 
@@ -94,7 +95,9 @@ def test_chat_initializes_all_tools_for_every_session(
     )
 
     assert response.status_code == 200
-    create.assert_awaited_once_with("user", not_interactive=False, channel=channel)
+    create.assert_awaited_once_with(
+        "user", openai_client=backend_openai_client, not_interactive=False, channel=channel,
+    )
     assert messages[0].session_id == session_id
     assert messages[0].channel == channel
     assert messages[0].json_output is json_requested

@@ -77,7 +77,7 @@ async def saved_turn(agent, message):
 @pytest.mark.parametrize("confirmation", [False, True])
 @pytest.mark.parametrize("insert_before_question", [False, True])
 async def test_inserted_chat_and_question_share_one_loop_and_record(
-    turn, monkeypatch, confirmation, insert_before_question,
+    turn, monkeypatch, confirmation, insert_before_question, make_openai_sdk_client,
 ):
     agent, message = turn
     monkeypatch.setattr(loop_module, "build_user_prompt", build_user_prompt)
@@ -86,6 +86,7 @@ async def test_inserted_chat_and_question_share_one_loop_and_record(
     runner = SimpleNamespace(workspace=agent.workspace, run=agent.run)
     monkeypatch.setattr(AgentRunner, "create", AsyncMock(return_value=runner))
     app = FastAPI()
+    app.state.openai_client = make_openai_sdk_client()
     app.include_router(router)
     app.dependency_overrides[require_user_jwt] = lambda: SimpleNamespace(
         user_id=message.user_id, channel=message.channel,
@@ -122,6 +123,7 @@ async def test_inserted_chat_and_question_share_one_loop_and_record(
     async def consume():
         async with execute.execute_chat_stream(
             message.user_id, channel=message.channel, session_id=message.session_id,
+            openai_client=app.state.openai_client,
             sender_name=message.sender_name, content=message.content,
         ) as events:
             async for event in events:
@@ -172,10 +174,11 @@ async def test_inserted_chat_and_question_share_one_loop_and_record(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_call_uses_tool", [False, True])
 async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
-    turn, monkeypatch, first_call_uses_tool,
+    turn, monkeypatch, first_call_uses_tool, make_openai_sdk_client,
 ):
     agent, message = turn
     app = FastAPI()
+    app.state.openai_client = make_openai_sdk_client()
     app.include_router(router)
     auth = SimpleNamespace(user_id=message.user_id, channel=message.channel)
     app.dependency_overrides[require_user_jwt] = lambda: auth
@@ -217,6 +220,7 @@ async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
     async def consume():
         async with execute.execute_chat_stream(
             message.user_id, channel=message.channel, session_id=message.session_id, sender_name=message.sender_name,
+            openai_client=app.state.openai_client,
             content=message.content, session_metadata={}, files=[], json_output=False,
         ) as events:
             return [event async for event in events]
@@ -526,13 +530,14 @@ async def test_inbox_message_resets_repeated_tool_call_count(turn):
 @pytest.mark.parametrize("field, value", [
     ("sender_name", "Bob"), ("session_metadata", {"trace": "other"}),
 ])
-async def test_chat_returns_conflict_for_changed_inbox_context(turn, monkeypatch, field, value):
+async def test_chat_returns_conflict_for_changed_inbox_context(turn, monkeypatch, field, value, make_openai_sdk_client):
     agent, message = turn
     guard = SessionChatGuard()
     inbox, _ = await guard.submit(message)
     monkeypatch.setattr(execute, "CHAT_GUARD", guard)
     monkeypatch.setattr(AgentRunner, "create", AsyncMock(return_value=SimpleNamespace(workspace=agent.workspace)))
     app = FastAPI()
+    app.state.openai_client = make_openai_sdk_client()
     app.include_router(router)
     app.dependency_overrides[require_user_jwt] = lambda: SimpleNamespace(
         user_id=message.user_id, channel=message.channel,

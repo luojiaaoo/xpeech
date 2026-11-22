@@ -1,4 +1,6 @@
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import jwt
@@ -6,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from xpeech.agent.runner import AgentRunner
+from xpeech.agent.server import server
 from xpeech.agent.server.api import app
 from xpeech.agent.server.dependencies import settings
 from xpeech.agent.server.schema import InboundMessage, InputText
@@ -42,7 +45,7 @@ class FakeRunner:
 
 
 @pytest.fixture
-def fake_runner(monkeypatch, tmp_path):
+def fake_runner(monkeypatch, tmp_path, backend_openai_client):
     runner = FakeRunner(tmp_path)
     created = {}
 
@@ -56,7 +59,35 @@ def fake_runner(monkeypatch, tmp_path):
     return runner
 
 
-def test_chat_sync_returns_collected_events(fake_runner, monkeypatch):
+def test_chat_endpoints_share_client_for_backend_lifespan(monkeypatch, tmp_path):
+    class Runner(FakeRunner):
+        async def run(self, *, message, inbox):
+            for event in await self.run_not_interactive(message):
+                yield event
+
+    create = AsyncMock(return_value=Runner(tmp_path))
+    monkeypatch.setattr(AgentRunner, "create", create)
+    monkeypatch.setattr(server, "get_async_database_engine", lambda: SimpleNamespace(dispose=AsyncMock()))
+    monkeypatch.setattr(server, "create_db_and_tables", AsyncMock())
+    monkeypatch.setattr(server, "close_all_sandboxes", AsyncMock())
+    monkeypatch.setattr(server, "close_all_mcp_connections", AsyncMock())
+
+    with TestClient(app) as http:
+        client = app.state.openai_client
+        assert client.max_retries == 8
+        assert not client.is_closed()
+        for path in ("/chat", "/chat_sync"):
+            response = http.post(path, headers=chat_headers(), data={"content": '[{"text":"hello"}]'})
+            assert response.status_code == 200
+        assert create.await_count == 2
+        assert all(call.kwargs["openai_client"] is client for call in create.await_args_list)
+        assert not client.is_closed()
+
+    assert client.is_closed()
+    assert not hasattr(app.state, "openai_client")
+
+
+def test_chat_sync_returns_collected_events(fake_runner, monkeypatch, backend_openai_client):
     monkeypatch.setattr("xpeech.agent.execute.generate_session_id", lambda: GENERATED_SESSION_ID)
     response = TestClient(app).post(
         "/chat_sync",
@@ -74,7 +105,7 @@ def test_chat_sync_returns_collected_events(fake_runner, monkeypatch):
     ]
     assert fake_runner.created == {
         "user_id": "user",
-        "kwargs": {"not_interactive": True, "channel": "web_client"},
+        "kwargs": {"openai_client": backend_openai_client, "not_interactive": True, "channel": "web_client"},
     }
     [message] = fake_runner.messages
     # 会话 ID 由服务端生成，忽略请求头里的 x-session-id。
@@ -128,6 +159,7 @@ def test_channel_jwt_signed_with_another_channels_key_is_rejected(fake_runner):
 
 def test_chat_sync_initializes_non_interactive_tools_without_session_header(
     fake_runner,
+    backend_openai_client,
 ):
     headers = chat_headers()
     del headers["x-session-id"]
@@ -139,7 +171,9 @@ def test_chat_sync_initializes_non_interactive_tools_without_session_header(
     )
 
     assert response.status_code == 200
-    assert fake_runner.created["kwargs"] == {"not_interactive": True, "channel": "web_client"}
+    assert fake_runner.created["kwargs"] == {
+        "openai_client": backend_openai_client, "not_interactive": True, "channel": "web_client",
+    }
 
 
 def test_chat_sync_recognizes_json_output_keyword(monkeypatch, fake_runner):

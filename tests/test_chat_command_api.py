@@ -143,6 +143,7 @@ def test_file_choices_limit_results_and_handle_new_workspaces(chat_command_clien
     assert (workspace.parent / "new-user").is_dir()
 
 
+@pytest.mark.usefixtures("backend_openai_client")
 def test_workspace_routes_reject_workspace_roots_linked_to_another_user(chat_command_client, tmp_path):
     client, _, _ = chat_command_client
     other = tmp_path / "bob"
