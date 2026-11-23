@@ -202,7 +202,7 @@ timeout = 120.0
 `llm.tokenizer.model` 必须与 vLLM 服务加载并暴露的模型名一致。需要让计数对应实际上下文时，vLLM 的模型、tokenizer、
 聊天模板和多模态预处理配置也应与推理服务一致。`llm.tokenizer.timeout` 是单次计数请求的超时秒数，包含多模态处理。
 Compose 中的 `vllm-tokenizer` 在容器启动时先安装 ModelScope，再通过魔搭下载模型文件。
-模型缓存持久化到 `data/modelscope`，并使用 `--max-tokenize-tokens 0` 关闭计数长度上限。
+模型缓存持久化到 `data/modelscope`。当前镜像的 `/tokenize` 对 Qwen 聊天请求默认不按模型上下文长度截断。
 backend 等待其健康检查通过后启动。
 切换 tokenizer 模型时，将 `.env` 中的 `VLLM_TOKENIZER_MODEL` 和 `conf.toml` 中的
 `llm.tokenizer.model` 设为同一个魔搭模型 ID。本地直接运行 backend 时，将 `llm.tokenizer.api_base`
