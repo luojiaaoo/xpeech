@@ -18,8 +18,8 @@ from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import mcp_client, registry
 import xpeech.config.settings as settings_module
 from xpeech.config.settings import MCPServerSettings, ExtraUserInfoConfig, ToolConfig, settings
-from xpeech.utils import redis_state
 from xpeech.utils.command_template import CommandTemplateError
+from xpeech.utils.redis_state import client as redis_connection
 
 
 @pytest.mark.asyncio
@@ -51,13 +51,12 @@ async def test_organization_cache_expires_after_one_hour(monkeypatch, first_orga
     ])
     monkeypatch.setattr(settings_module, "execute_command_template", execute)
     config = ExtraUserInfoConfig(user_organization_claim=".organization", command_extra_user_info_template="lookup $user_id")
-    key = redis_state.state_key("extra-user-info", [config.model_dump(mode="json"), "alice"])
-
     assert await config.resolve_user_organization("alice") == (first_organization or None)
     assert await config.resolve_user_organization("alice") == (first_organization or None)
     execute.assert_awaited_once()
 
-    async with redis_state.redis_client() as redis:
+    async with redis_connection.redis_client() as redis:
+        (key,) = await redis.keys("xpeech:cache:v2:*")
         assert 3590 <= await redis.ttl(key) <= 3600
         assert await redis.expire(key, 0)
 

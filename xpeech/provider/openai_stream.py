@@ -8,7 +8,7 @@ from loguru import logger
 from openai import APIStatusError, AsyncOpenAI
 
 from ..config.settings import settings
-from ..utils.redis_state import redis_client, redis_permit
+from ..utils.redis_state import redis_semaphore
 
 STREAM_CLOSE_TIMEOUT = 5.0
 _STREAM_CLOSE_TASKS: set[asyncio.Task[None]] = set()
@@ -57,10 +57,7 @@ class OpenAIStreamClient:
         start_time = time.time()
         response = None
         try:
-            async with (
-                redis_client() as redis,
-                redis_permit(redis, "xpeech:llm:permits:v1", settings.llm.parallel),
-            ):
+            async with redis_semaphore(settings.llm.parallel, key="xpeech:llm:permits:v1"):
                 response = await self._client.chat.completions.create(**kwargs)
                 async for chunk in response:
                     yield chunk

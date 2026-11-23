@@ -29,6 +29,7 @@ from ..utils.command_template import CommandTemplateError, execute_command_templ
 from ..utils.file_io import ensure_path
 from ..utils.filter_expr import validate_filter_source
 from ..utils.ids import validate_user_id
+from ..utils.redis_state import redis_alru_cache
 
 conf_toml_path = "conf.toml"  # Configuration TOML file path
 
@@ -486,35 +487,33 @@ class ExtraUserInfoConfig(BaseModel):
             raise ValueError("global claims require extra_user_info.command_extra_user_info_template")
         return self
 
-    async def _resolve_claim(self, user_id: str, claim: str) -> str | None:
+    @redis_alru_cache(ttl=3600, scope=lambda config: config.model_dump(mode="json"), cache_none=False)
+    async def _query_user_info(self, user_id: str) -> tuple[object] | None:
         if self.command_extra_user_info_template is None:
             raise ValueError("extra_user_info.command_extra_user_info_template is not configured")
-        from ..utils.redis_state import cached_query, state_key
-
-        async def query() -> tuple[object] | None:
-            try:
-                result = await execute_command_template(
-                    self.command_extra_user_info_template,
-                    {"user_id": user_id},
-                    operation="extra_user_info.command_extra_user_info_template",
-                    timeout=self.timeout,
-                    required_variables=("user_id",),
-                )
-            except CommandTemplateError as error:
-                if error.reason != "failed":
-                    raise
-                logger.warning("Extra user info lookup failed user_id={!r}: {}", user_id, error)
-                return None
-            payload = json.loads(result)
-            logger.info(
-                "Extra user info lookup succeeded user_id={!r} result={}",
-                user_id,
-                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        try:
+            result = await execute_command_template(
+                self.command_extra_user_info_template,
+                {"user_id": user_id},
+                operation="extra_user_info.command_extra_user_info_template",
+                timeout=self.timeout,
+                required_variables=("user_id",),
             )
-            return (payload,)
+        except CommandTemplateError as error:
+            if error.reason != "failed":
+                raise
+            logger.warning("Extra user info lookup failed user_id={!r}: {}", user_id, error)
+            return None
+        payload = json.loads(result)
+        logger.info(
+            "Extra user info lookup succeeded user_id={!r} result={}",
+            user_id,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        )
+        return (payload,)
 
-        key = state_key("extra-user-info", [self.model_dump(mode="json"), user_id])
-        result = await cached_query(key, 3600, query, cache_none=False)
+    async def _resolve_claim(self, user_id: str, claim: str) -> str | None:
+        result = await self._query_user_info(user_id)
         if result is None:
             return None
         (payload,) = result

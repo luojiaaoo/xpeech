@@ -2,7 +2,7 @@ import argparse
 import hashlib
 import hmac
 import secrets
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -14,6 +14,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from ....utils.channel_jwt import UserJWTAuth
 from ....utils.database import get_async_database_engine
+from ....utils.redis_state import redis_pool
 from .dao import User, WebClientDAO
 from .history import JsonlEventHistoryRepository
 from .models import (
@@ -65,11 +66,11 @@ def create_app(config: WebConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        await dao.initialize(lambda: _password_hash("admin123456"))
-        try:
+        async with AsyncExitStack() as cleanup:
+            cleanup.push_async_callback(dao.close)
+            await dao.initialize(lambda: _password_hash("admin123456"))
+            await cleanup.enter_async_context(redis_pool())
             yield
-        finally:
-            await dao.close()
 
     app = FastAPI(
         title=f"{config.system_name} Web",

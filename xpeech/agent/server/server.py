@@ -9,6 +9,7 @@ from starlette.middleware.cors import CORSMiddleware
 from ...config.settings import settings
 from ...utils.database import get_async_database_engine
 from ...utils.logging import configure_logging
+from ...utils.redis_state import redis_pool
 from ...utils.security.sandbox import close_all_sandboxes
 from ..record import create_db_and_tables
 from ..tools.mcp_client import close_all_mcp_connections
@@ -20,9 +21,10 @@ configure_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine = get_async_database_engine()
-    await create_db_and_tables(engine)
     async with AsyncExitStack() as cleanup:
+        await cleanup.enter_async_context(redis_pool())
         cleanup.push_async_callback(engine.dispose)
+        await create_db_and_tables(engine)
         cleanup.push_async_callback(close_all_sandboxes)
         cleanup.push_async_callback(close_all_mcp_connections)
         llm = settings.llm

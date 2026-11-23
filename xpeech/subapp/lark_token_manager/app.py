@@ -11,7 +11,7 @@ import base64
 import hashlib
 import hmac
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
 import httpx
@@ -305,19 +305,21 @@ async def refresh_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    store.initialize()
-    refresh_task = asyncio.create_task(refresh_loop())
-    for user_id in store.pending_user_ids(int(time.time())):
-        _schedule_poll(user_id)
-    try:
+    async with AsyncExitStack() as cleanup:
+        store.initialize()
+        cleanup.callback(store.close)
+        refresh_task = asyncio.create_task(refresh_loop())
+
+        async def stop_background_tasks() -> None:
+            tasks = [refresh_task, *_poll_tasks.values()]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        cleanup.push_async_callback(stop_background_tasks)
+        for user_id in store.pending_user_ids(int(time.time())):
+            _schedule_poll(user_id)
         yield
-    finally:
-        refresh_task.cancel()
-        tasks = list(_poll_tasks.values())
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(refresh_task, *tasks, return_exceptions=True)
-        store.close()
 
 
 app = FastAPI(title="Xpeech Feishu token manager", lifespan=lifespan)

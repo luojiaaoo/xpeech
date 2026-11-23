@@ -1,4 +1,5 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -7,22 +8,40 @@ from unittest.mock import AsyncMock
 
 import pytest
 from redis.exceptions import ConnectionError
+from typing_extensions import TypedDict
 
 from xpeech.config.settings import LLMConfig, settings
 from xpeech.utils import redis_state as state
+from xpeech.utils.redis_state import client as redis_connection
+from xpeech.utils.redis_state.client import redis_client as real_redis_client
+
+
+@pytest.mark.asyncio
+async def test_clients_share_pool_until_lifespan_ends(monkeypatch):
+    async with state.redis_pool():
+        async with real_redis_client() as first, real_redis_client() as second:
+            pool = first.connection_pool
+            assert second.connection_pool is pool
+            close = AsyncMock(wraps=pool.aclose)
+            monkeypatch.setattr(pool, "aclose", close)
+        close.assert_not_awaited()
+
+    close.assert_awaited_once()
+    async with real_redis_client() as standalone:
+        assert standalone.connection_pool is not pool
 
 
 @pytest.mark.asyncio
 async def test_separate_clients_share_limit_and_reclaim_expired_permits():
-    async with state.redis_client() as first, state.redis_client() as second:
+    async with redis_connection.redis_client() as first:
         await first.zadd("permits", {"crashed": 0})
         entered = asyncio.Event()
 
         async def waiting():
-            async with state.redis_permit(second, "permits", 1):
+            async with state.redis_semaphore(1, key="permits"):
                 entered.set()
 
-        async with state.redis_permit(first, "permits", 1):
+        async with state.redis_semaphore(1, key="permits"):
             task = asyncio.create_task(waiting())
             await asyncio.sleep(0.05)
             assert not entered.is_set()
@@ -34,11 +53,11 @@ async def test_separate_clients_share_limit_and_reclaim_expired_permits():
 
 @pytest.mark.asyncio
 async def test_lease_is_renewed_and_cancelled_holder_releases():
-    async with state.redis_client() as client:
+    async with redis_connection.redis_client() as client:
         entered = asyncio.Event()
 
         async def holder():
-            async with state.redis_permit(client, "renew", 1, lease_ms=400):
+            async with state.redis_semaphore(1, key="renew", lease_ms=400):
                 entered.set()
                 await asyncio.Event().wait()
 
@@ -55,11 +74,11 @@ async def test_lease_is_renewed_and_cancelled_holder_releases():
 
 @pytest.mark.asyncio
 async def test_lost_lease_stops_holder():
-    async with state.redis_client() as client:
+    async with redis_connection.redis_client() as client:
         entered = asyncio.Event()
 
         async def holder():
-            async with state.redis_permit(client, "lost", 1, lease_ms=400):
+            async with state.redis_semaphore(1, key="lost", lease_ms=400):
                 entered.set()
                 await asyncio.Event().wait()
 
@@ -72,9 +91,9 @@ async def test_lost_lease_stops_holder():
 
 @pytest.mark.asyncio
 async def test_cancelled_waiter_cannot_remove_holders_permit():
-    async with state.redis_client() as client, state.redis_permit(client, "waiting", 1):
+    async with redis_connection.redis_client() as client, state.redis_semaphore(1, key="waiting"):
         async def waiter():
-            async with state.redis_permit(client, "waiting", 1):
+            async with state.redis_semaphore(1, key="waiting"):
                 pytest.fail("Waiter acquired an occupied permit")
 
         task = asyncio.create_task(waiter())
@@ -87,30 +106,53 @@ async def test_cancelled_waiter_cannot_remove_holders_permit():
 
 @pytest.mark.asyncio
 async def test_shared_cache_singleflight_ttl_types_and_null():
-    value = {"time": datetime(2026, 11, 21, tzinfo=UTC), "n": Decimal("12.34")}
+    class CachedValue(TypedDict):
+        time: datetime
+        n: Decimal
+
+    value = {"time": datetime(2026, 11, 21, tzinfo=UTC), "n": Decimal("12.3456789012345678901234")}
     compute = AsyncMock(return_value=value)
-    results = await asyncio.gather(*(state.cached_query("cache", 5, compute) for _ in range(4)))
+
+    @state.redis_alru_cache(ttl=5)
+    async def cached(limit=20) -> CachedValue:
+        return await compute(limit)
+
+    results = await asyncio.gather(cached(), cached(20), cached(limit=20), cached())
     assert all(result == value for result in results)
     compute.assert_awaited_once()
-    async with state.redis_client() as client:
-        assert 0 < await client.ttl("cache") <= 5
-        await client.pexpire("cache", 1)
+    async with redis_connection.redis_client() as client:
+        (key,) = await client.keys("xpeech:cache:v2:*")
+        assert json.loads(await client.get(key)) == {"time": value["time"].isoformat(), "n": str(value["n"])}
+        assert 0 < await client.ttl(key) <= 5
+        await client.pexpire(key, 1)
     await asyncio.sleep(0.02)
-    await state.cached_query("cache", 5, compute)
+    await cached()
     assert compute.await_count == 2
+
     null = AsyncMock(return_value=None)
-    assert await state.cached_query("null", 5, null) is None
-    assert await state.cached_query("null", 5, null) is None
+
+    @state.redis_alru_cache(ttl=5)
+    async def cached_null():
+        return await null()
+
+    assert await cached_null() is None
+    assert await cached_null() is None
     null.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_failures_are_not_cached():
-    compute = AsyncMock(side_effect=[ValueError("bad JSON"), None, "ok"])
-    with pytest.raises(ValueError):
-        await state.cached_query("retry", 3600, compute, cache_none=False)
-    assert await state.cached_query("retry", 3600, compute, cache_none=False) is None
-    assert await state.cached_query("retry", 3600, compute, cache_none=False) == "ok"
+    compute = AsyncMock(side_effect=[TimeoutError("source timed out"), None, "ok"])
+
+    @state.redis_alru_cache(ttl=3600, cache_none=False)
+    async def cached():
+        return await compute()
+
+    with pytest.raises(TimeoutError, match="source timed out"):
+        await cached()
+    assert await cached() is None
+    assert await cached() == "ok"
+    assert await cached() == "ok"
     assert compute.await_count == 3
 
 
@@ -123,10 +165,14 @@ async def test_cache_outage_falls_back_but_model_outage_rejects(monkeypatch, mak
         raise ConnectionError("offline")
         yield
 
-    monkeypatch.setattr(state, "redis_client", unavailable)
-    monkeypatch.setattr(openai_stream, "redis_client", unavailable)
+    monkeypatch.setattr(redis_connection, "redis_client", unavailable)
     compute = AsyncMock(return_value="source")
-    assert await state.cached_query("outage", 5, compute) == "source"
+
+    @state.redis_alru_cache(ttl=5)
+    async def cached():
+        return await compute()
+
+    assert await cached() == "source"
     compute.assert_awaited_once()
     completion = AsyncMock()
     client = openai_stream.OpenAIStreamClient(make_openai_sdk_client(completion))
@@ -137,16 +183,21 @@ async def test_cache_outage_falls_back_but_model_outage_rejects(monkeypatch, mak
 
 @pytest.mark.asyncio
 async def test_cache_write_failure_does_not_repeat_source_query(monkeypatch):
-    original_client = state.redis_client
+    original_client = redis_connection.redis_client
 
     def client():
         result = original_client()
         result.set = AsyncMock(side_effect=ConnectionError("write failed"))
         return result
 
-    monkeypatch.setattr(state, "redis_client", client)
+    monkeypatch.setattr(redis_connection, "redis_client", client)
     compute = AsyncMock(return_value="already computed")
-    assert await state.cached_query("write-failure", 5, compute) == "already computed"
+
+    @state.redis_alru_cache(ttl=5)
+    async def cached():
+        return await compute()
+
+    assert await cached() == "already computed"
     compute.assert_awaited_once()
 
 
@@ -187,22 +238,24 @@ async def test_model_limit_is_shared_by_stream_clients(monkeypatch, make_openai_
 
 
 @pytest.mark.asyncio
-async def test_statistics_share_cache_across_repository_instances(monkeypatch):
+async def test_statistics_share_cache_across_repository_instances():
     from xpeech.agent.record import ConversationRecord
-    from xpeech.agent.server.routes.statistics import statistics_cache
+    from xpeech.agent.server.routes.statistics import _CachedRecord, _StatisticsValues, statistics_cache
 
     record = ConversationRecord(
         id=1, user_id="alice", session_id="session", request_id="request", sender_name="Alice",
         user_question="Q", model_response="A", input_tokens=12, output_tokens=4,
         model_call_count=1, duration_s=1, channel="web_client",
     )
-    compute = AsyncMock(return_value=([record], {"number": Decimal(16)}))
+    summary_values = {"input_tokens": Decimal(16), "data_as_of": record.created_at}
+    compute = AsyncMock(return_value=([record], summary_values))
 
     class Repository:
-        _engine = SimpleNamespace(url=SimpleNamespace(render_as_string=lambda **kw: "database-a"))
+        def __init__(self, database="database-a"):
+            self._engine = SimpleNamespace(url=SimpleNamespace(render_as_string=lambda **kwargs: database))
 
         @statistics_cache
-        async def records(self, *, limit=20) -> tuple[list[ConversationRecord], dict]:
+        async def records(self, *, limit=20) -> tuple[list[_CachedRecord], _StatisticsValues]:
             return await compute()
 
     first, second = Repository(), Repository()
@@ -210,10 +263,13 @@ async def test_statistics_share_cache_across_repository_instances(monkeypatch):
     result, summary = await second.records(limit=20)
     assert isinstance(result[0], ConversationRecord)
     assert result[0].created_at == record.created_at
-    assert summary == {"number": Decimal(16)}
+    assert summary == summary_values
+    assert isinstance(summary["input_tokens"], Decimal)
     compute.assert_awaited_once()
     await second.records(limit=10)
     assert compute.await_count == 2
+    await Repository("database-b").records()
+    assert compute.await_count == 3
 
 
 @pytest.mark.asyncio

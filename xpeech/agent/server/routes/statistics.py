@@ -2,23 +2,23 @@ import csv
 import io
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from functools import wraps
-from inspect import signature
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, BeforeValidator, with_config
 from sqlalchemy import Integer, String, asc, cast, desc, distinct, extract, func
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import aliased
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
+from typing_extensions import TypedDict
 
 from ....config.settings import settings
 from ....utils.database import get_async_database_engine
-from ....utils.redis_state import cached_query, state_key
+from ....utils.redis_state import redis_alru_cache
 from ...record import ConversationRecord, record_yaml_path
 
 STATISTICS_CACHE_TTL_S = 5
@@ -26,21 +26,25 @@ STATISTICS_CACHE_TTL_S = 5
 Granularity = Literal["hour", "day", "week", "month"]
 
 
-def statistics_cache(function):
-    parameters = signature(function)
-    adapter = TypeAdapter(parameters.return_annotation)
+statistics_cache = redis_alru_cache(
+    ttl=STATISTICS_CACHE_TTL_S,
+    scope=lambda repository: repository._engine.url.render_as_string(hide_password=False),
+)
+_CachedRecord = Annotated[ConversationRecord, BeforeValidator(ConversationRecord.model_validate)]
 
-    @wraps(function)
-    async def wrapped(self, *args, **kwargs):
-        bound = parameters.bind(self, *args, **kwargs)
-        bound.apply_defaults()
-        values = dict(bound.arguments)
-        values.pop("self")
-        key = state_key("statistics", [self._engine.url.render_as_string(hide_password=False), function.__name__, values])
-        result = await cached_query(key, STATISTICS_CACHE_TTL_S, lambda: function(self, *args, **kwargs))
-        return adapter.validate_python(result)
 
-    return wrapped
+@with_config(extra="allow")
+class _StatisticsValues(TypedDict, total=False):
+    """SQL aggregate fields whose Python types need to survive a cache hit."""
+
+    data_as_of: datetime | None
+    first_active_at: datetime | None
+    last_active_at: datetime | None
+    question_count: int | Decimal
+    model_call_count: int | Decimal
+    input_tokens: int | Decimal
+    output_tokens: int | Decimal
+    average_duration_s: float | Decimal | None
 
 
 class ConversationStatisticsRepository:
@@ -86,7 +90,7 @@ class ConversationStatisticsRepository:
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         sender_name: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> _StatisticsValues:
         statement = select(
             func.count(ConversationRecord.id).label("question_count"),
             func.count(distinct(ConversationRecord.user_id)).label("active_user_count"),
@@ -115,7 +119,7 @@ class ConversationStatisticsRepository:
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         sender_name: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[_StatisticsValues]:
         formats: dict[Granularity, str] = {
             "hour": 'YYYY-MM-DD"T"HH24:00:00',
             "day": "YYYY-MM-DD",
@@ -193,7 +197,7 @@ class ConversationStatisticsRepository:
         end_at: datetime | None = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[_StatisticsValues], int]:
         question_count = func.count(ConversationRecord.id).label("question_count")
         local_day = func.date(
             func.timezone("UTC", ConversationRecord.created_at) + timedelta(minutes=timezone_offset_minutes)
@@ -241,7 +245,7 @@ class ConversationStatisticsRepository:
         sender_name: str | None = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[_StatisticsValues], int]:
         question_count = func.count(ConversationRecord.id).label("question_count")
         statement = (
             select(
@@ -303,7 +307,7 @@ class ConversationStatisticsRepository:
                 yield record
 
     @statistics_cache
-    async def latest_records(self, *, limit: int = 20) -> list[ConversationRecord]:
+    async def latest_records(self, *, limit: int = 20) -> list[_CachedRecord]:
         statement = select(ConversationRecord).order_by(desc(ConversationRecord.id)).limit(limit)
         async with AsyncSession(self._engine) as session:
             return list((await session.exec(statement)).all())
@@ -334,7 +338,7 @@ class ConversationStatisticsRepository:
         after_id: int | None = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> tuple[list[ConversationRecord], dict[str, Any]]:
+    ) -> tuple[list[_CachedRecord], _StatisticsValues]:
         statement = select(ConversationRecord)
         statement = self._with_filters(
             statement,

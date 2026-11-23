@@ -63,9 +63,9 @@ class _ModelPermits:
     key = "xpeech:llm:permits:v1"
 
     async def count(self) -> int:
-        from xpeech.provider import openai_stream
+        from xpeech.utils.redis_state import client
 
-        async with openai_stream.redis_client() as redis:
+        async with client.redis_client() as redis:
             return await redis.zcard(self.key)
 
     async def wait_for(self, expected: int) -> None:
@@ -108,14 +108,12 @@ def isolated_redis(monkeypatch):
     import fakeredis
     from fakeredis.aioredis import FakeRedis
 
-    from xpeech.provider import openai_stream
-    from xpeech.utils import redis_state
+    from xpeech.utils.redis_state import client as redis_connection
 
     server = fakeredis.FakeServer()
 
     def client(*args, **kwargs):
         return FakeRedis(server=server, decode_responses=True)
 
-    monkeypatch.setattr(redis_state, "redis_client", client)
-    monkeypatch.setattr(openai_stream, "redis_client", client)
+    monkeypatch.setattr(redis_connection, "redis_client", client)
     return server

@@ -171,10 +171,7 @@ async def test_stop_api_cancels_only_matching_stream_and_returns_permit(streamin
         permit_acquired = asyncio.Event()
 
         async def hold_permit():
-            async with (
-                redis_state.redis_client() as redis,
-                redis_state.redis_permit(redis, state.permits.key, settings.llm.parallel),
-            ):
+            async with redis_state.redis_semaphore(settings.llm.parallel, key=state.permits.key):
                 permit_acquired.set()
                 await asyncio.Event().wait()
 

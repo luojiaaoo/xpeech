@@ -1,7 +1,7 @@
 """Feishu connection and persistent scheduling in one application process."""
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Annotated
 
 import httpx
@@ -20,6 +20,7 @@ from ....config.settings import settings
 from ....utils.database import get_database_engine
 from ....utils.helper import ensure_async
 from ....utils.logging import configure_logging
+from ....utils.redis_state import redis_pool
 from .bridge import FeishuBridge
 from .schedule import (
     FeishuScheduleRuntime,
@@ -36,22 +37,18 @@ from .schedule import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     bridge = FeishuBridge(app.state.chat_url, settings.feishu.app_id, settings.feishu.app_secret)
-    async with httpx.AsyncClient() as client:
+    async with AsyncExitStack() as cleanup:
+        await cleanup.enter_async_context(redis_pool())
+        client = await cleanup.enter_async_context(httpx.AsyncClient())
         runtime = FeishuScheduleRuntime(app.state.chat_url, client, bridge.channel)
         await ensure_async(start_background_scheduler)(
             get_database_engine(), runtime=runtime, event_loop=asyncio.get_running_loop()
         )
-        # APScheduler needs the running loop even when job-store work is offloaded.
-        try:
-            async with asyncio.TaskGroup() as group:
-                connection = group.create_task(bridge.start())
-                try:
-                    yield
-                finally:
-                    await stop_background_scheduler()
-                    connection.cancel()
-        finally:
-            await stop_background_scheduler()
+        group = await cleanup.enter_async_context(asyncio.TaskGroup())
+        connection = group.create_task(bridge.start())
+        cleanup.callback(connection.cancel)
+        cleanup.push_async_callback(stop_background_scheduler)
+        yield
 
 
 app = FastAPI(lifespan=lifespan)

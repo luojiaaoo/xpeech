@@ -77,6 +77,8 @@ Compose 包含后端、Nginx、Web 客户端、飞书渠道、Lark 令牌管理�
 - 用户组织、姓名和元数据共用原始 JSON 查询缓存，TTL 为 3600 秒，按用户 ID、命令及 claim 配置的哈希隔离。查询失败、超时和无效 JSON 不缓存。
 - 统计查询按数据库身份、方法及完整参数共享缓存，TTL 为 5 秒。两类缓存通过 Redis 租约合并相同查询；Redis 故障时记录告警并直接查询数据源。
 
+开发时通过 `xpeech.utils.redis_state` 使用 `async with redis_semaphore(并发数, key="共享键")` 和 `@redis_alru_cache(ttl=秒数)`。缓存是 Redis TTL 缓存，不做本地 LRU 淘汰；方法可用 `scope` 指定共享范围，有返回类型标注时按类型还原缓存数据。共用状态的 Redis 连接池随 backend、Web 和飞书服务的生命周期创建和关闭。
+
 `llm.api_key` 只接受一个 Key，逗号分隔的多 Key 配置会报错，不再轮询。Nginx 按用户粘性路由继续保留，用户绑定实例的状态仍由所属实例管理。
 
 ## Web 客户端
