@@ -11,9 +11,9 @@ async def test_response_exposes_aggregates_only_after_stream_finishes():
     tool_call = ToolCallRequest(id="call-1", name="search", arguments={"query": "xpeech"})
 
     async def chunks():
-        yield "reasoning_content", "think "
+        yield "reasoning", "think "
         yield "content", "hello "
-        yield "reasoning_content", "again"
+        yield "reasoning", "again"
         yield "content", "world"
         yield "tool_calls", ToolCallChunk(
             index=0,
@@ -34,12 +34,12 @@ async def test_response_exposes_aggregates_only_after_stream_finishes():
     streamed = [chunk async for chunk in response.iter_mix_chunks]
 
     assert streamed == [
-        ("reasoning_content", "think "),
-        ("reasoning_content_end", None),
+        ("reasoning", "think "),
+        ("reasoning_end", None),
         ("content", "hello "),
         ("content_end", None),
-        ("reasoning_content", "again"),
-        ("reasoning_content_end", None),
+        ("reasoning", "again"),
+        ("reasoning_end", None),
         ("content", "world"),
         ("content_end", None),
         (

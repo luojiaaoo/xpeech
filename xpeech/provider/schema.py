@@ -70,13 +70,13 @@ class ToolCallChunk:
     arguments: str | None = None
 
 
-StreamChunk = tuple[Literal["reasoning_content", "content", "tool_calls"], str | ToolCallChunk]
-EndChunk = tuple[Literal["reasoning_content_end", "content_end", "tool_calls_end"], None]
+StreamChunk = tuple[Literal["reasoning", "content", "tool_calls"], str | ToolCallChunk]
+EndChunk = tuple[Literal["reasoning_end", "content_end", "tool_calls_end"], None]
 ChunkMix = StreamChunk | EndChunk
 
 
 END_CHUNKS: dict[str, EndChunk] = {
-    "reasoning_content": ("reasoning_content_end", None),
+    "reasoning": ("reasoning_end", None),
     "content": ("content_end", None),
     "tool_calls": ("tool_calls_end", None),
 }
@@ -172,7 +172,7 @@ class LLMResponse:
         return "".join(
             chunk
             for kind, chunk in self._chunks
-            if kind == "reasoning_content" and isinstance(chunk, str)
+            if kind == "reasoning" and isinstance(chunk, str)
         )
 
     @property

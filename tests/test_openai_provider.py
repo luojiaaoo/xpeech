@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from openai.types.chat.chat_completion_chunk import ChoiceDelta
 
 from xpeech.provider.openai_provider import OpenAIProvider
 from xpeech.provider.schema import LLMParameters, RegisteredTool, ToolCallChunk, ToolCallRequest
@@ -62,7 +63,7 @@ async def test_closing_parsed_model_stream_returns_permit_without_task_exit(
 
     async def upstream():
         try:
-            yield stream_chunk(delta=SimpleNamespace(content="partial", reasoning_content=None, tool_calls=None))
+            yield stream_chunk(delta=SimpleNamespace(content="partial", reasoning=None, tool_calls=None))
             reading.set()
             await asyncio.Event().wait()
         finally:
@@ -245,7 +246,7 @@ async def test_chat_uses_all_registered_tools(make_openai_sdk_client):
 
     async def upstream():
         yield stream_chunk(
-            delta=SimpleNamespace(reasoning_content=None, content="ok", tool_calls=None),
+            delta=SimpleNamespace(reasoning=None, content="ok", tool_calls=None),
             finish_reason="stop",
         )
 
@@ -292,11 +293,11 @@ async def test_chat_uses_all_registered_tools(make_openai_sdk_client):
 @pytest.mark.asyncio
 async def test_parse_response_streams_text_and_assembles_tool_calls(make_openai_sdk_client):
     async def upstream():
-        yield stream_chunk(delta=SimpleNamespace(reasoning_content="why ", content=None, tool_calls=None))
-        yield stream_chunk(delta=SimpleNamespace(reasoning_content=None, content="hello ", tool_calls=None))
+        yield stream_chunk(delta=ChoiceDelta.model_validate({"reasoning": "why "}))
+        yield stream_chunk(delta=SimpleNamespace(reasoning=None, content="hello ", tool_calls=None))
         yield stream_chunk(
             delta=SimpleNamespace(
-                reasoning_content=None,
+                reasoning=None,
                 content=None,
                 tool_calls=[
                     SimpleNamespace(
@@ -309,7 +310,7 @@ async def test_parse_response_streams_text_and_assembles_tool_calls(make_openai_
         )
         yield stream_chunk(
             delta=SimpleNamespace(
-                reasoning_content=None,
+                reasoning=None,
                 content="world",
                 tool_calls=[
                     SimpleNamespace(
@@ -336,8 +337,8 @@ async def test_parse_response_streams_text_and_assembles_tool_calls(make_openai_
     chunks = [chunk async for chunk in response.iter_mix_chunks]
 
     assert chunks == [
-        ("reasoning_content", "why "),
-        ("reasoning_content_end", None),
+        ("reasoning", "why "),
+        ("reasoning_end", None),
         ("content", "hello "),
         ("content_end", None),
         ("tool_calls", ToolCallChunk(index=0, id="call-1", name="search", arguments='{"query":')),
@@ -362,7 +363,7 @@ async def test_chat_delegates_stream_defaults_to_stream_client(make_openai_sdk_c
 
     async def upstream():
         yield stream_chunk(
-            delta=SimpleNamespace(reasoning_content=None, content="ok", tool_calls=None),
+            delta=SimpleNamespace(reasoning=None, content="ok", tool_calls=None),
             finish_reason="stop",
         )
 
@@ -420,7 +421,7 @@ async def test_chat_omits_unset_optional_parameters(json_output, support_json_ou
 
     async def upstream():
         yield stream_chunk(
-            delta=SimpleNamespace(reasoning_content=None, content="ok", tool_calls=None),
+            delta=SimpleNamespace(reasoning=None, content="ok", tool_calls=None),
             finish_reason="stop",
         )
 

@@ -449,9 +449,9 @@ class AgentLoop:
 
                     async with aclosing(response.iter_mix_chunks) as chunks:
                         async for kind, chunk in chunks:
-                            if kind == "reasoning_content" and isinstance(chunk, str):
+                            if kind == "reasoning" and isinstance(chunk, str):
                                 yield {"event": "thinking", "context": chunk}
-                            elif kind == "reasoning_content_end":
+                            elif kind == "reasoning_end":
                                 yield {"event": "thinking_end", "context": ""}
                             elif kind == "content" and isinstance(chunk, str):
                                 yield {"event": "assistant", "context": chunk}

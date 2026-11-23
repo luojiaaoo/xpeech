@@ -52,7 +52,7 @@ def streaming_chat(monkeypatch, tmp_path, model_permits, make_openai_sdk_client)
             if state.block:
                 await asyncio.Event().wait()
             state.emitted += 1
-            delta = SimpleNamespace(content="hello", reasoning_content=None, tool_calls=None)
+            delta = SimpleNamespace(content="hello", reasoning=None, tool_calls=None)
             return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=None)])
 
         async def aclose(self):

@@ -38,7 +38,7 @@ def make_response(content: str) -> LLMResponse:
         ([], "I've completed processing but have no response to give."),
         ([("content", "")], "I've completed processing but have no response to give."),
         ([("content", " \n\t")], "I've completed processing but have no response to give."),
-        ([("reasoning_content", "thinking")], "I've completed processing but have no response to give."),
+        ([("reasoning", "thinking")], "I've completed processing but have no response to give."),
         ([("content", " answer ")], " answer "),
     ],
     ids=["no-chunks", "empty-content", "whitespace-content", "reasoning-only", "visible-content"],
@@ -86,6 +86,11 @@ async def test_final_response_is_emitted_and_persisted_when_model_returns_no_tex
 
     events = [event async for event in agent_loop.run(message)]
 
+    thinking_events = [event for event in events if event["event"] in {"thinking", "thinking_end"}]
+    assert thinking_events == ([
+        {"event": "thinking", "context": "thinking"},
+        {"event": "thinking_end", "context": ""},
+    ] if ("reasoning", "thinking") in response_chunks else [])
     assert [event for event in events if event["event"] == "assistant"] == [
         {"event": "assistant", "context": expected_content},
     ]

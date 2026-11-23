@@ -250,9 +250,9 @@ class OpenAIProvider:
                         parsed_response.set_finish_reason(choice.finish_reason)
 
                     delta = choice.delta
-                    reasoning = getattr(delta, "reasoning_content", None)
+                    reasoning = getattr(delta, "reasoning", None)
                     if reasoning:
-                        yield "reasoning_content", reasoning
+                        yield "reasoning", reasoning
 
                     content = getattr(delta, "content", None)
                     if content:
