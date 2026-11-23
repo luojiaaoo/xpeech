@@ -81,6 +81,7 @@ services:
   vllm-tokenizer:
     image: m.daocloud.io/docker.io/vllm/vllm-openai-cpu:v0.34.0
     environment:
+      UV_DEFAULT_INDEX: https://pypi.tuna.tsinghua.edu.cn/simple
       VLLM_USE_MODELSCOPE: "true"
     entrypoint: ["/bin/sh", "-c", "uv pip install 'modelscope<1.38' && exec vllm \"$@\"", "--"]
     command:
