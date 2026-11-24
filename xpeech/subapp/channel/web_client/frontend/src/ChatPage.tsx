@@ -467,10 +467,15 @@ export default function ChatPage({
         content = (
           <div className="bubble-footer">
             {item.transient ? (
-              <span className="response-loading-dots" role="status" aria-label="正在处理">
-                <span aria-hidden="true" />
-                <span aria-hidden="true" />
-                <span aria-hidden="true" />
+              <span className="response-loading" role="status" aria-label="正在处理">
+                <span className="response-loading-wave" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span aria-hidden="true">正在处理</span>
               </span>
             ) : item.tokenUsage ? renderTokenUsage(item.tokenUsage) : null}
             {item.content ? (

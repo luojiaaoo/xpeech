@@ -296,21 +296,30 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .csv-preview-cell { white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-summary { padding-block: 2px 8px !important; }
 .bubble-footer { display: flex; width: 100%; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px; }
-.response-loading-dots { display: inline-flex; min-height: 22px; align-items: center; gap: 4px; color: #687181; }
-.response-loading-dots > span {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
+.response-loading { display: inline-flex; min-height: 22px; align-items: center; gap: 10px; color: #5145a5; font-size: 14px; }
+.response-loading-wave { display: inline-flex; flex: none; align-items: center; gap: 3px; color: #5a4cd2; }
+.response-loading-wave > span {
+  width: 3px;
+  height: 14px;
+  border-radius: 4px;
   background: currentColor;
-  animation: response-loading-pulse 1.2s ease-in-out infinite;
+  transform: scaleY(.38);
+  opacity: .68;
+  animation: response-loading-wave 1.45s cubic-bezier(.43, 0, .57, 1) -1.17s infinite;
 }
-.response-loading-dots > span:nth-child(2) { animation-delay: .15s; }
-.response-loading-dots > span:nth-child(3) { animation-delay: .3s; }
-@keyframes response-loading-pulse {
-  0%, 60%, 100% { opacity: .45; }
-  30% { opacity: 1; }
+.response-loading-wave > span:nth-child(2) { animation-delay: -.99s; }
+.response-loading-wave > span:nth-child(3) { animation-delay: -.81s; }
+.response-loading-wave > span:nth-child(4) { animation-delay: -.63s; }
+.response-loading-wave > span:nth-child(5) { animation-delay: -.45s; }
+@keyframes response-loading-wave {
+  30% { transform: scaleY(1); opacity: 1; }
 }
-@media (prefers-reduced-motion: reduce) { .response-loading-dots > span { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .response-loading-wave > span { animation: none; }
+  .response-loading-wave > span:nth-child(2),
+  .response-loading-wave > span:nth-child(4) { transform: scaleY(.66); }
+  .response-loading-wave > span:nth-child(3) { transform: none; opacity: 1; }
+}
 .bubble-copy-button { margin-inline-start: auto; flex: 0 0 auto; }
 .token-usage { display: flex; min-width: 0; max-width: 100%; align-items: center; flex-wrap: wrap; gap: 4px 6px; color: #646b78; }
 .token-usage-more.ant-btn { width: 22px; min-width: 22px; height: 22px; padding: 0; color: #8a919f; }

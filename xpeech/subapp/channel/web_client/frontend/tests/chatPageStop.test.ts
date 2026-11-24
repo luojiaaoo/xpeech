@@ -235,7 +235,7 @@ test('a disconnected stream ends locally without blocking the next send', async 
   page.cleanupHistory();
 });
 
-test('the footer shows three loading dots until usage arrives, even with the connection open', async () => {
+test('the footer shows the loading wave until usage arrives, even with the connection open', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('hello');
   page.streams[0].receive({ event: 'user', context: 'hello' });
@@ -244,10 +244,14 @@ test('the footer shows three loading dots until usage arrives, even with the con
   assert.equal(initialProcess.content.type, 'ProcessPanel');
   assert.equal(initialProcess.content.props.running, true);
   const loadingFooter = page.items().at(-1);
-  const dots = loadingFooter.content.props.children[0];
-  assert.equal(dots.props.role, 'status');
-  assert.equal(dots.props['aria-label'], '正在处理');
-  assert.equal(dots.props.children.length, 3);
+  const status = loadingFooter.content.props.children[0];
+  assert.equal(status.props.role, 'status');
+  assert.equal(status.props['aria-label'], '正在处理');
+  const [wave, label] = status.props.children;
+  assert.equal(wave.props.className, 'response-loading-wave');
+  assert.equal(wave.props['aria-hidden'], 'true');
+  assert.equal(wave.props.children.length, 5);
+  assert.equal(label.props.children, '正在处理');
 
   const stream = page.streams[0];
   for (const event of [
