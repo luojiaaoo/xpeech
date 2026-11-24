@@ -2,13 +2,13 @@ import asyncio
 import json
 import shlex
 import sys
+from contextlib import nullcontext
 from importlib import import_module
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from xpeech.config.settings import ExtraUserInfoConfig, OAuth2Config, WebClientConfig, settings
-from xpeech.subapp.channel.helper import ChatStream
 from xpeech.subapp.channel.web_client.models import OAuth2WebConfig, WebConfig
 from xpeech.utils.command_template import CommandTemplateError
 
@@ -279,10 +279,8 @@ def test_oauth_login_creates_local_account_by_default(
     monkeypatch.setattr(web, "_password_hash", lambda *args: "hash")
     chat = AsyncMock(return_value=httpx.Response(200, json=[]))
     monkeypatch.setattr(proxy, "open_chat_sync", chat)
-    stream = AsyncMock(side_effect=lambda *args, **kwargs: ChatStream(
-        httpx.Response(200, content=b""), SimpleNamespace(aclose=AsyncMock()),
-    ))
-    monkeypatch.setattr(proxy, "open_chat", stream)
+    stream = MagicMock(return_value=nullcontext((httpx.Response(200), MagicMock())))
+    monkeypatch.setattr(proxy, "open_chat_stream", stream)
     app = web.create_app(WebConfig(
         backend_url="http://backend.test", static_dir=tmp_path / "missing", system_name="Test",
         session_history_path=tmp_path / "history",
@@ -371,7 +369,7 @@ def test_oauth_login_creates_local_account_by_default(
                 "session_metadata": {"employee_name": "client-name", "trace": "ws"},
             })
             assert socket.receive_json()["type"] == "done"
-        assert json.loads(stream.await_args.args[3]) == {**expected_metadata, "trace": "ws"}
+        assert json.loads(stream.call_args.args[3]) == {**expected_metadata, "trace": "ws"}
         assert client.post("/api/auth/logout").status_code == 204
         assert client.get("/api/auth/me").status_code == 401
         dao.create_user.assert_awaited_once()

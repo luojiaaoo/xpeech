@@ -1,10 +1,11 @@
 import base64
 import json
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 from urllib.parse import quote, unquote
 
 import httpx
@@ -15,7 +16,7 @@ from sqlalchemy import inspect
 from sqlmodel import Session, func, select
 
 from xpeech.config.settings import JWTChannelConfig, settings
-from xpeech.subapp.channel.helper import BackendJWTParams, ChatStream
+from xpeech.subapp.channel.helper import BackendJWTParams
 from xpeech.subapp.channel.web_client.dao import AuthenticationSession, User, WebClientDAO
 from xpeech.utils.database import get_async_database_engine, get_database_engine
 
@@ -73,12 +74,11 @@ def send(client, path, headers):
 
 
 def stream_mock(monkeypatch):
-    chat = AsyncMock(side_effect=lambda *_args, **_kwargs: ChatStream(
-        httpx.Response(200, content=b'data: {"event":"assistant_end","context":""}\n\n'),
-        SimpleNamespace(aclose=AsyncMock()),
-    ))
+    events = MagicMock()
+    events.__aiter__.return_value = [{"event": "assistant_end", "context": "", "turn_id": SESSION_ID}]
+    chat = MagicMock(return_value=nullcontext((httpx.Response(200), events)))
     sync = AsyncMock(return_value=httpx.Response(200, json=[{"event": "assistant", "context": "hello"}]))
-    monkeypatch.setattr(proxy, "open_chat", chat)
+    monkeypatch.setattr(proxy, "open_chat_stream", chat)
     monkeypatch.setattr(proxy, "open_chat_sync", sync)
     return SimpleNamespace(chat=chat, sync=sync)
 
@@ -229,7 +229,7 @@ def test_two_embedded_conversations_keep_distinct_ids(client, monkeypatch):
             })
             assert socket.receive_json()["type"] == "event"
             assert socket.receive_json()["type"] == "done"
-    assert [call.kwargs["session_id"] for call in stream.chat.await_args_list] == [SESSION_ID, SESSION_ID, NEXT_SESSION_ID]
+    assert [call.kwargs["session_id"] for call in stream.chat.call_args_list] == [SESSION_ID, SESSION_ID, NEXT_SESSION_ID]
 
 
 def test_embedded_sender_name_is_required(client, monkeypatch):
@@ -237,7 +237,7 @@ def test_embedded_sender_name_is_required(client, monkeypatch):
     headers = bearer()
     headers.pop("x-sender-name")
     assert send(client, "/api/chat_sync", headers).status_code == 422
-    stream.chat.assert_not_awaited()
+    stream.chat.assert_not_called()
     stream.sync.assert_not_awaited()
 
 
@@ -247,7 +247,7 @@ def test_embedded_sender_name_is_validated(client, monkeypatch, sender):
     headers = bearer()
     headers["x-sender-name"] = sender
     assert send(client, "/api/chat_sync", headers).status_code == 422
-    stream.chat.assert_not_awaited()
+    stream.chat.assert_not_called()
     stream.sync.assert_not_awaited()
 
 
@@ -294,7 +294,7 @@ def test_jwt_expiration_is_checked_again_for_each_request(client, monkeypatch):
     monkeypatch.setattr(jwt.api_jwt, "datetime", SimpleNamespace(now=lambda tz: after_expiration))
     for path in EMBED_PATHS:
         assert send(client, path, headers).status_code == 401
-    assert stream.chat.await_count == 0
+    stream.chat.assert_not_called()
     assert stream.sync.await_count == 1
 
 

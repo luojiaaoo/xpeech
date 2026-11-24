@@ -955,8 +955,8 @@ async def test_consume_sends_one_sdk_batch_as_one_prompt(monkeypatch):
     ]
     requests = []
 
-    async def chat_events(request_messages, chat_url, channel_name, *, session_id):
-        requests.append((request_messages, chat_url, channel_name, session_id))
+    async def chat_events(request_messages, chat_url, *, session_id):
+        requests.append((request_messages, chat_url, session_id))
         if False:
             yield
 
@@ -967,7 +967,7 @@ async def test_consume_sends_one_sdk_batch_as_one_prompt(monkeypatch):
     await bridge.consume(messages)
 
     assert requests == [
-        (messages, "http://backend.test/chat", "feishu", DEFAULT_SESSION_ID)
+        (messages, "http://backend.test/chat", DEFAULT_SESSION_ID)
     ]
     assert [call.args[0] for call in channel.add_reaction.await_args_list] == [
         "om_message_1",

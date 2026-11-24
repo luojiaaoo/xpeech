@@ -2,13 +2,14 @@
 
 import asyncio
 import json
+from unittest.mock import AsyncMock
 
 import anyio
 import httpx
 import pytest
 from fastapi import FastAPI
 
-from xpeech.subapp.channel.web_client import backend
+from xpeech.subapp.channel import helper
 from xpeech.subapp.channel.web_client.dao import User
 from xpeech.subapp.channel.web_client.history import JsonlEventHistoryRepository
 from xpeech.subapp.channel.web_client.routes import proxy
@@ -25,6 +26,8 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
     messages = asyncio.Queue()
     sent = []
     history = JsonlEventHistoryRepository(tmp_path)
+    maintain_history = AsyncMock(wraps=history._maintain_history_files)
+    monkeypatch.setattr(history, "_maintain_history_files", maintain_history)
     user = User(user_id="alice", username="Alice", password_hash="unused")
     user_event = {"event": "user", "context": "hi", "turn_id": SESSION_ID}
     assistant_event = {"event": "assistant", "context": "hello", "turn_id": SESSION_ID}
@@ -57,14 +60,14 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
             if phase == "opening":
                 ready.set()
                 await asyncio.Event().wait()
-            return httpx.Response(200, stream=Upstream())
+            return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, stream=Upstream())
 
         async def aclose(self):
             await anyio.lowlevel.checkpoint()
             client_closed.set()
 
     client_class = httpx.AsyncClient
-    monkeypatch.setattr(backend.httpx, "AsyncClient", lambda **kwargs: client_class(
+    monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client_class(
         transport=BackendTransport(), **kwargs,
     ))
 
@@ -104,6 +107,8 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
             await messages.put({"type": "websocket.disconnect", "code": 1000})
         await asyncio.wait_for(asyncio.shield(task), timeout=1)
         assert client_closed.is_set()
+        if phase == "complete":
+            maintain_history.assert_awaited_once_with(user_id="alice", protected_session_id=SESSION_ID)
         if phase == "opening":
             assert not closed.is_set()
         else:

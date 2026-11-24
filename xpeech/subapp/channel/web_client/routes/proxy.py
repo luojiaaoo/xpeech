@@ -1,9 +1,8 @@
 import base64
 import binascii
-import codecs
 import json
-import re
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AsyncExitStack
 from typing import Annotated
 from urllib.parse import unquote, urlsplit
 
@@ -32,8 +31,15 @@ from .....utils.channel_jwt import UserJWTAuth
 from .....utils.command_template import CommandTemplateError
 from .....utils.ids import validate_session_id
 from .....utils.internal_jwt import create_internal_access_token
-from ...helper import BackendAuthParams, BackendJWTParams, BackendUserParams, fetch_file, proxy_get
-from ..backend import chat_status, open_chat, open_chat_sync, stop_chat, submit_question
+from ...helper import (
+    BackendAuthParams,
+    BackendJWTParams,
+    BackendUserParams,
+    fetch_file,
+    open_chat_stream,
+    proxy_get,
+)
+from ..backend import chat_status, open_chat_sync, stop_chat, submit_question
 from ..dao import User
 from ..history import JsonlEventHistoryRepository
 
@@ -58,43 +64,6 @@ def _proxy_response(
         media_type=upstream.headers.get("content-type"),
         headers=headers,
     )
-
-
-class _SSEEventCollector:
-    """在透传字节的同时增量解析 SSE，不让历史记录改变响应内容。"""
-
-    def __init__(self) -> None:
-        self._decoder = codecs.getincrementaldecoder("utf-8")()
-        self._buffer = ""
-        self.events: list[dict] = []
-
-    def _collect(self, block: str) -> None:
-        data = "\n".join(
-            line[5:].lstrip(" ")
-            for line in block.splitlines()
-            if line.startswith("data:")
-        )
-        if not data:
-            return
-        try:
-            event = json.loads(data)
-        except json.JSONDecodeError:
-            return
-        if isinstance(event, dict):
-            self.events.append(event)
-
-    def feed(self, chunk: bytes) -> None:
-        self._buffer += self._decoder.decode(chunk)
-        blocks = re.split(r"\r?\n\r?\n", self._buffer)
-        self._buffer = blocks.pop()
-        for block in blocks:
-            self._collect(block)
-
-    def finish(self) -> None:
-        self._buffer += self._decoder.decode(b"", final=True)
-        if self._buffer.strip():
-            self._collect(self._buffer)
-        self._buffer = ""
 
 
 def _history_identity(user: User | UserJWTAuth) -> tuple[str, str]:
@@ -347,74 +316,43 @@ def create_proxy_router(
 
                 tasks.start_soon(watch_disconnect)
                 try:
-                    try:
-                        chat_stream = await open_chat(
-                            _backend_auth(user),
-                            sender_name,
-                            content,
-                            json.dumps(metadata, ensure_ascii=False),
-                            str(URL(backend_url) / "chat"),
-                            files=upload_data,
-                            session_id=session_id,
-                        )
-                    except Exception:  # noqa: BLE001 - 后端连接失败通过当前 WebSocket 返回
-                        logger.exception("WebSocket chat could not open the backend stream")
-                        await send_error("无法连接聊天后端")
-                        return
-
-                    upstream = chat_stream.response
-                    if upstream.status_code >= 400:
+                    async with AsyncExitStack() as stack:
                         try:
+                            upstream, events = await stack.enter_async_context(open_chat_stream(
+                                _backend_auth(user),
+                                sender_name,
+                                content,
+                                json.dumps(metadata, ensure_ascii=False),
+                                str(URL(backend_url) / "chat"),
+                                files=upload_data,
+                                session_id=session_id,
+                            ))
+                        except Exception:  # noqa: BLE001 - 后端连接失败通过当前 WebSocket 返回
+                            logger.exception("WebSocket chat could not open the backend stream")
+                            await send_error("无法连接聊天后端")
+                            return
+
+                        if upstream.status_code >= 400:
                             body = await upstream.aread()
-                        finally:
-                            await chat_stream.aclose()
-                        await send_error(
-                            body.decode("utf-8", errors="replace") or f"聊天后端返回 {upstream.status_code}",
-                            upstream.status_code,
-                        )
-                        return
+                            await send_error(
+                                body.decode("utf-8", errors="replace") or f"聊天后端返回 {upstream.status_code}",
+                                upstream.status_code,
+                            )
+                            return
 
-                    history_user_id, history_channel = _history_identity(user)
-                    collector = _SSEEventCollector()
-                    sent_events = 0
-
-                    async def save_events(events: list[dict]) -> None:
-                        with anyio.CancelScope(shield=True):
-                            try:
-                                await history.append(
-                                    history_user_id, session_id, events, channel=history_channel,
-                                )
-                            except Exception:  # noqa: BLE001 - 历史失败不能改变聊天响应
-                                logger.exception("Web event history could not be saved")
-
-                    async def emit_events() -> None:
-                        nonlocal sent_events
-                        events = collector.events[sent_events:]
-                        # Persist in receipt order across streams, not request completion order.
-                        await save_events(events)
-                        sent_events = len(collector.events)
-                        for event in events:
+                        history_user_id, history_channel = _history_identity(user)
+                        append_event = history.event_appender(history_user_id, session_id, channel=history_channel)
+                        async for event in events:
+                            with anyio.CancelScope(shield=True):
+                                try:
+                                    await append_event(event)
+                                except Exception:  # noqa: BLE001 - 历史失败不能改变聊天响应
+                                    logger.exception("Web event history could not be saved")
                             await websocket.send_json({
                                 "type": "event",
                                 "session_id": session_id,
                                 "event": event,
                             })
-
-                    try:
-                        async for chunk in upstream.aiter_bytes():
-                            try:
-                                collector.feed(chunk)
-                            except (UnicodeDecodeError, ValueError):
-                                logger.exception("Web event history could not parse an SSE chunk")
-                            await emit_events()
-                        try:
-                            collector.finish()
-                        except (UnicodeDecodeError, ValueError):
-                            logger.exception("Web event history could not finish SSE parsing")
-                        await emit_events()
-                    finally:
-                        with anyio.CancelScope(shield=True):
-                            await chat_stream.aclose()
                     await websocket.send_json({"type": "done", "session_id": session_id})
                 except (WebSocketDisconnect, RuntimeError):
                     pass

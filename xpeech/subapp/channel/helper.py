@@ -1,5 +1,6 @@
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, asynccontextmanager
 from dataclasses import dataclass
 from email.message import Message as EmailMessage
 from pathlib import Path
@@ -12,31 +13,13 @@ from asyncer import asyncify
 from httpx_sse import EventSource
 from yarl import URL
 
-from ...config.settings import settings
 from ...utils.channel_jwt import UserTokenParams, create_token
-from ...utils.helper import stack_ensure_aclosing
-from .schema import ChatEvent, ChatEventType, FileData, Message, TextData
 
 
 @dataclass(frozen=True)
 class DownloadedFile:
     filename: str
     content: bytes
-
-
-@dataclass(frozen=True)
-class ChatStream:
-    """An open response from the backend chat endpoint."""
-
-    response: httpx.Response
-    _client: httpx.AsyncClient
-
-    async def aclose(self) -> None:
-        with anyio.CancelScope(shield=True):
-            try:
-                await self.response.aclose()
-            finally:
-                await self._client.aclose()
 
 
 @dataclass(frozen=True)
@@ -100,129 +83,68 @@ async def proxy_get(
         return await client.get(url, headers=_backend_headers(auth), params=params)
 
 
-async def open_chat_stream(
-    user_id: str,
+def open_chat_stream(
+    auth: BackendAuthParams,
     sender_name: str,
     content: str,
     session_metadata: str,
     chat_url: str,
-    channel: str,
     *,
     session_id: str,
     files: Any = None,
-) -> ChatStream:
-    """Open a streaming request to the backend chat endpoint."""
+) -> AbstractAsyncContextManager[tuple[httpx.Response, AsyncIterator[dict[str, Any]]]]:
+    """Prepare an authenticated request to the backend chat endpoint."""
+    return sse_request(
+        "POST", chat_url,
+        headers={**_backend_headers(auth, sender_name), "x-session-id": session_id},
+        data={"session_metadata": session_metadata, "content": content},
+        files=files,
+    )
 
-    data = {
-        "session_metadata": session_metadata,
-        "content": content,
-    }
+
+@asynccontextmanager
+async def sse_request(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str],
+    data: dict[str, str] | None = None,
+    files: Any = None,
+) -> AsyncIterator[tuple[httpx.Response, AsyncIterator[dict[str, Any]]]]:
+    """Keep a streaming response and its JSON event iterator open for the caller."""
+    resources = AsyncExitStack()
     client = httpx.AsyncClient(timeout=None)
+    resources.push_async_callback(client.aclose)
     try:
-        headers = _backend_headers(BackendUserParams(user_id, channel), sender_name)
-        headers.update({"x-session-id": session_id, "Accept": "text/event-stream", "Cache-Control": "no-store"})
         request = client.build_request(
-            "POST", chat_url, headers=headers, data=data, files=files,
+            method, url, headers={**headers, "Accept": "text/event-stream", "Cache-Control": "no-store"},
+            data=data, files=files,
         )
         if files:
             # https://github.com/encode/httpx/pull/3698
             request.stream = _AsyncMultipartStream(request.stream)
         response = await client.send(request, stream=True)
-    except BaseException:
-        await client.aclose()
-        raise
-    return ChatStream(response=response, _client=client)
+        resources.push_async_callback(response.aclose)
+        events = _iter_sse_payloads(response)
+        resources.push_async_callback(events.aclose)
+        yield response, events
+    finally:
+        with anyio.CancelScope(shield=True):
+            await resources.aclose()
 
 
-async def iter_chat_events(
-    messages: list[Message],
-    chat_url: str,
-    channel: str,
-    *,
-    session_id: str,
-) -> AsyncIterator[ChatEvent]:
-    """Send channel messages to the chat endpoint and yield parsed SSE event dicts."""
-
-    if not messages:
-        return
-
-    user_id = messages[0].user_id
-    if any(message.user_id != user_id for message in messages):
-        raise ValueError("All messages must belong to the same session.")
-    sender_name = messages[0].sender_name
-    if any(message.sender_name != sender_name for message in messages):
-        raise ValueError("All messages must belong to the same sender.")
-
-    content: list[dict[str, str]] = []
-    files: list[Path] = []
-    session_metadata: dict[str, str | int] = {}
-
-    for message in messages:
-        session_metadata.update(message.session_metadata)
-        for item in message.content:
-            if isinstance(item, TextData):
-                content.append({"text": item.text})
-            elif isinstance(item, FileData):
-                files.append(item.file)
-            else:
-                raise TypeError(f"Unsupported message content type: {type(item)!r}")
-
-    await settings.extra_user_info.merge_session_metadata(user_id, session_metadata)
-    async with stack_ensure_aclosing() as stack:
-        upload_files = []
-        for file_path in files:
-            file = await stack.enter_async_context(await anyio.open_file(file_path, "rb"))
-            upload_files.append(("files", (file_path.name, file.wrapped, "application/octet-stream")))
-        stream = await open_chat_stream(
-            user_id,
-            sender_name,
-            json.dumps(content, ensure_ascii=False),
-            json.dumps(
-                {key: str(value) for key, value in session_metadata.items()},
-                ensure_ascii=False,
-            ),
-            chat_url,
-            channel,
-            session_id=session_id,
-            files=upload_files,
-        )
-        try:
-            if not stream.response.is_success:
-                await stream.response.aread()
-            stream.response.raise_for_status()
-            event_source = EventSource(stream.response)
-            sse_events = event_source.aiter_sse()
-            async for sse_event in sse_events:
-                payload = json.loads(sse_event.data)
-                event_type = payload["event"]
-                if event_type == "user":
-                    continue
-                if event_type in {ChatEventType.ASSISTANT, ChatEventType.THINKING}:
-                    yield ChatEvent(
-                        event=event_type,
-                        context=_iter_text_chunks(payload["context"], f"{event_type}_end", sse_events),
-                    )
-                else:
-                    yield ChatEvent.model_validate(payload)
-        finally:
-            await stream.aclose()
-
-
-async def _iter_text_chunks(
-    first_chunk: str,
-    end_event: str,
-    sse_events: AsyncIterator[Any],
-) -> AsyncIterator[str]:
-    """Yield text chunks until the matching stream-end event is received."""
-
-    yield first_chunk
-
-    async for sse_event in sse_events:
-        payload = json.loads(sse_event.data)
-        if payload["event"] == end_event:
-            return
-        event = ChatEvent.model_validate(payload)
-        yield event.context
+async def _iter_sse_payloads(response: httpx.Response) -> AsyncGenerator[dict[str, Any], None]:
+    """Decode backend SSE frames and retain the original event fields."""
+    async with aclosing(EventSource(response).aiter_sse()) as events:
+        async for event in events:
+            if not event.data:
+                continue
+            try:
+                payload = json.loads(event.data)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                yield payload
 
 
 async def submit_question(

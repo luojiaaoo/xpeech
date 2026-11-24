@@ -1,4 +1,5 @@
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,44 +16,32 @@ class JsonlEventHistoryRepository(YamlHistoryRepository):
     _FILE_SUFFIX = ".jsonl"
 
     @staticmethod
-    def _validate_events(content: Any, filename: str) -> list[dict[str, Any]]:
-        if not isinstance(content, list) or any(not isinstance(event, dict) for event in content):
-            raise ValueError(f"Invalid web event history format: {filename}")
-        return content
-
-    @staticmethod
     async def _load_path(path: Path) -> list[dict[str, Any]]:
         content = await LockedFile(path).read_text()
         try:
             events = [json.loads(line) for line in content.splitlines() if line.strip()]
         except json.JSONDecodeError as error:
             raise ValueError(f"Invalid web event history format: {path.name}") from error
-        events = JsonlEventHistoryRepository._validate_events(events, path.name)
+        if any(not isinstance(event, dict) for event in events):
+            raise ValueError(f"Invalid web event history format: {path.name}")
         logger.info("Web event history loaded events={}", len(events))
         return events
 
-    @staticmethod
-    def _serialize(events: list[dict[str, Any]]) -> str:
-        return "".join(f"{json.dumps(event, ensure_ascii=False)}\n" for event in events)
+    def event_appender(
+        self, user_id: str, session_id: str, *, channel: str,
+    ) -> Callable[[dict[str, Any]], Awaitable[None]]:
+        """返回逐条写入函数，在首次写入时定位文件并清理历史目录。"""
+        file: LockedFile | None = None
 
-    async def append(
-        self,
-        user_id: str,
-        session_id: str,
-        events: list[dict[str, Any]],
-        *,
-        channel: str,
-    ) -> None:
-        """逐行追加事件，避免续聊时读取并重写已有内容。"""
-        if not events:
-            return
-        path = await self._history_path(user_id, session_id, channel=channel)
-        await self._maintain_history_files(
-            user_id=user_id,
-            protected_session_id=session_id,
-        )
-        await LockedFile(path).append_text(self._serialize(events))
-        logger.info("Web event history appended events={}", len(events))
+        async def append_event(event: dict[str, Any]) -> None:
+            nonlocal file
+            if file is None:
+                path = await self._history_path(user_id, session_id, channel=channel)
+                await self._maintain_history_files(user_id=user_id, protected_session_id=session_id)
+                file = LockedFile(path)
+            await file.append_text(f"{json.dumps(event, ensure_ascii=False)}\n")
+
+        return append_event
 
     async def list_channel_sessions(self, user_id: str, *, channel: str) -> list[dict[str, Any]]:
         """按更新时间列出指定通道的会话，并附带首条用户消息作为摘要。"""

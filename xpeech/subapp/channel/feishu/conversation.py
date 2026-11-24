@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import json
 import random
+from contextlib import aclosing
 
 import httpx
 from loguru import logger
 from yarl import URL
 
 from ..helper import download_file as download_channel_file
-from ..helper import iter_chat_events
 from ..schema import ChatEvent, ChatEventType, Message
+from .backend import iter_chat_events
 from .channel import XpeechFeishuChannel
 from .config import DEFAULT_SESSION_ID, EMOJI_TYPES
 from .delivery import FeishuDelivery, ensure_send_success
@@ -60,66 +61,66 @@ class FeishuConversation:
                 )
 
         try:
-            async for event in iter_chat_events(
+            async with aclosing(iter_chat_events(
                 messages,
                 str(URL(self.chat_url) / "chat"),
-                "feishu",
                 session_id=DEFAULT_SESSION_ID,
-            ):
-                received_output = True
-                if event.event in {ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT}:
-                    if event.event == ChatEventType.TOOL_CALL:
-                        await self.tools.finish_tool_progress(tool_progress)
-                        tool_progress = ToolProgress()
-                    await self.tools.send_tool_progress(chat_id, event, tool_progress)
-                    if event.event == ChatEventType.TOOL_CALL_RESULT:
-                        payload = json.loads(event.context)
-                        tool_call_id = payload["tool_call_id"]
-                        if tool_call_id in tool_question_cards:
-                            await self.questions.finish_confirmation(tool_question_cards.pop(tool_call_id), payload)
-                    continue
-                if event.event == ChatEventType.SEND_FILE:
-                    downloaded_file = await download_channel_file(
-                        user_id,
-                        event.context,
-                        self.chat_url,
-                        "feishu",
-                    )
-                    result = await self.channel.send(
-                        chat_id,
-                        {
-                            "file": {
-                                "source": downloaded_file.content,
-                                "file_name": downloaded_file.filename,
-                            }
-                        },
-                    )
-                    ensure_send_success(result, operation="send file")
-                    continue
-                if event.event == ChatEventType.QUESTION:
-                    card = await self.questions.send_question(chat_id, event.context)
-                    question = json.loads(event.context)
-                    question_message_ids.add(card.message_id)
-                    if question.get("type") == "confirm" and question.get("tool_call_id"):
-                        tool_question_cards[question["tool_call_id"]] = card
-                    continue
+            )) as events:
+                async for event in events:
+                    received_output = True
+                    if event.event in {ChatEventType.TOOL_CALL, ChatEventType.TOOL_CALL_RESULT}:
+                        if event.event == ChatEventType.TOOL_CALL:
+                            await self.tools.finish_tool_progress(tool_progress)
+                            tool_progress = ToolProgress()
+                        await self.tools.send_tool_progress(chat_id, event, tool_progress)
+                        if event.event == ChatEventType.TOOL_CALL_RESULT:
+                            payload = json.loads(event.context)
+                            tool_call_id = payload["tool_call_id"]
+                            if tool_call_id in tool_question_cards:
+                                await self.questions.finish_confirmation(tool_question_cards.pop(tool_call_id), payload)
+                        continue
+                    if event.event == ChatEventType.SEND_FILE:
+                        downloaded_file = await download_channel_file(
+                            user_id,
+                            event.context,
+                            self.chat_url,
+                            "feishu",
+                        )
+                        result = await self.channel.send(
+                            chat_id,
+                            {
+                                "file": {
+                                    "source": downloaded_file.content,
+                                    "file_name": downloaded_file.filename,
+                                }
+                            },
+                        )
+                        ensure_send_success(result, operation="send file")
+                        continue
+                    if event.event == ChatEventType.QUESTION:
+                        card = await self.questions.send_question(chat_id, event.context)
+                        question = json.loads(event.context)
+                        question_message_ids.add(card.message_id)
+                        if question.get("type") == "confirm" and question.get("tool_call_id"):
+                            tool_question_cards[question["tool_call_id"]] = card
+                        continue
 
-                formatted = self.formatter._format_chat_event(event)
-                if formatted:
-                    message, iter_content = formatted
-                    await self.delivery.channel_send(
-                        to=chat_id,
-                        message=message,
-                        opts=(
-                            {"reply_to": reply_to}
-                            if event.event == ChatEventType.ASSISTANT and reply_to is not None
-                            else None
-                        ),
-                        user_id=user_id,
-                        sender_name=sender_name,
-                        message_type=event.event,
-                        iter_content=iter_content,
-                    )
+                    formatted = self.formatter._format_chat_event(event)
+                    if formatted:
+                        message, iter_content = formatted
+                        await self.delivery.channel_send(
+                            to=chat_id,
+                            message=message,
+                            opts=(
+                                {"reply_to": reply_to}
+                                if event.event == ChatEventType.ASSISTANT and reply_to is not None
+                                else None
+                            ),
+                            user_id=user_id,
+                            sender_name=sender_name,
+                            message_type=event.event,
+                            iter_content=iter_content,
+                        )
         except httpx.HTTPStatusError as exc:
             await self._send_backend_error(
                 exc,

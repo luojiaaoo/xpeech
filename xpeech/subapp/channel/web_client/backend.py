@@ -3,48 +3,10 @@
 import json
 from typing import Any
 
-import anyio
 import httpx
 from yarl import URL
 
-from ..helper import BackendAuthParams, ChatStream, _backend_headers
-
-
-def _chat_form(content: str, session_metadata: str) -> dict[str, str]:
-    return {"session_metadata": session_metadata, "content": content}
-
-
-async def open_chat(
-    auth: BackendAuthParams,
-    sender_name: str,
-    content: str,
-    session_metadata: str,
-    chat_url: str,
-    *,
-    files: Any = None,
-    session_id: str,
-) -> ChatStream:
-    """Open the interactive /chat request as a text/event-stream."""
-    headers = _backend_headers(auth, sender_name)
-    headers.update({
-        "x-session-id": session_id,
-        "Accept": "text/event-stream",
-        "Cache-Control": "no-store",
-    })
-    client = httpx.AsyncClient(timeout=None)
-    try:
-        response = await client.send(
-            client.build_request(
-                "POST", chat_url, headers=headers,
-                data=_chat_form(content, session_metadata), files=files,
-            ),
-            stream=True,
-        )
-    except BaseException:
-        with anyio.CancelScope(shield=True):
-            await client.aclose()
-        raise
-    return ChatStream(response=response, _client=client)
+from ..helper import BackendAuthParams, _backend_headers
 
 
 async def open_chat_sync(
@@ -69,7 +31,7 @@ async def open_chat_sync(
         return await client.post(
             chat_url,
             headers=headers,
-            data=_chat_form(content, session_metadata),
+            data={"session_metadata": session_metadata, "content": content},
             files=files,
         )
 

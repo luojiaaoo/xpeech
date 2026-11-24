@@ -1,6 +1,7 @@
+from contextlib import nullcontext
 from importlib import import_module
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -8,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, WebExtraChannelConfig, settings
-from xpeech.subapp.channel.helper import ChatStream, _backend_headers
+from xpeech.subapp.channel.helper import _backend_headers
 from xpeech.subapp.channel.web_client.dao import User
 from xpeech.subapp.channel.web_client.session import authorize_web_channel
 from xpeech.utils.channel_jwt import UserJWTAuth
@@ -261,11 +262,13 @@ def test_channel_and_embed_are_exclusive_and_channel_is_only_a_login_parameter(c
 
 
 def test_custom_channel_is_used_for_http_websocket_jwt_and_isolated_history(channel_client, monkeypatch):
-    opener = AsyncMock(side_effect=lambda *_args, **_kwargs: ChatStream(
-        httpx.Response(200, content=b'data: {"event":"assistant","context":"answer"}\n\n'),
-        SimpleNamespace(aclose=AsyncMock()),
-    ))
-    monkeypatch.setattr(proxy, "open_chat", opener)
+    events = MagicMock()
+    events.__aiter__.return_value = [
+        {"event": "user", "context": "", "turn_id": SESSION_ID},
+        {"event": "assistant", "context": "answer", "turn_id": SESSION_ID},
+    ]
+    opener = MagicMock(return_value=nullcontext((httpx.Response(200), events)))
+    monkeypatch.setattr(proxy, "open_chat_stream", opener)
     file_fetch = AsyncMock(return_value=httpx.Response(200, content=b"report"))
     answer = AsyncMock(return_value=httpx.Response(200, json={"message": "Answer received"}))
     monkeypatch.setattr(proxy, "fetch_file", file_fetch)
@@ -277,8 +280,9 @@ def test_custom_channel_is_used_for_http_websocket_jwt_and_isolated_history(chan
     with client.websocket_connect("/api/chat/ws") as socket:
         socket.send_json({"type": "start", "session_id": SESSION_ID, "content": "[]"})
         assert socket.receive_json()["type"] == "event"
+        assert socket.receive_json()["type"] == "event"
         assert socket.receive_json()["type"] == "done"
-    for call in [*opener.await_args_list, file_fetch.await_args, answer.await_args]:
+    for call in [*opener.call_args_list, file_fetch.await_args, answer.await_args]:
         headers = _backend_headers(call.args[0])
         auth = UserJWTAuth(headers["authorization"].removeprefix("Bearer "))
         assert (auth.channel, auth.user_id) == ("crm", "admin")

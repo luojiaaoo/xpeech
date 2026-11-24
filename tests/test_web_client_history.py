@@ -2,10 +2,10 @@ import base64
 import json
 import os
 import time
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import httpx
 import jwt
@@ -15,45 +15,32 @@ from pydantic import ValidationError
 from uuid6 import uuid7
 
 from xpeech.config.settings import JWTChannelConfig, WebClientConfig, settings
-from xpeech.subapp.channel.helper import ChatStream
 from xpeech.subapp.channel.web_client.app import WebConfig, create_app
 from xpeech.subapp.channel.web_client.history import JsonlEventHistoryRepository
 from xpeech.subapp.channel.web_client.routes import proxy
-
-pytestmark = pytest.mark.usefixtures("postgres_database")
 
 SESSION_ID = "018f0000-0000-7000-8000-000000000001"
 NEXT_SESSION_ID = "018f0000-0000-7000-8000-000000000002"
 SECRET = "test-channel-key-at-least-64-characters-for-sha512-signing-tests"
 
 
-def test_sse_collector_handles_split_multibyte_data_and_multiline_events():
-    collector = proxy._SSEEventCollector()
-    payload = (
-        'event: message\ndata: {"event":"assistant",\ndata: "context":"你好"}\n\n'
-        'data: {"event":"assistant_end","context":""}\n\n'
-    ).encode()
-    for byte in payload:
-        collector.feed(bytes([byte]))
-    collector.finish()
-
-    assert collector.events == [
-        {"event": "assistant", "context": "你好"},
-        {"event": "assistant_end", "context": ""},
-    ]
-
-
 @pytest.mark.asyncio
 async def test_event_repository_appends_filters_channels_and_cleans_expired_files(tmp_path: Path):
     repository = JsonlEventHistoryRepository(tmp_path, max_history_days=1)
-    first = [{"event": "user", "context": "hello"}, {"event": "assistant", "context": "world"}]
-    second = [{"event": "user", "context": "continue"}]
-    await repository.append("alice", SESSION_ID, first, channel="web_client")
-    await repository.append("alice", SESSION_ID, second, channel="web_client")
-    await repository.append("alice", SESSION_ID, [{"event": "user", "context": "embedded"}], channel="crm")
-    await repository.append("alice", NEXT_SESSION_ID, [{"event": "user", "context": "new"}], channel="web_client")
+    events = [
+        {"event": "user", "context": "hello"},
+        {"event": "assistant", "context": "world"},
+        {"event": "user", "context": "continue"},
+    ]
+    append_event = repository.event_appender("alice", SESSION_ID, channel="web_client")
+    for event in events:
+        await append_event(event)
+    append_embedded = repository.event_appender("alice", SESSION_ID, channel="crm")
+    await append_embedded({"event": "user", "context": "embedded"})
+    append_next_session = repository.event_appender("alice", NEXT_SESSION_ID, channel="web_client")
+    await append_next_session({"event": "user", "context": "new"})
 
-    assert await repository.load("alice", SESSION_ID, channel="web_client") == [*first, *second]
+    assert await repository.load("alice", SESSION_ID, channel="web_client") == events
     sessions = await repository.list_channel_sessions("alice", channel="web_client")
     assert [item["session_id"] for item in sessions] == [NEXT_SESSION_ID, SESSION_ID]
     assert sessions[1]["preview"] == "hello"
@@ -74,7 +61,7 @@ def test_web_history_retention_must_be_positive():
 
 
 @pytest.fixture
-def history_client(tmp_path: Path, monkeypatch):
+def history_client(tmp_path: Path, monkeypatch, postgres_database):
     monkeypatch.setattr("xpeech.subapp.channel.web_client.app.PBKDF2_ITERATIONS", 1)
     monkeypatch.setattr(settings.jwt, "channels", {
         "web_client": JWTChannelConfig(secret_key=SECRET),
@@ -88,22 +75,16 @@ def history_client(tmp_path: Path, monkeypatch):
             *(block["text"] for block in json.loads(content)),
             *(f"📎 {file[0]}" for _, file in files),
         ])
-        events = [
+        events = MagicMock()
+        events.__aiter__.return_value = [
             {"event": "user", "context": display, "turn_id": turn_id},
             {"event": "assistant", "context": "回答", "turn_id": turn_id},
             {"event": "assistant_end", "context": "", "turn_id": turn_id},
         ]
-        return ChatStream(
-            httpx.Response(
-                200,
-                content="".join(f"data: {json.dumps(event)}\n\n" for event in events).encode(),
-                headers={"Content-Type": "text/event-stream"},
-            ),
-            SimpleNamespace(aclose=AsyncMock()),
-        )
+        return nullcontext((httpx.Response(200), events))
 
-    opener = AsyncMock(side_effect=open_stream)
-    monkeypatch.setattr(proxy, "open_chat", opener)
+    opener = MagicMock(side_effect=open_stream)
+    monkeypatch.setattr(proxy, "open_chat_stream", opener)
     app = create_app(WebConfig(
         backend_url="http://backend.test",
 
@@ -138,7 +119,7 @@ def test_logged_in_user_can_load_and_continue_the_same_session(history_client):
 
     assert send_local_chat(client)[-1]["type"] == "done"
     assert send_local_chat(client, "继续")[-1]["type"] == "done"
-    assert [call.kwargs["session_id"] for call in opener.await_args_list] == [SESSION_ID, SESSION_ID]
+    assert [call.kwargs["session_id"] for call in opener.call_args_list] == [SESSION_ID, SESSION_ID]
 
     sessions = client.get("/api/history/sessions")
     assert sessions.status_code == 200
@@ -261,11 +242,11 @@ def test_each_reply_uses_a_session_websocket_and_saves_before_done(history_clien
         continued = receive_websocket_turn(websocket)
         assert continued[-1]["type"] == "done"
 
-    assert [call.kwargs["session_id"] for call in opener.await_args_list] == [
+    assert [call.kwargs["session_id"] for call in opener.call_args_list] == [
         SESSION_ID, NEXT_SESSION_ID, SESSION_ID,
     ]
-    assert json.loads(opener.await_args_list[0].args[3]) == {"source": "websocket-test"}
-    assert opener.await_args_list[0].kwargs["files"][0][1][0] == "报告.txt"
+    assert json.loads(opener.call_args_list[0].args[3]) == {"source": "websocket-test"}
+    assert opener.call_args_list[0].kwargs["files"][0][1][0] == "报告.txt"
     assert (history_path / "admin" / f"channel=web_client&session_id={SESSION_ID}.jsonl").is_file()
 
 

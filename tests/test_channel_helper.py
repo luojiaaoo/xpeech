@@ -1,8 +1,8 @@
 import json
 from io import BytesIO
 from threading import get_ident
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -15,6 +15,7 @@ from xpeech.config.settings import (
     settings,
 )
 from xpeech.subapp.channel import helper
+from xpeech.subapp.channel.feishu.backend import iter_chat_events
 from xpeech.subapp.channel.schema import ChatEventType, Message, TextData
 from xpeech.utils.channel_jwt import UserJWTAuth
 
@@ -45,11 +46,11 @@ async def test_multipart_upload_reads_files_off_the_event_loop(monkeypatch):
     monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client_class(
         transport=httpx.MockTransport(respond), **kwargs,
     ))
-    stream = await helper.open_chat_stream(
-        "alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL,
+    async with helper.open_chat_stream(
+        helper.BackendUserParams("alice", TEST_CHANNEL), "Alice", "[]", "{}", "http://backend.test/chat",
         session_id=SESSION_ID, files=[("files", ("report.txt", File(b"file content")))],
-    )
-    await stream.aclose()
+    ) as (response, _events):
+        assert response.status_code == 200
     assert reads
 
 
@@ -66,10 +67,11 @@ async def test_backend_requests_bind_user_in_jwt_subject(monkeypatch):
     monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client_class(
         transport=httpx.MockTransport(respond), **kwargs,
     ))
-    stream = await helper.open_chat_stream(
-        "alice", "Alice", "[]", "{}", "http://backend.test/chat", TEST_CHANNEL, session_id=SESSION_ID,
-    )
-    await stream.aclose()
+    async with helper.open_chat_stream(
+        helper.BackendUserParams("alice", TEST_CHANNEL), "Alice", "[]", "{}", "http://backend.test/chat",
+        session_id=SESSION_ID,
+    ) as (response, _events):
+        assert response.status_code == 200
     await helper.submit_question("alice", "yes", "http://backend.test", TEST_CHANNEL, session_id=SESSION_ID)
     await helper.stop_chat("alice", "http://backend.test", TEST_CHANNEL, session_id=SESSION_ID)
     await helper.fetch_file(helper.BackendUserParams("alice", TEST_CHANNEL), "report.txt", "http://backend.test")
@@ -96,11 +98,9 @@ class _JsonErrorStream(httpx.AsyncByteStream):
 
 @pytest.mark.asyncio
 async def test_iter_chat_events_reads_streaming_error_response(monkeypatch: pytest.MonkeyPatch):
-    request = httpx.Request("POST", "http://backend.test/chat")
-    response = httpx.Response(409, request=request, stream=_JsonErrorStream())
-    client = SimpleNamespace(aclose=AsyncMock())
-    open_chat_stream = AsyncMock(return_value=helper.ChatStream(response=response, _client=client))
-    monkeypatch.setattr(helper, "open_chat_stream", open_chat_stream)
+    response = httpx.Response(409, stream=_JsonErrorStream())
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _request: response))
+    monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client)
     message = Message(
         message_id="om_message",
         chat_id="oc_chat",
@@ -114,46 +114,76 @@ async def test_iter_chat_events_reads_streaming_error_response(monkeypatch: pyte
     with pytest.raises(httpx.HTTPStatusError) as exc_info:
         _ = [
             event
-            async for event in helper.iter_chat_events(
+            async for event in iter_chat_events(
                 [message],
                 "http://backend.test/chat",
-                TEST_CHANNEL,
                 session_id=SESSION_ID,
             )
         ]
 
     assert exc_info.value.response.json() == {"detail": "Session already has an active chat request"}
     assert response.is_closed
-    client.aclose.assert_awaited_once()
+    assert client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_sse_request_handles_multiline_events_and_split_utf8(monkeypatch):
+    payload = (
+        ': ping\r\n\r\n'
+        'data: {"event":"user",\r\n'
+        f'data: "context":"你好","turn_id":"{SESSION_ID}"}}\r\n\r\n'
+        'data: invalid json\r\n\r\n'
+        f'data: {{"event":"assistant_end","context":"","turn_id":"{SESSION_ID}"}}\r\n\r\n'
+    ).encode()
+
+    class ByteStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for byte in payload:
+                yield bytes([byte])
+
+    response = httpx.Response(200, headers={"Content-Type": "text/event-stream"}, stream=ByteStream())
+
+    def respond(request):
+        assert request.headers["accept"] == "text/event-stream"
+        return response
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client)
+    async with helper.sse_request("GET", "http://backend.test/events", headers={}) as (upstream, events):
+        assert upstream is response
+        assert [event async for event in events] == [
+            {"event": "user", "context": "你好", "turn_id": SESSION_ID},
+            {"event": "assistant_end", "context": "", "turn_id": SESSION_ID},
+        ]
+    assert response.is_closed
+    assert client.is_closed
 
 
 @pytest.mark.asyncio
 async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: pytest.MonkeyPatch):
     lookup = AsyncMock(return_value={"department": "server-team"})
     monkeypatch.setattr(ExtraUserInfoConfig, "resolve_session_metadata", lookup)
-    class FakeEventSource:
-        def __init__(self, _response):
-            pass
+    payloads = [
+        {"event": "user", "context": "hello"},
+        {"event": "thinking", "context": "first "},
+        {"event": "thinking", "context": "second"},
+        {"event": "thinking_end", "context": ""},
+        {"event": "assistant", "context": "answer"},
+        {"event": "assistant_end", "context": ""},
+        {"event": "command", "context": "/new"},
+        {"event": "command", "context": "这条消息将用于引导后续回复"},
+    ]
+    requests = []
 
-        async def aiter_sse(self):
-            for payload in [
-                {"event": "user", "context": "hello"},
-                {"event": "thinking", "context": "first "},
-                {"event": "thinking", "context": "second"},
-                {"event": "thinking_end", "context": ""},
-                {"event": "assistant", "context": "answer"},
-                {"event": "assistant_end", "context": ""},
-                {"event": "command", "context": "/new"},
-                {"event": "command", "context": "这条消息将用于引导后续回复"},
-            ]:
-                yield SimpleNamespace(data=json.dumps({**payload, "turn_id": SESSION_ID}))
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(
+            200, headers={"Content-Type": "text/event-stream"},
+            content="".join(f"data: {json.dumps({**payload, 'turn_id': SESSION_ID})}\n\n" for payload in payloads),
+        )
 
-    request = httpx.Request("POST", "http://backend.test/chat")
-    response = httpx.Response(200, request=request)
-    client = SimpleNamespace(aclose=AsyncMock())
-    open_stream = AsyncMock(return_value=helper.ChatStream(response, client))
-    monkeypatch.setattr(helper, "open_chat_stream", open_stream)
-    monkeypatch.setattr(helper, "EventSource", FakeEventSource)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(helper.httpx, "AsyncClient", lambda **kwargs: client)
     message = Message(
         message_id="om_message",
         chat_id="oc_chat",
@@ -164,15 +194,16 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
         session_metadata={"department": "client-team", "trace": "original"},
     )
 
-    events = helper.iter_chat_events(
+    events = iter_chat_events(
         [message],
         "http://backend.test/chat",
-        TEST_CHANNEL,
         session_id=SESSION_ID,
     )
     thinking = await anext(events)
     lookup.assert_awaited_once_with("E1001")
-    assert json.loads(open_stream.await_args.args[3]) == {"department": "server-team", "trace": "original"}
+    [request] = requests
+    metadata = parse_qs(request.content.decode())["session_metadata"][0]
+    assert json.loads(metadata) == {"department": "server-team", "trace": "original"}
     assert message.session_metadata == {"department": "client-team", "trace": "original"}
     assert thinking.event == ChatEventType.THINKING
     assert not isinstance(thinking.context, str)
@@ -190,6 +221,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
     assert queued.event == ChatEventType.COMMAND
     assert queued.context == "这条消息将用于引导后续回复"
     await events.aclose()
+    assert client.is_closed
 
 
 def test_extract_string_claim_resolves_nested_feishu_userinfo():
