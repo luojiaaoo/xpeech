@@ -219,7 +219,9 @@ test('the answer streams outside the process before usage arrives or the connect
     // TODO(remove-legacy-tool-events): 清理时将旧元组夹具改为带 tool_call_id 的对象数组。
     { event: 'tool_call', context: '[["tool-1","read_file",{}]]' },
   ]) stream.receive(event);
-  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'process']);
+  const duringTool = page.items();
+  assert.deepEqual(Array.from(duringTool, (item: any) => item.role), ['user', 'process', 'assistant']);
+  assert.equal(duringTool[2].content.props.children.props.content, '正在读取');
 
   stream.receive({ event: 'assistant', context: '最终' });
   const live = page.items();

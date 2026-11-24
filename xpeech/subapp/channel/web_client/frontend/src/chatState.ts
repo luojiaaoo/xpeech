@@ -149,10 +149,7 @@ export function chatDisplayItems(messages: ChatMessage[], running = false, showF
     while (end < messages.length && (messages[end].role !== 'user' || messages[end].continuation)) end++;
     const turn = messages.slice(start, end);
     const active = running && end === messages.length;
-    // Display text as it streams. Later model activity moves it into the process.
-    const latest = turn.findLast((item) => item.role === 'assistant'
-      || (active && (item.role === 'thinking' || item.role === 'tool')));
-    const visibleReply = latest?.role === 'assistant' ? latest : undefined;
+    const visibleReply = turn.findLast((item) => item.role === 'assistant');
     const process: ChatMessage[] = [];
     const visible: ChatDisplayItem[] = [];
     for (const item of turn) {
