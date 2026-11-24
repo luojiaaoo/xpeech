@@ -173,26 +173,23 @@ async def test_chat_warns_when_provider_does_not_return_token_usage(monkeypatch)
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("usages", "expected"), [
     ([{"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
-      {"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25}], ("0k", "0k", "0k")),
-    ([{"prompt_tokens": None, "completion_tokens": None}, {}], ("0k", "0k", "0k")),
-    ([{"prompt_tokens": 10, "completion_tokens": 2}, {}], ("0k", "0k", "0k")),
-    ([{}, {"prompt_tokens": 20, "completion_tokens": 5}], ("0k", "0k", "0k")),
+      {"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25}], (30, 7, 37)),
+    ([{"prompt_tokens": None, "completion_tokens": None}, {}], (0, 0, 0)),
+    ([{"prompt_tokens": 10, "completion_tokens": 2}, {}], (10, 2, 12)),
+    ([{}, {"prompt_tokens": 20, "completion_tokens": 5}], (20, 5, 25)),
     ([{"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
-      {"prompt_tokens": 20, "total_tokens": 25}], ("0k", "0k", "0k")),
-    ([{"total_tokens": 12}, {"total_tokens": 25}], ("0k", "0k", "0k")),
+      {"prompt_tokens": 20, "total_tokens": 25}], (30, 2, 32)),
+    ([{"total_tokens": 12}, {"total_tokens": 25}], (0, 0, 0)),
     ([{"prompt_tokens": 10, "completion_tokens": 2},
-      {"prompt_tokens": 20, "completion_tokens": 5}], ("0k", "0k", "0k")),
+      {"prompt_tokens": 20, "completion_tokens": 5}], (30, 7, 37)),
     ([{"prompt_tokens": 0, "completion_tokens": 0},
-      {"prompt_tokens": 0, "completion_tokens": 0}], ("0k", "0k", "0k")),
+      {"prompt_tokens": 0, "completion_tokens": 0}], (0, 0, 0)),
     ([{"prompt_tokens": 1_234_000, "completion_tokens": 1_000},
-      {"prompt_tokens": 1_000, "completion_tokens": 234}], ("1235k", "1k", "1236k")),
+      {"prompt_tokens": 1_000, "completion_tokens": 234}], (1_235_000, 1_234, 1_236_234)),
     *[
         ([{"prompt_tokens": value, "completion_tokens": 0, "total_tokens": value},
-          dict.fromkeys(("prompt_tokens", "completion_tokens", "total_tokens"), 0)], (expected, "0k", expected))
-        for value, expected in [
-            (999, "0k"), (1_000, "1k"), (1_234, "1k"), (999_994, "999k"),
-            (999_995, "999k"), (1_000_000, "1000k"), (1_234_567, "1234k"),
-        ]
+          dict.fromkeys(("prompt_tokens", "completion_tokens", "total_tokens"), 0)], (value, 0, value))
+        for value in (999, 1_000, 1_234, 999_994, 999_995, 1_000_000, 1_234_567)
     ],
 ])
 async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: Path, monkeypatch, usages, expected):
@@ -280,9 +277,9 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
     assert tool_result["duration_seconds"] >= 0
     assert {"event": "assistant", "context": "final answer"} in events
     assert {"event": "assistant_end", "context": ""} in events
-    assert '"大模型请求次数": "2"' in events[-1]["context"]
     assert events[-1]["event"] == "token_usage"
     metrics = json.loads(events[-1]["context"])
+    assert metrics["大模型请求次数"] == 2
     assert (metrics["输入 Token"], metrics["输出 Token"], metrics["总 Token"]) == expected
     try:
         async with AsyncSession(engine) as session:

@@ -248,7 +248,7 @@ test('preserves malformed tool payloads instead of crashing or silently dropping
 test('renders one final summary after files and forms and retains usage without prose', () => {
   const messages = finishChatTurn(apply([
     event('assistant', '文件如下'), event('assistant_end'), event('send_file', '/poster.svg'),
-    event('question', '{"fields":[]}'), event('token_usage', '{"大模型请求次数":"2"}'),
+    event('question', '{"fields":[]}'), event('token_usage', '{"大模型请求次数":2}'),
   ]));
   assert.equal(messages.filter((item) => item.role === 'summary').length, 1);
   assert.equal(messages.at(-1)?.role, 'summary');

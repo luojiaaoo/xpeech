@@ -144,22 +144,15 @@ function renderTokenUsage(tokenUsage: string) {
   try {
     const data = JSON.parse(tokenUsage) as unknown;
     if (!data || Array.isArray(data) || typeof data !== 'object') throw new Error('Invalid token usage');
-    const { 原始词元数: counts } = data as { 原始词元数?: Record<string, number> };
     metrics = Object.entries(data).flatMap(([label, value]) => {
-      if (label === '原始词元数') return [];
       if (label === '上下文明细' && value && typeof value === 'object') {
         contextUsage = value as ContextUsage;
         return [];
       }
+      if (typeof value !== 'string' && typeof value !== 'number') return [];
       let displayValue = String(value);
-      if (['输入 Token', '输出 Token', '总 Token'].includes(label)) {
-        const count = counts?.[label] ?? value;
-        if (typeof count === 'number') displayValue = formatTokenCount(count);
-      } else if (label === '上下文使用率' && counts) {
-        const { 上下文已用: used, 上下文上限: limit } = counts;
-        if (typeof used === 'number' && typeof limit === 'number') {
-          displayValue = displayValue.replace(/\(\d+k \/ \d+k\)/, `(${formatTokenCount(used)} / ${formatTokenCount(limit)})`);
-        }
+      if (typeof value === 'number' && ['输入 Token', '输出 Token', '总 Token'].includes(label)) {
+        displayValue = formatTokenCount(value);
       } else if (['大模型请求次数', '大模型交互次数'].includes(label) && /^\d+$/.test(displayValue)) {
         displayValue += ' 次';
       }

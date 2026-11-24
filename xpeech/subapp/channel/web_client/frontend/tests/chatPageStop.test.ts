@@ -242,7 +242,7 @@ test('context pie chart appears beside the statistics menu and shows token count
   page.render().onSubmit('hello');
   const usage = {
     上下文使用率: '13.61% (20k / 147k)',
-    '总 Token': '1k', 会话时长: '2秒', '输入 Token': '0k',
+    '总 Token': 1700, 会话时长: '2秒', '输入 Token': 0,
     上下文明细: {
       系统提示词: { 词元数: 2199, 占比: 2199 / 147000 }, 对话消息: { 词元数: 17567, 占比: 17567 / 147000 },
       用户上下文: { 词元数: 234, 占比: 234 / 147000 },
@@ -265,7 +265,7 @@ test('context pie chart appears beside the statistics menu and shows token count
   assert.ok(details.includes('2k'));
   assert.ok(details.includes('17k'));
   assert.ok(details.includes('234'));
-  assert.ok(details.includes('0k'));
+  assert.ok(details.includes('"children":"0"'));
   assert.ok(details.includes('1.50'));
   assert.ok(details.includes('剩余空间'));
   assert.ok(details.includes('127k'));
@@ -284,11 +284,7 @@ test('the usage summary and statistics format raw counts at the thousand and mil
   page.render().onSubmit('hello');
   const usage = {
     上下文使用率: '100.00% (1000k / 1k) ♻️ 即将达到最大上下文',
-    '总 Token': '1000k', '输入 Token': '0k', '输出 Token': '1000k', 大模型请求次数: '2',
-    原始词元数: {
-      '总 Token': 1_000_999, '输入 Token': 999, '输出 Token': 1_000_000,
-      上下文已用: 1_000_000, 上下文上限: 1_000,
-    },
+    '总 Token': 1_000_999, '输入 Token': 999, '输出 Token': 1_000_000, 大模型请求次数: 2,
   };
   const stream = page.streams[0];
   stream.receive({ event: 'assistant', context: 'answer' });
@@ -298,7 +294,7 @@ test('the usage summary and statistics format raw counts at the thousand and mil
   const summary = page.items().find((item: any) => item.role === 'summary');
   const [, metrics, statistics] = summary.content.props.children[0].props.children;
   assert.deepEqual(Array.from(metrics, (metric: any) => metric.props.children[1].props.children), [
-    '100.00% (1m / 1k) ♻️ 即将达到最大上下文', '1m',
+    usage.上下文使用率, '1m',
   ]);
   assert.deepEqual(Array.from(statistics.props.content.props.children, (metric: any) =>
     metric.props.children[1].props.children), ['999', '1m', '2 次']);

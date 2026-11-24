@@ -19,9 +19,9 @@ def test_token_usage_shows_summary_metrics_with_model_call_count():
             "对话消息": {"词元数": 18000, "占比": 18000 / 147000},
             "剩余空间": {"词元数": 127000, "占比": 127000 / 147000},
         },
-        "总 Token": "1k",
+        "总 Token": 1200,
         "会话时长": "2秒",
-        "输入 Token": "0k", "输出 Token": "0k", "大模型请求次数": "1",
+        "输入 Token": 500, "输出 Token": 700, "大模型请求次数": 1,
     }
     formatted = FeishuEventFormatter()._format_token_usage(json.dumps(usage))
     assert formatted == "上下文使用率：13.61% (20k / 147k) | 总 Token：1k | 会话时长：2秒 | 大模型请求次数：1"
@@ -134,7 +134,7 @@ def test_truncation_preserves_literal_ampersands_inside_code_and_complete_entiti
 def test_non_streaming_card_escapes_dynamic_markup_and_preserves_markdown(event_type):
     formatter = FeishuEventFormatter()
     raw = '**标题**\n[链接](https://example.test)\n<rss>甲 &amp; 乙</rss>'
-    context = json.dumps({"总 Token": raw}) if event_type == ChatEventType.TOKEN_USAGE else raw
+    context = json.dumps({"上下文使用率": raw}) if event_type == ChatEventType.TOKEN_USAGE else raw
     event = ChatEvent(event=event_type, context=context)
     message, _ = formatter._format_chat_event(event)
     content = message["card"]["body"]["elements"][0]["content"]

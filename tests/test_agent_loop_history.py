@@ -132,8 +132,8 @@ async def test_token_usage_is_emitted_after_saved_record_expires(tmp_path, make_
     assert {"event": "assistant", "context": "answer"} in events
     assert events[-1]["event"] == "token_usage"
     metrics = json.loads(events[-1]["context"])
-    assert (metrics["输入 Token"], metrics["输出 Token"], metrics["总 Token"]) == ("1k", "5k", "6k")
-    assert metrics["大模型请求次数"] == "1"
+    assert (metrics["输入 Token"], metrics["输出 Token"], metrics["总 Token"]) == (1234, 5678, 6912)
+    assert metrics["大模型请求次数"] == 1
     assert "上下文明细" in metrics
 
 
