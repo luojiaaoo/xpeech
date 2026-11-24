@@ -193,9 +193,12 @@ export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): Chat
   if (event.event === 'user') return startChatTurn(messages, event.context, event.continuation);
   const next = messages.filter((item) => !item.transient);
   if (event.event === 'assistant' || event.event === 'thinking') {
-    const last = next.at(-1);
-    if (last?.role === event.event && last.streaming) {
-      return [...next.slice(0, -1), { ...last, content: last.content + event.context }];
+    // A command acknowledgement can arrive while another connection is still streaming.
+    const index = next.findLastIndex((item) => item.role === event.event && item.streaming);
+    if (index >= 0) {
+      const current = next[index];
+      next[index] = { ...current, content: current.content + event.context };
+      return next;
     }
     return [...finishStreams(next), {
       key: key(event.event), role: event.event, content: event.context, streaming: true,
@@ -206,8 +209,9 @@ export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): Chat
   }
   if (event.event === 'tool_call' || event.event === 'tool_call_result') return applyToolEvent(next, event);
   if (event.event === 'token_usage') return summarize(finishStreams(next), event.context);
+  if (event.event === 'command') return [...next, { key: key('command'), role: 'command', content: event.context }];
   const role = event.event === 'send_file' ? 'file' : event.event;
-  if (role !== 'file' && role !== 'command' && role !== 'question' && role !== 'error') return next;
+  if (role !== 'file' && role !== 'question' && role !== 'error') return next;
   let questionToolId: string | undefined;
   if (role === 'question') {
     try {

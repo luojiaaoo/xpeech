@@ -97,25 +97,34 @@ test('folds intermediate prose when the next reply starts and keeps the loading 
 });
 
 test('keeps the current reply visible through a queued follow-up and subsequent reasoning', () => {
-  const messages = apply([
-    event('assistant', '第一段'), event('assistant_end'),
+  const firstReply = [
+    event('user', '帮我做个海报'), event('assistant', '第一段'),
     { ...event('user', '补充消息'), continuation: true }, event('command', '已入队'),
-  ]);
+    event('assistant', '写完了'), event('assistant_end'),
+  ];
+  const messages = apply(firstReply, []);
   const awaitingFollowUp = chatDisplayItems(messages, true);
   assert.deepEqual(awaitingFollowUp.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command', 'summary']);
+  assert.equal(awaitingFollowUp[3].role === 'assistant' && awaitingFollowUp[3].content, '第一段写完了');
 
-  const thinking = apply([event('thinking', '处理补充消息')], messages);
+  const reasoning = event('thinking', '处理补充消息');
+  const thinking = appendChatEvent(messages, reasoning);
   const duringThinking = chatDisplayItems(thinking, true);
   assert.deepEqual(duringThinking.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command', 'summary']);
   assert.ok(duringThinking[2].role === 'process');
   assert.deepEqual(duringThinking[2].messages.map(item => item.content), ['处理补充消息']);
   assert.equal(duringThinking[3].key, awaitingFollowUp[3].key);
 
-  const nextReply = chatDisplayItems(apply([event('assistant', '第二段')], thinking), true);
-  assert.deepEqual(nextReply.map(item => item.role), ['user', 'user', 'process', 'command', 'assistant', 'summary']);
-  assert.ok(nextReply[2].role === 'process');
-  assert.deepEqual(nextReply[2].messages.map(item => item.content), ['第一段', '处理补充消息']);
-  assert.equal(nextReply[4].role === 'assistant' && nextReply[4].content, '第二段');
+  const secondReply = event('assistant', '第二段');
+  for (const display of [
+    chatDisplayItems(appendChatEvent(thinking, secondReply), true),
+    chatDisplayItems(chatMessagesFromEvents([...firstReply, reasoning, secondReply])),
+  ]) {
+    assert.deepEqual(display.map(item => item.role), ['user', 'user', 'process', 'command', 'assistant', 'summary']);
+    assert.ok(display[2].role === 'process');
+    assert.deepEqual(display[2].messages.map(item => item.content), ['第一段写完了', '处理补充消息']);
+    assert.equal(display[4].role === 'assistant' && display[4].content, '第二段');
+  }
 });
 
 test('keeps each historical final reply and usage visible while folding earlier messages per turn', () => {

@@ -423,10 +423,12 @@ test('typing during a reply enables sending and queued streams do not finish the
   assert.equal(acknowledgement.content.props.children[1].props.children, '这条消息将用于引导后续回复：「second」');
   assert.equal(page.render().loading, true);
   assert.deepEqual(page.running, [true]);
-  assert.equal(page.items().find((item: any) => item.role === 'assistant').key, items[3].key);
-  page.streams[0].receive({ event: 'assistant', context: 'after insertion' });
+  const replying = page.items().find((item: any) => item.role === 'assistant');
+  assert.equal(replying.content.props.children.props.streaming.hasNextChunk, true);
+  page.streams[0].receive({ event: 'assistant', context: ' after insertion' });
   assert.deepEqual(Array.from(page.messages().filter((item: any) => ['user', 'assistant'].includes(item.role)),
-    (item: any) => item.content), ['first', 'second', 'before insertion still streaming', 'after insertion']);
+    (item: any) => item.content), ['first', 'second', 'before insertion still streaming after insertion']);
+  assert.equal(page.items().find((item: any) => item.role === 'assistant').key, items[3].key);
   page.streams[0].finish();
   await tick();
   assert.equal(page.render().loading, false);
