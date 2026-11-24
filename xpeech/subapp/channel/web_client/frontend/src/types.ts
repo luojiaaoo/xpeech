@@ -194,7 +194,6 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'thinking' | 'tool' | 'command' | 'file' | 'question' | 'summary' | 'error';
   content: string;
   streaming?: boolean;
-  transient?: boolean;
   tokenUsage?: string;
   toolCall?: ToolCallInfo;
   historical?: boolean;

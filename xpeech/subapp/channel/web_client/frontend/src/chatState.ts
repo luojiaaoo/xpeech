@@ -154,11 +154,8 @@ export function chatDisplayItems(
       });
     }
     items.push(...visible);
-    const footerKey = `summary_${turnId}`;
-    if (active) {
-      items.push({ key: footerKey, turnId, role: 'summary', content: '', transient: true });
-    } else if (summary) {
-      items.push({ ...summary, key: footerKey });
+    if (!active && summary) {
+      items.push({ ...summary, key: `summary_${turnId}` });
     }
   }
   return items;

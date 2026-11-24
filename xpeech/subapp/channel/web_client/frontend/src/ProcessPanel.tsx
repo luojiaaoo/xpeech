@@ -32,7 +32,7 @@ export default function ProcessPanel({
 
   return (
     <details className="process-panel">
-      <summary aria-label={`${label}，点击展开或收起过程`}>
+      <summary className={running ? 'process-summary-running' : undefined} aria-label={`${label}，点击展开或收起过程`}>
         {running ? <LoadingOutlined spin className="process-spinner" /> : <CheckOutlined className="process-spinner" />}
         <span className="process-label">{label}</span>
         <RightOutlined className="process-chevron" />

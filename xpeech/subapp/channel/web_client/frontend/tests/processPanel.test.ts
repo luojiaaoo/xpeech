@@ -55,6 +55,7 @@ async function processPanel() {
       assert.equal(tree.type, 'details');
       assert.equal(tree.props.open, undefined);
       const summary = tree.props.children[0];
+      assert.equal(summary.props.className, running ? 'process-summary-running' : undefined);
       assert.equal(summary.props.children[0].type, running ? 'Loading' : 'Check');
       assert.equal(summary.props.children[2].props.className, 'process-chevron');
       return summary.props.children[1].props.children;

@@ -32,7 +32,7 @@ test('groups inserted user messages above one process in live chat and history',
   ];
   const inserted = followUps.reduce(appendChatEvent, before);
   const items = chatDisplayItems(inserted, running);
-  assert.deepEqual(items.map(item => item.role), ['user', 'user', 'user', 'process', 'assistant', 'summary']);
+  assert.deepEqual(items.map(item => item.role), ['user', 'user', 'user', 'process', 'assistant']);
   assert.deepEqual(items.filter(item => item.role === 'user').map(item => item.content), ['first', 'second', 'third']);
   assert.ok(items[3].role === 'process' && items[3].running);
   assert.equal(items[3].key, processKey);
@@ -56,28 +56,27 @@ test('groups inserted user messages above one process in live chat and history',
   }
 });
 
-test('folds intermediate prose when the next reply starts and keeps the loading footer until usage arrives', () => {
+test('folds intermediate prose when the next reply starts and keeps the process running until usage arrives', () => {
   const initial = startChatTurn([], '读取文件');
-  const placeholder = chatDisplayItems(initial, running);
-  assert.deepEqual(placeholder.map(item => item.role), ['user', 'process', 'summary']);
-  assert.equal(placeholder[2].role === 'summary' && placeholder[2].transient, true);
+  const initialItems = chatDisplayItems(initial, running);
+  assert.deepEqual(initialItems.map(item => item.role), ['user', 'process']);
+  assert.ok(initialItems[1].role === 'process' && initialItems[1].running);
   const intro = apply([
     event('thinking', '先分析'), event('thinking_end'),
     event('assistant', '我先读取文件'), event('assistant_end'),
   ], initial);
   const introItems = chatDisplayItems(intro, running);
-  assert.deepEqual(introItems.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
+  assert.deepEqual(introItems.map(item => item.role), ['user', 'process', 'assistant']);
   assert.equal(introItems[2].role === 'assistant' && introItems[2].streaming, false);
 
   const toolCall = apply([tools('tool_call', [['a', 'read_file', {}]])], intro);
   const duringTool = chatDisplayItems(toolCall, running);
-  assert.deepEqual(duringTool.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
+  assert.deepEqual(duringTool.map(item => item.role), ['user', 'process', 'assistant']);
   const process = duringTool[1];
-  assert.equal(process.key, placeholder[1].key);
+  assert.equal(process.key, initialItems[1].key);
   assert.ok(process.role === 'process' && process.running);
   assert.deepEqual(process.messages.map(item => item.role), ['thinking', 'tool']);
   assert.equal(duringTool[2].key, introItems[2].key);
-  assert.equal(duringTool[3].key, placeholder[2].key);
 
   const toolMessages = apply([
     toolResult({ tool_call_id: 'a', name: 'read_file', result: 'ok', duration_seconds: 1, success: true }),
@@ -87,7 +86,7 @@ test('folds intermediate prose when the next reply starts and keeps the loading 
   const messages = apply([event('assistant', '读取'), event('assistant', '完成')], toolMessages);
   const before = structuredClone(messages);
   const live = chatDisplayItems(messages, running);
-  assert.deepEqual(live.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
+  assert.deepEqual(live.map(item => item.role), ['user', 'process', 'assistant']);
   assert.ok(live[1].role === 'process');
   assert.deepEqual(live[1].messages.map(item => item.role), ['thinking', 'assistant', 'tool']);
   assert.equal(live[1].messages[1].key, introItems[2].key);
@@ -101,7 +100,6 @@ test('folds intermediate prose when the next reply starts and keeps the loading 
   assert.equal(finished[1].role === 'process' && finished[1].running, false);
   assert.equal(finished[2].key, live[2].key);
   assert.equal(finished[2].role === 'assistant' && finished[2].streaming, false);
-  assert.equal(finished[3].key, placeholder[2].key);
   assert.equal(finished[3].role === 'summary' && finished[3].tokenUsage, usage);
   assert.deepEqual(messages, before);
 });
@@ -114,23 +112,23 @@ test('keeps the current reply visible through a queued follow-up and subsequent 
   ];
   const messages = apply(firstReply, []);
   const awaitingFollowUp = chatDisplayItems(messages, running);
-  assert.deepEqual(awaitingFollowUp.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command', 'summary']);
+  assert.deepEqual(awaitingFollowUp.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command']);
   assert.equal(awaitingFollowUp[3].role === 'assistant' && awaitingFollowUp[3].content, '第一段写完了');
 
   const reasoning = event('thinking', '处理补充消息');
   const thinking = appendChatEvent(messages, reasoning);
   const duringThinking = chatDisplayItems(thinking, running);
-  assert.deepEqual(duringThinking.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command', 'summary']);
+  assert.deepEqual(duringThinking.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command']);
   assert.ok(duringThinking[2].role === 'process');
   assert.deepEqual(duringThinking[2].messages.map(item => item.content), ['处理补充消息']);
   assert.equal(duringThinking[3].key, awaitingFollowUp[3].key);
 
   const secondReply = event('assistant', '第二段');
-  for (const display of [
-    chatDisplayItems(appendChatEvent(thinking, secondReply), running),
-    chatDisplayItems(chatMessagesFromEvents([...firstReply, reasoning, secondReply])),
-  ]) {
-    assert.deepEqual(display.map(item => item.role), ['user', 'user', 'process', 'command', 'assistant', 'summary']);
+  const live = chatDisplayItems(appendChatEvent(thinking, secondReply), running);
+  const history = chatDisplayItems(chatMessagesFromEvents([...firstReply, reasoning, secondReply]));
+  assert.deepEqual(live.map(item => item.role), ['user', 'user', 'process', 'command', 'assistant']);
+  assert.deepEqual(history.map(item => item.role), ['user', 'user', 'process', 'command', 'assistant', 'summary']);
+  for (const display of [live, history]) {
     assert.ok(display[2].role === 'process');
     assert.deepEqual(display[2].messages.map(item => item.content), ['第一段写完了', '处理补充消息']);
     assert.equal(display[4].role === 'assistant' && display[4].content, '第二段');
@@ -146,10 +144,10 @@ test('keeps each historical final reply and usage visible while folding earlier 
   ]);
   const items = chatDisplayItems(startChatTurn(history, '第三问', 'turn-3'), new Set(['turn-3']));
   assert.deepEqual(items.map(item => item.role), [
-    'user', 'process', 'assistant', 'summary', 'user', 'process', 'assistant', 'summary', 'user', 'process', 'summary',
+    'user', 'process', 'assistant', 'summary', 'user', 'process', 'assistant', 'summary', 'user', 'process',
   ]);
   assert.deepEqual(items.filter(item => item.role === 'assistant').map(item => item.content), ['第一答', '第二答']);
-  assert.deepEqual(items.filter(item => item.role === 'summary').map(item => item.tokenUsage), ['{"总 Token":100,"会话时长":"2秒"}', '{"总 Token":200}', undefined]);
+  assert.deepEqual(items.filter(item => item.role === 'summary').map(item => item.tokenUsage), ['{"总 Token":100,"会话时长":"2秒"}', '{"总 Token":200}']);
   assert.deepEqual(items.filter(item => item.role === 'process').map(item => item.running), [false, false, true]);
   assert.equal(items[1].role === 'process' && items[1].tokenUsage, '{"总 Token":100,"会话时长":"2秒"}');
 });
@@ -179,7 +177,7 @@ test('all command replies keep their timing panel and remain visible outside it 
     const events = [event('user', command), event('command', response)];
     const live = appendChatEvent(startChatTurn([], command), events[1]);
     const active = chatDisplayItems(live, running);
-    assert.deepEqual(active.map(item => item.role), ['user', 'process', 'command', 'summary']);
+    assert.deepEqual(active.map(item => item.role), ['user', 'process', 'command']);
     for (const messages of [finishChatTurn(live), chatMessagesFromEvents(events)]) {
       const items = chatDisplayItems(messages);
       assert.deepEqual(items.map(item => item.role), ['user', 'process', 'command']);
@@ -235,7 +233,7 @@ test('preserves assistant, thinking and tool order across multiple model calls',
   assert.equal(messages[3].toolCall?.input && (messages[3].toolCall.input as { path: string }).path, '/skill.md');
   assert.equal(messages[3].toolCall?.output, '技能内容');
   assert.equal(messages.at(-1)?.content, '我先读取技能。\n\n海报已生成。');
-  assert.ok(messages.every((item) => !item.streaming && !item.transient));
+  assert.ok(messages.every((item) => !item.streaming));
 });
 
 test('pairs parallel calls by ID when names match and results arrive out of order', () => {
@@ -346,7 +344,7 @@ test('restores multiple turns from persisted user and assistant events as read-o
   assert.equal(messages[1].content, '第一个回答');
   assert.equal(messages[4].content, '第二个问题');
   assert.equal(messages.at(-1)?.content, '第二个回答');
-  assert.ok(messages.every((item) => item.historical && !item.streaming && !item.transient));
+  assert.ok(messages.every((item) => item.historical && !item.streaming));
 });
 
 test('continues a restored conversation without merging its final turn into the new turn', () => {
