@@ -352,7 +352,7 @@ class AgentLoop:
         not_interactive: bool = False,
         inbox: SessionInbox | None = None,
     ):
-        """运行 Agent 循环，在无工具调用的迭代结束时接收追加消息。"""
+        """运行 Agent 循环，在下一次模型调用前注入追加消息。"""
         start_time = time.perf_counter()
         request_id = get_request_id()
         if request_id is None:
@@ -477,14 +477,14 @@ class AgentLoop:
                         detail=str(exc),
                     ) from exc
 
+                has_tool_calls = response.has_tool_calls
                 logger.info(
                     "Provider chat completed loop_count={} has_tool_calls={}",
                     loop_count,
-                    response.has_tool_calls,
+                    has_tool_calls,
                 )
 
-                # 如果有工具调用
-                if response.has_tool_calls:
+                if has_tool_calls:
                     async with aclosing(self.tool_call(
                         response,
                         messages_yaml,
@@ -500,22 +500,31 @@ class AgentLoop:
                             yield i
                 else:
                     final_content = response.content
-                    pending = inbox.drain_or_close() if inbox is not None else []
-                    if not pending:
-                        break
 
-                    # 先记录当前回复，再逐条写入累计的用户消息。
-                    if final_content is not None:
+                # 获取 inbox 中的待处理消息。
+                pending = []
+                if inbox is not None:
+                    pending = inbox.drain() if has_tool_calls else inbox.drain_or_close()
+
+                # 只有没有工具调用且没有待处理消息时，才结束循环。
+                if not (has_tool_calls or pending):
+                    break
+
+                if pending:
+                    # 如果没有工具调用，则记录助手消息。
+                    if not has_tool_calls and final_content is not None:
                         _append_turn_message(
                             messages_yaml, turn_messages, {"role": "assistant", "content": final_content},
                         )
+                    # 记录待处理消息。
                     for incoming in pending:
                         _append_turn_message(
                             messages_yaml, turn_messages,
                             await build_user_prompt(message=incoming, workspace=self.workspace),
                         )
 
-                anomaly_guard.observe_tool_calls(response.tool_calls)
+                # 用户补充引导后，重新跟踪连续重复的工具调用。
+                anomaly_guard.observe_tool_calls([] if pending else response.tool_calls)
 
             if final_content is None:
                 final_content = "I've completed processing but have no response to give."

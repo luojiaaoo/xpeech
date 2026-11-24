@@ -160,8 +160,9 @@ async def test_inserted_chat_and_question_share_one_loop_and_record(
             owner.cancel()
         await asyncio.gather(owner, return_exceptions=True)
 
-    assert len(contexts) == 3
-    assert contexts[-1][-1]["content"][1]["text"] == "follow-up"
+    assert len(contexts) == 2
+    assert [msg["role"] for msg in contexts[1][-3:]] == ["assistant", "tool", "user"]
+    assert contexts[1][-1]["content"][1]["text"] == "follow-up"
     agent.records.append.assert_awaited_once()
     record = agent.records.append.await_args.args[0]
     assert record.user_question == "hi"
@@ -174,7 +175,7 @@ async def test_inserted_chat_and_question_share_one_loop_and_record(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_call_uses_tool", [False, True])
-async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
+async def test_chat_inserts_each_queued_message_before_next_model_call(
     turn, monkeypatch, first_call_uses_tool, make_openai_sdk_client,
 ):
     agent, message = turn
@@ -212,8 +213,6 @@ async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
         calls.append(deepcopy(messages))
         if len(calls) == 1:
             return LLMResponse(iter_mix_chunks=first_response())
-        if first_call_uses_tool and len(calls) == 2:
-            return response(("content", "first answer"))
         return response(("content", "final answer"))
 
     agent.chat = model_call
@@ -264,17 +263,19 @@ async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
     assert events[0] == {"event": "user", "context": "hi", "turn_id": events[0]["turn_id"]}
     assert sum(event["event"] == "user" for event in events) == 1
     assert {event["turn_id"] for event in events + queued_events} == {events[0]["turn_id"]}
+    assert len(calls) == 2
+    previous, first, second = calls[1][-3:]
     if first_call_uses_tool:
-        assert [msg["role"] for msg in calls[1]] == ["system", "user", "assistant", "tool"]
-    assert len(calls) == (3 if first_call_uses_tool else 2)
-    reply, first, second = calls[-1][-3:]
-    assert reply == {"role": "assistant", "content": "first answer"}
+        assert [msg["role"] for msg in calls[1]] == ["system", "user", "assistant", "tool", "user", "user"]
+        assert previous["tool_call_id"] == "call-1"
+    else:
+        assert previous == {"role": "assistant", "content": "first answer"}
     assert [first["role"], second["role"]] == ["user", "user"]
     assert [first["content"][1]["text"], second["content"][1]["text"]] == ["follow-up 1", long_text]
     assert "sender_name: Alice" in second["content"][0]["text"]
     assert "note.txt" in second["content"][2]["text"]
-    assert (await saved_turn(agent, message))[-4:-1] == [reply, first, second]
-    assert agent.records.append.await_args.kwargs["messages"][-4:-1] == [reply, first, second]
+    assert (await saved_turn(agent, message))[-4:-1] == [previous, first, second]
+    assert agent.records.append.await_args.kwargs["messages"][-4:-1] == [previous, first, second]
 
 
 @pytest.mark.asyncio
@@ -310,16 +311,16 @@ async def test_queued_messages_preserve_tool_context_and_json_output(turn, monke
         if calls == 1:
             for incoming in followups:
                 assert inbox.enqueue(incoming)
-        if calls in (1, 3, 4):
+        if calls <= 3:
             return response(("tool_calls", ToolCallChunk(
                 index=0, id=f"call-{calls}", name="capture", arguments="{}",
             )))
-        return response(("content", "first answer" if calls == 2 else "final answer"))
+        return response(("content", "final answer"))
 
     agent.chat = model_call
     events = [event async for event in agent.run(message, inbox=inbox)]
 
-    assert calls == 5
+    assert calls == 4
     assert tool_contexts == [("Alice", message.session_metadata)] * 3
     assert not any(event["event"] == "user" for event in events)
     assert agent.records.append.await_args.args[0].sender_name == "Alice"
@@ -346,7 +347,7 @@ async def test_tool_chain_continues_until_no_tools_and_no_pending_messages(turn,
         if calls == 1 and inbox_mode == "pending":
             assert inbox.enqueue(message)
         # Continue past the previous default of 40, including without an inbox.
-        if calls <= 45 or calls == 47:
+        if calls <= 45:
             return response(("tool_calls", ToolCallChunk(
                 index=0, id=f"call-{calls}", name="lookup", arguments="{}",
             )))
@@ -355,13 +356,12 @@ async def test_tool_chain_continues_until_no_tools_and_no_pending_messages(turn,
     agent.chat = model_call
     events = [event async for event in agent.run(message, inbox=inbox)]
 
-    expected_calls = 48 if inbox_mode == "pending" else 46
-    assert calls == expected_calls
+    assert calls == 46
     assert (await saved_turn(agent, message))[-1] == {
-        "role": "assistant", "content": f"answer {expected_calls}",
+        "role": "assistant", "content": "answer 46",
     }
     answers = [event["context"] for event in events if event["event"] == "assistant"]
-    assert answers == (["answer 46", "answer 48"] if inbox_mode == "pending" else ["answer 46"])
+    assert answers == ["answer 46"]
     if inbox is not None:
         assert not inbox.enqueue(message)
         assert inbox.drain() == []
@@ -505,9 +505,9 @@ async def test_inbox_message_resets_repeated_tool_call_count(turn):
         nonlocal calls
         contexts.append(deepcopy(kwargs["messages"]))
         calls += 1
-        if calls == 1:
+        if calls == 2:
             assert inbox.enqueue(message)
-        if calls in (4, 8):
+        if calls == 6:
             return response(("content", "done"))
         return response(("tool_calls", ToolCallChunk(
             index=0, id=f"call-{calls}", name="lookup", arguments="{}",
@@ -518,19 +518,15 @@ async def test_inbox_message_resets_repeated_tool_call_count(turn):
     await saved_turn(agent, message)
     saved = agent.history.save.await_args.args[2]
     assert not any(str(msg["content"]).startswith("You have called ") for msg in saved)
-    reminders = [
-        msg for context in contexts for msg in context
-        if str(msg["content"]).startswith("You have called ")
-    ]
+    reminder = {
+        "role": "user",
+        "content": ModelAnomalyGuard.REPEATED_TOOL_CALL_PROMPT.format(tool_name="lookup", observed_count=3),
+    }
     assert not any(
         str(msg["content"]).startswith("You have called ")
         for msg in agent.records.append.await_args.kwargs["messages"]
     )
-    assert calls == 8
-    assert reminders == [{
-        "role": "user",
-        "content": ModelAnomalyGuard.REPEATED_TOOL_CALL_PROMPT.format(tool_name="lookup", observed_count=3),
-    }] * 2
+    assert [reminder in context for context in contexts] == [False, False, False, False, False, True]
 
 
 @pytest.mark.asyncio
