@@ -253,9 +253,10 @@ export default function ChatPage({
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [fragmentRevision, setFragmentRevision] = useState<number | null>(null);
+  const [runningTurns, setRunningTurns] = useState(() => new Set<string>());
   const senderRef = useRef<React.ComponentRef<typeof Sender>>(null);
   const bubbleListRef = useRef<React.ComponentRef<typeof Bubble.List>>(null);
-  const requests = useRef(new Set<AbortController>());
+  const requests = useRef(new Map<AbortController, string | undefined>());
   const stoppingRef = useRef(false);
   const syncRequests = useRef(new Set<AbortController>());
   const sendRef = useRef(send);
@@ -305,7 +306,7 @@ export default function ChatPage({
   }, [active, embedded, historyLoading, sessionId]);
 
   useEffect(() => () => {
-    requests.current.forEach((controller) => controller.abort());
+    requests.current.forEach((_, controller) => controller.abort());
     requests.current.clear();
     syncRequests.current.forEach((controller) => controller.abort());
     syncRequests.current.clear();
@@ -358,7 +359,7 @@ export default function ChatPage({
 
   async function stop() {
     if (!requests.current.size || stoppingRef.current) return;
-    const controllers = Array.from(requests.current);
+    const controllers = Array.from(requests.current.keys());
     stoppingRef.current = true;
     setStopping(true);
     try {
@@ -378,20 +379,19 @@ export default function ChatPage({
     const sentFiles = sync ? sync.files ?? [] : composerRef.current.files;
     if (!text.trim() && sentFiles.length === 0) return [];
     const controller = new AbortController();
-    const continuation = !sync && requests.current.size > 0;
+    let turnId: string | undefined;
     // 同步交互纯后台执行：不写入对话、不影响输入框和加载状态，
     // 结果只经 Promise 与 onReply（xpeech:reply）回传主页面。
     if (sync) {
       syncRequests.current.add(controller);
     } else {
-      requests.current.add(controller);
-      const display = [text.trim(), ...sentFiles.map((file) => `📎 ${file.name}`)].filter(Boolean).join('\n');
-      appendEvent({ event: 'user', context: display, continuation });
+      const firstRequest = requests.current.size === 0;
+      requests.current.set(controller, undefined);
       composerRef.current = { value: '', files: [] };
       setValue('');
       setFiles([]);
       setAttachmentsOpen(false);
-      if (!continuation) {
+      if (firstRequest) {
         setLoading(true);
         onRunningChange?.(true);
       }
@@ -401,14 +401,20 @@ export default function ChatPage({
 
       const receive = (event: ChatEvent) => {
         if (controller.signal.aborted) return;
+        if (turnId === undefined && event.turn_id) {
+          const receivedTurnId = event.turn_id;
+          turnId = receivedTurnId;
+          requests.current.set(controller, receivedTurnId);
+          setRunningTurns((current) => new Set(current).add(receivedTurnId));
+        }
         appendEvent(event);
         if (embedded) postChatEvent(sessionId, event);
       };
-      await streamChat(text, sentFiles, receive, { sessionId, signal: controller.signal, continuation });
+      await streamChat(text, sentFiles, receive, { sessionId, signal: controller.signal });
       return [];
     } catch (error) {
       if (!controller.signal.aborted && !sync) {
-        appendEvent({ event: 'error', context: String(error) });
+        if (turnId !== undefined) appendEvent({ event: 'error', context: String(error), turn_id: turnId });
         message.error(String(error));
       }
       if (sync) throw error;
@@ -416,9 +422,17 @@ export default function ChatPage({
     } finally {
       if (sync) {
         syncRequests.current.delete(controller);
-      } else {
-        if (requests.current.delete(controller) && requests.current.size === 0) {
-          setMessages(finishChatTurn);
+      } else if (requests.current.delete(controller)) {
+        const completedTurn = turnId;
+        if (completedTurn !== undefined && !Array.from(requests.current.values()).includes(completedTurn)) {
+          setMessages((current) => finishChatTurn(current, completedTurn));
+          setRunningTurns((current) => {
+            const next = new Set(current);
+            next.delete(completedTurn);
+            return next;
+          });
+        }
+        if (requests.current.size === 0) {
           setLoading(false);
           onRunningChange?.(false);
         }
@@ -435,14 +449,11 @@ export default function ChatPage({
       } else if (item.role === 'tool' && item.toolCall) {
         content = <ToolCallCard tool={item.toolCall} />;
       } else if (item.role === 'question') {
-        const previous = messages.slice(0, messages.indexOf(item));
-        const turn = previous.slice(previous.findLastIndex(entry => entry.role === 'user') + 1);
-        const tool = turn.find(entry => entry.toolCall?.id === item.questionToolId)?.toolCall;
+        const tool = messages.find(entry => entry.turnId === item.turnId
+          && entry.toolCall?.id === item.questionToolId)?.toolCall;
         content = <Suspense fallback={<div>正在加载表单…</div>}><QuestionForm context={item.content} sessionId={sessionId} readOnly={item.historical} tool={tool} /></Suspense>;
       } else if (item.role === 'file') {
         content = <FileCard path={item.content} active={active} />;
-      } else if (item.role === 'status') {
-        content = <div className="chat-status-text">{item.transient ? <LoadingOutlined spin /> : null}{item.content}</div>;
       } else if (item.role === 'command') {
         content = <div className="chat-command-text"><CodeOutlined className="chat-command-icon" aria-hidden /><span>{item.content}</span></div>;
       } else if (item.role === 'error') {
@@ -469,12 +480,12 @@ export default function ChatPage({
       return content;
     }
 
-    return chatDisplayItems(messages, loading, embedded && active && fragmentRevision !== null).map((item) => ({
+    return chatDisplayItems(messages, runningTurns, embedded && active && fragmentRevision !== null).map((item) => ({
       key: item.key,
       role: item.role === 'fragment-actions' ? 'tool' : item.role,
       content: item.role === 'process' ? (
         <ProcessPanel running={item.running} tokenUsage={item.tokenUsage}>
-          {item.messages.filter((entry) => !entry.transient).map((entry) => (
+          {item.messages.map((entry) => (
             <div key={entry.key} className={`process-entry process-entry-${entry.role}`}>
               {renderMessage(entry)}
             </div>
@@ -487,7 +498,7 @@ export default function ChatPage({
           : null
       ) : renderMessage(item),
     }));
-  }, [active, embedded, fragmentRevision, loading, messages, sessionId]);
+  }, [active, embedded, fragmentRevision, messages, runningTurns, sessionId]);
 
   const attachmentItems: AttachmentsProps['items'] = files.map((file, index) => ({
     uid: `${index}-${file.name}-${file.lastModified}`,

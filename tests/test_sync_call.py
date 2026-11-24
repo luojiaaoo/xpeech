@@ -99,9 +99,13 @@ def test_chat_sync_returns_collected_events(fake_runner, monkeypatch, backend_op
     )
 
     assert response.status_code == 200
-    assert response.json() == [
-        {"event": "assistant", "context": "final answer"},
-        {"event": "token_usage", "context": "usage"},
+    events = response.json()
+    turn_id = events[0]["turn_id"]
+    assert turn_id
+    assert events == [
+        {"event": "user", "context": "hello", "turn_id": turn_id},
+        {"event": "assistant", "context": "final answer", "turn_id": turn_id},
+        {"event": "token_usage", "context": "usage", "turn_id": turn_id},
     ]
     assert fake_runner.created == {
         "user_id": "user",

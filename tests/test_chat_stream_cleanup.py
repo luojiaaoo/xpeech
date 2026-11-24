@@ -137,7 +137,10 @@ async def test_consumer_exit_while_route_paused_at_yield_returns_permit(streamin
 
     async def consume():
         async for event in state.stream:
-            assert event == {"event": "assistant", "context": "hello"}
+            if event["event"] == "user":
+                continue
+            assert event["event"] == "assistant"
+            assert event["context"] == "hello"
             received.set()
             if cancel:
                 await asyncio.Event().wait()
@@ -326,6 +329,7 @@ async def test_repeated_stop_and_cancelled_stop_request_do_not_interrupt_cleanup
 @pytest.mark.parametrize("after_first_chunk", [False, True])
 async def test_cancel_while_waiting_for_model_returns_permit(streaming_chat, after_first_chunk):
     state = streaming_chat
+    assert (await anext(state.stream))["event"] == "user"
     if after_first_chunk:
         await anext(state.stream)
         state.reading.clear()

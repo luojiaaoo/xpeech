@@ -4,8 +4,7 @@ import codecs
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
-from types import SimpleNamespace
-from typing import Annotated, Any
+from typing import Annotated
 from urllib.parse import unquote, urlsplit
 
 import anyio
@@ -148,23 +147,6 @@ def _cookie_websocket_origin_allowed(websocket: WebSocket) -> bool:
         return urlsplit(origin).netloc == websocket.headers.get("host", "")
     except ValueError:
         return False
-
-
-def _user_history_event(content: str, files: list[Any] | None) -> dict:
-    try:
-        inputs = json.loads(content)
-    except json.JSONDecodeError:
-        inputs = []
-    text = "\n".join(
-        item["text"].strip()
-        for item in inputs
-        if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"].strip()
-    ) if isinstance(inputs, list) else ""
-    attachments = [f"📎 {file.filename or 'attachment'}" for file in files or ()]
-    return {
-        "event": "user",
-        "context": "\n".join(part for part in (text, *attachments) if part),
-    }
 
 
 def create_proxy_router(
@@ -328,9 +310,6 @@ def create_proxy_router(
                 content = payload.get("content")
                 if not isinstance(content, str):
                     raise HTTPException(422, "content 必须是 JSON 字符串")
-                continuation = payload.get("continuation", False)
-                if not isinstance(continuation, bool):
-                    raise HTTPException(422, "continuation 必须是布尔值")
                 metadata = payload.get("session_metadata", {})
                 if not isinstance(metadata, dict):
                     raise HTTPException(422, "session_metadata 必须是 JSON 对象")
@@ -338,7 +317,6 @@ def create_proxy_router(
                 file_payloads = payload.get("files", [])
                 if not isinstance(file_payloads, list):
                     raise HTTPException(422, "files 必须是数组")
-                files = []
                 upload_data = []
                 for file_payload in file_payloads:
                     if not isinstance(file_payload, dict):
@@ -353,7 +331,6 @@ def create_proxy_router(
                     except (binascii.Error, ValueError):
                         raise HTTPException(422, "文件内容必须是有效的 base64") from None
                     filename = filename or "attachment"
-                    files.append(SimpleNamespace(filename=filename))
                     upload_data.append(("files", (filename, data, media_type)))
             except HTTPException as error:
                 await send_error(str(error.detail), error.status_code)
@@ -398,9 +375,6 @@ def create_proxy_router(
                         return
 
                     history_user_id, history_channel = _history_identity(user)
-                    user_event = _user_history_event(content, files)
-                    if continuation:
-                        user_event["continuation"] = True
                     collector = _SSEEventCollector()
                     sent_events = 0
 
@@ -412,8 +386,6 @@ def create_proxy_router(
                                 )
                             except Exception:  # noqa: BLE001 - 历史失败不能改变聊天响应
                                 logger.exception("Web event history could not be saved")
-
-                    await save_events([user_event])
 
                     async def emit_events() -> None:
                         nonlocal sent_events

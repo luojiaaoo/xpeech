@@ -167,35 +167,31 @@ export type ChatEventType =
 
 export interface ChatEvent {
   event: ChatEventType;
+  turn_id: string;
   context: string;
-  /** Display-only metadata for a user insertion during an ongoing process. */
-  continuation?: boolean;
 }
 
 export interface ToolCallResult {
-  // TODO(remove-legacy-tool-events): 旧历史仅有 id；清理时将 tool_call_id 改为必填并删除 id。
-  tool_call_id?: string;
-  id?: string;
+  tool_call_id: string;
   name: string;
   result: unknown;
   duration_seconds: number;
-  // TODO(remove-legacy-tool-events): 旧结果缺少 success；清理时改为必填。
-  success?: boolean;
+  success: boolean;
 }
 
-export interface ToolCallInfo {
+export type ToolCallInfo = {
   id: string;
   name: string;
-  input?: unknown;
-  output?: unknown;
-  status: 'running' | 'completed' | 'interrupted';
-  success?: boolean;
-  durationSeconds?: number;
-}
+  input: unknown;
+} & (
+  | { status: 'running' | 'interrupted'; output?: never; durationSeconds?: never; success?: never }
+  | { status: 'completed'; output: unknown; durationSeconds: number; success: boolean }
+);
 
 export interface ChatMessage {
   key: string;
-  role: 'user' | 'assistant' | 'thinking' | 'tool' | 'status' | 'command' | 'file' | 'question' | 'summary' | 'error';
+  turnId: string;
+  role: 'user' | 'assistant' | 'thinking' | 'tool' | 'command' | 'file' | 'question' | 'summary' | 'error';
   content: string;
   streaming?: boolean;
   transient?: boolean;
@@ -203,7 +199,6 @@ export interface ChatMessage {
   toolCall?: ToolCallInfo;
   historical?: boolean;
   questionToolId?: string;
-  continuation?: boolean;
 }
 export type ChatCommandChoice = { name: string; description: string; path?: string };
 export type ChatCommandCatalog = { commands: ChatCommandChoice[]; skills: ChatCommandChoice[] };

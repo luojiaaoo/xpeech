@@ -142,8 +142,10 @@ async def test_inserted_chat_and_question_share_one_loop_and_record(
                 "/chat", headers=headers, data={"content": '[{"text":"follow-up"}]'},
             ), timeout=2)
             assert queued.status_code == 200
+            turn_id = emitted[0]["turn_id"]
             assert [json.loads(line[6:]) for line in queued.text.splitlines() if line.startswith("data: ")] == [
-                {"event": "command", "context": "这条消息将用于引导后续回复：「follow-up」"},
+                {"event": "user", "context": "follow-up", "turn_id": turn_id},
+                {"event": "command", "context": "这条消息将用于引导后续回复：「follow-up」", "turn_id": turn_id},
             ]
             agent.records.append.assert_not_awaited()
             show_question.set()
@@ -227,6 +229,7 @@ async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
     long_prefix = "补充" * 20
     long_text = f"\n{long_prefix}\n这段正文也应交给模型"
     owner = asyncio.create_task(consume())
+    queued_events = []
     try:
         await asyncio.wait_for(waiting.wait(), timeout=2)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -245,8 +248,11 @@ async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
                     files=files,
                 ), timeout=2)
                 assert queued.status_code == 200
-                [ack] = [json.loads(line[6:]) for line in queued.text.splitlines() if line.startswith("data: ")]
-                assert ack == {"event": "command", "context": acknowledgement}
+                [user, ack] = [json.loads(line[6:]) for line in queued.text.splitlines() if line.startswith("data: ")]
+                displayed = f"{text.strip()}\n📎 note.txt" if files else text
+                assert user == {"event": "user", "context": displayed, "turn_id": ack["turn_id"]}
+                assert ack == {"event": "command", "context": acknowledgement, "turn_id": user["turn_id"]}
+                queued_events.extend((user, ack))
         resume.set()
         events = await asyncio.wait_for(owner, timeout=2)
     finally:
@@ -255,7 +261,9 @@ async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
             await asyncio.gather(owner, return_exceptions=True)
 
     assert create.await_count == 3
-    assert not any(event["event"] == "user" for event in events)
+    assert events[0] == {"event": "user", "context": "hi", "turn_id": events[0]["turn_id"]}
+    assert sum(event["event"] == "user" for event in events) == 1
+    assert {event["turn_id"] for event in events + queued_events} == {events[0]["turn_id"]}
     if first_call_uses_tool:
         assert [msg["role"] for msg in calls[1]] == ["system", "user", "assistant", "tool"]
     assert len(calls) == (3 if first_call_uses_tool else 2)

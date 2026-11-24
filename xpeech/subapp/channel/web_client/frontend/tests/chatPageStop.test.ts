@@ -74,7 +74,10 @@ async function chatPage(
       streamChat(_text: string, _files: File[], receive: Function, options: { signal: AbortSignal }) {
         if (realStreamChat) return realStreamChat(_text, _files, receive, options);
         return new Promise<void>((resolve, reject) => {
-          streams.push({ text: _text, signal: options.signal, receive, finish: resolve });
+          streams.push({
+            text: _text, signal: options.signal, finish: resolve,
+            receive: (event: object) => receive({ turn_id: 'turn-1', ...event }),
+          });
           options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
         });
       },
@@ -156,6 +159,8 @@ test('login injection fills the editable composer once and sends exactly the edi
   page.render().onChange('编辑后的内容');
   page.render().onSubmit('编辑后的内容');
   assert.equal(page.streams[0].text, '编辑后的内容');
+  assert.equal(page.messages().length, 0);
+  page.streams[0].receive({ event: 'user', context: '编辑后的内容' });
   assert.equal(page.messages()[0].content, '编辑后的内容');
   assert.equal(page.render().value, '');
   page.streams[0].finish();
@@ -207,6 +212,7 @@ test('a disconnected stream ends locally without blocking the next send', async 
 test('the footer shows three loading dots until usage arrives, even with the connection open', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('hello');
+  page.streams[0].receive({ event: 'user', context: 'hello' });
   const initialProcess = page.items()[1];
   assert.equal(initialProcess.role, 'process');
   assert.equal(initialProcess.content.type, 'ProcessPanel');
@@ -221,8 +227,7 @@ test('the footer shows three loading dots until usage arrives, even with the con
   for (const event of [
     { event: 'thinking', context: '分析问题' },
     { event: 'assistant', context: '正在读取' },
-    // TODO(remove-legacy-tool-events): 清理时将旧元组夹具改为带 tool_call_id 的对象数组。
-    { event: 'tool_call', context: '[["tool-1","read_file",{}]]' },
+    { event: 'tool_call', context: '[{"tool_call_id":"tool-1","name":"read_file","arguments":{}}]' },
   ]) stream.receive(event);
   const duringTool = page.items();
   assert.deepEqual(Array.from(duringTool, (item: any) => item.role), ['user', 'process', 'assistant', 'summary']);
@@ -275,6 +280,7 @@ test('context pie chart appears beside the statistics menu and shows token count
     },
   };
   const stream = page.streams[0];
+  stream.receive({ event: 'user', context: 'hello' });
   stream.receive({ event: 'assistant', context: 'answer' });
   stream.receive({ event: 'token_usage', context: JSON.stringify(usage) });
   stream.finish();
@@ -312,6 +318,7 @@ test('the usage summary and statistics format raw counts at the thousand and mil
     '总 Token': 1_000_999, '输入 Token': 999, '输出 Token': 1_000_000, 大模型请求次数: 2,
   };
   const stream = page.streams[0];
+  stream.receive({ event: 'user', context: 'hello' });
   stream.receive({ event: 'assistant', context: 'answer' });
   stream.receive({ event: 'token_usage', context: JSON.stringify(usage) });
   stream.finish();
@@ -329,6 +336,7 @@ test('the usage summary and statistics format raw counts at the thousand and mil
 test('command replies render outside the collapsed process and preserve help line breaks', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('/help');
+  page.streams[0].receive({ event: 'user', context: '/help' });
   const help = '/new -> 开始一个新会话\n/clear -> 清空上下文（不进行记忆总结）';
   page.streams[0].receive({ event: 'command', context: help });
   const command = page.items().find((item: any) => item.role === 'command');
@@ -352,9 +360,9 @@ test('the composer stop action waits for server acknowledgement, closes its stre
   });
   page.render().onSubmit('hello');
   const stream = page.streams[0];
+  stream.receive({ event: 'user', context: 'hello' });
   stream.receive({ event: 'assistant', context: '保留的部分回复' });
-  // TODO(remove-legacy-tool-events): 清理时将旧元组夹具改为带 tool_call_id 的对象数组。
-  stream.receive({ event: 'tool_call', context: '[["tool-1","read_file",{}]]' });
+  stream.receive({ event: 'tool_call', context: '[{"tool_call_id":"tool-1","name":"read_file","arguments":{}}]' });
   assert.equal(page.render().loading, true);
   page.render().onCancel();
   page.render().onCancel();
@@ -402,6 +410,7 @@ test('a failed stop keeps the stream running and allows retrying the stop action
 test('typing during a reply enables sending and queued streams do not finish the session', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('first');
+  page.streams[0].receive({ event: 'user', context: 'first' });
   const initialProcess = page.items()[1];
   page.streams[0].receive({ event: 'assistant', context: 'before insertion' });
   assert.equal(page.render().loading, true);
@@ -410,6 +419,7 @@ test('typing during a reply enables sending and queued streams do not finish the
   page.render().onSubmit('second');
   assert.equal(page.streams.length, 2);
   assert.equal(page.render().loading, true);
+  page.streams[1].receive({ event: 'user', context: 'second' });
   const items = page.items();
   assert.deepEqual(Array.from(items, (item: any) => item.role), ['user', 'user', 'process', 'assistant', 'summary']);
   assert.equal(items[2].key, initialProcess.key);
@@ -439,7 +449,9 @@ test('typing during a reply enables sending and queued streams do not finish the
 test('stopping a session aborts every pending stream and ignores their late events', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('first');
+  page.streams[0].receive({ event: 'user', context: 'first' });
   page.render().onSubmit('second');
+  page.streams[1].receive({ event: 'user', context: 'second' });
   assert.equal(page.streams.length, 2);
   page.render().onCancel();
   await tick();
@@ -448,31 +460,51 @@ test('stopping a session aborts every pending stream and ignores their late even
   assert.equal(page.messages().some((item: any) => item.content === 'late'), false);
   assert.deepEqual(page.running, [true, false]);
   page.render().onSubmit('new turn');
+  page.streams[2].receive({ event: 'user', context: 'new turn', turn_id: 'turn-2' });
   assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'user', 'process', 'user', 'process', 'summary']);
   page.streams[2].finish();
   await tick();
   page.cleanupHistory();
 });
 
-test('a command response completes independently and the session finishes when all requests end', async () => {
+test('keeps a new turn separate while the prior turn still has open sockets', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('first');
+  const [first] = page.streams;
+  first.receive({ event: 'user', context: 'first' });
+  first.receive({ event: 'assistant', context: 'first answer' });
+  first.receive({ event: 'assistant_end', context: '' });
+
   page.render().onSubmit('inserted');
-  page.streams[1].receive({ event: 'command', context: 'queued' });
-  // Leave the queued socket open while the execution completes.
-  page.streams[0].receive({ event: 'assistant', context: 'answer' });
-  page.streams[0].finish();
+  const inserted = page.streams[1];
+  page.render().onSubmit('new turn');
+  const next = page.streams[2];
+  next.receive({ event: 'user', context: 'new turn', turn_id: 'turn-2' });
+  next.receive({ event: 'assistant', context: 'second answer', turn_id: 'turn-2' });
+
+  // The previous turn's delayed frames must not close or update the new one.
+  inserted.receive({ event: 'user', context: 'inserted' });
+  inserted.receive({ event: 'command', context: 'queued' });
+  first.receive({ event: 'token_usage', context: '{"总 Token":10}' });
+  first.finish();
+  inserted.finish();
   await tick();
   assert.equal(page.render().loading, true);
   assert.deepEqual(page.running, [true]);
-  page.streams[1].finish();
+  assert.deepEqual(Array.from(page.messages().filter((item: any) => item.role === 'user'),
+    (item: any) => [item.content, item.turnId]), [
+    ['first', 'turn-1'], ['inserted', 'turn-1'], ['new turn', 'turn-2'],
+  ]);
+  const panels = page.items().filter((item: any) => item.role === 'process');
+  assert.deepEqual(Array.from(panels, (item: any) => item.content.props.running), [false, true]);
+  assert.equal(panels[0].content.props.tokenUsage, '{"总 Token":10}');
+  const reply = page.messages().find((item: any) => item.turnId === 'turn-2' && item.role === 'assistant');
+  assert.equal(reply.streaming, true);
+
+  next.finish();
   await tick();
   assert.equal(page.render().loading, false);
   assert.ok(page.messages().every((item: any) => !item.streaming && !item.transient));
   assert.deepEqual(page.running, [true, false]);
-  page.render().onSubmit('new turn');
-  assert.equal(page.messages().filter((item: any) => item.role === 'user').at(-1).continuation, undefined);
-  page.streams[2].finish();
-  await tick();
   page.cleanupHistory();
 });

@@ -137,6 +137,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
 
         async def aiter_sse(self):
             for payload in [
+                {"event": "user", "context": "hello"},
                 {"event": "thinking", "context": "first "},
                 {"event": "thinking", "context": "second"},
                 {"event": "thinking_end", "context": ""},
@@ -145,7 +146,7 @@ async def test_iter_chat_events_groups_text_chunks_until_end_event(monkeypatch: 
                 {"event": "command", "context": "/new"},
                 {"event": "command", "context": "这条消息将用于引导后续回复"},
             ]:
-                yield SimpleNamespace(data=json.dumps(payload))
+                yield SimpleNamespace(data=json.dumps({**payload, "turn_id": SESSION_ID}))
 
     request = httpx.Request("POST", "http://backend.test/chat")
     response = httpx.Response(200, request=request)

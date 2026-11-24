@@ -8,6 +8,7 @@ from typing import Any
 import anyio
 from fastapi import HTTPException, UploadFile, status
 from openai import AsyncOpenAI
+from uuid6 import uuid7
 
 from ..exceptions import PathProtectionError
 from ..utils.file_io import save_to_workspace
@@ -54,6 +55,18 @@ async def _prepare_message(
     return message
 
 
+def _user_event(
+    message: InboundMessage, *, turn_id: str, files: list[UploadFile] | None,
+) -> dict[str, Any]:
+    text = [block.text.strip() for block in message.content]
+    attachments = [f"📎 {file.filename or 'attachment'}" for file in files or ()]
+    return {
+        "event": "user",
+        "context": "\n".join(part for part in (*text, *attachments) if part),
+        "turn_id": turn_id,
+    }
+
+
 @asynccontextmanager
 async def execute_chat_stream(
     user_id: str,
@@ -87,6 +100,7 @@ async def execute_chat_stream(
         inbox, owner = await CHAT_GUARD.submit(message)
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    user_event = _user_event(message, turn_id=inbox.turn_id, files=files)
     if not owner:
         acknowledgement = "这条消息将用于引导后续回复"
         text = " ".join(" ".join(block.text for block in message.content).split())
@@ -97,7 +111,8 @@ async def execute_chat_stream(
             acknowledgement += f"：「{preview}」"
 
         async def acknowledge():
-            yield {"event": "command", "context": acknowledgement}
+            yield user_event
+            yield {"event": "command", "context": acknowledgement, "turn_id": inbox.turn_id}
 
         async with aclosing(acknowledge()) as events:
             yield events
@@ -105,9 +120,10 @@ async def execute_chat_stream(
 
     async def run():
         try:
+            yield user_event
             async with aclosing(runner.run(message=message, inbox=inbox)) as events:
                 async for event in events:
-                    yield event
+                    yield {**event, "turn_id": inbox.turn_id}
         finally:
             with anyio.CancelScope(shield=True):
                 await CHAT_GUARD.release(user_id, session_id, inbox)
@@ -152,4 +168,7 @@ async def execute_chat(
             files=files,
             json_output=json_output,
         )
-        return await runner.run_not_interactive(message)
+        turn_id = str(uuid7())
+        user_event = _user_event(message, turn_id=turn_id, files=files)
+        events = await runner.run_not_interactive(message)
+        return [user_event, *({**event, "turn_id": turn_id} for event in events)]

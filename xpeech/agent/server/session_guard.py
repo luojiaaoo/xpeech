@@ -1,5 +1,7 @@
 import asyncio
 
+from uuid6 import uuid7
+
 from .schema import InboundMessage
 
 
@@ -7,6 +9,7 @@ class SessionInbox:
     """一个 loop 的收件箱；队列检查与关闭之间不能出现 await。"""
 
     def __init__(self, message: InboundMessage) -> None:
+        self.turn_id = str(uuid7())
         self.user_id = message.user_id
         self.channel = message.channel
         self._context = message.inbox_context()

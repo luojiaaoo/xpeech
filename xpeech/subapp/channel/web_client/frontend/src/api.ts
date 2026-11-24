@@ -264,7 +264,7 @@ export const statisticsApi = {
   },
 };
 
-type ChatOptions = { sessionId: string; signal?: AbortSignal; continuation?: boolean };
+type ChatOptions = { sessionId: string; signal?: AbortSignal };
 
 function chatHeaders(sessionId: string): Headers {
   if (!sessionId) throw new Error('必须提供 sessionId');
@@ -372,7 +372,6 @@ export async function streamChat(
       if (settled) return;
       socket.send(JSON.stringify({
         type: 'start',
-        ...(options.continuation ? { continuation: true } : {}),
         session_id: sessionId,
         content: JSON.stringify(text.trim() ? [{ text: text.trim() }] : []),
         token,

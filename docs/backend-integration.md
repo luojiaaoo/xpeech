@@ -228,8 +228,9 @@ curl --fail-with-body -X POST "http://localhost:7878/chat_sync" \
 
 ```json
 [
-  {"event":"assistant","context":"你好！我是 Xpeech Agent。"},
-  {"event":"token_usage","context":"{\"大模型请求次数\":1}"}
+  {"event":"user","turn_id":"018f0000-0000-7000-8000-000000000002","context":"你好，请介绍一下自己"},
+  {"event":"assistant","turn_id":"018f0000-0000-7000-8000-000000000002","context":"你好！我是 Xpeech Agent。"},
+  {"event":"token_usage","turn_id":"018f0000-0000-7000-8000-000000000002","context":"{\"大模型请求次数\":1}"}
 ]
 ```
 
@@ -302,13 +303,15 @@ Web 客户端通过 `GET /api/chat/status` 代理查询。聊天连接意外断�
 每条事件通过标准 SSE `data:` 字段发送，**事件类型放在 JSON 的 `event` 中，SSE 层不设置 `event:` 名称**：
 
 ```text
-data: {"event":"assistant","context":"你好"}
+data: {"event":"user","turn_id":"018f0000-0000-7000-8000-000000000002","context":"你好"}
 
-data: {"event":"assistant","context":"，有什么可以帮你？"}
+data: {"event":"assistant","turn_id":"018f0000-0000-7000-8000-000000000002","context":"你好"}
 
-data: {"event":"assistant_end","context":""}
+data: {"event":"assistant","turn_id":"018f0000-0000-7000-8000-000000000002","context":"，有什么可以帮你？"}
 
-data: {"event":"token_usage","context":"{\"上下文使用率\":\"1.36% (2k / 147k)\",\"输入 Token\":1230,\"输出 Token\":567,\"总 Token\":1797,\"会话时长\":\"5秒\",\"大模型请求次数\":1}"}
+data: {"event":"assistant_end","turn_id":"018f0000-0000-7000-8000-000000000002","context":""}
+
+data: {"event":"token_usage","turn_id":"018f0000-0000-7000-8000-000000000002","context":"{\"上下文使用率\":\"1.36% (2k / 147k)\",\"输入 Token\":1230,\"输出 Token\":567,\"总 Token\":1797,\"会话时长\":\"5秒\",\"大模型请求次数\":1}"}
 
 ```
 
@@ -317,6 +320,7 @@ data: {"event":"token_usage","context":"{\"上下文使用率\":\"1.36% (2k / 14
 ```json
 {
   "event": "<事件类型>",
+  "turn_id": "<UUIDv7>",
   "context": "<字符串型载荷>"
 }
 ```
@@ -324,6 +328,7 @@ data: {"event":"token_usage","context":"{\"上下文使用率\":\"1.36% (2k / 14
 解析约定：
 
 - **`context` 始终是字符串**。纯文本直接使用；结构化事件需要对 `context` 再执行一次 `JSON.parse` / `json.loads`。
+- **`turn_id` 标识一次 Agent loop**。同一 loop 的模型分片、工具事件、统计，以及入队请求的 `user` 和 `command` 事件均使用相同的 ID。每次开启新的 loop 生成一个新 ID。
 - SSE 按空行分隔事件。TCP chunk 可能只包含半个事件或多个事件，不能直接逐 chunk 解析 JSON。
 - 忽略以 `:` 开头的 SSE 注释和保活行；不要依赖注释内容或 SSE 的 `event:` 字段。
 - 流是一次性的，没有 `id:` / `Last-Event-ID` 续传机制。
@@ -333,6 +338,7 @@ data: {"event":"token_usage","context":"{\"上下文使用率\":\"1.36% (2k / 14
 
 | `event` | `context` 格式 | 含义与处理方式 |
 | --- | --- | --- |
+| `user` | 用户文本与附件名 | 服务端回显，作为已接收请求的首条事件 |
 | `thinking` | 纯文本增量片段 | 思考过程，按顺序拼接，可按业务需要展示或隐藏 |
 | `thinking_end` | `""` | 当前思考段结束 |
 | `assistant` | 纯文本增量片段 | 回复正文，按顺序拼接到当前正文段 |
@@ -558,7 +564,7 @@ Agent 被唤醒，原 `/chat` SSE 继续推送。找不到等待事件时同样�
 ### 6.1 事件示例
 
 ```text
-data: {"event":"send_file","context":"outputs/report.pdf"}
+data: {"event":"send_file","turn_id":"018f0000-0000-7000-8000-000000000002","context":"outputs/report.pdf"}
 
 ```
 

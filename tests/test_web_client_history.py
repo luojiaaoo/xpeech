@@ -12,6 +12,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from uuid6 import uuid7
 
 from xpeech.config.settings import JWTChannelConfig, WebClientConfig, settings
 from xpeech.subapp.channel.helper import ChatStream
@@ -80,17 +81,28 @@ def history_client(tmp_path: Path, monkeypatch):
         "crm": JWTChannelConfig(secret_key=SECRET),
     })
     history_path = tmp_path / "event-history"
-    opener = AsyncMock(side_effect=lambda *_args, **_kwargs: ChatStream(
-        httpx.Response(
-            200,
-            content=(
-                'data: {"event":"assistant","context":"回答"}\n\n'
-                'data: {"event":"assistant_end","context":""}\n\n'
-            ).encode(),
-            headers={"Content-Type": "text/event-stream"},
-        ),
-        SimpleNamespace(aclose=AsyncMock()),
-    ))
+
+    def open_stream(_auth, _sender, content, _metadata, _url, *, files, session_id):
+        turn_id = str(uuid7())
+        display = "\n".join([
+            *(block["text"] for block in json.loads(content)),
+            *(f"📎 {file[0]}" for _, file in files),
+        ])
+        events = [
+            {"event": "user", "context": display, "turn_id": turn_id},
+            {"event": "assistant", "context": "回答", "turn_id": turn_id},
+            {"event": "assistant_end", "context": "", "turn_id": turn_id},
+        ]
+        return ChatStream(
+            httpx.Response(
+                200,
+                content="".join(f"data: {json.dumps(event)}\n\n" for event in events).encode(),
+                headers={"Content-Type": "text/event-stream"},
+            ),
+            SimpleNamespace(aclose=AsyncMock()),
+        )
+
+    opener = AsyncMock(side_effect=open_stream)
     monkeypatch.setattr(proxy, "open_chat", opener)
     app = create_app(WebConfig(
         backend_url="http://backend.test",
@@ -173,9 +185,9 @@ def test_embedded_and_login_history_use_their_verified_channels(history_client):
 
     assert send_local_chat(client, "嵌入消息", token=token, sender_name="embedded-user", files=[])[-1]["type"] == "done"
     assert client.get("/api/history/sessions", headers=headers).json()[0]["preview"] == "嵌入消息"
-    assert client.get(f"/api/history/sessions/{SESSION_ID}", headers=headers).json()["events"][0] == {
-        "event": "user", "context": "嵌入消息",
-    }
+    user_event = client.get(f"/api/history/sessions/{SESSION_ID}", headers=headers).json()["events"][0]
+    assert user_event["event"] == "user"
+    assert user_event["context"] == "嵌入消息"
     assert (history_path / "admin" / f"channel=crm&session_id={SESSION_ID}.jsonl").is_file()
     assert len(client.get("/api/history/sessions").json()) == 1
 
@@ -228,17 +240,20 @@ def test_each_reply_uses_a_session_websocket_and_saves_before_done(history_clien
             }],
         ))
         first = receive_websocket_turn(websocket)
-        assert [message["type"] for message in first] == ["event", "event", "done"]
+        assert [message["type"] for message in first] == ["event", "event", "event", "done"]
         assert all(message["session_id"] == SESSION_ID for message in first)
-        assert first[0]["event"] == {"event": "assistant", "context": "回答"}
-        assert client.get(f"/api/history/sessions/{SESSION_ID}").json()["events"][0] == {
-            "event": "user", "context": "会话 A\n📎 报告.txt",
+        events = [message["event"] for message in first[:-1]]
+        turn_id = events[0]["turn_id"]
+        assert events[0] == {
+            "event": "user", "context": "会话 A\n📎 报告.txt", "turn_id": turn_id,
         }
+        assert events[1] == {"event": "assistant", "context": "回答", "turn_id": turn_id}
+        assert client.get(f"/api/history/sessions/{SESSION_ID}").json()["events"] == events
 
     with client.websocket_connect("/api/chat/ws") as websocket:
         websocket.send_json(websocket_message(NEXT_SESSION_ID, "会话 B"))
         second = receive_websocket_turn(websocket)
-        assert [message["type"] for message in second] == ["event", "event", "done"]
+        assert [message["type"] for message in second] == ["event", "event", "event", "done"]
         assert client.get(f"/api/history/sessions/{NEXT_SESSION_ID}").json()["events"][0]["context"] == "会话 B"
 
     with client.websocket_connect("/api/chat/ws") as websocket:

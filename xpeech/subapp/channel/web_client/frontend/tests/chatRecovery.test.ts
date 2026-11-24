@@ -56,11 +56,11 @@ test('queued acknowledgement can finish independently of the original stream', a
     .then(() => { firstDone = true; });
   const second = state.api.streamChat('second', [], () => {}, { sessionId });
   await tick();
-  state.sockets[1].emit({ type: 'event', event: { event: 'command', context: 'queued' } });
+  state.sockets[1].emit({ type: 'event', event: { event: 'command', context: 'queued', turn_id: 'turn-1' } });
   state.sockets[1].emit({ type: 'done' });
   await second;
   assert.equal(firstDone, false);
-  state.sockets[0].emit({ type: 'event', event: { event: 'assistant', context: 'both replies' } });
+  state.sockets[0].emit({ type: 'event', event: { event: 'assistant', context: 'both replies', turn_id: 'turn-1' } });
   state.sockets[0].emit({ type: 'done' });
   await first;
   assert.deepEqual(received, ['both replies']);
@@ -68,11 +68,10 @@ test('queued acknowledgement can finish independently of the original stream', a
 
 test('a command notification does not hide a connection interrupted before the done frame', async () => {
   const state = await setup();
-  const chat = state.api.streamChat('inserted', [], () => {}, { sessionId, continuation: true });
+  const chat = state.api.streamChat('inserted', [], () => {}, { sessionId });
   const rejected = assert.rejects(chat, /中断/);
   await tick();
-  assert.equal(state.starts[0].continuation, true);
-  state.sockets[0].emit({ type: 'event', event: { event: 'command', context: 'queued' } });
+  state.sockets[0].emit({ type: 'event', event: { event: 'command', context: 'queued', turn_id: 'turn-1' } });
   state.sockets[0].close();
   await rejected;
   assert.equal(state.starts.length, 1);
@@ -86,7 +85,7 @@ test('abort ignores late socket events', async () => {
   const rejected = assert.rejects(chat, { name: 'AbortError' });
   await tick();
   controller.abort();
-  state.sockets[0].emit({ type: 'event', event: { event: 'assistant', context: 'late' } });
+  state.sockets[0].emit({ type: 'event', event: { event: 'assistant', context: 'late', turn_id: 'turn-1' } });
   await rejected;
   assert.equal(received.length, 0);
 });

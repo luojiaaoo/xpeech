@@ -1,4 +1,5 @@
 import asyncio
+from uuid import UUID
 
 import pytest
 
@@ -81,6 +82,8 @@ async def test_chat_can_join_active_loop_but_waits_for_cleanup_after_it_closes()
     await guard.release("user", "session", inbox)
     next_inbox, owner = await asyncio.wait_for(waiting, 1)
     assert owner and next_inbox is not inbox
+    assert UUID(inbox.turn_id).version == UUID(next_inbox.turn_id).version == 7
+    assert inbox.turn_id < next_inbox.turn_id
     await guard.release("user", "session", inbox)
     assert await guard.is_active("user", "session")
 

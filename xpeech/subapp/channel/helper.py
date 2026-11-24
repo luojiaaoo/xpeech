@@ -195,6 +195,8 @@ async def iter_chat_events(
             async for sse_event in sse_events:
                 payload = json.loads(sse_event.data)
                 event_type = payload["event"]
+                if event_type == "user":
+                    continue
                 if event_type in {ChatEventType.ASSISTANT, ChatEventType.THINKING}:
                     yield ChatEvent(
                         event=event_type,

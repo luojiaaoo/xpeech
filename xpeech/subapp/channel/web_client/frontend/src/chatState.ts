@@ -1,130 +1,107 @@
-import type { ChatEvent, ChatMessage, ToolCallInfo, ToolCallResult } from './types';
+import type { ChatEvent, ChatMessage, ToolCallResult } from './types';
 
 let messageId = 0;
 const key = (role: string) => `${role}_${++messageId}`;
 
-function responseStart(messages: ChatMessage[]) {
-  return messages.findLastIndex((item) => item.role === 'user') + 1;
+function updateTurn(messages: ChatMessage[], turnId: string, update: (turn: ChatMessage[]) => ChatMessage[]) {
+  // The backend allocates UUIDv7 IDs when turns start. Concurrent sockets can
+  // deliver events from different turns in a different order.
+  const index = messages.findIndex((item) => item.turnId >= turnId);
+  const start = index < 0 ? messages.length : index;
+  let end = start;
+  while (messages[end]?.turnId === turnId) end++;
+  return [...messages.slice(0, start), ...update(messages.slice(start, end)), ...messages.slice(end)];
+}
+
+function* chatTurns(messages: ChatMessage[]) {
+  let start = 0;
+  while (start < messages.length) {
+    let end = start + 1;
+    while (messages[end]?.turnId === messages[start].turnId) end++;
+    yield messages.slice(start, end);
+    start = end;
+  }
 }
 
 function finishStreams(messages: ChatMessage[], type?: 'assistant' | 'thinking') {
-  const start = responseStart(messages);
-  return messages.map((item, index) => index >= start && item.streaming && (!type || item.role === type)
+  return messages.map((item) => item.streaming && (!type || item.role === type)
     ? { ...item, streaming: false }
     : item);
 }
 
-function summarize(messages: ChatMessage[], tokenUsage?: string): ChatMessage[] {
-  const start = responseStart(messages);
-  const turn = messages.slice(start);
+function summarize(turn: ChatMessage[], turnId: string, tokenUsage?: string): ChatMessage[] {
   const content = turn.filter((item) => item.role === 'assistant').map((item) => item.content).join('\n\n');
   const previous = turn.find((item) => item.role === 'summary');
   const usage = tokenUsage ?? previous?.tokenUsage;
-  if (!content && usage === undefined) return messages;
-  if (previous?.content === content && previous.tokenUsage === usage) return messages;
+  if (!content && usage === undefined) return turn;
+  if (previous?.content === content && previous.tokenUsage === usage) return turn;
   return [
-    ...messages.filter((item, index) => index < start || item.role !== 'summary'),
-    { key: previous?.key ?? key('summary'), role: 'summary', content, tokenUsage: usage },
+    ...turn.filter((item) => item.role !== 'summary'),
+    { key: previous?.key ?? key('summary'), turnId, role: 'summary', content, tokenUsage: usage },
   ];
 }
 
-export function startChatTurn(messages: ChatMessage[], content: string, continuation = false): ChatMessage[] {
-  const start = responseStart(messages);
-  if (continuation && start > 0) {
-    return [
-      ...messages.slice(0, start),
-      { key: key('user'), role: 'user', content, continuation: true },
-      ...messages.slice(start),
-    ];
-  }
-  return [
-    ...finishChatTurn(messages),
-    { key: key('user'), role: 'user', content },
-    { key: key('status'), role: 'status', content: '正在思考', transient: true },
-  ];
-}
-
-export function finishChatTurn(messages: ChatMessage[]): ChatMessage[] {
-  const start = responseStart(messages);
-  const finished = finishStreams(messages.filter((item) => !item.transient)).map((item, index) => (
-    index >= start && item.toolCall?.status === 'running'
+function finishTurn(turn: ChatMessage[], turnId: string): ChatMessage[] {
+  const finished = finishStreams(turn).map((item) => (
+    item.toolCall?.status === 'running'
       ? { ...item, toolCall: { ...item.toolCall, status: 'interrupted' as const } }
       : item
   ));
-  return summarize(finished);
+  return summarize(finished, turnId);
+}
+
+export function finishChatTurn(messages: ChatMessage[], turnId: string): ChatMessage[] {
+  return updateTurn(messages, turnId, (turn) => finishTurn(turn, turnId));
 }
 
 function isToolCallResult(payload: unknown): payload is ToolCallResult {
-  // TODO(remove-legacy-tool-events): 旧历史使用 id 且可能缺少 success；清理时仅接受 tool_call_id 和布尔 success。
   return typeof payload === 'object' && payload !== null && !Array.isArray(payload)
-    && (('tool_call_id' in payload && typeof payload.tool_call_id === 'string')
-      || ('id' in payload && typeof payload.id === 'string'))
+    && 'tool_call_id' in payload && typeof payload.tool_call_id === 'string'
     && 'name' in payload && typeof payload.name === 'string'
     && 'result' in payload
     && 'duration_seconds' in payload && typeof payload.duration_seconds === 'number'
-    && Number.isFinite(payload.duration_seconds) && payload.duration_seconds >= 0;
-}
-
-function updateToolCall(messages: ChatMessage[], toolCall: ToolCallInfo): void {
-  const start = responseStart(messages);
-  const index = messages.findLastIndex((item, i) => i >= start && item.toolCall?.id === toolCall.id);
-  if (index >= 0) {
-    messages[index] = { ...messages[index], toolCall: { ...messages[index].toolCall, ...toolCall } };
-  } else {
-    messages.push({ key: key('tool'), role: 'tool', content: '', toolCall });
-  }
+    && Number.isFinite(payload.duration_seconds) && payload.duration_seconds >= 0
+    && 'success' in payload && typeof payload.success === 'boolean';
 }
 
 function applyToolEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[] {
-  const next = finishStreams(messages);
-  const isResult = event.event === 'tool_call_result';
   let payload: unknown;
   try {
     payload = JSON.parse(event.context);
   } catch {
-    payload = null;
+    return messages;
   }
-  if (isResult) {
-    if (isToolCallResult(payload)) {
-      // TODO(remove-legacy-tool-events): 旧结果使用 id 别名、缺少 success，且允许没有调用记录的结果独立展示。
-      // 清理时直接读取 tool_call_id/success，并仅更新当前轮次中 ID 匹配的已有调用。
-      updateToolCall(next, {
-        id: (payload.tool_call_id ?? payload.id)!, name: payload.name, output: payload.result,
-        status: 'completed', durationSeconds: payload.duration_seconds,
-        ...(typeof payload.success === 'boolean' ? { success: payload.success } : {}),
-      });
-      return next;
-    }
-  } else if (Array.isArray(payload)) {
-    // TODO(remove-legacy-tool-events): 兼容旧 [id, name, arguments] 元组；清理时直接使用对象数组。
-    const calls = payload.map(entry => Array.isArray(entry)
-      ? { tool_call_id: entry[0], name: entry[1], arguments: entry[2] } : entry);
-    if (calls.every(call => call && typeof call.tool_call_id === 'string'
-      && typeof call.name === 'string' && 'arguments' in call)) {
-      for (const call of calls) {
-        updateToolCall(next, { id: call.tool_call_id, name: call.name, input: call.arguments, status: 'running' });
-      }
-      return next;
-    }
+  if (event.event === 'tool_call_result') {
+    if (!isToolCallResult(payload)) return messages;
+    const next = finishStreams(messages);
+    const index = next.findLastIndex((item) => item.toolCall?.id === payload.tool_call_id);
+    const toolCall = next[index]?.toolCall;
+    if (!toolCall) return messages;
+    next[index] = { ...next[index], toolCall: {
+      ...toolCall, status: 'completed', output: payload.result,
+      durationSeconds: payload.duration_seconds, success: payload.success,
+    } };
+    return next;
   }
-  // TODO(remove-legacy-tool-events): 无法解析的旧事件用临时 ID 展示原文；清理时移除整个兜底分支。
-  return [...next, {
-    key: key('tool'), role: 'tool', content: '',
-    toolCall: {
-      id: key('unknown'), name: isResult ? '工具结果' : '工具调用',
-      ...(isResult ? { output: event.context } : { input: event.context }),
-      status: isResult ? 'completed' : 'running',
-    },
-  }];
+  if (!Array.isArray(payload) || !payload.every((call) => call && typeof call.tool_call_id === 'string'
+    && typeof call.name === 'string' && 'arguments' in call)) return messages;
+  return [
+    ...finishStreams(messages),
+    ...payload.map((call): ChatMessage => ({
+      key: key('tool'), turnId: event.turn_id, role: 'tool', content: '',
+      toolCall: { id: call.tool_call_id, name: call.name, input: call.arguments, status: 'running' },
+    })),
+  ];
 }
 
 export function chatMessagesFromEvents(events: ChatEvent[]): ChatMessage[] {
   let messages: ChatMessage[] = [];
   for (const event of events) {
-    if (!event || typeof event.context !== 'string') continue;
     messages = appendChatEvent(messages, event);
   }
-  return finishChatTurn(messages).map((item) => ({ ...item, historical: true }));
+  return Array.from(chatTurns(messages)).flatMap((turn) => (
+    finishTurn(turn, turn[0].turnId).map((item) => ({ ...item, historical: true }))
+  ));
 }
 
 export type ChatDisplayItem = ChatMessage | {
@@ -141,16 +118,15 @@ export type ChatDisplayItem = ChatMessage | {
 };
 
 // Keep the event history intact; folding only changes how each turn is displayed.
-export function chatDisplayItems(messages: ChatMessage[], running = false, showFragmentActions = false): ChatDisplayItem[] {
+export function chatDisplayItems(
+  messages: ChatMessage[], runningTurns: ReadonlySet<string> = new Set(), showFragmentActions = false,
+): ChatDisplayItem[] {
   const items: ChatDisplayItem[] = [];
-  let start = 0;
-  while (start < messages.length) {
-    let end = start + 1;
-    while (end < messages.length && (messages[end].role !== 'user' || messages[end].continuation)) end++;
-    const turn = messages.slice(start, end);
+  for (const turn of chatTurns(messages)) {
+    const { turnId } = turn[0];
     const summary = turn.findLast((item) => item.role === 'summary');
     const hasUsage = summary?.tokenUsage !== undefined;
-    const active = running && end === messages.length && !hasUsage;
+    const active = runningTurns.has(turnId) && !hasUsage;
     const visibleReply = turn.findLast((item) => item.role === 'assistant');
     const process: ChatMessage[] = [];
     const visible: ChatDisplayItem[] = [];
@@ -158,7 +134,7 @@ export function chatDisplayItems(messages: ChatMessage[], running = false, showF
       if (item.role === 'user') {
         items.push(item);
       } else if (item !== visibleReply && (
-        item.role === 'assistant' || item.role === 'thinking' || item.role === 'tool' || item.role === 'status'
+        item.role === 'assistant' || item.role === 'thinking' || item.role === 'tool'
       )) {
         process.push(item);
         if (showFragmentActions && item.toolCall?.name === 'fragment') {
@@ -173,25 +149,34 @@ export function chatDisplayItems(messages: ChatMessage[], running = false, showF
     }
     if (turn[0].role === 'user' || process.length || active) {
       items.push({
-        key: `process_${turn[0].key}`, role: 'process', messages: process, running: active,
+        key: `process_${turnId}`, role: 'process', messages: process, running: active,
         tokenUsage: summary?.tokenUsage,
       });
     }
     items.push(...visible);
-    const footerKey = `summary_${turn[0].key}`;
+    const footerKey = `summary_${turnId}`;
     if (active) {
-      items.push({ key: footerKey, role: 'summary', content: '', transient: true });
+      items.push({ key: footerKey, turnId, role: 'summary', content: '', transient: true });
     } else if (summary) {
       items.push({ ...summary, key: footerKey });
     }
-    start = end;
   }
   return items;
 }
 
 export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): ChatMessage[] {
-  if (event.event === 'user') return startChatTurn(messages, event.context, event.continuation);
-  const next = messages.filter((item) => !item.transient);
+  if (typeof event?.turn_id !== 'string' || !event.turn_id || typeof event.context !== 'string') return messages;
+  return updateTurn(messages, event.turn_id, (turn) => appendTurnEvent(turn, event));
+}
+
+function appendTurnEvent(next: ChatMessage[], event: ChatEvent): ChatMessage[] {
+  const turnId = event.turn_id;
+  if (event.event === 'user') {
+    const afterUsers = next.findIndex((item) => item.role !== 'user');
+    const index = afterUsers < 0 ? next.length : afterUsers;
+    next.splice(index, 0, { key: key('user'), turnId, role: 'user', content: event.context });
+    return next;
+  }
   if (event.event === 'assistant' || event.event === 'thinking') {
     // A command acknowledgement can arrive while another connection is still streaming.
     const index = next.findLastIndex((item) => item.role === event.event && item.streaming);
@@ -201,34 +186,27 @@ export function appendChatEvent(messages: ChatMessage[], event: ChatEvent): Chat
       return next;
     }
     return [...finishStreams(next), {
-      key: key(event.event), role: event.event, content: event.context, streaming: true,
+      key: key(event.event), turnId, role: event.event, content: event.context, streaming: true,
     }];
   }
   if (event.event === 'assistant_end' || event.event === 'thinking_end') {
     return finishStreams(next, event.event === 'assistant_end' ? 'assistant' : 'thinking');
   }
   if (event.event === 'tool_call' || event.event === 'tool_call_result') return applyToolEvent(next, event);
-  if (event.event === 'token_usage') return summarize(finishStreams(next), event.context);
-  if (event.event === 'command') return [...next, { key: key('command'), role: 'command', content: event.context }];
+  if (event.event === 'token_usage') return summarize(finishStreams(next), turnId, event.context);
+  if (event.event === 'command') return [...next, { key: key('command'), turnId, role: 'command', content: event.context }];
   const role = event.event === 'send_file' ? 'file' : event.event;
   if (role !== 'file' && role !== 'question' && role !== 'error') return next;
   let questionToolId: string | undefined;
   if (role === 'question') {
     try {
       const question = JSON.parse(event.context);
-      const toolName = question.tool_name;
       if (question.type === 'confirm' && typeof question.tool_call_id === 'string') {
         questionToolId = question.tool_call_id;
-      } else if (question.type === 'confirm' && toolName) {
-        // TODO(remove-legacy-tool-events): 旧确认卡片缺少 tool_call_id，按工具名匹配；清理时移除此分支。
-        const turn = next.slice(responseStart(next));
-        questionToolId = turn.find(item => item.toolCall?.status === 'running'
-          && item.toolCall.name === toolName
-          && !turn.some(question => question.questionToolId === item.toolCall?.id))?.toolCall?.id;
       }
     } catch { /* Free-text questions have no associated tool. */ }
   }
-  return [...finishStreams(next), { key: key(role), role, content: event.context,
+  return [...finishStreams(next), { key: key(role), turnId, role, content: event.context,
     ...(questionToolId ? { questionToolId } : {}),
   }];
 }
