@@ -204,13 +204,18 @@ test('a disconnected stream ends locally without blocking the next send', async 
   page.cleanupHistory();
 });
 
-test('the answer streams outside the process before usage arrives or the connection closes', async () => {
+test('the footer shows three loading dots until usage arrives, even with the connection open', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('hello');
   const initialProcess = page.items()[1];
   assert.equal(initialProcess.role, 'process');
   assert.equal(initialProcess.content.type, 'ProcessPanel');
   assert.equal(initialProcess.content.props.running, true);
+  const loadingFooter = page.items().at(-1);
+  const dots = loadingFooter.content.props.children[0];
+  assert.equal(dots.props.role, 'status');
+  assert.equal(dots.props['aria-label'], '正在处理');
+  assert.equal(dots.props.children.length, 3);
 
   const stream = page.streams[0];
   for (const event of [
@@ -220,22 +225,29 @@ test('the answer streams outside the process before usage arrives or the connect
     { event: 'tool_call', context: '[["tool-1","read_file",{}]]' },
   ]) stream.receive(event);
   const duringTool = page.items();
-  assert.deepEqual(Array.from(duringTool, (item: any) => item.role), ['user', 'process', 'assistant']);
+  assert.deepEqual(Array.from(duringTool, (item: any) => item.role), ['user', 'process', 'assistant', 'summary']);
   assert.equal(duringTool[2].content.props.children.props.content, '正在读取');
+  assert.equal(duringTool[3].key, loadingFooter.key);
 
   stream.receive({ event: 'assistant', context: '最终' });
   const live = page.items();
-  assert.deepEqual(Array.from(live, (item: any) => item.role), ['user', 'process', 'assistant']);
+  assert.deepEqual(Array.from(live, (item: any) => item.role), ['user', 'process', 'assistant', 'summary']);
   assert.equal(live[2].content.props.children.props.content, '最终');
   assert.equal(live[2].content.props.children.props.streaming.hasNextChunk, true);
   stream.receive({ event: 'assistant', context: '回复' });
   stream.receive({ event: 'assistant_end', context: '' });
   assert.equal(page.items()[2].content.props.children.props.content, '最终回复');
   assert.equal(page.items()[2].content.props.children.props.streaming.hasNextChunk, false);
+  assert.equal(page.items()[3].content.props.children[0].props.role, 'status');
 
   stream.receive({ event: 'token_usage', context: '{"总 Token":100,"会话时长":"2秒"}' });
-  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'process', 'assistant', 'summary']);
-  assert.equal(page.items()[2].key, live[2].key);
+  const withUsage = page.items();
+  assert.deepEqual(Array.from(withUsage, (item: any) => item.role), ['user', 'process', 'assistant', 'summary']);
+  assert.equal(withUsage[1].content.props.running, false);
+  assert.equal(withUsage[2].key, live[2].key);
+  assert.equal(withUsage[3].key, loadingFooter.key);
+  assert.equal(withUsage[3].content.props.children[0].props['aria-label'], 'Token 使用情况');
+  assert.equal(page.render().loading, true);
   stream.finish();
   await tick();
 
@@ -323,6 +335,7 @@ test('command replies render outside the collapsed process and preserve help lin
   assert.equal(command.content.props.className, 'chat-command-text');
   assert.equal(command.content.props.children[0].type, 'CodeOutlined');
   assert.equal(command.content.props.children[1].props.children, help);
+  assert.equal(page.items().at(-1).content.props.children[0].props.role, 'status');
   page.streams[0].finish();
   await tick();
   assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'process', 'command']);
@@ -354,6 +367,7 @@ test('the composer stop action waits for server acknowledgement, closes its stre
   assert.equal(stream.signal.aborted, true);
   assert.equal(page.render().loading, false);
   assert.equal(page.messages().find((item: any) => item.role === 'assistant').content, '保留的部分回复');
+  assert.equal(page.items().at(-1).content.props.children[0], null);
   assert.equal(page.messages().find((item: any) => item.toolCall)?.toolCall.status, 'interrupted');
   assert.ok(page.messages().every((item: any) => !item.streaming && !item.transient));
   assert.deepEqual(page.errors, []);
@@ -397,7 +411,7 @@ test('typing during a reply enables sending and queued streams do not finish the
   assert.equal(page.streams.length, 2);
   assert.equal(page.render().loading, true);
   const items = page.items();
-  assert.deepEqual(Array.from(items, (item: any) => item.role), ['user', 'user', 'process', 'assistant']);
+  assert.deepEqual(Array.from(items, (item: any) => item.role), ['user', 'user', 'process', 'assistant', 'summary']);
   assert.equal(items[2].key, initialProcess.key);
   assert.equal(items[2].content.props.running, true);
   assert.equal(items[3].content.props.children.props.content, 'before insertion');
@@ -432,7 +446,7 @@ test('stopping a session aborts every pending stream and ignores their late even
   assert.equal(page.messages().some((item: any) => item.content === 'late'), false);
   assert.deepEqual(page.running, [true, false]);
   page.render().onSubmit('new turn');
-  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'user', 'process', 'user', 'process']);
+  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'user', 'process', 'user', 'process', 'summary']);
   page.streams[2].finish();
   await tick();
   page.cleanupHistory();

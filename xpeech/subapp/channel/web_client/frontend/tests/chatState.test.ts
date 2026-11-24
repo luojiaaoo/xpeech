@@ -22,7 +22,7 @@ test('groups inserted user messages above one process in live chat and history',
   ];
   const inserted = followUps.reduce(appendChatEvent, before);
   const items = chatDisplayItems(inserted, true);
-  assert.deepEqual(items.map(item => item.role), ['user', 'user', 'user', 'process', 'assistant']);
+  assert.deepEqual(items.map(item => item.role), ['user', 'user', 'user', 'process', 'assistant', 'summary']);
   assert.deepEqual(items.filter(item => item.role === 'user').map(item => item.content), ['first', 'second', 'third']);
   assert.ok(items[3].role === 'process' && items[3].running);
   assert.equal(items[3].key, processKey);
@@ -46,26 +46,28 @@ test('groups inserted user messages above one process in live chat and history',
   }
 });
 
-test('keeps the latest reply visible through tool activity and folds it when the next reply starts', () => {
+test('folds intermediate prose when the next reply starts and keeps the loading footer until usage arrives', () => {
   const initial = startChatTurn([], '读取文件');
   const placeholder = chatDisplayItems(initial, true);
-  assert.deepEqual(placeholder.map(item => item.role), ['user', 'process']);
+  assert.deepEqual(placeholder.map(item => item.role), ['user', 'process', 'summary']);
+  assert.equal(placeholder[2].role === 'summary' && placeholder[2].transient, true);
   const intro = apply([
     event('thinking', '先分析'), event('thinking_end'),
     event('assistant', '我先读取文件'), event('assistant_end'),
   ], initial);
   const introItems = chatDisplayItems(intro, true);
-  assert.deepEqual(introItems.map(item => item.role), ['user', 'process', 'assistant']);
+  assert.deepEqual(introItems.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
   assert.equal(introItems[2].role === 'assistant' && introItems[2].streaming, false);
 
   const toolCall = apply([tools('tool_call', [['a', 'read_file', {}]])], intro);
   const duringTool = chatDisplayItems(toolCall, true);
-  assert.deepEqual(duringTool.map(item => item.role), ['user', 'process', 'assistant']);
+  assert.deepEqual(duringTool.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
   const process = duringTool[1];
   assert.equal(process.key, placeholder[1].key);
   assert.ok(process.role === 'process' && process.running);
   assert.deepEqual(process.messages.map(item => item.role), ['thinking', 'tool']);
   assert.equal(duringTool[2].key, introItems[2].key);
+  assert.equal(duringTool[3].key, placeholder[2].key);
 
   const toolMessages = apply([
     toolResult({ id: 'a', name: 'read_file', result: 'ok', duration_seconds: 1 }),
@@ -75,19 +77,22 @@ test('keeps the latest reply visible through tool activity and folds it when the
   const messages = apply([event('assistant', '读取'), event('assistant', '完成')], toolMessages);
   const before = structuredClone(messages);
   const live = chatDisplayItems(messages, true);
-  assert.deepEqual(live.map(item => item.role), ['user', 'process', 'assistant']);
+  assert.deepEqual(live.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
   assert.ok(live[1].role === 'process');
   assert.deepEqual(live[1].messages.map(item => item.role), ['thinking', 'assistant', 'tool']);
   assert.equal(live[1].messages[1].key, introItems[2].key);
   assert.ok(live[2].role === 'assistant' && live[2].streaming);
   assert.equal(live[2].content, '读取完成');
 
-  const finished = chatDisplayItems(finishChatTurn(messages));
+  const usage = '{"会话时长":"2秒"}';
+  const finished = chatDisplayItems(appendChatEvent(messages, event('token_usage', usage)), true);
   assert.deepEqual(finished.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
   assert.equal(finished[1].key, process.key);
   assert.equal(finished[1].role === 'process' && finished[1].running, false);
   assert.equal(finished[2].key, live[2].key);
   assert.equal(finished[2].role === 'assistant' && finished[2].streaming, false);
+  assert.equal(finished[3].key, placeholder[2].key);
+  assert.equal(finished[3].role === 'summary' && finished[3].tokenUsage, usage);
   assert.deepEqual(messages, before);
 });
 
@@ -97,17 +102,17 @@ test('keeps the current reply visible through a queued follow-up and subsequent 
     { ...event('user', '补充消息'), continuation: true }, event('command', '已入队'),
   ]);
   const awaitingFollowUp = chatDisplayItems(messages, true);
-  assert.deepEqual(awaitingFollowUp.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command']);
+  assert.deepEqual(awaitingFollowUp.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command', 'summary']);
 
   const thinking = apply([event('thinking', '处理补充消息')], messages);
   const duringThinking = chatDisplayItems(thinking, true);
-  assert.deepEqual(duringThinking.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command']);
+  assert.deepEqual(duringThinking.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command', 'summary']);
   assert.ok(duringThinking[2].role === 'process');
   assert.deepEqual(duringThinking[2].messages.map(item => item.content), ['处理补充消息']);
   assert.equal(duringThinking[3].key, awaitingFollowUp[3].key);
 
   const nextReply = chatDisplayItems(apply([event('assistant', '第二段')], thinking), true);
-  assert.deepEqual(nextReply.map(item => item.role), ['user', 'user', 'process', 'command', 'assistant']);
+  assert.deepEqual(nextReply.map(item => item.role), ['user', 'user', 'process', 'command', 'assistant', 'summary']);
   assert.ok(nextReply[2].role === 'process');
   assert.deepEqual(nextReply[2].messages.map(item => item.content), ['第一段', '处理补充消息']);
   assert.equal(nextReply[4].role === 'assistant' && nextReply[4].content, '第二段');
@@ -121,10 +126,10 @@ test('keeps each historical final reply and usage visible while folding earlier 
   ]);
   const items = chatDisplayItems(startChatTurn(history, '第三问'), true);
   assert.deepEqual(items.map(item => item.role), [
-    'user', 'process', 'assistant', 'summary', 'user', 'process', 'assistant', 'summary', 'user', 'process',
+    'user', 'process', 'assistant', 'summary', 'user', 'process', 'assistant', 'summary', 'user', 'process', 'summary',
   ]);
   assert.deepEqual(items.filter(item => item.role === 'assistant').map(item => item.content), ['第一答', '第二答']);
-  assert.deepEqual(items.filter(item => item.role === 'summary').map(item => item.tokenUsage), ['{"总 Token":100,"会话时长":"2秒"}', '{"总 Token":200}']);
+  assert.deepEqual(items.filter(item => item.role === 'summary').map(item => item.tokenUsage), ['{"总 Token":100,"会话时长":"2秒"}', '{"总 Token":200}', undefined]);
   assert.deepEqual(items.filter(item => item.role === 'process').map(item => item.running), [false, false, true]);
   assert.equal(items[1].role === 'process' && items[1].tokenUsage, '{"总 Token":100,"会话时长":"2秒"}');
 });
@@ -154,7 +159,7 @@ test('all command replies keep their timing panel and remain visible outside it 
     const events = [event('user', command), event('command', response)];
     const live = appendChatEvent(startChatTurn([], command), events[1]);
     const active = chatDisplayItems(live, true);
-    assert.deepEqual(active.map(item => item.role), ['user', 'process', 'command']);
+    assert.deepEqual(active.map(item => item.role), ['user', 'process', 'command', 'summary']);
     for (const messages of [finishChatTurn(live), chatMessagesFromEvents(events)]) {
       const items = chatDisplayItems(messages);
       assert.deepEqual(items.map(item => item.role), ['user', 'process', 'command']);

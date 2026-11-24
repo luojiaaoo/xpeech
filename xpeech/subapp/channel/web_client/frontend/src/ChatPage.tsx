@@ -450,7 +450,13 @@ export default function ChatPage({
       } else if (item.role === 'summary') {
         content = (
           <div className="bubble-footer">
-            {item.tokenUsage ? renderTokenUsage(item.tokenUsage) : null}
+            {item.transient ? (
+              <span className="response-loading-dots" role="status" aria-label="正在处理">
+                <span aria-hidden="true" />
+                <span aria-hidden="true" />
+                <span aria-hidden="true" />
+              </span>
+            ) : item.tokenUsage ? renderTokenUsage(item.tokenUsage) : null}
             {item.content ? (
               <Tooltip title="复制">
                 <Button type="text" size="small" className="bubble-copy-button" aria-label="复制消息"

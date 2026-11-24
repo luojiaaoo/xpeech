@@ -20,7 +20,7 @@ function summarize(messages: ChatMessage[], tokenUsage?: string): ChatMessage[] 
   const content = turn.filter((item) => item.role === 'assistant').map((item) => item.content).join('\n\n');
   const previous = turn.find((item) => item.role === 'summary');
   const usage = tokenUsage ?? previous?.tokenUsage;
-  if (!content && !usage) return messages;
+  if (!content && usage === undefined) return messages;
   if (previous?.content === content && previous.tokenUsage === usage) return messages;
   return [
     ...messages.filter((item, index) => index < start || item.role !== 'summary'),
@@ -148,7 +148,9 @@ export function chatDisplayItems(messages: ChatMessage[], running = false, showF
     let end = start + 1;
     while (end < messages.length && (messages[end].role !== 'user' || messages[end].continuation)) end++;
     const turn = messages.slice(start, end);
-    const active = running && end === messages.length;
+    const summary = turn.findLast((item) => item.role === 'summary');
+    const hasUsage = summary?.tokenUsage !== undefined;
+    const active = running && end === messages.length && !hasUsage;
     const visibleReply = turn.findLast((item) => item.role === 'assistant');
     const process: ChatMessage[] = [];
     const visible: ChatDisplayItem[] = [];
@@ -165,17 +167,23 @@ export function chatDisplayItems(messages: ChatMessage[], running = false, showF
             visible.push({ key: `${item.key}_actions`, role: 'fragment-actions', fragmentId: item.key, text: input.text });
           }
         }
-      } else {
+      } else if (item.role !== 'summary') {
         visible.push(item);
       }
     }
     if (turn[0].role === 'user' || process.length || active) {
       items.push({
         key: `process_${turn[0].key}`, role: 'process', messages: process, running: active,
-        tokenUsage: turn.findLast((item) => item.role === 'summary')?.tokenUsage,
+        tokenUsage: summary?.tokenUsage,
       });
     }
     items.push(...visible);
+    const footerKey = `summary_${turn[0].key}`;
+    if (active) {
+      items.push({ key: footerKey, role: 'summary', content: '', transient: true });
+    } else if (summary) {
+      items.push({ ...summary, key: footerKey });
+    }
     start = end;
   }
   return items;
