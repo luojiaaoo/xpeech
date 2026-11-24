@@ -1,6 +1,6 @@
 ---
 name: gongwenformat-pro
-description: 使用本地脚本将 Markdown、TXT 或 DOCX 正文套入 GB/T 9704-2012 公文版式，生成 Word 文件，支持标题、层级、红头、发文字号及版记。适用于已有内容的公文排版；字体需本机可用，PDF 导出另需 LibreOffice。包名含 Pro，但脚本没有付费接口或激活检查。
+description: 使用本地脚本将 Markdown、TXT 或 DOCX 正文套入 GB/T 9704-2012 公文版式，生成 Word 文件，支持标题、层级、红头、发文字号及版记。适用于已有内容的公文排版，字体需本机可用。包名含 Pro，但脚本没有付费接口或激活检查。
 ---
 
 ## 运行约定
@@ -44,8 +44,7 @@ uv run python <skill-path>/scripts/gongwen_format.py \
 基础参数:
 - `--title`:公文标题(二号小标宋,居中)
 - `--input`:输入文件路径(支持 .md / .txt / .docx)
-- `--output`:输出文件路径(支持 .docx 或 .pdf)
-- `--format`:输出格式 `docx`(默认)或 `pdf`(需要 LibreOffice)
+- `--output`:输出 Word 文件路径(.docx)
 
 查看完整参数列表:`uv run python <skill-path>/scripts/gongwen_format.py --help`
 
@@ -109,26 +108,3 @@ uv run python <skill-path>/scripts/gongwen_format.py \
   --print-date “2026-04-27” \
   --cc “省委办公厅，省人大常委会办公厅，省政协办公厅”
 ```
-
-### PDF 导出示例
-
-用户说:"帮我排版,要 PDF 格式"
-
-```bash
-uv run python <skill-path>/scripts/gongwen_format.py \
-  --title "关于XXX的实施意见" \
-  --input /tmp/content.md \
-  --output /tmp/output.pdf
-```
-
-也可以用 `--format pdf` 参数:
-
-```bash
-uv run python <skill-path>/scripts/gongwen_format.py \
-  --title "关于XXX的实施意见" \
-  --input /tmp/content.md \
-  --output /tmp/output.docx \
-  --format pdf
-```
-
-> ⚠️ PDF 导出需要安装 LibreOffice:`sudo apt install libreoffice-writer`

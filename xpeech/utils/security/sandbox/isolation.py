@@ -119,9 +119,6 @@ async def wrap_sandbox_command(
         "/etc/alternatives",
         # TShark uses system protocol preferences and Lua configuration here.
         "/etc/wireshark",
-        # Headless LibreOffice resolves shared registry links through /etc.
-        "/etc/libreoffice",
-        "/etc/papersize",
         # TeX Live stores configuration, generated formats and symlink targets here.
         "/etc/texmf",
         "/var/lib/texmf",

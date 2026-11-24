@@ -421,51 +421,6 @@ async def test_sandbox_analyzes_ethernet_capture_with_tshark(tmp_path, monkeypat
 
 
 @pytest.mark.skipif(
-    platform.system() != "Linux" or any(
-        shutil.which(name) is None for name in (*NETWORK_SANDBOX_EXECUTABLES, "libreoffice", "pdftotext")
-    ),
-    reason="Requires Linux sandbox dependencies, LibreOffice and Poppler",
-)
-@pytest.mark.asyncio
-@pytest.mark.parametrize("network_isolation", [False, True])
-async def test_sandbox_converts_document_with_libreoffice(tmp_path, monkeypatch, network_isolation):
-    workspace = tmp_path / "office-workspace"
-    workspace.mkdir()
-    source = workspace / "sample.fodt"
-    source.write_text('''<?xml version="1.0" encoding="UTF-8"?>
-<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
- xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
- office:version="1.2" office:mimetype="application/vnd.oasis.opendocument.text">
- <office:body><office:text>
-  <text:p>LibreOffice sandbox conversion</text:p><text:p>文档转换测试</text:p>
- </office:text></office:body>
-</office:document>
-''', encoding="utf-8")
-    monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
-
-    command = await sandbox.wrap_sandbox_command(
-        [
-            "libreoffice", "--headless", f"-env:UserInstallation={(workspace / 'lo-profile').as_uri()}",
-            "--convert-to", "pdf", "--outdir", str(workspace), str(source),
-        ],
-        workspace, skills_loader=SkillsLoader(workspace), network_isolation=network_isolation,
-    )
-    process = await asyncio.create_subprocess_exec(
-        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(process.communicate(), 60)
-
-    assert process.returncode == 0, (stdout + stderr).decode(errors="replace")
-    pdf = workspace / "sample.pdf"
-    assert pdf.read_bytes().startswith(b"%PDF-")
-    extracted = subprocess.run(["pdftotext", str(pdf), "-"], check=True, capture_output=True, timeout=10)
-    text = extracted.stdout.decode("utf-8")
-    assert "LibreOffice sandbox conversion" in text
-    assert "文档转换测试" in "".join(text.split())
-
-
-@pytest.mark.skipif(
     platform.system() != "Linux" or any(shutil.which(name) is None for name in NETWORK_SANDBOX_EXECUTABLES),
     reason="Requires Linux sandbox dependencies",
 )
