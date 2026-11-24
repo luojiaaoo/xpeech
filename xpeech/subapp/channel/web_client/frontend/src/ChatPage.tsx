@@ -247,6 +247,7 @@ export default function ChatPage({
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyIssue, setHistoryIssue] = useState<'legacy' | 'unavailable' | null>(null);
   const [value, setValue] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
@@ -316,14 +317,18 @@ export default function ChatPage({
     const controller = new AbortController();
     setMessages([]);
     setHistoryLoading(true);
+    setHistoryIssue(null);
     historyApi.get(sessionId, controller.signal).then((history) => {
       if (!controller.signal.aborted) {
         const restored = chatMessagesFromEvents(history.events);
+        if (history.events.some((event) => !event?.turn_id || typeof event.turn_id !== 'string')) {
+          setHistoryIssue('legacy');
+        }
         setMessages((current) => current.length ? current : restored);
       }
-    }).catch((error) => {
+    }).catch(() => {
       if (!controller.signal.aborted) {
-        message.error(`历史消息加载失败：${String(error)}`);
+        setHistoryIssue('unavailable');
       }
     }).finally(() => {
       if (!controller.signal.aborted) setHistoryLoading(false);
@@ -523,6 +528,17 @@ export default function ChatPage({
 
   return (
     <div className="chat-page">
+      {historyIssue && (
+        <Alert
+          banner
+          showIcon
+          type="warning"
+          title={historyIssue === 'legacy' ? '这段会话包含无法显示的旧版消息' : '暂时无法加载历史消息'}
+          description={historyIssue === 'legacy'
+            ? '你可以继续聊天，或新建会话。'
+            : '你可以继续聊天，或刷新页面重试。'}
+        />
+      )}
       <div className="chat-content">
         {historyLoading ? (
           <div className="history-loading"><LoadingOutlined spin /> 正在加载历史消息…</div>

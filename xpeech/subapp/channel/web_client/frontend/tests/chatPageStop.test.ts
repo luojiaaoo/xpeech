@@ -11,6 +11,7 @@ async function chatPage(
   stopChat: (sessionId: string) => Promise<{ stopped: boolean }>,
   transport?: { WebSocket: any; fetch: Function },
   initialPrompt: string | null = null,
+  loadHistory: () => Promise<{ events: unknown[] }> = async () => ({ events: [] }),
 ) {
   const slots: any[] = [];
   const effects: Function[] = [];
@@ -70,7 +71,7 @@ async function chatPage(
     ].map(name => [name, name])),
     './api': {
       getFile() {}, downloadFile() {}, chatSync() {}, stopChat,
-      historyApi: { async get() { return { events: [] }; } },
+      historyApi: { get: loadHistory },
       streamChat(_text: string, _files: File[], receive: Function, options: { signal: AbortSignal }) {
         if (realStreamChat) return realStreamChat(_text, _files, receive, options);
         return new Promise<void>((resolve, reject) => {
@@ -148,6 +149,31 @@ async function chatPage(
     injectPrompt(text: string) { pendingPrompt = text; promptListener?.(text); },
   };
 }
+
+test('shows a notice for old history and still displays compatible messages', async () => {
+  const page = await chatPage(async () => ({ stopped: true }), undefined, null, async () => ({
+    events: [
+      { event: 'user', context: '旧消息' },
+      { event: 'user', turn_id: 'turn-1', context: '新消息' },
+    ],
+  }));
+  assert.equal(page.render('Alert').title, '这段会话包含无法显示的旧版消息');
+  assert.equal(page.messages().length, 1);
+  assert.equal(page.messages()[0].content, '新消息');
+  assert.equal(page.render().disabled, false);
+  page.cleanupHistory();
+});
+
+test('keeps chat available and shows a friendly notice when history loading fails', async () => {
+  const page = await chatPage(async () => ({ stopped: true }), undefined, null, async () => {
+    throw new Error('Internal Server Error');
+  });
+  assert.equal(page.render('Alert').title, '暂时无法加载历史消息');
+  assert.equal(page.render('Alert').description, '你可以继续聊天，或刷新页面重试。');
+  assert.equal(page.render().disabled, false);
+  assert.equal(page.errors.length, 0);
+  page.cleanupHistory();
+});
 
 test('login injection fills the editable composer once and sends exactly the edited text', async () => {
   const page = await chatPage(async () => ({ stopped: true }), undefined, '登录注入内容');

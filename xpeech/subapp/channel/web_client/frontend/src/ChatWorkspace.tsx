@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Drawer, Empty, Typography, message } from 'antd';
+import { Alert, Button, Drawer, Empty, Typography } from 'antd';
 import { CloseOutlined, HistoryOutlined, LoadingOutlined, PlusOutlined } from '@ant-design/icons';
 import { historyApi } from './api';
 import { uuidv7 } from './uuidv7';
@@ -26,6 +26,7 @@ export default function ChatWorkspace({ systemName, recommendedQuestions, embedd
   const [startedSessionIds, setStartedSessionIds] = useState<string[]>([]);
   const [runningSessions, setRunningSessions] = useState<Record<string, boolean>>({});
   const [sessions, setSessions] = useState<ChatHistorySession[]>([]);
+  const [sessionsLoadFailed, setSessionsLoadFailed] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const listRequest = useRef(0);
@@ -33,9 +34,12 @@ export default function ChatWorkspace({ systemName, recommendedQuestions, embedd
   const refreshSessions = useCallback(() => {
     const requestId = ++listRequest.current;
     historyApi.list().then((items) => {
-      if (listRequest.current === requestId) setSessions(items);
-    }).catch((error) => {
-      if (listRequest.current === requestId) message.error(`历史会话加载失败：${String(error)}`);
+      if (listRequest.current === requestId) {
+        setSessions(items);
+        setSessionsLoadFailed(false);
+      }
+    }).catch(() => {
+      if (listRequest.current === requestId) setSessionsLoadFailed(true);
     });
   }, []);
 
@@ -90,8 +94,17 @@ export default function ChatWorkspace({ systemName, recommendedQuestions, embedd
         {onClose ? <Button type="text" size="small" aria-label="收起历史会话" icon={<CloseOutlined />} onClick={onClose} /> : null}
       </div>
       <div className="history-session-list">
+        {sessionsLoadFailed && (
+          <Alert
+            className="history-list-notice"
+            type="warning"
+            showIcon
+            title="暂时无法加载历史会话"
+            action={<Button size="small" onClick={refreshSessions}>重试</Button>}
+          />
+        )}
         {visibleSessions.length === 0 ? (
-          <Empty className="history-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史会话" />
+          !sessionsLoadFailed && <Empty className="history-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史会话" />
         ) : visibleSessions.map((item) => (
           <Button
             key={item.session_id}

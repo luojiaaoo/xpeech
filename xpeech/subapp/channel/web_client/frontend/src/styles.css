@@ -83,6 +83,7 @@ body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: 
 .history-session-running { flex: 0 0 auto; color: #3370ff; font-size: 12px; }
 .history-session-time { color: #8a94a3; font-size: 11px; }
 .history-list-loading { display: block; margin: 32px auto; text-align: center; }
+.history-list-notice { margin-bottom: 8px; }
 .history-empty { margin-top: 36px; }
 .history-drawer .ant-drawer-body { padding: 0; }
 .history-drawer .history-panel-heading { display: none; }
