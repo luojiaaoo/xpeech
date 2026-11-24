@@ -212,8 +212,6 @@ class LLMConfig(BaseModel):
     default_model: str
     tokenizer: TokenizerConfig = Field(default_factory=TokenizerConfig)
     parameters: LLMParameters
-    tools_python_package: str
-    default_tools: list[str]
     system_name: str = ""
     system_identity_prompt: str = ""
     custom_system_prompt: str = ""

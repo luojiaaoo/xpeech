@@ -14,8 +14,6 @@ def base_llm_config(**overrides):
         "api_base": "https://example.test",
         "default_model": "test",
         "parameters": {},
-        "tools_python_package": "custom_tools",
-        "default_tools": [],
         **overrides,
     }
 
@@ -84,6 +82,16 @@ def test_example_uses_nested_llm_parameters():
         "reasoning_effort": None,
     }
     assert config.max_history_days == 30
+
+
+@pytest.mark.parametrize(("key", "value"), [
+    ("tools_python_package", "custom_tools"),
+    ("default_tools", ["echo"]),
+    ("custom_tool_names", ["echo"]),
+])
+def test_llm_config_rejects_removed_python_tool_settings(key, value):
+    with pytest.raises(ValidationError, match=key):
+        LLMConfig.model_validate(base_llm_config(**{key: value}))
 
 
 def test_llm_config_rejects_invalid_max_history_days():

@@ -57,7 +57,6 @@ def turn(monkeypatch, tmp_path):
     agent.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))
     agent.chat = AsyncMock(return_value=response(("content", "answer")))
     agent.records = SimpleNamespace(append=AsyncMock())
-    agent.tools = []
     agent.max_accept_token = 1000
     agent._input_tokens = agent._output_tokens = agent._model_call_count = 0
     agent._count_context_tokens = AsyncMock(return_value=10)
@@ -207,7 +206,7 @@ async def test_chat_inserts_each_queued_message_after_first_tool_free_iteration(
         workspace=agent.workspace, max_result_chars=1000, mapping_tool_call_funcs={"lookup": lookup},
     )
 
-    async def model_call(*, messages, tools, json_output):
+    async def model_call(*, messages, json_output):
         calls.append(deepcopy(messages))
         if len(calls) == 1:
             return LLMResponse(iter_mix_chunks=first_response())

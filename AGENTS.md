@@ -10,7 +10,7 @@ Xpeech 是一个基于 FastAPI 的 Agent 服务。它提供一个 `/chat` 接口
 - 支持文本、图片和文件输入
 - 支持多轮会话和独立工作区
 - 使用 OpenAI 原生 SDK 接入 OpenAI 兼容的大模型服务
-- 支持内置工具和自定义 Python 工具
+- 支持内置工具
 - 支持通过 MCP Server 扩展 Agent 工具
 - 支持飞书消息桥接
 - 支持飞书一次性和周期后台定时 Agent 任务
@@ -562,7 +562,7 @@ OAuth2 用户标识配置使用 `user_id_claim`。
 工作区模板只在文件不存在时创建。长期记忆整理按 `memory/MEMORY.md` 路径串行执行，
 锁覆盖读取旧记忆、模型整理和保存新记忆，历史摘要追加也按文件串行执行。
 
-上述锁适用于当前单进程 backend（`workers=1`）。Shell、MCP 和自定义工具直接操作文件时，
+上述锁适用于当前单进程 backend（`workers=1`）。Shell 和 MCP 直接操作文件时，
 需要自行协调并发；同一文件的完整覆盖写入仍以后写入的内容为准。多会话同时处理文件时，
 建议使用不同的输出路径。
 
@@ -763,60 +763,11 @@ curl "http://localhost:7878/statistics/records/latest?limit=20" \
   -H "Authorization: Bearer <INTERNAL_JWT>"
 ```
 
-## 自定义工具
-
-在 `conf.toml` 里指定工具包：
-
-```toml
-[llm]
-tools_python_package = "custom_tools"
-default_tools = ["echo", "hello"]
-```
-
-工具包示例：
-
-```text
-custom_tools/
-  __init__.py
-  test_tools.py
-```
-
-`custom_tools/__init__.py`：
-
-```python
-from .test_tools import echo, hello
-
-__all__ = ["echo", "hello"]
-```
-
-`custom_tools/test_tools.py`：
-
-```python
-from typing import Annotated
-
-from pydantic import BaseModel, Field
-
-def hello():
-    """Return a hello message."""
-    return "hello"
-
-
-class Message(BaseModel):
-    content: Annotated[str, Field(description="The content to echo")]
-
-
-def echo(message: Message):
-    """Echo the message content."""
-    return message.content
-
-```
-
-工具函数需要有 docstring。函数可以不接收参数，也可以接收一个 Pydantic `BaseModel` 参数。
-
-
 ## MCP 工具
 
-可以在 `conf.toml` 的 `[tool.mcpServers.<name>]` 下配置 MCP Server。启动会话时，Xpeech 会在后台并发连接这些 Server、发现可用工具，首次对话无需等待 MCP 连接。每个 Server 就绪后，其工具会自动注册，并从后续模型调用开始可用。同一用户的并发会话共享连接和工具发现任务。
+外部工具通过 MCP Server 接入，在 `conf.toml` 的 `[tool.mcpServers.<name>]` 下配置。升级已有部署时，请从 `[llm]` 删除 `tools_python_package`、`default_tools` 和 `custom_tool_names` 中已有的键。
+
+启动会话时，Xpeech 会在后台并发连接这些 Server、发现可用工具，首次对话无需等待 MCP 连接。每个 Server 就绪后，其工具会自动注册，并从后续模型调用开始可用。同一用户的并发会话共享连接和工具发现任务。
 
 Agent 可调用无参数的 `query_mcp_status` 工具，立即查询当前通道允许访问的 MCP 状态。返回的 `servers` 按配置名称列出 `description`、`status`（`connecting`、`ready`、`unavailable`、`disconnected`）、`transport`、`tool_count`、`tools` 和 `error`。`error` 仅包含异常类型；查询不会等待连接或发起网络请求。连接失败后，下次对话会立即在后台重新连接，无需等待固定冷却时间；正在进行的连接和工具发现任务仍由并发会话共享。
 
@@ -1051,7 +1002,7 @@ MCP 工具通过 `conf.toml` 的 `execution_request_tools` 选择需要确认的
 
 工具文本结果超过 `[tool].max_result_chars`（默认 10,000）时不会丢弃尾部内容：完整结果会以
 文本文件保存到当前用户 workspace 的 `tool-results/`，工具消息返回原始内容前缀、总字符数和
-相对文件路径。该阈值统一用于 shell、MCP、内置工具和自定义工具。`read_file` 是例外：执行器不会
+相对文件路径。该阈值统一用于内置工具和 MCP 工具。`read_file` 是例外：执行器不会
 把它的结果再次保存到 `tool-results/`；它会在返回内容超过该阈值时直接拒绝读取并提示缩小范围，
 避免读取超长结果文件时再次生成结果文件。
 

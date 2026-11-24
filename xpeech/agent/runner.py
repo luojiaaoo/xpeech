@@ -67,7 +67,6 @@ class AgentRunner:
         agent_loop = AgentLoop(
             provider=provider,
             workspace=self.workspace,
-            tools=llm_config.default_tools,
             channel=self.channel,
             user_organization=self.user_organization,
             mapping_tool_call_funcs=provider.mapping_tool_call_funcs,

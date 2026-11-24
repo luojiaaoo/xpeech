@@ -20,7 +20,6 @@ class TokenUsage:
     """保留组装时的 vLLM 分项计数；展示独立于压缩预算的整包计数。"""
 
     provider: OpenAIProvider
-    tools: list[str]
     compression_threshold: int
     context_tokens: dict[str, int]
 
@@ -34,7 +33,7 @@ class TokenUsage:
         duration_s: float,
     ) -> dict[str, str]:
         """补充最终对话和工具的独立计数，汇总中文统计字段。"""
-        tool_tokens = await self.provider.chat_count_tool_tokens(tools=self.tools)
+        tool_tokens = await self.provider.chat_count_tool_tokens()
         components = {
             **self.context_tokens,
             "对话消息": await token_counter(strip_internal_message_metadata(remove_system_messages(messages))),

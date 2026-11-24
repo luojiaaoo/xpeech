@@ -27,7 +27,7 @@ async def test_usage_event_uses_display_counts_without_recounting_full_context(m
         chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 200, "mcp_tools": 300}),
     )
     context_tokens = {"系统提示词": system_tokens, "用户上下文": 20}
-    usage = TokenUsage(provider=provider, tools=[], compression_threshold=147_000, context_tokens=context_tokens)
+    usage = TokenUsage(provider=provider, compression_threshold=147_000, context_tokens=context_tokens)
     event = await usage.build_event([
         {"role": "system", "content": "rules"},
         {"role": "user", "content": "<system-reminder>identity</system-reminder>"},
@@ -38,7 +38,7 @@ async def test_usage_event_uses_display_counts_without_recounting_full_context(m
     counter.assert_awaited_once_with([
         {"role": "user", "content": "hello"}, {"role": "assistant", "content": "answer"},
     ])
-    provider.chat_count_tool_tokens.assert_awaited_once_with(tools=[])
+    provider.chat_count_tool_tokens.assert_awaited_once_with()
     metrics = json.loads(event["context"])
     assert event["event"] == "token_usage"
     details = metrics["上下文明细"]

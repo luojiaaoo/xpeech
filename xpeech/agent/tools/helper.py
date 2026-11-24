@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
 from ...utils.file_io import is_relative_path
-from ...utils.helper import dynamic_import
 from ...utils.security import sandbox
 from ..skills.skill import BUILTIN_SKILLS_DIR
 
@@ -197,24 +196,3 @@ def as_tool(func: Callable[Type[BaseModel] | None, str | dict], name_suffix: str
     model_info = get_tool_model_cls(func)
 
     return pydantic_function_tool(model_info.model_cls, name=tool_name, description=description)
-
-
-_MODULE_CUSTOM_CACHE = {}
-
-
-def get_custom_tool_func(function_name: str) -> list[dict]:
-    """
-    获取自定义工具函数。
-    """
-    function_name_paths = function_name.split(".")
-    _name = settings.llm.tools_python_package
-    module = dynamic_import(_name)
-    if _name not in _MODULE_CUSTOM_CACHE:
-        _MODULE_CUSTOM_CACHE[_name] = module
-    _temp = None
-    for i in function_name_paths:
-        if _temp is None:
-            _temp = getattr(_MODULE_CUSTOM_CACHE[_name], i)
-        else:
-            _temp = getattr(_temp, i)
-    return _temp

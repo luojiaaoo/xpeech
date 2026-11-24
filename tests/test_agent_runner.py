@@ -40,7 +40,6 @@ def make_config(workspace_base_path: Path):
             support_image=True,
             support_video=False,
             support_json_output=True,
-            default_tools=["tool-a"],
         ),
         tool=object(),
         extra_user_info=ExtraUserInfoConfig(),

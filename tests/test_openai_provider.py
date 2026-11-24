@@ -17,14 +17,13 @@ pytestmark = pytest.mark.usefixtures("fake_vllm_tokenizer")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("override_mcp", [False, True])
-async def test_tool_usage_counts_only_effective_schemas(override_mcp, make_openai_sdk_client):
+async def test_tool_usage_counts_registered_schemas(make_openai_sdk_client):
     async def local_tool() -> str:
         """Run a local operation."""
         return "local"
 
     async def remote_tool() -> str:
-        """Override the remote tool locally."""
+        """Run a remote operation."""
         return "remote"
 
     provider = OpenAIProvider(
@@ -37,15 +36,10 @@ async def test_tool_usage_counts_only_effective_schemas(override_mcp, make_opena
             "parameters": {"type": "object", "properties": {}},
         },
     })
-    tools = [remote_tool] if override_mcp else []
-    counts = await provider.chat_count_tool_tokens(tools)
-    enabled = await provider._resolve_tools(tools)
-    local_schemas = [tool.tool_json for tool in enabled.values() if tool.source == "system_tools"]
-    assert counts["system_tools"] == await token_counter(tools=local_schemas)
-    if not override_mcp:
-        assert counts["mcp_tools"] == await token_counter(tools=[provider.default_tools["remote_tool"].tool_json])
-    assert counts["system_tools"] > 0
-    assert (counts["mcp_tools"] == 0) is override_mcp
+    assert await provider.chat_count_tool_tokens() == {
+        "system_tools": await token_counter(tools=[provider.default_tools["local_tool"].tool_json]),
+        "mcp_tools": await token_counter(tools=[provider.default_tools["remote_tool"].tool_json]),
+    }
 
     empty = OpenAIProvider(
         client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
@@ -127,7 +121,7 @@ def test_chat_exposes_llm_parameter_overrides_as_one_object():
         ({"remove_default_tools": True, "remove_all_tools": True}, []),
     ],
 )
-async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected_names, make_openai_sdk_client):
+async def test_removal_options_apply_only_to_chat(options, expected_names, make_openai_sdk_client):
     captured_kwargs = {}
 
     class StreamClient:
@@ -152,7 +146,6 @@ async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected
         """An extra tool."""
         return "extra"
 
-    monkeypatch.setattr("xpeech.provider.openai_provider.get_custom_tool_func", lambda name: search)
     provider = OpenAIProvider(
         client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters()
     )
@@ -170,11 +163,12 @@ async def test_removal_options_apply_only_to_chat(monkeypatch, options, expected
     provider.register_function_tool(default_tool)
     provider._stream_client = StreamClient()
     messages = [{"role": "user", "content": "hello"}]
-    request = {"messages": messages, "tools": ["search", extra_tool], **options}
+    tools = [search, extra_tool]
+    request = {"messages": messages, "tools": tools, **options}
 
     # 压缩预算保持整包计数，不接受 chat 的 remove_* 开关。
-    count = await provider.chat_count_tokens(messages=messages, tools=["search", extra_tool])
-    await provider.chat(messages=messages, tools=["search", extra_tool])
+    count = await provider.chat_count_tokens(messages=messages, tools=tools)
+    await provider.chat(messages=messages, tools=tools)
     full_tools = captured_kwargs["tools"]
     await provider.chat(**request)
 

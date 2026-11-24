@@ -198,7 +198,6 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY xpeech/ ./xpeech/
-COPY custom_tools/ ./custom_tools/
 COPY assets/ ./assets/
 RUN uv sync --frozen --no-dev
 

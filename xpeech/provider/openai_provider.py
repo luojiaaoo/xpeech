@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from ..agent.tools.helper import as_tool, get_custom_tool_func
+from ..agent.tools.helper import as_tool
 from ..agent.tools.interactions import InteractionRequest
 from ..utils.helper import ensure_async, token_counter
 from .openai_stream import OpenAIStreamClient
@@ -119,25 +119,23 @@ class OpenAIProvider:
         tool = self._build_function_tool(func_, tool_json=tool_json)
         self._publish_tool(func_.__name__, RegisteredTool(func=tool.func, tool_json=tool.tool_json, source="mcp_tools"))
 
-    async def _parse_tools(self, funcs: list[Callable[[type[BaseModel] | None], str | list]]) -> ToolRegistry:
+    async def _parse_tools(self, funcs: list[Callable[..., Any]]) -> ToolRegistry:
         """解析普通函数工具。"""
 
         tools: ToolRegistry = {}
         for func in funcs:
-            # 解析工具函数
             tools[func.__name__] = self._build_function_tool(func)
         return tools
 
     async def _resolve_tools(
         self,
-        tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
+        tools: list[Callable[..., Any]] | None = None,
         *,
         remove_all_tools: bool = False,
         remove_default_tools: bool = False,
     ) -> ToolRegistry:
         """统一解析请求使用的工具，供模型调用和上下文统计复用。"""
-        funcs = [get_custom_tool_func(tool) if isinstance(tool, str) else tool for tool in tools] if tools else []
-        parsed_tools = await self._parse_tools(funcs)
+        parsed_tools = await self._parse_tools(tools or [])
         if remove_all_tools:
             return {}
         if remove_default_tools:
@@ -147,28 +145,25 @@ class OpenAIProvider:
     async def chat_count_tokens(
         self,
         messages: list[dict[str, Any]],
-        tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
+        tools: list[Callable[..., Any]] | None = None,
     ) -> int:
         """整包通过 vLLM 精确计算消息及启用的工具定义，供上下文压缩判断使用。"""
         registered_tools = await self._resolve_tools(tools)
         return await token_counter(messages, tools=[tool.tool_json for tool in registered_tools.values()] or None)
 
-    async def chat_count_tool_tokens(
-        self,
-        tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
-    ) -> dict[str, int]:
-        """分别通过 vLLM 计算实际启用的系统工具和 MCP 工具定义。"""
+    async def chat_count_tool_tokens(self) -> dict[str, int]:
+        """分别通过 vLLM 计算已注册的系统工具和 MCP 工具定义。"""
         counts = {}
-        registered_tools = await self._resolve_tools(tools)
+        registered_tools = tuple(self.default_tools.values())
         for source in ("system_tools", "mcp_tools"):
-            schemas = [tool.tool_json for tool in registered_tools.values() if tool.source == source]
+            schemas = [tool.tool_json for tool in registered_tools if tool.source == source]
             counts[source] = await token_counter(tools=schemas) if schemas else 0
         return counts
 
     async def chat(
         self,
         messages: list[dict[str, Any]],
-        tools: list[str | Callable[[type[BaseModel] | None], str | list]] | None = None,
+        tools: list[Callable[..., Any]] | None = None,
         parameters: LLMParameters | None = None,
         remove_all_tools: bool = False,
         remove_default_tools: bool = False,
@@ -186,7 +181,7 @@ class OpenAIProvider:
             tools, remove_all_tools=remove_all_tools, remove_default_tools=remove_default_tools
         )
         tool_jsons = [tool.tool_json for tool in registered_tools.values()]
-        # 本次请求携带的工具（含按需解析的自定义工具）同样进入可执行函数映射。
+        # 本次请求传入的内置函数也需要登记到可执行函数映射。
         self.mapping_tool_call_funcs.update({tool_name: tool.func for tool_name, tool in registered_tools.items()})
 
         # 参数构建

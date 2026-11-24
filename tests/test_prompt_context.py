@@ -33,7 +33,7 @@ async def test_context_breakdown_accumulates_blocks_and_leaves_messages_clean(tm
     provider = OpenAIProvider(
         client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
     )
-    agent = AgentLoop(provider=provider, workspace=tmp_path, tools=[])
+    agent = AgentLoop(provider=provider, workspace=tmp_path)
     agent.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
     agent.records = SimpleNamespace(append=AsyncMock())
     provider.chat = AsyncMock(side_effect=lambda **_: response("final answer " * 100))
@@ -138,7 +138,6 @@ async def test_run_replaces_front_contexts_without_accumulating_versions(tmp_pat
         default_context_token=200_000, default_model="test",
         chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
     )
-    agent.tools = []
     agent.max_accept_token = 100_000
     agent._input_tokens = agent._output_tokens = agent._model_call_count = 0
     message = InboundMessage(

@@ -74,7 +74,6 @@ class AgentLoop:
         self,
         provider: OpenAIProvider,
         workspace: Path,
-        tools: list[str],
         channel: str | None = None,
         user_organization: str | None = None,
         mapping_tool_call_funcs: dict[str, Any] | None = None,
@@ -82,7 +81,6 @@ class AgentLoop:
         """初始化模型提供方、会话组件和循环配置。"""
         self.provider = provider
         self.workspace = workspace
-        self.tools = tools
         self.channel = channel
         self.user_organization = user_organization
         self.mapping_tool_call_funcs = mapping_tool_call_funcs if mapping_tool_call_funcs is not None else {}
@@ -401,7 +399,6 @@ class AgentLoop:
         system_prompt = await build_system_prompt(channel=self.channel)
         token_usage = TokenUsage(
             provider=self.provider,
-            tools=self.tools,
             compression_threshold=self.max_accept_token,
             context_tokens={"系统提示词": await token_counter([system_prompt])},
         )
@@ -443,7 +440,6 @@ class AgentLoop:
                 try:
                     response = await self.chat(
                         messages=anomaly_guard.prepare_messages(messages_yaml),
-                        tools=self.tools,
                         json_output=message.json_output,
                     )
 
@@ -582,7 +578,7 @@ class AgentLoop:
 
     async def _count_context_tokens(self, messages: list[dict[str, Any]]) -> int:
         """按 vLLM 整包计数判断是否需要压缩，与展示用的分项统计独立。"""
-        return await self.provider.chat_count_tokens(messages=strip_internal_message_metadata(messages), tools=self.tools)
+        return await self.provider.chat_count_tokens(messages=strip_internal_message_metadata(messages))
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs) -> LLMResponse:
         """移除内部元数据后调用模型提供方。"""

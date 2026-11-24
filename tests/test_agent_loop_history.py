@@ -68,7 +68,6 @@ async def test_final_response_is_emitted_and_persisted_when_model_returns_no_tex
     agent_loop.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))
     agent_loop.chat = AsyncMock(return_value=LLMResponse(iter_mix_chunks=chunks()))
     agent_loop.records = SimpleNamespace(append=AsyncMock())
-    agent_loop.tools = []
     agent_loop.max_accept_token = 100_000
     agent_loop._input_tokens = 0
     agent_loop._output_tokens = 0
@@ -109,7 +108,7 @@ async def test_token_usage_is_emitted_after_saved_record_expires(tmp_path, make_
         client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
     )
     provider.chat = AsyncMock(return_value=response)
-    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[])
+    agent_loop = AgentLoop(provider=provider, workspace=tmp_path)
     agent_loop.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
 
     async def save_record(record, *, messages):
@@ -153,7 +152,7 @@ async def test_compression_uses_90_percent_of_context_window(
         default_model="test",
         parameters=LLMParameters(max_context_tokens=context_tokens, max_tokens=output_tokens),
     )
-    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[])
+    agent_loop = AgentLoop(provider=provider, workspace=tmp_path)
 
     assert agent_loop.max_accept_token == expected_threshold
     assert agent_loop.compressor._target_tokens == expected_threshold // 2
@@ -187,7 +186,7 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
             },
         },
     )
-    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[])
+    agent_loop = AgentLoop(provider=provider, workspace=tmp_path)
     # 使用较小预算验证工具定义也会触发压缩。
     agent_loop.max_accept_token = 170
     agent_loop.compressor = loop_module.ConversationCompressor(
@@ -273,7 +272,6 @@ async def test_not_interactive_run_saves_yaml_history(tmp_path: Path, monkeypatc
     )
     agent_loop.chat = AsyncMock(return_value=make_response("scheduled result"))
     agent_loop.records = SimpleNamespace(append=AsyncMock())
-    agent_loop.tools = []
     agent_loop.max_accept_token = 100_000
     agent_loop._input_tokens = 0
     agent_loop._output_tokens = 0
@@ -354,7 +352,6 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
     )
     agent_loop.chat = AsyncMock(side_effect=RuntimeError("provider unavailable"))
     agent_loop.records = SimpleNamespace(append=AsyncMock())
-    agent_loop.tools = []
     agent_loop.max_accept_token = 100_000
     agent_loop._input_tokens = 0
     agent_loop._output_tokens = 0
@@ -433,7 +430,6 @@ async def test_request_yaml_retains_new_messages_across_multiple_compressions(tm
         workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={"search": search},
     )
     agent_loop.records = SimpleNamespace(append=AsyncMock())
-    agent_loop.tools = []
     agent_loop.max_accept_token = 100_000
     agent_loop._input_tokens = agent_loop._output_tokens = agent_loop._model_call_count = 0
     message = InboundMessage(

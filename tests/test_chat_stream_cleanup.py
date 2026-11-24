@@ -94,7 +94,6 @@ def streaming_chat(monkeypatch, tmp_path, model_permits, make_openai_sdk_client)
     agent.history = YamlHistoryRepository(tmp_path / "history")
     state.history = agent.history
     agent.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))
-    agent.tools = []
     agent.max_accept_token = 147_000
     agent.chat = call_provider
     monkeypatch.setattr(settings.path, "workspace_base_path", tmp_path)

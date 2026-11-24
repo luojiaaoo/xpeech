@@ -8,8 +8,6 @@ from asyncer import asyncify
 import anyio
 import httpx
 import yaml
-from importlib.util import spec_from_file_location, module_from_spec
-import sys
 from io import BytesIO
 from PIL import Image
 from async_lru import alru_cache
@@ -68,31 +66,6 @@ async def stack_ensure_aclosing() -> AsyncIterator[AsyncExitStack]:
 def format_exception2llm(e: Exception) -> str:
     """给大模型看的异常内容"""
     return f"{type(e).__name__}: {e}"
-
-
-def dynamic_import(path: str, module_name: str | None = None):
-    path_obj = Path(path).resolve()
-    if path_obj.is_dir():
-        init_file = path_obj / "__init__.py"
-        if not init_file.exists():
-            raise ImportError(f"目录不是 package: {path_obj}")
-        name = module_name or path_obj.name
-        spec = spec_from_file_location(
-            name,
-            init_file,
-            submodule_search_locations=[str(path_obj)],
-        )
-    elif path_obj.is_file():
-        name = module_name or path_obj.stem
-        spec = spec_from_file_location(name, path_obj)
-    else:
-        raise FileNotFoundError(path_obj)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"无法导入: {path_obj}")
-    module = module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def format_now(format_string: str = "%Y-%m-%d") -> str:
