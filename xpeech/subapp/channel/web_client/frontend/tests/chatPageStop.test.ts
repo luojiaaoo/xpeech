@@ -204,7 +204,7 @@ test('a disconnected stream ends locally without blocking the next send', async 
   page.cleanupHistory();
 });
 
-test('the process receives its running state and usage while the final answer and usage appear outside', async () => {
+test('the answer streams outside the process before usage arrives or the connection closes', async () => {
   const page = await chatPage(async () => ({ stopped: true }));
   page.render().onSubmit('hello');
   const initialProcess = page.items()[1];
@@ -218,11 +218,22 @@ test('the process receives its running state and usage while the final answer an
     { event: 'assistant', context: '正在读取' },
     // TODO(remove-legacy-tool-events): 清理时将旧元组夹具改为带 tool_call_id 的对象数组。
     { event: 'tool_call', context: '[["tool-1","read_file",{}]]' },
-    { event: 'assistant', context: '最终回复' },
-    { event: 'token_usage', context: '{"总 Token":100,"会话时长":"2秒"}' },
   ]) stream.receive(event);
-  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'process', 'summary']);
-  assert.equal(page.items()[1].key, initialProcess.key);
+  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'process']);
+
+  stream.receive({ event: 'assistant', context: '最终' });
+  const live = page.items();
+  assert.deepEqual(Array.from(live, (item: any) => item.role), ['user', 'process', 'assistant']);
+  assert.equal(live[2].content.props.children.props.content, '最终');
+  assert.equal(live[2].content.props.children.props.streaming.hasNextChunk, true);
+  stream.receive({ event: 'assistant', context: '回复' });
+  stream.receive({ event: 'assistant_end', context: '' });
+  assert.equal(page.items()[2].content.props.children.props.content, '最终回复');
+  assert.equal(page.items()[2].content.props.children.props.streaming.hasNextChunk, false);
+
+  stream.receive({ event: 'token_usage', context: '{"总 Token":100,"会话时长":"2秒"}' });
+  assert.deepEqual(Array.from(page.items(), (item: any) => item.role), ['user', 'process', 'assistant', 'summary']);
+  assert.equal(page.items()[2].key, live[2].key);
   stream.finish();
   await tick();
 
@@ -384,9 +395,10 @@ test('typing during a reply enables sending and queued streams do not finish the
   assert.equal(page.streams.length, 2);
   assert.equal(page.render().loading, true);
   const items = page.items();
-  assert.deepEqual(Array.from(items, (item: any) => item.role), ['user', 'user', 'process']);
+  assert.deepEqual(Array.from(items, (item: any) => item.role), ['user', 'user', 'process', 'assistant']);
   assert.equal(items[2].key, initialProcess.key);
   assert.equal(items[2].content.props.running, true);
+  assert.equal(items[3].content.props.children.props.content, 'before insertion');
   page.streams[0].receive({ event: 'assistant', context: ' still streaming' });
   page.streams[1].receive({ event: 'command', context: '这条消息将用于引导后续回复：「second」' });
   page.streams[1].finish();
@@ -395,6 +407,7 @@ test('typing during a reply enables sending and queued streams do not finish the
   assert.equal(acknowledgement.content.props.children[1].props.children, '这条消息将用于引导后续回复：「second」');
   assert.equal(page.render().loading, true);
   assert.deepEqual(page.running, [true]);
+  assert.equal(page.items().find((item: any) => item.role === 'assistant').key, items[3].key);
   page.streams[0].receive({ event: 'assistant', context: 'after insertion' });
   assert.deepEqual(Array.from(page.messages().filter((item: any) => ['user', 'assistant'].includes(item.role)),
     (item: any) => item.content), ['first', 'second', 'before insertion still streaming', 'after insertion']);

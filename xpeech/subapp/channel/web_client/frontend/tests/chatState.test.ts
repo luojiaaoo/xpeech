@@ -46,33 +46,63 @@ test('groups inserted user messages above one process in live chat and history',
   }
 });
 
-test('folds a running turn into one process item until its final reply is known', () => {
+test('streams the latest reply outside the process and folds it when a tool call arrives', () => {
   const initial = startChatTurn([], '读取文件');
   const placeholder = chatDisplayItems(initial, true);
   assert.deepEqual(placeholder.map(item => item.role), ['user', 'process']);
-  const messages = apply([
+  const intro = apply([
     event('thinking', '先分析'), event('thinking_end'),
     event('assistant', '我先读取文件'), event('assistant_end'),
+  ], initial);
+  const introItems = chatDisplayItems(intro, true);
+  assert.deepEqual(introItems.map(item => item.role), ['user', 'process', 'assistant']);
+  assert.equal(introItems[2].role === 'assistant' && introItems[2].streaming, false);
+
+  const toolMessages = apply([
     tools('tool_call', [['a', 'read_file', {}]]),
     toolResult({ id: 'a', name: 'read_file', result: 'ok', duration_seconds: 1 }),
-    event('assistant', '读取完成'),
-  ], initial);
-  const before = structuredClone(messages);
-  const items = chatDisplayItems(messages, true);
-  assert.deepEqual(items.map(item => item.role), ['user', 'process']);
-  const process = items[1];
+  ], intro);
+  const duringTool = chatDisplayItems(toolMessages, true);
+  assert.deepEqual(duringTool.map(item => item.role), ['user', 'process']);
+  const process = duringTool[1];
   assert.equal(process.key, placeholder[1].key);
-  assert.equal(process.role, 'process');
-  if (process.role !== 'process') throw new Error('Expected process item');
-  assert.equal(process.running, true);
-  assert.deepEqual(process.messages.map(item => item.role), ['thinking', 'assistant', 'tool', 'assistant']);
+  assert.ok(process.role === 'process' && process.running);
+  assert.deepEqual(process.messages.map(item => item.role), ['thinking', 'assistant', 'tool']);
+  assert.equal(process.messages[1].key, introItems[2].key);
+
+  const messages = apply([event('assistant', '读取'), event('assistant', '完成')], toolMessages);
+  const before = structuredClone(messages);
+  const live = chatDisplayItems(messages, true);
+  assert.deepEqual(live.map(item => item.role), ['user', 'process', 'assistant']);
+  assert.ok(live[2].role === 'assistant' && live[2].streaming);
+  assert.equal(live[2].content, '读取完成');
 
   const finished = chatDisplayItems(finishChatTurn(messages));
   assert.deepEqual(finished.map(item => item.role), ['user', 'process', 'assistant', 'summary']);
   assert.equal(finished[1].key, process.key);
   assert.equal(finished[1].role === 'process' && finished[1].running, false);
-  assert.equal(finished[2].role === 'assistant' && finished[2].content, '读取完成');
+  assert.equal(finished[2].key, live[2].key);
+  assert.equal(finished[2].role === 'assistant' && finished[2].streaming, false);
   assert.deepEqual(messages, before);
+});
+
+test('keeps the current reply visible during a queued follow-up until the next model output', () => {
+  const messages = apply([
+    event('assistant', '第一段'), event('assistant_end'),
+    { ...event('user', '补充消息'), continuation: true }, event('command', '已入队'),
+  ]);
+  const awaitingFollowUp = chatDisplayItems(messages, true);
+  assert.deepEqual(awaitingFollowUp.map(item => item.role), ['user', 'user', 'process', 'assistant', 'command']);
+
+  const thinking = apply([event('thinking', '处理补充消息')], messages);
+  const duringThinking = chatDisplayItems(thinking, true);
+  assert.deepEqual(duringThinking.map(item => item.role), ['user', 'user', 'process', 'command']);
+  assert.ok(duringThinking[2].role === 'process');
+  assert.deepEqual(duringThinking[2].messages.map(item => item.content), ['第一段', '处理补充消息']);
+
+  const nextReply = chatDisplayItems(apply([event('assistant', '第二段')], thinking), true);
+  assert.deepEqual(nextReply.map(item => item.role), ['user', 'user', 'process', 'command', 'assistant']);
+  assert.equal(nextReply[4].role === 'assistant' && nextReply[4].content, '第二段');
 });
 
 test('keeps each historical final reply and usage visible while folding earlier messages per turn', () => {

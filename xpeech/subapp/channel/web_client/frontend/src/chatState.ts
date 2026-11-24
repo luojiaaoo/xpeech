@@ -149,14 +149,16 @@ export function chatDisplayItems(messages: ChatMessage[], running = false, showF
     while (end < messages.length && (messages[end].role !== 'user' || messages[end].continuation)) end++;
     const turn = messages.slice(start, end);
     const active = running && end === messages.length;
-    // The last assistant message is only known when the request has ended.
-    const finalReply = active ? undefined : turn.findLast((item) => item.role === 'assistant');
+    // Display text as it streams. Later model activity moves it into the process.
+    const latest = turn.findLast((item) => item.role === 'assistant'
+      || (active && (item.role === 'thinking' || item.role === 'tool')));
+    const visibleReply = latest?.role === 'assistant' ? latest : undefined;
     const process: ChatMessage[] = [];
     const visible: ChatDisplayItem[] = [];
     for (const item of turn) {
       if (item.role === 'user') {
         items.push(item);
-      } else if (item !== finalReply && (
+      } else if (item !== visibleReply && (
         item.role === 'assistant' || item.role === 'thinking' || item.role === 'tool' || item.role === 'status'
       )) {
         process.push(item);
