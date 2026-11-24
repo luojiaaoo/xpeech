@@ -55,15 +55,19 @@ class TokenUsage:
         context_usage = f"{ratio:.2%} ({format_token_count(total)} / {format_token_count(limit)})"
         if total > self.compression_threshold * 0.9:
             context_usage += " ♻️ 即将达到最大上下文"
+        token_counts = {
+            "输入 Token": input_tokens,
+            "输出 Token": output_tokens,
+            "总 Token": input_tokens + output_tokens,
+        }
         return {
             "event": "token_usage",
             "context": json.dumps({
                 "上下文使用率": context_usage,
                 "上下文明细": details,
-                "输入 Token": format_token_count(input_tokens),
-                "输出 Token": format_token_count(output_tokens),
-                "总 Token": format_token_count(input_tokens + output_tokens),
+                **{name: format_token_count(count) for name, count in token_counts.items()},
                 "会话时长": f"{duration_s:.0f}秒",
                 "大模型请求次数": str(model_call_count),
+                "原始词元数": {**token_counts, "上下文已用": total, "上下文上限": limit},
             }, ensure_ascii=False),
         }

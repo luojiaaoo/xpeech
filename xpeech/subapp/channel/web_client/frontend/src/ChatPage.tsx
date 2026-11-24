@@ -68,6 +68,12 @@ const contextPartColors = [
   '#8cb96c', '#d28bbb', '#6875a9', '#f46665', '#6f93c8', '#a0b5c0',
 ];
 
+function formatTokenCount(count: number): string {
+  if (count >= 1_000_000) return `${Math.floor(count / 1_000_000)}m`;
+  if (count >= 1_000) return `${Math.floor(count / 1_000)}k`;
+  return String(count);
+}
+
 function renderContextUsage(usage: ContextUsage) {
   const parts = Object.entries(usage)
     .filter(([key, part]) => part.词元数 > 0 || key === '剩余空间')
@@ -96,7 +102,7 @@ function renderContextUsage(usage: ContextUsage) {
           <li key={part.key}>
             <span className="context-usage-dot" style={{ background: part.color }} />
             <span className="context-usage-name">{part.key}</span>
-            <span>{`${Math.floor(part.词元数 / 1000)}k`}</span>
+            <span>{formatTokenCount(part.词元数)}</span>
             <span className="context-usage-ratio">{(part.占比 * 100).toFixed(2)}%</span>
           </li>
         ))}
@@ -138,18 +144,26 @@ function renderTokenUsage(tokenUsage: string) {
   try {
     const data = JSON.parse(tokenUsage) as unknown;
     if (!data || Array.isArray(data) || typeof data !== 'object') throw new Error('Invalid token usage');
+    const { 原始词元数: counts } = data as { 原始词元数?: Record<string, number> };
     metrics = Object.entries(data).flatMap(([label, value]) => {
+      if (label === '原始词元数') return [];
       if (label === '上下文明细' && value && typeof value === 'object') {
         contextUsage = value as ContextUsage;
         return [];
       }
-      return [{
-        key: label,
-        label: tokenUsageLabels[label] || label,
-        value: ['大模型请求次数', '大模型交互次数'].includes(label) && /^\d+$/.test(String(value))
-          ? `${String(value)} 次`
-          : String(value),
-      }];
+      let displayValue = String(value);
+      if (['输入 Token', '输出 Token', '总 Token'].includes(label)) {
+        const count = counts?.[label] ?? value;
+        if (typeof count === 'number') displayValue = formatTokenCount(count);
+      } else if (label === '上下文使用率' && counts) {
+        const { 上下文已用: used, 上下文上限: limit } = counts;
+        if (typeof used === 'number' && typeof limit === 'number') {
+          displayValue = displayValue.replace(/\(\d+k \/ \d+k\)/, `(${formatTokenCount(used)} / ${formatTokenCount(limit)})`);
+        }
+      } else if (['大模型请求次数', '大模型交互次数'].includes(label) && /^\d+$/.test(displayValue)) {
+        displayValue += ' 次';
+      }
+      return [{ key: label, label: tokenUsageLabels[label] || label, value: displayValue }];
     });
   } catch {
     metrics = [{ key: '详情', label: '详情', value: tokenUsage }];

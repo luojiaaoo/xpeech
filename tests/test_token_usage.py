@@ -54,5 +54,9 @@ async def test_usage_event_uses_display_counts_without_recounting_full_context(m
         assert details["系统提示词"]["占比"] == 1
         assert details["剩余空间"] == {"词元数": 0, "占比": 0}
     assert (metrics["输入 Token"], metrics["输出 Token"], metrics["总 Token"]) == ("1k", "0k", "1k")
+    assert metrics["原始词元数"] == {
+        "输入 Token": 1000, "输出 Token": 234, "总 Token": 1234,
+        "上下文已用": total, "上下文上限": 147000,
+    }
     assert (metrics["会话时长"], metrics["大模型请求次数"]) == ("3秒", "2")
     assert context_tokens == {"系统提示词": system_tokens, "用户上下文": 20}
