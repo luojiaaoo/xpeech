@@ -1,20 +1,60 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlmodel import SQLModel
+from sqlalchemy import inspect
+from sqlmodel import SQLModel, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from xpeech.subapp.channel.web_client.dao import (
     AuthenticationSession,
+    AuthenticationSessionChannel,
     DuplicateUserIdError,
     ProtectedAdminDeletionError,
     ProtectedAdminIdentityError,
     User,
     WebClientDAO,
+    create_db_and_tables,
 )
 from xpeech.utils.database import get_async_database_engine
 
 pytestmark = pytest.mark.usefixtures("postgres_database")
+
+
+@pytest.mark.asyncio
+async def test_web_client_migrates_legacy_auth_tables():
+    engine = get_async_database_engine()
+    dao = WebClientDAO(engine)
+    await dao.initialize(lambda: "admin-hash")
+    user = await dao.create_user(
+        username="Alice", user_id="alice", password_hash="alice-hash", is_admin=False,
+    )
+    await dao.create_session(
+        token_hash="legacy-token",
+        user_id=user.id,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        channel="crm",
+    )
+    # Recreate the legacy table layout with existing rows and foreign keys.
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql("ALTER TABLE web_client_users RENAME TO users")
+        await connection.exec_driver_sql("ALTER TABLE web_client_sessions RENAME TO sessions")
+
+    await asyncio.gather(create_db_and_tables(engine), create_db_and_tables(engine))
+
+    async with engine.connect() as connection:
+        tables = await connection.run_sync(lambda conn: set(inspect(conn).get_table_names()))
+        assert tables == {"web_client_users", "web_client_sessions", "web_session_channels"}
+    session_user = await dao.get_user_for_session("legacy-token")
+    assert session_user is not None
+    assert session_user.id == user.id
+    assert session_user.user_id == "alice"
+    assert session_user.channel == "crm"
+    assert await dao.delete_user(user.id)
+    async with AsyncSession(engine) as session:
+        assert (await session.exec(select(AuthenticationSession))).first() is None
+        assert (await session.exec(select(AuthenticationSessionChannel))).first() is None
 
 
 @pytest.mark.asyncio

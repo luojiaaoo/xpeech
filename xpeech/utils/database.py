@@ -1,6 +1,8 @@
 """Shared PostgreSQL engine configuration for synchronous and async services."""
 
-from sqlalchemy import Engine, MetaData, text
+from collections.abc import Callable
+
+from sqlalchemy import Connection, Engine, MetaData, text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import create_engine
@@ -67,7 +69,14 @@ def create_tables(engine: Engine, metadata: MetaData) -> None:
         metadata.create_all(connection)
 
 
-async def create_tables_async(engine: AsyncEngine, metadata: MetaData) -> None:
+async def create_tables_async(
+    engine: AsyncEngine,
+    metadata: MetaData,
+    *,
+    before_create: Callable[[Connection], None] | None = None,
+) -> None:
     async with engine.begin() as connection:
         await connection.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _SCHEMA_LOCK})
+        if before_create is not None:
+            await connection.run_sync(before_create)
         await connection.run_sync(metadata.create_all)

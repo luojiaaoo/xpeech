@@ -2,7 +2,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pydantic import PrivateAttr
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import Column, Connection, DateTime, ForeignKey, Index, Integer, String, inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -26,7 +26,7 @@ class _WebClientSQLModel(SQLModel, registry=_web_client_registry):
 class User(_WebClientSQLModel, table=True):
     """Web 客户端用户。"""
 
-    __tablename__ = "users"
+    __tablename__ = "web_client_users"
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: str = Field(sa_column=Column(String, nullable=False, unique=True))
@@ -51,14 +51,14 @@ class User(_WebClientSQLModel, table=True):
 class AuthenticationSession(_WebClientSQLModel, table=True):
     """Web 客户端登录会话。"""
 
-    __tablename__ = "sessions"
+    __tablename__ = "web_client_sessions"
     __table_args__ = (Index("idx_sessions_user_id", "user_id"),)
 
     token_hash: str = Field(primary_key=True)
     user_id: int = Field(
         sa_column=Column(
             Integer,
-            ForeignKey("users.id", ondelete="CASCADE"),
+            ForeignKey("web_client_users.id", ondelete="CASCADE"),
             nullable=False,
         )
     )
@@ -72,7 +72,11 @@ class AuthenticationSessionChannel(_WebClientSQLModel, table=True):
     __tablename__ = "web_session_channels"
 
     token_hash: str = Field(
-        sa_column=Column(String, ForeignKey("sessions.token_hash", ondelete="CASCADE"), primary_key=True)
+        sa_column=Column(
+            String,
+            ForeignKey("web_client_sessions.token_hash", ondelete="CASCADE"),
+            primary_key=True,
+        )
     )
     channel: str
 
@@ -89,9 +93,22 @@ class ProtectedAdminDeletionError(Exception):
     """默认管理员不允许删除。"""
 
 
+# TODO: Delete the table rename migration after existing deployments have upgraded.
+def _rename_legacy_auth_tables(connection: Connection) -> None:
+    existing = set(inspect(connection).get_table_names())
+    for old_name, new_name in (
+        ("users", User.__tablename__),
+        ("sessions", AuthenticationSession.__tablename__),
+    ):
+        if old_name in existing and new_name not in existing:
+            connection.exec_driver_sql(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+
+
 async def create_db_and_tables(engine: AsyncEngine) -> None:
-    """创建 Web 客户端认证表。"""
-    await create_tables_async(engine, _WebClientSQLModel.metadata)
+    """创建 Web 客户端认证表并兼容旧表名。"""
+    await create_tables_async(
+        engine, _WebClientSQLModel.metadata, before_create=_rename_legacy_auth_tables
+    )
 
 
 class WebClientDAO:

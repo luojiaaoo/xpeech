@@ -446,7 +446,7 @@ iframe 和当前对话保持不变。请求返回 401 时也会触发重新获�
 由业务后端签发新凭证，再通过 `updateJWT()` 更新；无需销毁组件。
 
 `destroy()` 只销毁前端组件并清除内存凭证，不撤销已签发的 JWT；原 JWT 在 `exp` 到期前
-仍有效。普通网页登录继续使用 HttpOnly Cookie 和 `sessions` 表，其退出、停用及密码
+仍有效。普通网页登录继续使用 HttpOnly Cookie 和 `web_client_sessions` 表，其退出、停用及密码
 管理逻辑保持原有行为。
 
 接入错误会显示在聊天窗口中，同时触发业务页面的 `xpeech:error` 事件，详情为

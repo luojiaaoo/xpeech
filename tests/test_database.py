@@ -78,7 +78,7 @@ async def test_all_sqlmodel_tables_share_one_database(postgres_database):
         ))
         with tokens.engine.connect() as connection:
             assert {
-                "conversation_records", "users", "sessions", "lark_token_sessions",
+                "conversation_records", "web_client_users", "web_client_sessions", "lark_token_sessions",
                 "lark_device_authorizations",
             } <= set(inspect(connection).get_table_names())
         with Session(tokens.engine) as session:
