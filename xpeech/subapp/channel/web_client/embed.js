@@ -7,7 +7,6 @@ var root = null;
 var panel = null;
 var launcher = null;
 var closeButton = null;
-var minimizeButton = null;
 var maximizeButton = null;
 var body = null;
 var status = null;
@@ -42,6 +41,12 @@ var chatFileListeners = new Set();
 var fragmentHandlers = new Map();
 var fragmentButtonStyles = new Set(['default', 'primary', 'dashed', 'text', 'link', 'danger', 'warning', 'success']);
 var fragmentRevision = 0;
+var pageAgentConfig = null;
+var pageAgentToggle = null;
+var pageAgentInstance = null;
+var pageAgentOpen = false;
+var pageAgentModule = null;
+var pageAgentImportRetries = 0;
 
 function rejectRequests(message, sentOnly = false, keepRequestId = null) {
   pendingRequests.forEach(function (pending, id) {
@@ -228,6 +233,7 @@ function initialize() {
   if (host) return;
   host = document.createElement("div");
   host.id = "xpeech-widget";
+  host.setAttribute("data-page-agent-ignore", "true");
   root = host.attachShadow({ mode: "open" });
   root.innerHTML = '<style>' +
   ':host{all:initial;position:fixed;right:20px;bottom:20px;width:46px;height:46px;z-index:2147483000;font-family:system-ui,sans-serif;color:#18213d;pointer-events:none}' +
@@ -251,17 +257,18 @@ function initialize() {
   '.resize-ne,.resize-nw,.resize-se,.resize-sw{width:14px;height:14px}.resize-ne,.resize-sw{cursor:nesw-resize}.resize-nw,.resize-se{cursor:nwse-resize}' +
   '.resize-ne,.resize-nw{top:0}.resize-se,.resize-sw{bottom:0}.resize-ne,.resize-se{right:0}.resize-nw,.resize-sw{left:0}' +
   '.window-actions button{display:grid;place-items:center;width:30px;height:30px;background:none;border:0;border-radius:6px;font-size:22px;color:#5b6578}.window-actions button:hover{background:#f0f3f8}#body{flex:1;min-height:0;position:relative}' +
+  '#page-agent-toggle{width:auto;padding:0 8px;font-size:13px;white-space:nowrap}#page-agent-toggle[aria-pressed="true"]{background:#edf3ff;color:#2153c5}' +
   '#status{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px;background:#fff;color:#68788f;line-height:1.6;font-size:14px;text-align:center;overflow:auto}iframe{display:block;width:100%;height:100%;border:0}' +
   'button:focus-visible{outline:3px solid #8ab4ff;outline-offset:3px}[hidden]{display:none!important}' +
-  '</style><section id="panel" role="dialog"><header><strong id="title"></strong><div class="window-actions"><button id="minimize" aria-label="最小化聊天" title="最小化">−</button><button id="maximize" aria-label="最大化聊天" title="最大化">□</button><button id="close" aria-label="关闭聊天" title="关闭">×</button></div></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-expanded="false" title="点击打开聊天，拖动调整位置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg></button>';
+  '</style><section id="panel" role="dialog"><header><strong id="title"></strong><div class="window-actions"><button id="maximize" aria-label="最大化聊天" title="最大化">□</button><button id="close" aria-label="关闭聊天" title="关闭">×</button></div></header><div id="body"><div id="status" role="status">正在连接…</div></div></section><button id="launcher" aria-expanded="false" title="点击打开聊天，拖动调整位置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg></button>';
   document.body.appendChild(host);
   panel = root.getElementById("panel");
   launcher = root.getElementById("launcher");
   closeButton = root.getElementById("close");
-  minimizeButton = root.getElementById("minimize");
   maximizeButton = root.getElementById("maximize");
   body = root.getElementById("body");
   status = root.getElementById("status");
+  if (pageAgentConfig) initializePageAgentToggle();
   ["n", "e", "s", "w", "ne", "nw", "se", "sw"].forEach(function (edge) {
     var handle = document.createElement("div");
     handle.className = "resize-handle resize-" + edge;
@@ -289,15 +296,92 @@ function initialize() {
   launcher.addEventListener("pointercancel", endDrag);
   launcher.addEventListener("lostpointercapture", endDrag);
   closeButton.addEventListener("click", close);
-  minimizeButton.addEventListener("click", minimize);
   maximizeButton.addEventListener("click", function () {
     setMaximized(!maximized);
   });
   root.addEventListener("keydown", function (event) {
-    if (event.key === "Escape") close();
+    if (event.key !== "Escape") return;
+    if (pageAgentOpen && event.target === pageAgentToggle) closePageAgent();
+    else close();
   });
   window.addEventListener("message", onMessage);
   window.addEventListener("resize", keepInViewport);
+}
+
+function initializePageAgentToggle() {
+  pageAgentToggle = document.createElement("button");
+  pageAgentToggle.id = "page-agent-toggle";
+  pageAgentToggle.type = "button";
+  pageAgentToggle.textContent = "网页操作";
+  setPageAgentOpen(false);
+  maximizeButton.before(pageAgentToggle);
+  pageAgentToggle.addEventListener("click", function () {
+    if (pageAgentOpen) { closePageAgent(); return; }
+    setPageAgentOpen(true);
+    showPageAgent();
+  });
+}
+
+function importPageAgent() {
+  if (!pageAgentModule) {
+    // A failed import can stay cached in the document's module map.
+    var retry = pageAgentImportRetries ? "?retry=" + pageAgentImportRetries : "";
+    pageAgentModule = import(origin + "/assets/page-agent.js" + retry).catch(function (error) {
+      pageAgentModule = null;
+      pageAgentImportRetries += 1;
+      throw error;
+    });
+  }
+  return pageAgentModule;
+}
+
+async function showPageAgent() {
+  var config = pageAgentConfig;
+  try {
+    if (!pageAgentInstance) {
+      pageAgentToggle.setAttribute("aria-busy", "true");
+      var module = await importPageAgent();
+      if (pageAgentConfig !== config || !pageAgentOpen || pageAgentInstance) return;
+      var agent = module.createPageAgent(config);
+      pageAgentInstance = agent;
+      agent.addEventListener("dispose", function () {
+        if (pageAgentInstance !== agent) return;
+        pageAgentInstance = null;
+        closePageAgent();
+      }, { once: true });
+    }
+    pageAgentInstance.panel.show();
+    pageAgentInstance.panel.wrapper.querySelector("input")?.focus();
+  } catch (error) {
+    if (pageAgentConfig !== config || !pageAgentOpen) return;
+    disposePageAgent();
+    closePageAgent();
+    pageAgentToggle.title = "网页操作初始化失败，点击重试";
+    window.dispatchEvent(new CustomEvent("xpeech:error", { detail: { message: "网页操作初始化失败：" + error.message } }));
+  } finally {
+    if (pageAgentConfig === config) pageAgentToggle.removeAttribute("aria-busy");
+  }
+}
+
+function setPageAgentOpen(open) {
+  pageAgentOpen = open;
+  pageAgentToggle.setAttribute("aria-pressed", String(open));
+  pageAgentToggle.title = open ? "隐藏网页操作" : "显示网页操作";
+  if (!open) pageAgentToggle.removeAttribute("aria-busy");
+}
+
+function closePageAgent() {
+  setPageAgentOpen(false);
+  pageAgentInstance?.panel.hide();
+  void pageAgentInstance?.stop();
+  var button = panel.classList.contains("open") ? pageAgentToggle : launcher;
+  if (!button.hidden) button.focus();
+}
+
+function disposePageAgent() {
+  var agent = pageAgentInstance;
+  pageAgentInstance = null;
+  agent?.dispose();
 }
 
 function clamp(value, min, max) {
@@ -448,7 +532,6 @@ function restore() {
   setMaximized(false);
   if (!panel.classList.contains('open')) open();
 }
-function minimize() { close(); }
 function hideButton() {
   if (launcher) {
     if (drag) endDrag({ pointerId: drag.id, type: "pointercancel" });
@@ -697,6 +780,33 @@ function normalizeSessionMetadata(metadata) {
   }
   return metadata;
 }
+function normalizePageAgent(config) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw new TypeError("Page Agent 配置必须为对象");
+  }
+  if (typeof config.model !== "string" || !config.model.trim() ||
+      typeof config.baseURL !== "string" || !config.baseURL.trim()) {
+    throw new TypeError("启用网页操作必须提供 pageAgent.model 和 pageAgent.baseURL");
+  }
+  var url = new URL(config.baseURL.trim(), window.location.href);
+  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new TypeError("pageAgent.baseURL 必须为有效的 HTTP(S) API 根地址");
+  }
+  if (config.apiKey !== undefined && (typeof config.apiKey !== "string" || !config.apiKey.trim())) {
+    throw new TypeError("pageAgent.apiKey 必须为非空字符串");
+  }
+  return { model: config.model.trim(), baseURL: url.origin + url.pathname.replace(/\/+$/, ""), apiKey: config.apiKey?.trim() };
+}
+function registerPageAgent(config) {
+  pageAgentConfig = normalizePageAgent(config);
+  if (!host) return;
+  if (!pageAgentToggle) {
+    initializePageAgentToggle();
+    return;
+  }
+  disposePageAgent();
+  if (pageAgentOpen) showPageAgent();
+}
 function init(value, senderName, title = "AI 助手", sessionMetadata = {}) {
   if (identityConfigured) throw new Error("init 只能初始化一次，请先调用 destroy() 再设置 JWT");
   var nextSenderName = normalizeSenderName(senderName);
@@ -749,6 +859,10 @@ function destroy() {
   currentSessionMetadata = {};
   channelName = null;
   needsRetry = false;
+  pageAgentToggle = null;
+  pageAgentOpen = false;
+  pageAgentConfig = null;
+  disposePageAgent();
   removeFrame();
   replyListeners.clear();
   chatFileListeners.clear();
@@ -762,7 +876,7 @@ function destroy() {
   normalPanelBounds = null;
   suppressLauncherClick = false;
   if (host) host.remove();
-  host = root = panel = launcher = closeButton = minimizeButton = maximizeButton = body = status = null;
+  host = root = panel = launcher = closeButton = maximizeButton = body = status = null;
 }
 
-export { init, updateJWT, hideButton, showButton, open, close, maximize, restore, minimize, destroy, setInput, addFiles, newConversation, switchConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile, registerFragmentHandler };
+export { init, registerPageAgent, updateJWT, hideButton, showButton, open, close, maximize, restore, close as minimize, destroy, setInput, addFiles, newConversation, switchConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile, registerFragmentHandler };

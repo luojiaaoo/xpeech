@@ -11,10 +11,17 @@ const jwtFor = (sub = 'alice', kid = 'crm', signature = 'signature') =>
 const resultFor = (sub = 'alice', expiresIn = 60) =>
   ({ user_id: sub, expires_in: expiresIn });
 
-async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Response>) {
+type CreatePageAgent = (config: { model: string }) => unknown;
+
+async function runtime(
+  fetcher?: (url: string, init: RequestInit) => Promise<Response>,
+  importPageAgent?: (url: string) => Promise<CreatePageAgent>,
+) {
   const sent: { data: any; origin: string }[] = [];
   const calls: { url: string; init: RequestInit }[] = [];
   const frames: Element[] = [];
+  const buttons: Element[] = [];
+  const events: Event[] = [];
   const listeners = new Map<string, Function[]>();
   const timers = new Map<number, { callback: Function; delay: number }>();
   let timerId = 0;
@@ -37,15 +44,17 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
     classes = new Set<string>();
     classList = { add: (s: string) => this.classes.add(s), remove: (s: string) => this.classes.delete(s), contains: (s: string) => this.classes.has(s) };
     contentWindow = { postMessage: (data: any, origin: string) => sent.push({ data, origin }) };
-    set innerHTML(_value: string) {
-      for (const id of ['panel', 'title', 'launcher', 'close', 'minimize', 'maximize', 'body', 'status']) this.ids.set(id, new Element());
+    set innerHTML(value: string) {
+      for (const [, id] of value.matchAll(/\bid="([^"]+)"/g)) this.ids.set(id, new Element());
       this.ids.get('panel')!.geometry = { left: 564, top: 12, width: 440, height: 700 };
     }
     attachShadow() { return this; }
     getElementById(id: string) { return this.ids.get(id)!; }
     appendChild(child: Element) { this.children.push(child); }
+    before() {}
     remove() { this.removed = true; }
     setAttribute(key: string, value: string) { this.attrs[key] = value; }
+    removeAttribute(key: string) { delete this.attrs[key]; }
     addEventListener(type: string, handler: Function) { this.events[type] = handler; }
     focus() {}
     getBoundingClientRect() {
@@ -69,7 +78,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
     removeEventListener(type: string, handler: Function) {
       listeners.set(type, (listeners.get(type) || []).filter((item) => item !== handler));
     },
-    dispatchEvent(_event: unknown) {},
+    dispatchEvent(event: Event) { events.push(event); },
   };
   const context = vm.createContext({
     window, URL, Error, CustomEvent, AbortController, atob, TextDecoder, File,
@@ -78,6 +87,7 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
       createElement(tag: string) {
         const element = new Element();
         if (tag === 'iframe') frames.push(element);
+        if (tag === 'button') buttons.push(element);
         return element;
       },
     },
@@ -101,11 +111,21 @@ async function runtime(fetcher?: (url: string, init: RequestInit) => Promise<Res
   const module = new vm.SourceTextModule(sdk, {
     context, identifier: 'https://assistant.test/embed.js',
     initializeImportMeta(meta) { meta.url = 'https://assistant.test/embed.js'; },
+    async importModuleDynamically(url) {
+      assert.ok(importPageAgent, 'The SDK must load the plugin only on demand');
+      const createPageAgent = await importPageAgent(url);
+      const plugin = new vm.SyntheticModule(['createPageAgent'], function () {
+        this.setExport('createPageAgent', createPageAgent);
+      }, { context });
+      await plugin.link(() => assert.fail('Unexpected plugin dependency'));
+      await plugin.evaluate();
+      return plugin;
+    },
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { init: Function; updateJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; switchConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function; registerFragmentHandler: Function };
-  return { window, context, frames, calls, hosts, sent, message, listeners, timers, api };
+  const api = module.namespace as { init: Function; registerPageAgent: Function; updateJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; switchConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function; registerFragmentHandler: Function };
+  return { window, context, frames, buttons, events, calls, hosts, sent, message, listeners, timers, api };
 }
 
 test('loading the SDK creates no UI or requests until init and leaves website globals alone', async () => {
@@ -117,7 +137,7 @@ test('loading the SDK creates no UI or requests until init and leaves website gl
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'registerFragmentHandler', 'restore', 'send', 'setInput', 'showButton', 'switchConversation', 'updateJWT']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'registerFragmentHandler', 'registerPageAgent', 'restore', 'send', 'setInput', 'showButton', 'switchConversation', 'updateJWT']);
 });
 
 test('init validates the original JWT without exchanging it and only delivers to its own iframe', async () => {
@@ -145,6 +165,90 @@ test('init validates the original JWT without exchanging it and only delivers to
   assert.equal(app.frames[0].src.includes('alice'), false);
 });
 
+test('registerPageAgent validates model settings without initializing the widget', async () => {
+  const app = await runtime();
+  assert.throws(() => app.api.registerPageAgent({}), /model.*baseURL/);
+  assert.throws(() => app.api.registerPageAgent({ model: 'browser-model', baseURL: 'javascript:void(0)' }), /HTTP\(S\)/);
+  app.api.registerPageAgent({ model: 'browser-model', baseURL: 'https://model.test/v1' });
+  await tick();
+  assert.equal(app.hosts.length, 0);
+  assert.equal(app.calls.length, 0);
+  app.api.destroy();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  assert.equal(app.hosts.length, 1);
+  assert.equal(app.calls.length, 1);
+  assert.equal(app.buttons.length, 0);
+});
+
+test('Page Agent retries a failed import and only opens the latest registered model', async () => {
+  const imports: string[] = [];
+  let resolveImport!: (create: CreatePageAgent) => void;
+  const app = await runtime(undefined, (url) => {
+    imports.push(url);
+    if (imports.length === 1) return Promise.reject(new Error('Plugin unavailable'));
+    return new Promise((resolve) => { resolveImport = resolve; });
+  });
+  app.api.registerPageAgent({ model: 'first', baseURL: '/v1' });
+  app.api.init(jwtFor(), 'Alice');
+  const [toggle] = app.buttons;
+  assert.equal(imports.length, 0);
+  toggle.events.click();
+  await tick();
+  assert.equal(toggle.attrs['aria-pressed'], 'false');
+  assert.equal(toggle.attrs['aria-busy'], undefined);
+  assert.equal(app.events.at(-1)?.type, 'xpeech:error');
+
+  toggle.events.click();
+  assert.equal(toggle.attrs['aria-busy'], 'true');
+  toggle.events.click();
+  assert.equal(toggle.attrs['aria-busy'], undefined);
+  toggle.events.click();
+  app.api.registerPageAgent({ model: 'latest', baseURL: '/v1' });
+  const models: string[] = [];
+  let shown = 0;
+  let stopped = 0;
+  let disposed = 0;
+  resolveImport((config) => {
+    models.push(config.model);
+    return Object.assign(new EventTarget(), {
+      panel: { show: () => { shown++; }, hide() {}, wrapper: { querySelector: () => null } },
+      stop: () => { stopped++; },
+      dispose() { disposed++; this.dispatchEvent(new Event('dispose')); },
+    });
+  });
+  await tick();
+  assert.deepEqual(imports, [
+    'https://assistant.test/assets/page-agent.js',
+    'https://assistant.test/assets/page-agent.js?retry=1',
+  ]);
+  assert.deepEqual(models, ['latest']);
+  assert.equal(shown, 1);
+  assert.equal(toggle.attrs['aria-busy'], undefined);
+  toggle.events.click();
+  assert.equal(stopped, 1);
+  toggle.events.click();
+  assert.equal(shown, 2);
+  assert.deepEqual(models, ['latest']);
+  app.api.destroy();
+  assert.equal(disposed, 1);
+});
+
+test('destroy prevents a pending Page Agent import from opening a panel', async () => {
+  let resolveImport!: (create: CreatePageAgent) => void;
+  const app = await runtime(undefined, () => new Promise((resolve) => { resolveImport = resolve; }));
+  app.api.init(jwtFor(), 'Alice');
+  app.api.registerPageAgent({ model: 'first', baseURL: '/v1' });
+  app.buttons[0].events.click();
+  app.api.destroy();
+  app.api.init(jwtFor(), 'Alice');
+  let created = 0;
+  resolveImport(() => { created++; });
+  await tick();
+  assert.equal(created, 0);
+  assert.equal(app.buttons.length, 1);
+});
+
 test('button and panel visibility are independent and closing preserves the iframe', async () => {
   const app = await runtime();
   app.api.init(jwtFor(), 'Alice');
@@ -163,7 +267,7 @@ test('button and panel visibility are independent and closing preserves the ifra
   assert.equal(app.calls.length, 1);
 });
 
-test('maximize, restore and minimize preserve the iframe and the floating window dimensions', async () => {
+test('maximize, restore and close preserve the iframe and the floating window dimensions', async () => {
   const app = await runtime();
   app.api.init(jwtFor(), 'Alice');
   await tick();
@@ -185,10 +289,14 @@ test('maximize, restore and minimize preserve the iframe and the floating window
   app.listeners.get('resize')!.forEach(handler => handler());
   assert.equal(panel.style.width, '800px');
   assert.equal(panel.style.height, '640px');
-  app.hosts[0].ids.get('minimize')!.events.click();
+  assert.equal(app.hosts[0].ids.has('minimize'), false);
+  app.hosts[0].ids.get('close')!.events.click();
   assert.equal(panel.classes.has('open'), false);
   app.api.open();
   assert.equal(panel.classes.has('maximized'), true);
+  app.api.minimize();
+  assert.equal(panel.classes.has('open'), false);
+  app.api.open();
   app.api.restore();
   assert.equal(panel.style.width, '600px');
   assert.equal(panel.style.height, '500px');

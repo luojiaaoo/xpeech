@@ -50,6 +50,11 @@
     .fragment-chart polyline { fill: none; stroke: #3370ff; stroke-width: 3; stroke-linejoin: round; }
     .fragment-chart circle { fill: #fff; stroke: #3370ff; stroke-width: 3; }
     .test-notice { padding: 16px; border: 1px solid #f2cc7a; border-radius: 9px; background: #fff8e6; color: #775414; }
+    .page-agent-model { margin: 16px 0; }
+    .page-agent-model summary { cursor: pointer; font-weight: 600; }
+    .page-agent-model label, .page-agent-example label { display: block; margin-top: 10px; }
+    .page-agent-example select { width: 100%; padding: 10px 12px; border: 1px solid #dfe5ef; border-radius: 9px; background: white; color: inherit; font: inherit; }
+    .page-agent-example button { margin-top: 12px; }
     @media (max-width: 600px) { main { margin: 24px auto; padding: 16px; } article { padding: 24px; } }
   </style>
 </head>
@@ -62,6 +67,7 @@
     <p id="status" role="status">正在加载聊天组件…</p>
     <div class="demo-tabs" role="tablist" aria-label="演示功能">
       <button id="tab-connection" type="button" role="tab" aria-controls="panel-connection" aria-selected="true">连接</button>
+      <button id="tab-web-test" type="button" role="tab" aria-controls="panel-web-test" aria-selected="false" tabindex="-1">网页测试</button>
       <button id="tab-chat" type="button" role="tab" aria-controls="panel-chat" aria-selected="false" tabindex="-1">对话</button>
       <button id="tab-sessions" type="button" role="tab" aria-controls="panel-sessions" aria-selected="false" tabindex="-1">会话</button>
       <button id="tab-fragments" type="button" role="tab" aria-controls="panel-fragments" aria-selected="false" tabindex="-1">注册片段</button>
@@ -74,7 +80,7 @@
       <h2>连接设置</h2>
       <p class="test-notice"><strong>仅供本地测试：正式接入必须从业务后端获取 JWT，签名密钥只能保存在后端，不能放在前端。</strong>
         此处输入的 Key 会发送到本地演示后端，浏览器不签名。</p>
-      <form id="connection">
+      <form id="connection" data-page-agent-ignore="true">
         <dl>
           <dt><label for="service">聊天前端 URL</label></dt>
           <dd><input id="service" type="url" required placeholder="http://localhost:7939/" disabled></dd>
@@ -88,6 +94,47 @@
           <dt>会话元数据</dt><dd id="metadata">—</dd>
         </dl>
         <button id="connect" type="submit" disabled>连接 / 重新连接</button>
+      </form>
+    </section>
+
+    <section class="demo-panel" id="panel-web-test" role="tabpanel" aria-labelledby="tab-web-test" tabindex="0" hidden>
+      <h2>网页控制测试</h2>
+      <details id="page-agent-model-settings" class="reply-box page-agent-model" data-page-agent-ignore="true">
+        <summary>插件注册</summary>
+        <form id="page-agent-model-form">
+          <label for="page-agent-model">模型名称</label>
+          <input id="page-agent-model" required>
+          <label for="page-agent-base-url">OpenAI 兼容 API 地址</label>
+          <input id="page-agent-base-url" type="url" placeholder="https://model.example.com/v1" required>
+          <label for="page-agent-api-key">API Key（可选）</label>
+          <input id="page-agent-api-key" type="password" autocomplete="off">
+          <p class="file-hint">模型服务需允许当前演示站点跨域访问。</p>
+          <button id="page-agent-enable" type="submit" disabled>启用网页操作</button>
+          <p id="page-agent-model-status" class="file-hint" role="status" hidden></p>
+        </form>
+      </details>
+      <h3>网页操作演示</h3>
+      <p class="file-hint">启用网页操作后，打开聊天并点击标题栏的「网页操作」。输入「联系人填张三，部门选运营，进入下一步，停在提交前」，按 Enter 执行。核对信息后亲自点击「模拟提交」。</p>
+      <form id="page-agent-example" class="reply-box page-agent-example" aria-label="联系人演示表单">
+        <div id="page-agent-edit">
+          <label for="demo-contact">联系人</label>
+          <input id="demo-contact" name="contact" required>
+          <label for="demo-department">部门</label>
+          <select id="demo-department" name="department" required>
+            <option value="">请选择</option>
+            <option>运营</option>
+            <option>客服</option>
+            <option>研发</option>
+          </select>
+          <button id="page-agent-next" type="button">下一步</button>
+        </div>
+        <div id="page-agent-review" hidden>
+          <h3>核对联系人信息</h3>
+          <p id="page-agent-summary"></p>
+          <button id="page-agent-back" type="button" class="secondary">返回修改</button>
+          <button type="submit">模拟提交</button>
+        </div>
+        <p id="page-agent-example-status" class="file-hint" role="status" hidden>已模拟提交，数据仅显示在本页。</p>
       </form>
     </section>
 
@@ -219,6 +266,7 @@
     const connect = document.querySelector('#connect');
     const channel = document.querySelector('#channel');
     const secretKey = document.querySelector('#secret-key');
+    const pageAgentEnable = document.querySelector('#page-agent-enable');
     const latestFragment = document.querySelector('#latest-fragment');
     const syncFragments = document.querySelector('#sync-fragments');
     const syncFiles = document.querySelector('#sync-files');
@@ -231,6 +279,7 @@
     let senderName;
     let assistantTitle;
     let sessionMetadata;
+    let pageAgentConfig;
     let loggedIn = false;
     let connectionVersion = 0;
     let fragmentSessionId = null;
@@ -556,6 +605,8 @@
       // Freeze these test parameters for renewal until the next connection/login.
       const credentials = { channel: channel.value.trim(), secret_key: secretKey.value };
       assistant.init(() => loadJWT(credentials), senderName, assistantTitle, sessionMetadata);
+      const supportsPageAgent = typeof assistant.registerPageAgent === 'function';
+      if (pageAgentConfig && supportsPageAgent) assistant.registerPageAgent(pageAgentConfig);
       const version = connectionVersion;
       assistant.onChatFile(file => {
         if (version !== connectionVersion || !loggedIn) return;
@@ -576,6 +627,8 @@
       chatAttachments.setEnabled(true);
       syncAttachments.setEnabled(true);
       open.disabled = false;
+      pageAgentEnable.disabled = !supportsPageAgent;
+      pageAgentEnable.title = supportsPageAgent ? '' : '当前聊天前端版本不支持网页操作';
       fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = false;
       toggle.textContent = '退出演示登录';
       status.textContent = '演示用户已登录，聊天组件自动获取并续签凭证。';
@@ -590,7 +643,7 @@
         return;
       }
       connectionVersion++;
-      service.disabled = channel.disabled = secretKey.disabled = connect.disabled = true;
+      service.disabled = channel.disabled = secretKey.disabled = connect.disabled = pageAgentEnable.disabled = true;
       open.disabled = fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = toggle.disabled = true;
       targetSession.disabled = switchConversation.disabled = true;
       loggedIn = false;
@@ -632,6 +685,47 @@
       document.querySelector('#connection').addEventListener('submit', event => {
         event.preventDefault();
         void connectService();
+      });
+      const pageAgentExample = document.querySelector('#page-agent-example');
+      const pageAgentModelStatus = document.querySelector('#page-agent-model-status');
+      document.querySelector('#page-agent-model-form').addEventListener('submit', event => {
+        event.preventDefault();
+        if (pageAgentEnable.disabled) return;
+        const modelConfig = {
+          model: document.querySelector('#page-agent-model').value,
+          baseURL: document.querySelector('#page-agent-base-url').value,
+          apiKey: document.querySelector('#page-agent-api-key').value.trim() || undefined,
+        };
+        try {
+          assistant.registerPageAgent(modelConfig);
+        } catch (error) {
+          pageAgentModelStatus.textContent = error.message;
+          pageAgentModelStatus.hidden = false;
+          return;
+        }
+        pageAgentConfig = modelConfig;
+        pageAgentModelStatus.hidden = true;
+        document.querySelector('#page-agent-model-settings').open = false;
+        pageAgentExample.scrollIntoView({ block: 'nearest' });
+      });
+      const pageAgentEdit = document.querySelector('#page-agent-edit');
+      const pageAgentReview = document.querySelector('#page-agent-review');
+      const pageAgentExampleStatus = document.querySelector('#page-agent-example-status');
+      document.querySelector('#page-agent-next').addEventListener('click', () => {
+        if (!pageAgentExample.reportValidity()) return;
+        const values = new FormData(pageAgentExample);
+        document.querySelector('#page-agent-summary').textContent = `${values.get('contact')} · ${values.get('department')}`;
+        pageAgentEdit.hidden = true;
+        pageAgentReview.hidden = false;
+      });
+      document.querySelector('#page-agent-back').addEventListener('click', () => {
+        pageAgentReview.hidden = pageAgentExampleStatus.hidden = true;
+        pageAgentEdit.hidden = false;
+        document.querySelector('#demo-contact').focus();
+      });
+      pageAgentExample.addEventListener('submit', event => {
+        event.preventDefault();
+        if (!pageAgentReview.hidden) pageAgentExampleStatus.hidden = false;
       });
       open.addEventListener('click', () => assistant.open());
       registerFragment.addEventListener('click', registerFragmentDemo);
@@ -766,7 +860,7 @@
           resetFiles();
           resetSessions();
           resetFragmentDemo();
-          open.disabled = true;
+          open.disabled = pageAgentEnable.disabled = true;
           fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = true;
           toggle.textContent = '重新登录演示';
           status.textContent = '已退出演示登录，聊天组件已销毁。';

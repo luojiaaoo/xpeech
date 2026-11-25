@@ -119,6 +119,7 @@ assistant.init(jwtOrProvider, senderName, title = "AI 助手", sessionMetadata =
 | 方法 | 用途 |
 | --- | --- |
 | `open()` / `close()` | 展开 / 收起窗口，保留当前对话 |
+| `registerPageAgent({ model, baseURL, apiKey })` | 注册网页操作插件，在聊天标题栏显示「网页操作」开关，`apiKey` 可选 |
 | `hideButton()` / `showButton()` | 隐藏 / 显示浮动按钮，不改变窗口展开状态 |
 | `destroy()` | 移除组件，清理内存凭证；可重复调用，已签发 JWT 到期前仍有效 |
 
@@ -132,6 +133,32 @@ document.querySelector("#open-assistant").addEventListener("click", () => {
 ```
 
 关闭再打开、自动续签均保留对话；点击「新建会话」、销毁后重建或刷新页面会开启新对话，不恢复旧消息展示。旧会话的后端记录不会被删除。
+
+## 启用网页操作
+
+调用 `registerPageAgent()` 启用网页操作。可以在 `init()` 前后注册。`model` 和 `baseURL` 必填，组件在首次点击「网页操作」时加载 Page Agent。`baseURL` 为 OpenAI 兼容 API 的根地址，组件会请求其下的 `/chat/completions`。模型须支持工具调用。 [Page Agent 接入说明](https://github.com/alibaba/page-agent/blob/main/docs/README-zh.md)
+
+```javascript
+assistant.init(loadAssistantJWT, user.display_name, "客服助手", { source: "portal" });
+assistant.registerPageAgent({
+  model: "your-model-name",
+  baseURL: "https://model.example.com/v1",
+});
+```
+
+浏览器直连模型服务时，可传浏览器可用的 `apiKey`，模型服务需允许业务站点跨域请求。网页操作运行于业务页面，任务和可见页面内容会发送到配置的模型服务。请勿将长期模型密钥放到初始化代码里。
+
+重复注册会替换模型配置并停止当前网页任务。调用 `destroy()` 会清除注册和模型配置，下次登录时可重新注册。
+
+网页操作直接适配现有控件，可浏览只读链接、切换标签页、查询和筛选、填写常用输入框、选择选项及进入本地步骤。插件根据控件文字、无障碍名称和表单语义拦截可识别的保存、提交、删除等动作。原生表单仅放行可识别的 GET 查询和本地对话框操作。涉及站点自定义写入或自动保存时，助手根据页面提示判断，并将可能写入后台的步骤交由用户操作。
+
+```html
+<label>联系人 <input name="contact"></label>
+<button type="button">下一步</button>
+<button type="submit">提交</button>
+```
+
+打开悬浮聊天后，可用标题栏的「网页操作」开关显示或收起 Page Agent 原生面板。面板打开后，输入任务并按 Enter 执行。两个窗口可以同时打开。收起网页操作面板会停止当前网页任务，已填写的内容保留在业务页面上，提交由用户亲自点击。
 
 ## 部署与排错
 

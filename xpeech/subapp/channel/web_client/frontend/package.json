@@ -20,9 +20,11 @@
     "@js-preview/excel": "^1.7.14",
     "antd": "^6.6.1",
     "dayjs": "^1.11.19",
+    "page-agent": "1.12.4",
     "prismjs": "^1.30.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/prismjs": "^1.26.6",

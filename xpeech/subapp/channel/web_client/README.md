@@ -168,7 +168,7 @@ function onLogout() {
 | `assistant.close()` | 收起聊天窗口，保留 iframe、聊天内容和会话 |
 | `assistant.maximize()` | 展开并最大化聊天窗口 |
 | `assistant.restore()` | 还原为浮动窗口并展开 |
-| `assistant.minimize()` | 最小化为悬浮按钮，保留 iframe 和会话 |
+| `assistant.minimize()` | `close()` 的兼容别名，收起聊天窗口并保留会话 |
 | `assistant.setInput(text, { timeoutMs? } = {})` | 替换当前对话输入框内容（允许空字符串清空），不自动发送；返回 `Promise<{ session_id }>` |
 | `assistant.addFiles(files, { timeoutMs? } = {})` | 将 `File[]` 追加到当前对话框的待发送附件，显示附件列表，不自动上传或发送；返回 `Promise<{ session_id }>` |
 | `assistant.newConversation({ timeoutMs? } = {})` | 新建会话，清空对话框及草稿，等待新输入框就绪后返回 `Promise<{ session_id }>` |
