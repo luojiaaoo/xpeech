@@ -14,6 +14,7 @@
 | `tools.py` | 工具调用卡片的创建、按调用 ID 更新、结果着色和流式收尾 |
 | `questions.py` | 问题卡片发送、回调提交、重复点击保护、执行结果更新 |
 | `schedule.py` | PostgreSQL 任务持久化、到期调用 `/chat_sync`、直接发送结果 |
+| `jobstore.py` | 写入可直接查询的任务详情，启动时回填已有任务 |
 | `formatting.py` | 聊天事件展示规则、Markdown 转义、内容截断 |
 | `cards.py` | 表单、执行确认和定时任务结果的纯卡片构建函数 |
 | `config.py` | 渠道常量 |

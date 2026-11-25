@@ -10,8 +10,10 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 import pytest_asyncio
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pydantic import ValidationError
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from xpeech.agent.server.api import app as backend_app
 from xpeech.agent.tools.schedule import client as tool_client
@@ -23,8 +25,8 @@ from xpeech.agent.tools.schedule.tool import (
     feishu_schedule_once,
 )
 from xpeech.agent.tools.schedule.tool_args import (
-    FeishuScheduleCancelArgs,
     FeishuScheduleArgs,
+    FeishuScheduleCancelArgs,
     FeishuScheduleCronArgs,
     FeishuScheduleOnceArgs,
 )
@@ -47,6 +49,17 @@ def payload(**updates):
         "session_metadata": {"open_id": "ou_alice"},
         **updates,
     }
+
+
+def stored_task(engine, job_id):
+    with engine.connect() as connection:
+        return connection.execute(
+            text(
+                "SELECT user_id, sender_name, schedule_value, prompt "
+                "FROM feishu_scheduled_jobs WHERE id = :job_id"
+            ),
+            {"job_id": job_id},
+        ).mappings().one_or_none()
 
 
 @pytest_asyncio.fixture
@@ -90,11 +103,14 @@ def test_trigger_validation(values):
 
 
 @pytest.mark.asyncio
-async def test_management_json_and_ownership(api):
-    created = await api.post("/schedules", headers=headers(), json=payload())
+async def test_management_json_and_ownership(api, running):
+    created = await api.post("/schedules", headers=headers(), json=payload(sender_name="张三", prompt="提醒我提交周报"))
     assert created.status_code == 200
     task = created.json()["task"]
-    assert task["prompt"] == "task"
+    assert task["prompt"] == "提醒我提交周报"
+    assert stored_task(running.engine, task["job_id"]) == {
+        "user_id": "alice", "sender_name": "张三", "schedule_value": "0 9 * * *", "prompt": "提醒我提交周报",
+    }
     assert datetime.fromisoformat(task["next_run_time"]).tzinfo is not None
     assert (await api.get("/schedules", headers=headers())).json() == {"tasks": [task]}
     assert (await api.get("/schedules", headers=headers("bob"))).json() == {"tasks": []}
@@ -102,6 +118,7 @@ async def test_management_json_and_ownership(api):
     assert (await api.delete(url, headers=headers("bob"))).status_code == 404
     cancelled = await api.delete(url, headers=headers())
     assert cancelled.json() == {"job_id": task["job_id"], "cancelled": True}
+    assert stored_task(running.engine, task["job_id"]) is None
     assert (await api.delete(url, headers=headers())).status_code == 404
     assert (await api.get("/schedules", headers=headers())).json() == {"tasks": []}
 
@@ -161,6 +178,50 @@ async def test_persistence_skips_downtime_and_ignores_old_table(running):
     assert restored.get_job(once.id) is None
     assert restored.get_job(recurring.id).next_run_time > future
     assert inspect(running.engine).get_table_names() == ["feishu_scheduled_jobs"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("database", ["sqlite", "postgres"])
+async def test_upgrade_backfills_readable_details_from_legacy_jobs(database, request, tmp_path):
+    if database == "postgres":
+        request.getfixturevalue("postgres_database")
+        from xpeech.utils.database import get_database_engine
+
+        engine = get_database_engine()
+    else:
+        engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
+
+    legacy_scheduler = AsyncIOScheduler(jobstores={
+        "default": SQLAlchemyJobStore(engine=engine, tablename="feishu_scheduled_jobs"),
+    })
+    legacy_scheduler.start(paused=True)
+    run_at = datetime.now(legacy_scheduler.timezone) + timedelta(days=1)
+    details = {
+        "user_id": "00042", "sender_name": "张三", "schedule_value": run_at.isoformat(), "prompt": "明天提醒我\n提交周报",
+    }
+    kwargs = {"job_id": "legacy-job", "session_metadata": {"open_id": "ou_alice"}, "schedule_type": "run_at", **details}
+    try:
+        legacy_scheduler.add_job(
+            schedule.run_feishu_background_task, "date", run_date=run_at, id="legacy-job",
+            kwargs=kwargs,
+        )
+    finally:
+        legacy_scheduler.shutdown(wait=False)
+        await asyncio.sleep(0)
+
+    async with httpx.AsyncClient() as client:
+        runtime = schedule.FeishuScheduleRuntime("http://backend.test", client, SimpleNamespace())
+        try:
+            restored = schedule.start_background_scheduler(engine, runtime=runtime).get_job("legacy-job")
+            assert restored.next_run_time == run_at
+            assert restored.kwargs == kwargs
+            assert stored_task(engine, "legacy-job") == details
+            assert set(details) | {"id", "next_run_time", "job_state"} == {
+                column["name"] for column in inspect(engine).get_columns("feishu_scheduled_jobs")
+            }
+        finally:
+            await schedule.stop_background_scheduler()
+            engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -324,6 +385,7 @@ async def test_one_time_job_actually_runs_and_is_removed(running):
     )
     await asyncio.wait_for(sent.wait(), timeout=5)
     assert scheduler.get_job(job.id) is None
+    assert stored_task(running.engine, job.id) is None
     assert "result" in str(running.channel.send.await_args)
 
 
@@ -389,6 +451,7 @@ def test_creation_requires_exactly_one_trigger(values):
 
 def test_trigger_whitespace_and_weekday_semantics():
     from zoneinfo import ZoneInfo
+
     from xpeech.agent.tools.schedule.tool_args import parse_schedule_cron
 
     assert FeishuScheduleCreateRequest(**payload(run_at=" ", cron=" 0  9 * * mon-fri ")).cron == "0 9 * * mon-fri"

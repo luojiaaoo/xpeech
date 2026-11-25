@@ -12,7 +12,6 @@ from uuid import uuid4
 
 import httpx
 from apscheduler.job import Job
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from loguru import logger
@@ -24,6 +23,7 @@ from ....utils.channel_jwt import UserTokenParams, create_token
 from .cards import build_feishu_background_task_card
 from .channel import XpeechFeishuChannel
 from .delivery import ensure_send_success
+from .jobstore import FeishuJobStore
 
 SCHEDULED_TASK_PROMPT_PREFIX = (
     "## 定时任务运行说明\n\n"
@@ -101,7 +101,7 @@ def start_background_scheduler(
     if _scheduler is not None and _scheduler.running:
         return _scheduler
 
-    jobstore = SQLAlchemyJobStore(engine=engine, tablename="feishu_scheduled_jobs")
+    jobstore = FeishuJobStore(engine)
     scheduler = AsyncIOScheduler(
         jobstores={"default": jobstore},
         event_loop=event_loop,

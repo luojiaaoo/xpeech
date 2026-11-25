@@ -651,7 +651,7 @@ YAML 包含本轮用户消息、工具调用、工具结果和最终回答，不
 大屏的会话查询结果支持逐条下载 YAML。
 
 对话记录、Web 用户与会话、飞书令牌的建表和业务读写统一使用 SQLModel；
-定时任务保留 APScheduler 自带的 SQLAlchemyJobStore，所有服务统一读取 `conf.toml` 的
+定时任务使用扩展了可查询字段的 APScheduler SQLAlchemyJobStore，所有服务统一读取 `conf.toml` 的
 `[database]` 配置，使用同一个 PostgreSQL 数据库。同步服务使用 `sqlmodel.create_engine` 和
 `Session`，异步服务使用异步 engine 和 SQLModel `AsyncSession`，驱动为 psycopg 3。
 同步与异步连接统一显式使用 `READ COMMITTED`（读已提交）隔离级别。
@@ -719,6 +719,17 @@ XPEECH_TEST_DATABASE_URL='postgresql://test_user:test_password@127.0.0.1:5432/xp
 - 时间字段必填且不能为 `null`、空字符串或纯空白；不要向工具传入另一种任务的时间字段。
 
 飞书渠道启动时读取 `[database]` 指定的 PostgreSQL 数据库中的 `feishu_scheduled_jobs` 表。
+表中可直接查询 `user_id`（飞书工号）、`sender_name`（创建时的显示名）、
+`schedule_value`（cron 表达式或单次任务的 ISO 8601 时间）和 `prompt`（原始任务提示词）。
+飞书渠道启动时自动为已有任务表补列，并从任务状态回填。可用以下 SQL 查看创建者、任务内容和下次运行时间。
+
+```sql
+SELECT id, user_id, sender_name, schedule_value, prompt,
+       to_timestamp(next_run_time) AT TIME ZONE 'Asia/Shanghai' AS next_run_at
+FROM feishu_scheduled_jobs
+ORDER BY next_run_time;
+```
+
 backend 通过 `api --feishu-url` 管理任务，飞书通过 `feishu --chat-url` 调用 `/chat_sync` 执行。
 Compose 将后者设置为 Nginx 地址。
 
