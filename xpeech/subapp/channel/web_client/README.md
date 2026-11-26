@@ -174,7 +174,7 @@ function onLogout() {
 | `assistant.newConversation({ timeoutMs? } = {})` | 新建会话，清空对话框及草稿，等待新输入框就绪后返回 `Promise<{ session_id }>` |
 | `assistant.switchConversation(session_id, { timeoutMs? } = {})` | 切换到指定会话，等待目标会话就绪后返回 `Promise<{ session_id }>` |
 | `assistant.send({ timeoutMs? } = {})` | 发送当前输入框的文字及待发送附件，消息与流式回复显示在对话框，提交后返回 `Promise<{ session_id }>` |
-| `assistant.chatSync(text, { files?, timeoutMs? } = {})` | 在当前会话后台运行，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id: string, fragments: string[], files: string[] }>` |
+| `assistant.chatSync(text, { files?, timeoutMs? } = {})` | 在当前会话后台运行，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id: string, text: string, fragments: string[], files: string[] }>` |
 | `assistant.downloadFile(path, { timeoutMs? } = {})` | 按工作区路径下载文件，自动携带当前 JWT 并触发浏览器保存，返回 `Promise<{ session_id }>` |
 | `assistant.getFile(path, { timeoutMs? } = {})` | 获取文件二进制，返回 `Promise<File>`，包含文件名和 MIME 类型，供主站 JS 处理，不触发浏览器保存 |
 | `assistant.onReply(callback)` | 每次 `fragment` 工具调用回传 `{ session_id, text }`，返回取消订阅函数 |
@@ -299,20 +299,20 @@ await assistant.chatSync('总结这些数据', {
 
 有附件时允许 `text` 为空字符串；文本和附件不能同时为空。
 
-`chatSync()` 只返回当前嵌入会话的 `session_id`、`fragment` 工具调用的 `text` 参数列表
-和 `send_file` 指定的文件路径列表，不返回原始事件：
+`chatSync()` 返回当前嵌入会话的 `session_id`、本次执行最后一条助手正文 `text`、
+`fragment` 工具调用的文本列表 `fragments` 和 `send_file` 指定的文件路径列表 `files`。
 
 ```javascript
-const { session_id, fragments, files } = await assistant.chatSync('生成并发送报告，另外将摘要作为 text 调用 fragment', {
+const { session_id, text, fragments, files } = await assistant.chatSync('生成并发送报告，另外将摘要作为 text 调用 fragment', {
   files: Array.from(fileInput.files),
 });
-console.log(session_id, fragments);
+console.log(session_id, text, fragments);
 for (const path of files) {
   await assistant.downloadFile(path);
 }
 ```
 
-两个列表都按事件中的出现顺序返回，未产生对应内容时为 `[]`。
+`text` 保留正文原始格式，没有助手正文时为 `""`。两个列表都按事件中的出现顺序返回，未产生对应内容时为 `[]`。
 可通过 `getFile(path)` 单独获取文件内容。
 输入选项的 `files` 仍是待上传的 `File[]`，与返回的文件路径列表用途不同。
 
@@ -365,10 +365,10 @@ SDK 本身收到通知不会自动下载；调用方决定如何处理。`destro
 `chatSync()` 使用当前 JWT、发送者名称及初始化时的 `sessionMetadata`，
 保留输入框草稿和待发送附件，只携带调用时通过 `files` 显式传入的附件。它使用后端的非交互模式，不等待用户填写问题表单；
 后端为每次同步执行生成独立会话，不读取也不写入对话历史。
-片段和文件路径通过 Promise 返回，不渲染到对话框，窗口收起时也可执行。
+最终助手正文、片段和文件路径通过 Promise 返回，不渲染到对话框，窗口收起时也可执行。
 需要模型输出 JSON 对象时，在消息文本中加入完整标记 `::请严格以JSON格式回复::`，例如
 `assistant.chatSync("总结当前订单的风险。::请严格以JSON格式回复::")`。仅本次请求生效，需模型配置支持；
-不支持时返回 HTTP 400。该标记控制模型回复的格式，不改变 `chatSync()` 的返回字段。
+不支持时返回 HTTP 400。启用后，`text` 中的正文仍以字符串返回，调用方可用 `JSON.parse(text)` 解析。
 同步调用可与对话框手动聊天、其他同步调用并发执行，互不阻塞。
 请求失败或后台执行出错时，Promise 会以错误拒绝。
 

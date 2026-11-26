@@ -804,7 +804,7 @@ test('interaction requests wait for the composer and correlate responses from th
   app.message({ ...inputResponse, session_id: 'other' });
   await tick();
   assert.equal(settled, false);
-  const syncResult = { session_id: 'first', fragments: [], files: [] };
+  const syncResult = { session_id: 'first', text: '{"answer":"完成"}', fragments: [], files: [] };
   app.message({
     type: 'xpeech:response', request_id: commands[1].request_id, session_id: 'first',
     result: { ...syncResult, events: [{ event: 'assistant', context: 'not part of the SDK contract' }] },
@@ -815,7 +815,7 @@ test('interaction requests wait for the composer and correlate responses from th
   app.api.destroy();
 });
 
-test('concurrent sync results return their own fragments and file paths without file notifications', async () => {
+test('concurrent sync results return their own text, fragments and file paths without file notifications', async () => {
   const app = await runtime();
   const dispatched: any[] = [];
   app.window.dispatchEvent = (event: any) => { dispatched.push(event); };
@@ -830,26 +830,32 @@ test('concurrent sync results return their own fragments and file paths without 
   const second = app.api.chatSync('second');
   const secondRequest = app.sent.at(-1)!.data;
   app.message({ type: 'xpeech:response', session_id: 'first', request_id: secondRequest.request_id,
-    result: { session_id: 'first', fragments: ['second fragment'], files: ['second.txt'] } });
+    result: { session_id: 'first', text: 'second answer', fragments: ['second fragment'], files: ['second.txt'] } });
   app.message({ type: 'xpeech:response', session_id: 'first', request_id: firstRequest.request_id,
-    result: { session_id: 'first', fragments: ['first fragment'], files: ['reports/报告 #1 & 2.pdf', 'other.bin'] } });
+    result: { session_id: 'first', text: 'first answer', fragments: ['first fragment'], files: ['reports/报告 #1 & 2.pdf', 'other.bin'] } });
   assert.deepEqual(structuredClone(await first), {
-    session_id: 'first', fragments: ['first fragment'], files: ['reports/报告 #1 & 2.pdf', 'other.bin'],
+    session_id: 'first', text: 'first answer', fragments: ['first fragment'], files: ['reports/报告 #1 & 2.pdf', 'other.bin'],
   });
-  assert.deepEqual(structuredClone(await second), { session_id: 'first', fragments: ['second fragment'], files: ['second.txt'] });
+  assert.deepEqual(structuredClone(await second), {
+    session_id: 'first', text: 'second answer', fragments: ['second fragment'], files: ['second.txt'],
+  });
   assert.equal(chatFiles.length, 0);
   assert.equal(dispatched.filter(event => event.type.includes('file')).length, 0);
   app.api.destroy();
 });
 
-test('sync rejects a raw event response or raw events placed in a result list', async () => {
+test('sync rejects responses with invalid text or raw events', async () => {
   const app = await runtime();
   app.api.init(jwtFor(), 'Alice');
   await tick();
   app.message({ type: 'xpeech:ready' });
   app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
   const events = [{ event: 'assistant', context: 'answer' }];
-  for (const result of [events, { session_id: 'first', fragments: events, files: [] }]) {
+  for (const result of [
+    events,
+    { session_id: 'first', text: 'answer', fragments: events, files: [] },
+    { session_id: 'first', text: events, fragments: [], files: [] },
+  ]) {
     const pending = assert.rejects(app.api.chatSync('hello'), /无效的同步聊天响应/);
     app.message({
       type: 'xpeech:response', session_id: 'first', request_id: app.sent.at(-1)!.data.request_id, result,
@@ -881,7 +887,7 @@ test('sync attachments are snapshotted while queued and permit file-only request
   }
   await assert.rejects(app.api.chatSync(' ', { files: [] }), /不能为空/);
   app.message({ type: 'xpeech:response', session_id: 'first', request_id: request.request_id,
-    result: { session_id: 'first', fragments: [], files: [] } });
+    result: { session_id: 'first', text: '', fragments: [], files: [] } });
   await pending;
   app.api.destroy();
 });
@@ -1292,7 +1298,7 @@ test('timed out requests are discarded, renewal preserves active requests, and d
   await tick();
   app.message({ type: 'xpeech:authenticated' });
   app.message({ type: 'xpeech:response', session_id: 'first', request_id: request.request_id,
-    result: { session_id: 'first', fragments: [], files: [] } });
+    result: { session_id: 'first', text: '', fragments: [], files: [] } });
   assert.equal((await result).fragments.length, 0);
   app.api.destroy();
   // Fake timers do not automatically remove themselves on firing.

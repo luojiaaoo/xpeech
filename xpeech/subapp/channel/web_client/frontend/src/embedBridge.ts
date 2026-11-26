@@ -80,15 +80,17 @@ export function postChatEvent(sessionId: string, event: ChatEvent) {
 }
 
 function collectSyncResult(sessionId: string, events: ChatEvent[]) {
+  let finalText = '';
   const fragments: string[] = [];
   const files: string[] = [];
   for (const event of events) {
     if (event.event === 'error') throw new Error(event.context || '同步交互失败');
+    if (event.event === 'assistant' && typeof event.context === 'string') finalText = event.context;
     const path = filePath(event);
     if (path !== undefined) files.push(path);
     for (const text of fragmentTexts(event)) fragments.push(text);
   }
-  return { session_id: sessionId, fragments, files };
+  return { session_id: sessionId, text: finalText, fragments, files };
 }
 
 /** Mounted only after authentication and the conversation composer are ready. */

@@ -136,10 +136,16 @@ function chatSync(text, options) {
     function isStringList(values) {
       return Array.isArray(values) && Array.from(values).every(function (value) { return typeof value === 'string'; });
     }
-    if (!result || typeof result.session_id !== 'string' || !isStringList(result.fragments) || !isStringList(result.files)) {
+    if (!result || typeof result.session_id !== 'string' || typeof result.text !== 'string'
+        || !isStringList(result.fragments) || !isStringList(result.files)) {
       throw new Error('无效的同步聊天响应');
     }
-    return { session_id: result.session_id, fragments: Array.from(result.fragments), files: Array.from(result.files) };
+    return {
+      session_id: result.session_id,
+      text: result.text,
+      fragments: Array.from(result.fragments),
+      files: Array.from(result.files),
+    };
   });
 }
 function downloadFile(path, options) { return requestInteraction('downloadFile', path, options); }

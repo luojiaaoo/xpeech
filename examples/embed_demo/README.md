@@ -11,7 +11,7 @@
 | 对话 | `setInput()`、`addFiles()`、`send()` 和最新的 `onReply()` 片段通知 |
 | 会话 | `newConversation()` 和 `switchConversation()` |
 | 注册片段 | `registerFragmentHandler()`、填入并发送测试提示词、在主页面绘制折线图 |
-| 同步 | `chatSync()` 的独立输入、附件、返回片段和文件 |
+| 同步 | `chatSync()` 的独立输入、附件、返回正文、片段和文件 |
 | 文件 | 对话框文件通知 `onChatFile()` 和按路径下载 |
 | 日志 | 片段通知、同步结果和操作记录 |
 

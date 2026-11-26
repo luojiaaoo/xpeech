@@ -140,7 +140,7 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
   ]);
   const sync = sent.find(item => item.data.type === 'xpeech:response' && item.data.request_id === 'sync-1');
   assert.deepEqual(structuredClone(sync.data.result), {
-    session_id: 'first', fragments: ['结果片段'], files: ['reports/sync.pdf'],
+    session_id: 'first', text: '完成', fragments: ['结果片段'], files: ['reports/sync.pdf'],
   });
   const fragments = sent.filter(item => item.data.type === 'xpeech:reply');
   assert.deepEqual(structuredClone(fragments.map(item => item.data)), [

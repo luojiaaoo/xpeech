@@ -29,7 +29,7 @@ test('iframe bridge validates parent, session and payload and correlates sync re
   const drafts: string[] = [];
   const calls: any[] = [];
   const events = [
-    { event: 'assistant', context: 'answer' },
+    { event: 'assistant', context: '正在准备报告' },
     { event: 'tool_call', context: JSON.stringify([
       { name: 'fragment', arguments: { text: '  第一段\n' } },
       { name: 'shell', arguments: { text: 'ignored' } },
@@ -42,6 +42,9 @@ test('iframe bridge validates parent, session and payload and correlates sync re
     { event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: '第二段' } }]) },
     { event: 'send_file', context: '' },
     { event: 'send_file', context: 'second.txt' },
+    { event: 'thinking', context: 'internal reasoning' },
+    { event: 'assistant', context: '  {"summary":"报告已完成"}\n' },
+    { event: 'token_usage', context: '{}' },
   ];
   const dispose = app.api.connectEmbedBridge('first', {
     setInput(text: string) { drafts.push(text); },
@@ -64,6 +67,7 @@ test('iframe bridge validates parent, session and payload and correlates sync re
   assert.equal(app.sent.at(-1).data.request_id, '1');
   assert.deepEqual(structuredClone(app.sent.at(-1).data.result), {
     session_id: 'first',
+    text: '  {"summary":"报告已完成"}\n',
     fragments: ['  第一段\n', '', '第二段'],
     files: ['reports/报告 #1 & 2.pdf', 'second.txt'],
   });
@@ -115,7 +119,7 @@ test('iframe bridge forwards binary attachments and rejects invalid files', asyn
   await app.message(request);
   assert.equal(calls[0].text, '');
   assert.equal(calls[0].options.files[0], file);
-  assert.deepEqual(structuredClone(app.sent.at(-1).data.result), { session_id: 'first', fragments: [], files: [] });
+  assert.deepEqual(structuredClone(app.sent.at(-1).data.result), { session_id: 'first', text: '', fragments: [], files: [] });
   for (const files of [null, file, ['file.txt'], [new Blob(['text'])], new Array(1)]) {
     await app.message({ ...request, text: 'hello', files });
     assert.match(app.sent.at(-1).data.error, /files/);
@@ -129,6 +133,7 @@ test('sync error events reject the interaction instead of returning a partial re
   const dispose = app.api.connectEmbedBridge('first', {
     async chatSync() {
       return [
+        { event: 'assistant', context: 'partial answer' },
         { event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: 'partial' } }]) },
         { event: 'error', context: 'sync failed' },
       ];
