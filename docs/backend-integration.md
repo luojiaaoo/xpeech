@@ -79,7 +79,7 @@ secret_key = "replace-with-a-distinct-crm-secret-at-least-32-characters"
 
 `jwt.secret_key` 仅供 backend、飞书任务 API 等内部服务互信。内部 JWT 不带 `kid` 或 `sub`，不能调用本文的聊天、答题、文件、技能接口；`/statistics` 及其子接口、飞书内部任务管理接口也不属于外部通道的权限范围。
 
-通道名就是 JWT header 的 `kid`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内建技能、用户工作区技能与 MCP 使用 `filter` 过滤表达式：省略 `filter` 的资源为公共资源，一律展示或注册；配置 `filter` 的资源仅在表达式求值为真时可见。表达式为 Python 布尔表达式极小子集，内置 `channel("...")`（匹配通道名）与 `org("...")`（匹配组织前缀）两个短名函数，服务端按白名单解析求值，不使用 eval。
+通道名就是 JWT header 的 `kid`，由服务端按验签后的 `kid` 读取，接入方不能通过 payload、请求头或元数据覆盖。内置技能与 MCP 支持 `filter` 过滤表达式。省略配置的资源为公共资源，配置了表达式的资源仅在求值为真时可见。表达式支持 `channel("...")` 匹配通道名、`org("...")` 匹配组织前缀、`profile("...")` 匹配本次聊天选择的资源配置名称。
 
 `org()` 依赖服务端通过 `[organization].command_template` 查询当前已鉴权 `user_id` 的组织字符串，使用 stdout 作为组织值。命令必须包含 `${user_id}` 或 `$user_id`，默认超时 10 秒；JWT 或请求元数据不能覆盖组织。无查询命令、查询失败或空结果时组织视为未知，`org()` 不匹配任何前缀。过滤表达式的完整语法与配置示例见 README。
 
@@ -192,11 +192,14 @@ x-sender-name: %E5%BC%A0%E4%B8%89
 | --- | --- | --- | --- |
 | `content` | 是 | — | **JSON 字符串**，文本块列表，例如 `[{"text":"你好"},{"text":"第二段"}]`；目前仅支持文本块；文本中加入完整标记 `::请严格以JSON格式回复::` 可启用 JSON 输出，见第 3.5 节 |
 | `session_metadata` | 否 | `"{}"` | **JSON 字符串**，元数据对象，例如 `{"sender_id":"u-123"}`；值请使用字符串 |
+| `profile` | 否 | 空 | 本次聊天选择的资源配置名称。例如传入 `sales`，资源配置中的 `profile("sales")` 即为真。区分大小写，每次请求单独传入 |
 | `files` | 否 | 空 | multipart 文件字段，可重复多个；附件保存到用户工作区的 `attachments/YYYY-MM-DD/` 下，重名自动加序号 |
 
 `content`、`session_metadata` 是表单里的字符串，不能把整个请求发送为 `application/json`。非法 JSON 返回 `422`；`session_metadata` 必须为对象。渠道由 JWT `kid` 决定，元数据中的 `channel` 键会被丢弃。
 
 消息时间由服务端记录，当前接口不提供 `timestamp` 表单参数。
+
+例如，MCP 和内置 Skill 都可以使用 `channel("crm") and org("公司/销售/") and profile("sales")` 作为过滤表达式。请求须使用 CRM 通道签发的 JWT，并在表单里传入 `-F 'profile=sales'`。服务端通过 `[organization].command_template` 查询用户组织，只有返回值以 `公司/销售/` 开头时才满足组织条件。
 
 最小请求：
 

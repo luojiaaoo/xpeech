@@ -214,6 +214,7 @@ def create_proxy_router(
         sender_name: Annotated[str | None, Header(alias="x-sender-name", min_length=1)] = None,
         session_metadata: Annotated[str, Form()] = "{}",
         files: Annotated[list[UploadFile] | None, File()] = None,
+        profile: Annotated[str | None, Form(description="本次聊天选择的资源配置名称")] = None,
     ):
         sender_name = _validated_sender_name(user, sender_name)
         try:
@@ -251,6 +252,7 @@ def create_proxy_router(
                 json.dumps(metadata, ensure_ascii=False),
                 str(URL(backend_url) / "chat_sync"),
                 files=upload_data,
+                profile=profile,
             )
             return Response(
                 upstream.content,
@@ -266,6 +268,7 @@ def create_proxy_router(
             str(URL(backend_url) / "chat"),
             files=upload_data,
             session_id=session_id,
+            profile=profile,
         )
         upstream = chat_stream.response
         if upstream.status_code >= 400:
@@ -362,6 +365,9 @@ def create_proxy_router(
                 metadata = payload.get("session_metadata", {})
                 if not isinstance(metadata, dict):
                     raise HTTPException(422, "session_metadata 必须是 JSON 对象")
+                profile = payload.get("profile")
+                if profile is not None and not isinstance(profile, str):
+                    raise HTTPException(422, "profile 必须是字符串")
                 file_payloads = payload.get("files", [])
                 if not isinstance(file_payloads, list):
                     raise HTTPException(422, "files 必须是数组")
@@ -406,6 +412,7 @@ def create_proxy_router(
                             str(URL(backend_url) / "chat"),
                             files=upload_data,
                             session_id=session_id,
+                            profile=profile,
                         )
                     except Exception:  # noqa: BLE001 - 后端连接失败通过当前 WebSocket 返回
                         logger.exception("WebSocket chat could not open the backend stream")

@@ -129,12 +129,14 @@ class SkillsLoader:
         channel: str | None = None,
         user_organization: str | None = None,
         not_interactive: bool = False,
+        profile: str | None = None,
     ):
         self.workspace_skills = workspace / "skills" if workspace is not None else None
         self.builtin_skills = BUILTIN_SKILLS_DIR
         self.channel = channel
         self.user_organization = user_organization
         self.not_interactive = not_interactive
+        self.profile = profile
 
     async def _workspace_skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
         """Return workspace skill documents without shadowing built-in directories."""
@@ -163,6 +165,9 @@ class SkillsLoader:
         seen_names: set[str],
     ) -> list[SkillInfo]:
         """Read, filter and de-duplicate skill documents."""
+        filter_context = FilterContext(
+            channel=self.channel, org=self.user_organization, profile=self.profile,
+        )
         skills = []
         for skill_file, source in skill_files:
             content = await LockedFile(skill_file).read_text()
@@ -184,9 +189,7 @@ class SkillsLoader:
             if self.not_interactive and metadata.name in INTERACTIVE_SKILL_NAMES:
                 continue
             # Workspace skills are placed by the user and are not subject to access filters.
-            if source == "builtin" and not filter_allows_access(
-                metadata.filter, FilterContext(channel=self.channel, org=self.user_organization)
-            ):
+            if source == "builtin" and not filter_allows_access(metadata.filter, filter_context):
                 continue
             if metadata.name in seen_names:
                 logger.warning("Skipping duplicate skill '{}' at '{}'", metadata.name, skill_file)

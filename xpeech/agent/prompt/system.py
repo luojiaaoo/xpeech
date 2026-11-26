@@ -148,6 +148,7 @@ async def build_system_prompt(
     channel: str | None = None,
     user_organization: str | None = None,
     not_interactive: bool = False,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """组合身份、安全、记忆和技能信息，生成系统消息。"""
     parts = []
@@ -167,7 +168,8 @@ async def build_system_prompt(
     parts.append(await memory.get_self_improvement_context())
 
     skills_prompt = await SkillsLoader(
-        workspace, channel=channel, user_organization=user_organization, not_interactive=not_interactive,
+        workspace, channel=channel, user_organization=user_organization,
+        not_interactive=not_interactive, profile=profile,
     ).build_skills_prompt()
     if skills_prompt:
         parts.append(skills_prompt)

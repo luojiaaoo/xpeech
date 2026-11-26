@@ -27,6 +27,11 @@ from ..schema import (
 
 router = APIRouter()
 
+ChatProfile = Annotated[
+    str | None,
+    Form(description="本次聊天选择的资源配置名称，供 MCP 和内置 Skill 的过滤表达式匹配"),
+]
+
 
 @router.get("/chat/status")
 async def chat_status(
@@ -83,6 +88,7 @@ async def chat(
     content: Annotated[InputContent, Depends(content)],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
     json_output: Annotated[bool, Depends(json_output_enabled)],
+    profile: ChatProfile = None,
 ):
     """接收用户消息，并以 SSE 流持续返回 Agent 事件。"""
     events = execute_chat_stream(
@@ -94,6 +100,7 @@ async def chat(
         session_metadata=session_metadata,
         files=files,
         json_output=json_output,
+        profile=profile,
     )
     async for event in CHAT_STREAMS.stream(user_id, session_id, events):
         yield event
@@ -112,6 +119,7 @@ async def chat_sync(
     content: Annotated[InputContent, Depends(content)],
     files: Annotated[list[UploadFile], File(default_factory=list, description="消息附件列表")],
     json_output: Annotated[bool, Depends(json_output_enabled)],
+    profile: ChatProfile = None,
 ) -> list[dict[str, Any]]:
     """接收用户消息，阻塞运行 Agent，并一次性返回合并后的全部事件。
 
@@ -125,5 +133,6 @@ async def chat_sync(
         session_metadata=session_metadata,
         files=files,
         json_output=json_output,
+        profile=profile,
     )
     return result

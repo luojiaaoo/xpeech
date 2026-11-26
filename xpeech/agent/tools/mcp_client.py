@@ -964,6 +964,7 @@ def _persistent_registration_key(config: MCPServerConfig) -> tuple[Any, ...]:
         loader.channel if loader is not None else None,
         loader.user_organization if loader is not None else None,
         loader.not_interactive if loader is not None else False,
+        loader.profile if loader is not None else None,
     )
 
 

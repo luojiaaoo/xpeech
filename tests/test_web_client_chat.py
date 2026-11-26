@@ -52,6 +52,8 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
     form = schema["paths"][f"/api/{endpoint}"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
     form_fields = schema["components"]["schemas"][form["$ref"].rsplit("/", 1)[1]]["properties"]
     assert "json_output" not in form_fields
+    assert "profile" in form_fields
+    assert "filter" not in form_fields
 
     with TestClient(app) as client:
         assert client.post(
@@ -63,6 +65,7 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
             headers={"x-session-id": "018f0000-0000-7000-8000-000000000001"},
             data={
                 "content": json.dumps([{"text": text}], ensure_ascii=False),
+                "profile": "finance",
                 "session_metadata": json.dumps(
                     {"channel": "spoofed", "source": "browser"}
                 ),
@@ -74,6 +77,7 @@ def test_web_client_forwards_chat_metadata_without_channel_injection(
     assert proxied.headers["content-type"].startswith(media_type)
     assert opener.await_args.args[4] == f"http://backend.test/{endpoint}"
     assert "json_output" not in opener.await_args.kwargs
+    assert opener.await_args.kwargs["profile"] == "finance"
     assert json.loads(opener.await_args.args[2]) == [{"text": text}]
     assert json.loads(opener.await_args.args[3]) == {
         "channel": "spoofed",

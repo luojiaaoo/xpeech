@@ -35,6 +35,7 @@ def turn(monkeypatch, tmp_path):
     agent.workspace = tmp_path
     agent.channel = "test"
     agent.user_organization = None
+    agent.profile = None
     agent.history = YamlHistoryRepository(tmp_path / "history")
     agent.history.save = AsyncMock(wraps=agent.history.save)
     agent.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))

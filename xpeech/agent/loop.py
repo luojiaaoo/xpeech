@@ -75,6 +75,7 @@ class AgentLoop:
         channel: str | None = None,
         user_organization: str | None = None,
         mapping_tool_call_funcs: dict[str, Any] | None = None,
+        profile: str | None = None,
     ):
         """初始化模型提供方、会话组件和循环配置。"""
         self.provider = provider
@@ -84,6 +85,7 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.channel = channel
         self.user_organization = user_organization
+        self.profile = profile
         self.mapping_tool_call_funcs = mapping_tool_call_funcs if mapping_tool_call_funcs is not None else {}
         self.max_accept_token = int(self.provider.default_context_token * 0.9 - self.summary_tokens)
         self.history = YamlHistoryRepository(
@@ -366,6 +368,7 @@ class AgentLoop:
                 channel=self.channel,
                 user_organization=self.user_organization,
                 not_interactive=not_interactive,
+                profile=self.profile,
             ),
         )
         # 拼接用户消息（给user添加时间戳字典，用于二级压缩）

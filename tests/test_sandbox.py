@@ -330,19 +330,20 @@ async def test_sandbox_command_selects_lark_skills_by_injected_token(tmp_path: P
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("channel", "organization", "expected"),
+    ("channel", "organization", "profile", "expected"),
     [
-        (None, None, {"public"}),
-        ("crm", None, {"public", "tagged"}),
-        (None, "公司/研发/平台", {"public", "organization"}),
-        ("crm", "公司/研发/平台", {"public", "tagged", "organization", "both"}),
-        ("crm", "公司/销售", {"public", "tagged"}),
-        ("other", "公司/研发/平台", {"public", "organization"}),
-        ("other", "公司/销售", {"public"}),
+        (None, None, None, {"public"}),
+        ("crm", None, None, {"public", "tagged"}),
+        ("crm", None, "finance", {"public", "tagged", "finance"}),
+        (None, "公司/研发/平台", None, {"public", "organization"}),
+        ("crm", "公司/研发/平台", None, {"public", "tagged", "organization", "both"}),
+        ("crm", "公司/销售", None, {"public", "tagged"}),
+        ("other", "公司/研发/平台", "finance", {"public", "organization"}),
+        ("other", "公司/销售", None, {"public"}),
     ],
 )
 async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
-    tmp_path, monkeypatch, channel, organization, expected,
+    tmp_path, monkeypatch, channel, organization, profile, expected,
 ):
     builtin_root = tmp_path / "builtin"
     for name, restrictions in {
@@ -350,6 +351,7 @@ async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
         "tagged": 'filter: channel("crm")\n',
         "organization": 'filter: org("公司/研发")\n',
         "both": 'filter: channel("crm") and org("公司/研发")\n',
+        "finance": 'filter: channel("crm") and profile("finance")\n',
         "invalid": "filter: channel()\n",
     }.items():
         directory = builtin_root / name
@@ -360,7 +362,7 @@ async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
     custom_skill = workspace / "skills/custom/SKILL.md"
     custom_skill.parent.mkdir(parents=True)
     custom_skill.write_text("---\nname: custom\n---\nCustom instructions")
-    loader = SkillsLoader(workspace, channel=channel, user_organization=organization)
+    loader = SkillsLoader(workspace, channel=channel, user_organization=organization, profile=profile)
     monkeypatch.setattr(loader, "list_skill_info", AsyncMock(side_effect=AssertionError("Workspace skills requested")))
 
     args = await sandbox.wrap_sandbox_command("true", workspace, skills_loader=loader)

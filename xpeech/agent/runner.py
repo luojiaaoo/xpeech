@@ -21,11 +21,13 @@ class AgentRunner:
         config: Settings,
         not_interactive: bool = False,
         channel: str | None = None,
+        profile: str | None = None,
     ) -> None:
         self.user_id = user_id
         self.config = config
         self.not_interactive = not_interactive
         self.channel = channel
+        self.profile = profile
         self.user_organization: str | None = None
         self.workspace = (config.path.workspace_base_path / self.user_id).resolve()
         self._agent_loop: AgentLoop | None = None
@@ -38,9 +40,10 @@ class AgentRunner:
         config: Settings = settings,
         not_interactive: bool = False,
         channel: str | None = None,
+        profile: str | None = None,
     ) -> Self:
         """Create a fully initialized runner for one user."""
-        runner = cls(user_id, config=config, not_interactive=not_interactive, channel=channel)
+        runner = cls(user_id, config=config, not_interactive=not_interactive, channel=channel, profile=profile)
         await runner._initialize()
         return runner
 
@@ -71,6 +74,7 @@ class AgentRunner:
             channel=self.channel,
             user_organization=self.user_organization,
             mapping_tool_call_funcs=provider.mapping_tool_call_funcs,
+            profile=self.profile,
         )
         await register_tools(
             user_id=self.user_id,
@@ -80,6 +84,7 @@ class AgentRunner:
             not_interactive=self.not_interactive,
             channel=self.channel,
             user_organization=self.user_organization,
+            profile=self.profile,
         )
         self._agent_loop = agent_loop
 

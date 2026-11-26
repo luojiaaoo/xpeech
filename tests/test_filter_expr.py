@@ -40,6 +40,10 @@ from xpeech.utils.filter_expr import (
         ('channel("crm") and not org("公司/销售/")', FilterContext(channel="crm", org="公司/销售/"), False),
         ('(channel("crm") or channel("erp")) and org("p/")', FilterContext(channel="erp", org="p/q"), True),
         ('(channel("crm") or channel("erp")) and org("p/")', FilterContext(channel="erp", org="x"), False),
+        ('profile("finance")', FilterContext(), False),
+        ('profile("finance", "hr")', FilterContext(profile="hr"), True),
+        ('profile("finance")', FilterContext(profile="Finance"), False),
+        ('profile("finance") and channel("crm")', FilterContext(channel="erp", profile="finance"), False),
         ("True", FilterContext(), True),
         ("False", FilterContext(channel="crm"), False),
     ],
@@ -60,6 +64,8 @@ def test_missing_filter_is_public():
         "   ",
         "channel()",
         "org()",
+        "profile()",
+        'filter("finance")',
         "channel(1)",
         'channel("")',
         'channel(" a")',
@@ -111,7 +117,7 @@ def test_filter_length_limit():
     parse_filter(longest)
 
 
-@pytest.mark.parametrize("source", [None, 'channel("crm") or org("公司/")', "channel()", "import os"])
+@pytest.mark.parametrize("source", [None, 'channel("crm") or org("公司/")', 'profile("finance")', "channel()", "import os"])
 def test_config_surfaces_validate_identically(source):
     if source is not None:
         try:

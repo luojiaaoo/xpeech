@@ -220,7 +220,7 @@ async def test_agent_loop_records_final_response_and_aggregated_usage(tmp_path: 
         async def chat(self, **_kwargs):
             return next(responses)
 
-    async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive):
+    async def build_test_system_prompt(workspace: Path, *, channel, user_organization, not_interactive, profile):
         assert workspace == tmp_path / "workspace"
         assert channel == "crm"
         assert user_organization is None

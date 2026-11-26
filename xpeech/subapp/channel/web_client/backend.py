@@ -10,8 +10,11 @@ from yarl import URL
 from ..helper import BackendAuthParams, ChatStream, _backend_headers
 
 
-def _chat_form(content: str, session_metadata: str) -> dict[str, str]:
-    return {"session_metadata": session_metadata, "content": content}
+def _chat_form(content: str, session_metadata: str, profile: str | None) -> dict[str, str]:
+    form = {"session_metadata": session_metadata, "content": content}
+    if profile is not None:
+        form["profile"] = profile
+    return form
 
 
 async def open_chat(
@@ -23,6 +26,7 @@ async def open_chat(
     *,
     files: Any = None,
     session_id: str,
+    profile: str | None = None,
 ) -> ChatStream:
     """Open the interactive /chat request as a text/event-stream."""
     headers = _backend_headers(auth, sender_name)
@@ -36,7 +40,7 @@ async def open_chat(
         response = await client.send(
             client.build_request(
                 "POST", chat_url, headers=headers,
-                data=_chat_form(content, session_metadata), files=files,
+                data=_chat_form(content, session_metadata, profile), files=files,
             ),
             stream=True,
         )
@@ -55,6 +59,7 @@ async def open_chat_sync(
     chat_url: str,
     *,
     files: Any = None,
+    profile: str | None = None,
 ) -> httpx.Response:
     """Call the non-interactive /chat_sync and wait for the full JSON event list.
 
@@ -69,7 +74,7 @@ async def open_chat_sync(
         return await client.post(
             chat_url,
             headers=headers,
-            data=_chat_form(content, session_metadata),
+            data=_chat_form(content, session_metadata, profile),
             files=files,
         )
 

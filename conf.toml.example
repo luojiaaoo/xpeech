@@ -170,7 +170,8 @@ tool_timeout = 120
 
 # [tool.mcpServers.my-api]
 # description = "查询 CRM 客户资料和订单；客户、订单相关任务可等待此服务就绪"
-# filter = 'tag("crm") or org("company/engineering/")' # 省略表示公共 MCP；表达式求值为真才连接并注册，语法见 README。
+# 同时要求 CRM 通道、[organization] 查询返回的组织以“公司/销售/”开头，以及 chat 表单传入 profile=sales。
+# filter = 'channel("crm") and org("公司/销售/") and profile("sales")'
 # url = "https://mcp.example.com/sse"
 # transport = "sse" # stdio / sse / streamable-http
 # command_authorization_token = "curl --fail --silent 'https://auth.example.com/token?user_id=${user_id}'"

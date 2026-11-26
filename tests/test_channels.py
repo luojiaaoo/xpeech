@@ -176,7 +176,7 @@ async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tm
 
 @pytest.mark.parametrize("path, not_interactive", [("/chat", False), ("/chat_sync", True)])
 @pytest.mark.parametrize("session_id", ["00000000-0000-7000-8000-000000000000", UUID7_SESSION_ID])
-def test_chat_passes_verified_channel_to_registration(
+def test_chat_passes_verified_channel_and_profile_to_registration(
     channels,
     monkeypatch,
     tmp_path,
@@ -218,11 +218,12 @@ def test_chat_passes_verified_channel_to_registration(
         headers=headers,
         data={
             "content": '[{"text":"hello"}]',
-            "session_metadata": '{"channel":"erp","channel_name":"erp","channel_tag":"erp"}',
+            "session_metadata": '{"channel":"erp","channel_name":"erp","channel_tag":"erp","profile":"hr"}',
+            "profile": "finance",
         },
     )
     assert response.status_code == 200
-    assert created == [("tag-user", {"not_interactive": not_interactive, "channel": "crm"})]
+    assert created == [("tag-user", {"not_interactive": not_interactive, "channel": "crm", "profile": "finance"})]
 
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
@@ -231,7 +232,8 @@ async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tm
     skill_root = tmp_path / "builtin" if source == "builtin" else tmp_path / "skills"
     skill_file = skill_root / "dedicated" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
-    skill_file.write_text('---\nname: dedicated\nfilter: channel("crm")\nalways: true\n---\n# CRM instructions')
+    expression = 'channel("crm") and profile("finance")'
+    skill_file.write_text(f'---\nname: dedicated\nfilter: {expression}\nalways: true\n---\n# CRM instructions')
     builtin_dirs = [skill_file.parent] if source == "builtin" else []
     monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtin_dirs))
     loader = SkillsLoader(tmp_path)
@@ -239,14 +241,17 @@ async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tm
     if source == "builtin":
         # 内置技能受过滤表达式限制。
         assert prompt == ""
-        loader = SkillsLoader(tmp_path, channel="crm")
+        assert await SkillsLoader(tmp_path, channel="crm").list_builtin_skill_info() == []
+        assert await SkillsLoader(tmp_path, profile="finance").list_builtin_skill_info() == []
+        loader = SkillsLoader(tmp_path, channel="crm", profile="finance")
+        assert len(await loader.list_builtin_skill_info()) == 1
         prompt = await loader.build_skills_prompt()
     # 工作区技能由用户自己放置，不受访问过滤表达式限制。
     assert "# CRM instructions" in prompt
     skill = (await loader.list_skill_info())[0]
-    assert skill.metadata.filter == 'channel("crm")'
+    assert skill.metadata.filter == expression
     assert "filter" not in skill.metadata.kwargs
-    system_prompt = await build_system_prompt(tmp_path, channel="crm")
+    system_prompt = await build_system_prompt(tmp_path, channel="crm", profile="finance")
     assert "# CRM instructions" in system_prompt["content"]
 
 
@@ -261,21 +266,22 @@ async def test_invalid_skill_filters_are_skipped(monkeypatch, tmp_path, filter_y
 
 
 @pytest.mark.parametrize(
-    "channel, expected",
+    "channel, profile, expected",
     [
-        (None, ["public"]),
-        ("crm", ["public", "crm", "shared"]),
-        ("erp", ["public", "erp", "shared"]),
-        ("sales", ["public"]),
-        ("cr", ["public"]),
-        ("CRM", ["public"]),
+        (None, None, ["public"]),
+        ("crm", None, ["public", "crm", "shared"]),
+        ("crm", "finance", ["public", "crm", "shared", "finance"]),
+        ("erp", "finance", ["public", "erp", "shared"]),
+        ("sales", None, ["public"]),
+        ("cr", None, ["public"]),
+        ("CRM", None, ["public"]),
     ],
 )
 @pytest.mark.parametrize("not_interactive", [False, True])
 @pytest.mark.parametrize("include_public", [False, True])
 @pytest.mark.asyncio
 async def test_mcp_only_registers_public_and_matching_servers(
-    monkeypatch, tmp_path, channel, expected, not_interactive, include_public
+    monkeypatch, tmp_path, channel, profile, expected, not_interactive, include_public
 ):
     async def shell():
         return "unused"
@@ -288,6 +294,7 @@ async def test_mcp_only_registers_public_and_matching_servers(
                 "crm": {"command": "demo", "filter": 'channel("crm")'},
                 "erp": {"command": "demo", "filter": 'channel("erp")'},
                 "shared": {"command": "demo", "filter": 'channel("crm", "erp")'},
+                "finance": {"command": "demo", "filter": 'channel("crm") and profile("finance")'},
             }
         }
     )
@@ -330,6 +337,7 @@ async def test_mcp_only_registers_public_and_matching_servers(
         config=config,
         channel=channel,
         not_interactive=not_interactive,
+        profile=profile,
     )
     assert requested == registered == expected
     status_tool = next((tool for tool in function_tools if tool.__name__ == "query_mcp_status"), None)
@@ -357,3 +365,14 @@ def test_mcp_preserves_filter_in_registration_and_cache_key(tmp_path):
     assert mcp_client._persistent_registration_key(public.config) != mcp_client._persistent_registration_key(
         dedicated.config
     )
+
+
+def test_stdio_mcp_cache_separates_skill_mounts_by_profile(tmp_path):
+    config = MCPServerSettings(command="demo")
+    first, second = (
+        mcp_client.create_mcp_registration_from_config(
+            "demo", config, workspace=tmp_path, skills_loader=SkillsLoader(tmp_path, profile=profile),
+        )
+        for profile in ("finance", "hr")
+    )
+    assert mcp_client._persistent_registration_key(first.config) != mcp_client._persistent_registration_key(second.config)

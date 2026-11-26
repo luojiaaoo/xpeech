@@ -281,8 +281,9 @@ HTTP 错误会拒绝 Promise；HTTP 200 返回的 `error` 事件保留在 `event
 双方都校验 `postMessage` 的 origin 和窗口来源，请求和响应还使用 `request_id`、`session_id` 关联。
 
 Web Client 同时提供 `POST /api/chat_sync`，与 `/api/chat` 使用相同的 multipart 字段
-（`content`、`session_metadata`、`files`）和认证 / 会话请求头，
+（`content`、`session_metadata`、`files`、可选的 `profile`）和认证 / 会话请求头，
 成功时返回完整 JSON 事件数组；嵌入请求仍必须提供合法 UUIDv7 的 `x-session-id` 和 `x-sender-name`。
+`/api/chat/ws` 的 `start` 消息也可携带字符串字段 `profile`。
 
 JWT 必须由业务后端先验证网站当前用户的登录身份，再为该用户签发，不能直接采用浏览器提交的
 任意用户 ID。Header 的 `kid` 必须与服务端 `jwt.channels` 的自定义通道名一致，例如 `crm`

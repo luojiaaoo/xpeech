@@ -87,6 +87,7 @@ def streaming_chat(monkeypatch, tmp_path):
     agent.workspace = tmp_path
     agent.channel = None
     agent.user_organization = None
+    agent.profile = None
     agent.history = YamlHistoryRepository(tmp_path / "history")
     state.history = agent.history
     agent.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))

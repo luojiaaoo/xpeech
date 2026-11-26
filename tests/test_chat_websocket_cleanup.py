@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from urllib.parse import parse_qs
 
 import anyio
 import httpx
@@ -44,6 +45,8 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
 
     class BackendTransport(httpx.AsyncBaseTransport):
         async def handle_async_request(self, request):
+            form = parse_qs((await request.aread()).decode())
+            assert form["profile"] == ["finance"]
             if phase == "opening":
                 ready.set()
                 await asyncio.Event().wait()
@@ -67,7 +70,7 @@ async def test_websocket_disconnect_closes_upstream_and_saves_partial_history(tm
     ))
     await messages.put({"type": "websocket.connect"})
     await messages.put({"type": "websocket.receive", "text": json.dumps({
-        "type": "start", "session_id": SESSION_ID, "content": '[{"text":"hi"}]',
+        "type": "start", "session_id": SESSION_ID, "content": '[{"text":"hi"}]', "profile": "finance",
     })})
     scope = {
         "type": "websocket", "asgi": {"version": "3.0"}, "scheme": "ws",

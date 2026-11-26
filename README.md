@@ -121,31 +121,32 @@ secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
 鉴权后的通道名（内部调用和定时任务为 `None`）以单个字符串显式传递到 Runner、技能加载和工具注册，供资源过滤表达式使用。
 
 Skill 的 YAML frontmatter 和 MCP 配置都支持 `filter` 过滤表达式。配置了 `filter` 的资源仅在表达式
-求值为真时展示或注册；省略 `filter` 的资源是公共资源，一律可见。同一条件作用于内建技能、
-用户工作区技能（含 `always` 技能）、技能列表 API，以及 MCP 状态、用途和工具注册；未匹配的 MCP 不会发起连接。
+求值为真时展示或注册；省略 `filter` 的资源是公共资源，一律可见。过滤表达式作用于内置技能（含 `always` 技能）、
+技能列表 API 中的内置技能，以及 MCP 状态、用途和工具注册。用户工作区技能由用户自行管理。
 过滤控制资源加载，不是工作区文件的访问控制。同一 `user_id` 的工作区和历史仍然共享；需要系统间数据隔离时应使用独立的用户 ID。
 MCP 在注册阶段过滤，不匹配时不会建立连接；同步聊天和定时任务也在注册阶段跳过追问、创建/查看/取消调度等交互式工具。
 
-表达式是 Python 布尔表达式的极小子集，用 `and` / `or` / `not` 和括号组合两个内置短名函数：
+表达式是 Python 布尔表达式的极小子集，可用 `and` / `or` / `not` 和括号组合下列函数。
 
 - `channel("crm", ...)`：当前通道的名称（JWT `kid`）等于任一参数时为真，区分大小写精确匹配。
 - `org("公司/研发/", ...)`：用户组织字符串以任一参数为前缀时为真，区分大小写按字面匹配，不解析通配符或自动补充分隔符。例如组织 `公司/研发/平台` 匹配 `org("公司/研发/")`，不匹配 `org("公司/销售/")`。
+- `profile("finance", ...)` 区分大小写，精确匹配 `POST /chat` 或 `POST /chat_sync` 表单传入的资源配置名称，例如 `-F 'profile=finance'`。省略该字段时，函数返回假。名称由调用方选择，需要限制通道或组织时，用 `and` 组合对应条件。
 
 参数是非空字符串字面量，支持中文，不能有首尾空白；通道或组织未知（含查询失败）时对应函数为假。
-表达式最长 1024 个字符。无需给 Skill 名称增加特殊前缀。例如：
+表达式最长 1024 个字符。以下示例同时要求 CRM 通道、用户组织以 `公司/销售/` 开头，以及聊天表单传入 `profile=sales`。
 
 ```yaml
 ---
 name: crm-report
 description: CRM 报表助手
-filter: channel("crm") or org("公司/研发/", "公司/平台/")
+filter: channel("crm") and org("公司/销售/") and profile("sales")
 ---
 ```
 
 ```toml
 [tool.mcpServers.crm-api]
 url = "https://crm.example.com/mcp"
-filter = 'channel("crm") and not org("公司/销售/")'
+filter = 'channel("crm") and org("公司/销售/") and profile("sales")'
 ```
 
 表达式经 `ast.parse` 解析后按严格节点白名单校验，再由服务端自行解释求值，不使用 `eval`/`exec`：

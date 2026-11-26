@@ -92,7 +92,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
     create_templates.assert_awaited_once_with(runner.workspace)
     register_tools.assert_awaited_once()
     assert set(register_tools.await_args.kwargs) == {
-        "user_id", "provider", "workspace", "config", "not_interactive", "channel", "user_organization",
+        "user_id", "provider", "workspace", "config", "not_interactive", "channel", "user_organization", "profile",
     }
     assert register_tools.await_args.kwargs["not_interactive"] is False
     assert register_tools.await_args.kwargs["channel"] is None
@@ -118,11 +118,13 @@ async def test_runner_resolves_organization_once_before_registering_tools(
     async def check_registration(**kwargs):
         lookup.assert_awaited_once_with("alice")
         assert kwargs["user_organization"] == "公司/研发/平台"
+        assert kwargs["profile"] == "finance"
 
     register_tools.side_effect = check_registration
-    runner = await AgentRunner.create("alice", config=config)
+    runner = await AgentRunner.create("alice", config=config, profile="finance")
     assert runner.user_organization == "公司/研发/平台"
     assert FakeAgentLoop.instances[0].kwargs["user_organization"] == "公司/研发/平台"
+    assert FakeAgentLoop.instances[0].kwargs["profile"] == "finance"
 
 
 @pytest.mark.asyncio
