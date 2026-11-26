@@ -36,6 +36,7 @@ var suppressLauncherClick = false;
 var interactionSession = null;
 var requestSequence = 0;
 var pendingRequests = new Map();
+var fragmentCallListeners = new Set();
 var replyListeners = new Set();
 var chatFileListeners = new Set();
 var fragmentHandlers = new Map();
@@ -151,6 +152,11 @@ function chatSync(text, options) {
 function downloadFile(path, options) { return requestInteraction('downloadFile', path, options); }
 function getFile(path, options) {
   return requestInteraction('getFile', path, options).then(function (result) { return result.file; });
+}
+function onFragmentCall(listener) {
+  if (typeof listener !== 'function') throw new TypeError('listener 必须为函数');
+  fragmentCallListeners.add(listener);
+  return function () { fragmentCallListeners.delete(listener); };
 }
 function onReply(listener) {
   if (typeof listener !== 'function') throw new TypeError('listener 必须为函数');
@@ -639,12 +645,19 @@ function onMessage(event) {
     if (typeof data.error === 'string') pending.reject(new Error(data.error));
     else pending.resolve(changesConversation(pending.data.method) ? { session_id: data.result.session_id } : data.result);
     flushRequests();
-  } else if (data.type === "xpeech:reply" && data.session_id === interactionSession && typeof data.text === 'string') {
-    var reply = { session_id: data.session_id, text: data.text };
-    replyListeners.forEach(function (listener) {
-      try { listener(reply); } catch (error) { console.error('Xpeech onReply callback failed', error); }
+  } else if (data.type === 'xpeech:fragment-call' && data.session_id === interactionSession && typeof data.text === 'string') {
+    var fragmentCall = { session_id: data.session_id, text: data.text };
+    fragmentCallListeners.forEach(function (listener) {
+      try { listener(fragmentCall); } catch (error) { console.error('Xpeech onFragmentCall callback failed', error); }
     });
-    window.dispatchEvent(new CustomEvent('xpeech:reply', { detail: reply }));
+    window.dispatchEvent(new CustomEvent('xpeech:fragment-call', { detail: fragmentCall }));
+  } else if (data.type === 'xpeech:reply' && typeof data.session_id === 'string' && data.session_id &&
+      typeof data.turn_id === 'string' && data.turn_id && typeof data.text === 'string' && data.text) {
+    var finalReply = { session_id: data.session_id, turn_id: data.turn_id, text: data.text };
+    replyListeners.forEach(function (listener) {
+      try { listener(finalReply); } catch (error) { console.error('Xpeech onReply callback failed', error); }
+    });
+    window.dispatchEvent(new CustomEvent('xpeech:reply', { detail: finalReply }));
   } else if (data.type === 'xpeech:file' && data.session_id === interactionSession &&
       typeof data.path === 'string' && data.path.trim()) {
     var file = { session_id: data.session_id, path: data.path };
@@ -870,6 +883,7 @@ function destroy() {
   pageAgentConfig = null;
   disposePageAgent();
   removeFrame();
+  fragmentCallListeners.clear();
   replyListeners.clear();
   chatFileListeners.clear();
   fragmentHandlers.clear();
@@ -885,4 +899,4 @@ function destroy() {
   host = root = panel = launcher = closeButton = maximizeButton = body = status = null;
 }
 
-export { init, registerPageAgent, updateJWT, hideButton, showButton, open, close, maximize, restore, close as minimize, destroy, setInput, addFiles, newConversation, switchConversation, send, chatSync, downloadFile, getFile, onReply, onChatFile, registerFragmentHandler };
+export { init, registerPageAgent, updateJWT, hideButton, showButton, open, close, maximize, restore, close as minimize, destroy, setInput, addFiles, newConversation, switchConversation, send, chatSync, downloadFile, getFile, onFragmentCall, onReply, onChatFile, registerFragmentHandler };

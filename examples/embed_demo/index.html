@@ -37,6 +37,7 @@
     .reply-box { padding: 14px 16px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
     .reply-box h3 { margin: 0 0 8px; font-size: 13px; color: #5b6578; }
     .reply-content { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 3.2em; }
+    #panel-sync > .reply-box, #panel-chat > .reply-box + .reply-box { margin-top: 16px; }
     .file-hint { margin: 6px 0 12px; font-size: 13px; overflow-wrap: anywhere; }
     .file-box { margin-top: 16px; }
     .file-box ul { padding-left: 22px; }
@@ -141,7 +142,7 @@
     <section class="demo-panel" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="0" hidden>
       <h2>对话框操作</h2>
       <label for="prompt">要填入的消息</label>
-      <textarea id="prompt" rows="3">请调用 fragment，text 为「你好」</textarea>
+      <textarea id="prompt" rows="3">请调用 fragment，text 为「你好」，然后用一句话回复「已发送问候」。</textarea>
       <label for="chat-files-input">对话附件（可多选）</label>
       <input id="chat-files-input" type="file" multiple disabled>
       <button id="chat-generate-file" type="button" class="secondary" disabled>添加 JS 示例文件</button>
@@ -152,7 +153,11 @@
       <button id="send-chat" disabled>发送对话框内容</button>
       <p class="file-hint">先填入文字或插入附件，再发送。片段按钮和折线图可在「注册片段」页测试。</p>
       <section class="reply-box">
-        <h3>最近的片段通知（onReply）</h3>
+        <h3>最近的最终助手正文（onReply）</h3>
+        <div id="latest-answer" class="reply-content" aria-live="polite">—</div>
+      </section>
+      <section class="reply-box">
+        <h3>最近的片段通知（onFragmentCall）</h3>
         <div id="latest-fragment" class="reply-content" aria-live="polite">—</div>
       </section>
     </section>
@@ -194,13 +199,17 @@
       <h2>后台同步调用</h2>
       <p class="file-hint">同步请求不展开聊天窗口，也不改变对话框的消息、草稿或附件。</p>
       <label for="sync-prompt">同步请求内容</label>
-      <textarea id="sync-prompt" rows="3">请调用 fragment，text 为「报告摘要」</textarea>
+      <textarea id="sync-prompt" rows="3">请调用 fragment，text 为「报告摘要」，然后用一句话回复「报告摘要已生成」。</textarea>
       <label for="sync-files-input">同步附件（可多选）</label>
       <input id="sync-files-input" type="file" multiple disabled>
       <button id="sync-generate-file" type="button" class="secondary" disabled>添加 JS 示例文件</button>
       <button id="sync-clear-files" type="button" class="secondary" disabled>清空附件</button>
       <p id="sync-selected-files" class="file-hint">未选择附件</p>
       <button id="sync" disabled>同步发送（纯后台）</button>
+      <section class="reply-box">
+        <h3>最终助手正文</h3>
+        <div id="sync-answer" class="reply-content" aria-live="polite">—</div>
+      </section>
       <section class="reply-box">
         <h3>同步调用片段（fragment 参数）</h3>
         <div id="sync-fragments" class="reply-content" aria-live="polite">—</div>
@@ -267,7 +276,9 @@
     const channel = document.querySelector('#channel');
     const secretKey = document.querySelector('#secret-key');
     const pageAgentEnable = document.querySelector('#page-agent-enable');
+    const latestAnswer = document.querySelector('#latest-answer');
     const latestFragment = document.querySelector('#latest-fragment');
+    const syncAnswer = document.querySelector('#sync-answer');
     const syncFragments = document.querySelector('#sync-fragments');
     const syncFiles = document.querySelector('#sync-files');
     const chatFiles = document.querySelector('#chat-files');
@@ -614,11 +625,17 @@
         addDownload(file, version, false);
         log(`发现对话框文件：${file.path}`);
       });
-      assistant.onReply(({ session_id, text }) => {
+      assistant.onFragmentCall(({ session_id, text }) => {
         if (version !== connectionVersion || !loggedIn) return;
         rememberSession(session_id);
         latestFragment.textContent = text || '（空字符串）';
         log(`收到片段（会话 ${session_id}）：${text}`);
+      });
+      assistant.onReply(({ session_id, turn_id, text }) => {
+        if (version !== connectionVersion || !loggedIn) return;
+        rememberSession(session_id);
+        latestAnswer.textContent = text;
+        log(`收到最终助手正文（会话 ${session_id}，轮次 ${turn_id}）：${text}`);
       });
       loggedIn = true;
       updateFragmentControls();
@@ -654,7 +671,7 @@
       assistant?.destroy();
       assistant = undefined;
       replies.replaceChildren();
-      latestFragment.textContent = syncFragments.textContent = '—';
+      latestAnswer.textContent = latestFragment.textContent = syncAnswer.textContent = syncFragments.textContent = '—';
       service.value = url.origin;
       status.textContent = '正在连接聊天前端…';
       try {
@@ -822,6 +839,7 @@
         const uploadFiles = syncAttachments.snapshot();
         const text = syncPrompt.value;
         sync.disabled = true;
+        syncAnswer.textContent = '等待助手正文…';
         const started = Date.now();
         log(`发起后台同步请求：${text}`, 'sync-call');
         if (uploadFiles.length) log(`本次上传附件：${uploadFiles.map(file => file.name).join('、')}`, 'sync-call');
@@ -830,7 +848,8 @@
           // 纯后台交互：不展开聊天窗口，消息和回复都不渲染到对话框。
           const result = await assistant.chatSync(text, { files: uploadFiles });
           if (version !== connectionVersion) return;
-          const { session_id, fragments, files } = result;
+          const { session_id, text: answer, fragments, files } = result;
+          syncAnswer.textContent = answer || '（本次同步没有助手正文）';
           for (const path of files) {
             addDownload({ path, session_id }, version, true);
             log(`发现 sync 文件：${path}`);
@@ -844,6 +863,7 @@
           status.textContent = '同步交互完成（对话框无任何变化），结果已回传主页面。';
         } catch (error) {
           if (version === connectionVersion) {
+            syncAnswer.textContent = '—';
             syncFragments.textContent = `同步失败：${error.message}`;
             log(`同步请求失败：${error.message}`, 'log-error');
             status.textContent = error.message;
@@ -860,6 +880,7 @@
           resetFiles();
           resetSessions();
           resetFragmentDemo();
+          latestAnswer.textContent = syncAnswer.textContent = syncFragments.textContent = '—';
           open.disabled = pageAgentEnable.disabled = true;
           fill.disabled = addChatFiles.disabled = newConversation.disabled = sendChat.disabled = sync.disabled = true;
           toggle.textContent = '重新登录演示';

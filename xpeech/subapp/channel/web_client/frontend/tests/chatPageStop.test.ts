@@ -84,7 +84,7 @@ async function chatPage(
       },
     },
     './embedBridge': {
-      connectEmbedBridge() {}, postChatEvent() {},
+      connectEmbedBridge() {}, postChatEvent() {}, postFinalReply() {},
     },
     './ToolCallCard': { default: 'ToolCallCard' },
     './FragmentCard': { default: 'FragmentCard' },

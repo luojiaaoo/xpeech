@@ -165,6 +165,18 @@ async function analyzeOrder(savedSessionId, files) {
 }
 ```
 
+`onReply(callback)` 订阅嵌入对话每轮成功结束后的最终助手正文，返回取消订阅函数。
+回调接收 `{ session_id, turn_id, text }`，也可通过 `window` 上的 `xpeech:reply` 事件接收。
+切换会话后，此前仍在运行的会话完成时也会回调。
+同步调用的正文通过 `chatSync()` 返回，历史回放、取消、失败和没有正文的轮次均跳过回调。
+
+```javascript
+const unsubscribe = assistant.onReply(({ session_id, turn_id, text }) => {
+  console.log({ session_id, turn_id, text });
+});
+// 离开业务页面时可调用 unsubscribe()，destroy() 也会清理订阅。
+```
+
 ## 同步调用与结果
 
 `chatSync(text, { files?, timeoutMs? })` 使用当前 JWT、发送者名称和初始化时的元数据，在后台独立执行。
@@ -205,8 +217,8 @@ console.log({ session_id, text, fragments, files });
 
 ## 片段通知和操作卡
 
-`onReply(callback)` 接收 `{ session_id, text }`。这里的 `text` 来自 `fragment` 工具调用，界面聊天和成功的同步调用都会发送此通知。
-它也可通过 `window` 上的 `xpeech:reply` 事件接收，任选一种方式即可。订阅方法返回取消订阅函数。
+`onFragmentCall(callback)` 接收 `{ session_id, text }`。这里的 `text` 来自 `fragment` 工具调用，界面聊天和成功的同步调用都会发送此通知。
+订阅方法返回取消订阅函数，也可通过 `window` 上的 `xpeech:fragment-call` 事件接收片段。
 
 要在聊天中显示由宿主定义的按钮，对目标会话调用 `registerFragmentHandler(session_id, handler)`。
 `handler(text)` 同步返回 `{ title, description, buttons }`。标题和按钮标签须为非空字符串，描述可为空字符串。

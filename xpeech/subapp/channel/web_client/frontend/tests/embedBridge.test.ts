@@ -71,11 +71,11 @@ test('iframe bridge validates parent, session and payload and correlates sync re
     fragments: ['  第一段\n', '', '第二段'],
     files: ['reports/报告 #1 & 2.pdf', 'second.txt'],
   });
-  const notifications = app.sent.filter(item => item.data.type === 'xpeech:reply');
+  const notifications = app.sent.filter(item => item.data.type === 'xpeech:fragment-call');
   assert.deepEqual(structuredClone(notifications.map(item => item.data)), [
-    { type: 'xpeech:reply', session_id: 'first', text: '  第一段\n' },
-    { type: 'xpeech:reply', session_id: 'first', text: '' },
-    { type: 'xpeech:reply', session_id: 'first', text: '第二段' },
+    { type: 'xpeech:fragment-call', session_id: 'first', text: '  第一段\n' },
+    { type: 'xpeech:fragment-call', session_id: 'first', text: '' },
+    { type: 'xpeech:fragment-call', session_id: 'first', text: '第二段' },
   ]);
   await app.message({ ...input, method: 'chatSync', text: '' });
   assert.match(app.sent.at(-1).data.error, /不能为空/);
@@ -143,7 +143,7 @@ test('sync error events reject the interaction instead of returning a partial re
   const response = app.sent.at(-1).data;
   assert.equal(response.error, 'sync failed');
   assert.equal(response.result, undefined);
-  assert.equal(app.sent.some(item => item.data.type === 'xpeech:reply'), false);
+  assert.equal(app.sent.some(item => item.data.type === 'xpeech:fragment-call'), false);
   dispose();
 });
 
@@ -295,5 +295,5 @@ test('StrictMode setup/cleanup only announces the surviving conversation and sta
   resolve([{ event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: 'stale' } }]) }]);
   await pending;
   assert.equal(app.sent.filter(item => item.data.type === 'xpeech:response').length, 0);
-  assert.equal(app.sent.some(item => item.data.type === 'xpeech:reply'), false);
+  assert.equal(app.sent.some(item => item.data.type === 'xpeech:fragment-call'), false);
 });

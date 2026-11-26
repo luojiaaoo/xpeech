@@ -124,7 +124,7 @@ async function runtime(
   });
   await module.link(() => { throw new Error('The embed module must be standalone'); });
   await module.evaluate();
-  const api = module.namespace as { init: Function; registerPageAgent: Function; updateJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; switchConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onReply: Function; onChatFile: Function; registerFragmentHandler: Function };
+  const api = module.namespace as { init: Function; registerPageAgent: Function; updateJWT: Function; hideButton: Function; showButton: Function; open: Function; close: Function; maximize: Function; restore: Function; minimize: Function; destroy: Function; setInput: Function; addFiles: Function; newConversation: Function; switchConversation: Function; send: Function; chatSync: Function; downloadFile: Function; getFile: Function; onFragmentCall: Function; onReply: Function; onChatFile: Function; registerFragmentHandler: Function };
   return { window, context, frames, buttons, events, calls, hosts, sent, message, listeners, timers, api };
 }
 
@@ -137,7 +137,7 @@ test('loading the SDK creates no UI or requests until init and leaves website gl
   assert.equal(app.calls.length, 0);
   assert.equal(Object.getOwnPropertyDescriptor(app.window, 'user_id')?.set, undefined);
   assert.equal(app.window.Xpeech, undefined);
-  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onReply', 'open', 'registerFragmentHandler', 'registerPageAgent', 'restore', 'send', 'setInput', 'showButton', 'switchConversation', 'updateJWT']);
+  assert.deepEqual(Object.keys(app.api).sort(), ['addFiles', 'chatSync', 'close', 'destroy', 'downloadFile', 'getFile', 'hideButton', 'init', 'maximize', 'minimize', 'newConversation', 'onChatFile', 'onFragmentCall', 'onReply', 'open', 'registerFragmentHandler', 'registerPageAgent', 'restore', 'send', 'setInput', 'showButton', 'switchConversation', 'updateJWT']);
 });
 
 test('init validates the original JWT without exchanging it and only delivers to its own iframe', async () => {
@@ -1198,7 +1198,33 @@ test('fragment handler runs once per card and only calls back for the selected b
   app.api.destroy();
 });
 
-test('reply subscriptions filter frames and sessions and can be removed', async () => {
+test('fragment call subscriptions filter frames and sessions and can be removed', async () => {
+  const app = await runtime();
+  const dispatched: any[] = [];
+  app.window.dispatchEvent = (event: any) => { dispatched.push(event); };
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
+  const replies: any[] = [];
+  const unsubscribe = app.api.onFragmentCall((reply: any) => replies.push(reply));
+  const reply = { type: 'xpeech:fragment-call', session_id: 'first', text: '你好' };
+  app.message(reply, 'https://attacker.test');
+  app.message(reply, 'https://assistant.test', {});
+  app.message({ ...reply, session_id: 'old' });
+  app.message({ ...reply, text: 123 });
+  assert.equal(replies.length, 0);
+  app.message(reply);
+  assert.deepEqual(structuredClone(replies[0]), { session_id: 'first', text: '你好' });
+  assert.equal(dispatched.at(-1).type, 'xpeech:fragment-call');
+  assert.equal(dispatched.at(-1).detail, replies[0]);
+  unsubscribe();
+  app.message(reply);
+  assert.equal(replies.length, 1);
+  app.api.destroy();
+});
+
+test('final reply subscriptions accept completed background conversations from the trusted frame', async () => {
   const app = await runtime();
   const dispatched: any[] = [];
   app.window.dispatchEvent = (event: any) => { dispatched.push(event); };
@@ -1208,18 +1234,29 @@ test('reply subscriptions filter frames and sessions and can be removed', async 
   app.message({ type: 'xpeech:interaction-ready', session_id: 'first' });
   const replies: any[] = [];
   const unsubscribe = app.api.onReply((reply: any) => replies.push(reply));
-  const reply = { type: 'xpeech:reply', session_id: 'first', text: '你好' };
-  app.message(reply, 'https://attacker.test');
-  app.message(reply, 'https://assistant.test', {});
-  app.message({ ...reply, session_id: 'old' });
-  app.message({ ...reply, text: 123 });
+  const result = { session_id: 'first', turn_id: 'turn-1', text: '最终正文\n' };
+  const notification = { type: 'xpeech:reply', ...result };
+  app.message(notification, 'https://attacker.test');
+  app.message(notification, 'https://assistant.test', {});
+  app.message({ ...notification, turn_id: '' });
+  app.message({ ...notification, text: '' });
+  app.message({ ...notification, type: 'xpeech:fragment-call' });
   assert.equal(replies.length, 0);
-  app.message(reply);
-  assert.deepEqual(structuredClone(replies[0]), { session_id: 'first', text: '你好' });
+  assert.equal(dispatched.some(event => event.type === 'xpeech:reply'), false);
+  app.message({ type: 'xpeech:interaction-ready', session_id: 'second' });
+  app.message(notification);
+  assert.deepEqual(structuredClone(replies), [result]);
   assert.equal(dispatched.at(-1).type, 'xpeech:reply');
   assert.equal(dispatched.at(-1).detail, replies[0]);
   unsubscribe();
-  app.message(reply);
+  app.message(notification);
+  assert.equal(replies.length, 1);
+  app.api.onReply((reply: any) => replies.push(reply));
+  app.api.destroy();
+  app.api.init(jwtFor(), 'Alice');
+  await tick();
+  app.message({ type: 'xpeech:ready' });
+  app.message(notification);
   assert.equal(replies.length, 1);
   app.api.destroy();
 });

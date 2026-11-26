@@ -70,13 +70,17 @@ function filePath(event: ChatEvent) {
 }
 
 function postFragment(sessionId: string, text: string) {
-  postToParent({ type: 'xpeech:reply', session_id: sessionId, text });
+  postToParent({ type: 'xpeech:fragment-call', session_id: sessionId, text });
 }
 
 export function postChatEvent(sessionId: string, event: ChatEvent) {
   const path = filePath(event);
   if (path !== undefined) postToParent({ type: 'xpeech:file', session_id: sessionId, path });
   for (const text of fragmentTexts(event)) postFragment(sessionId, text);
+}
+
+export function postFinalReply(sessionId: string, turnId: string, text: string) {
+  postToParent({ type: 'xpeech:reply', session_id: sessionId, turn_id: turnId, text });
 }
 
 function collectSyncResult(sessionId: string, events: ChatEvent[]) {

@@ -177,7 +177,8 @@ function onLogout() {
 | `assistant.chatSync(text, { files?, timeoutMs? } = {})` | 在当前会话后台运行，支持 `File[]` 附件，不渲染到对话框，返回 `Promise<{ session_id: string, text: string, fragments: string[], files: string[] }>` |
 | `assistant.downloadFile(path, { timeoutMs? } = {})` | 按工作区路径下载文件，自动携带当前 JWT 并触发浏览器保存，返回 `Promise<{ session_id }>` |
 | `assistant.getFile(path, { timeoutMs? } = {})` | 获取文件二进制，返回 `Promise<File>`，包含文件名和 MIME 类型，供主站 JS 处理，不触发浏览器保存 |
-| `assistant.onReply(callback)` | 每次 `fragment` 工具调用回传 `{ session_id, text }`，返回取消订阅函数 |
+| `assistant.onFragmentCall(callback)` | 每次 `fragment` 工具调用回传 `{ session_id, text }`，返回取消订阅函数 |
+| `assistant.onReply(callback)` | 每轮嵌入对话成功结束后回传最终助手正文 `{ session_id, turn_id, text }`，返回取消订阅函数 |
 | `assistant.onChatFile(callback)` | 对话框发送文件时回传 `{ session_id, path }`，返回取消订阅函数 |
 | `assistant.registerFragmentHandler(session_id, handler)` | 为嵌入会话注册额外的片段操作卡，返回取消本次注册的函数 |
 | `assistant.destroy()` | 移除按钮和 iframe，取消请求与定时器，清除内存中的身份和 JWT，不发送服务端撤销请求 |
@@ -220,7 +221,7 @@ UUIDv7。目标会话只加载当前用户和通道的历史；没有历史时�
 
 ```javascript
 // 对话框聊天和 chatSync 中的 fragment 调用都会通知。
-const unsubscribe = assistant.onReply(({ session_id, text }) => {
+const unsubscribe = assistant.onFragmentCall(({ session_id, text }) => {
   console.log("片段", session_id, text);
 });
 
@@ -236,7 +237,7 @@ try {
   console.error("同步交互失败", error);
 }
 
-// 不再需要接收片段时调用；destroy() 也会清除全部 onReply 订阅。
+// 停止接收片段时调用，destroy() 也会清理订阅。
 unsubscribe();
 ```
 
@@ -356,11 +357,12 @@ console.log('sync 文件', files);
 sync 文件只随本次调用的结果返回，不派发文件订阅或文件事件通知。
 SDK 本身收到通知不会自动下载；调用方决定如何处理。`destroy()` 会清除文件订阅。
 
-片段还会通过主页面的 `window` 派发 `CustomEvent("xpeech:reply")`，其 `detail`
-与 `onReply` 参数相同。选择一种订阅方式即可，避免重复处理。
+片段还会通过主页面的 `window` 派发 `CustomEvent("xpeech:fragment-call")`，其 `detail`
+与 `onFragmentCall` 参数相同。
 流式对话收到 `fragment` 工具调用时逐条通知；同步请求成功后按调用顺序逐条通知。
-普通模型回复、思考内容和其他工具事件不会触发通知。若需要区分同一会话内的并发同步请求，
-直接读取每次 `chatSync()` 返回的 `fragments`。
+订阅最终助手正文时使用 `onReply()` 或 `window` 上的 `xpeech:reply` 事件。每轮成功完成且有正文时通知一次，保留最后一条助手正文的原始格式。
+会话切换后，原会话仍可完成并回调。同步执行和历史回放跳过此订阅，`destroy()` 清理所有订阅。
+若需要区分同一会话内的并发同步请求，直接读取每次 `chatSync()` 返回的 `fragments`。
 
 `chatSync()` 使用当前 JWT、发送者名称及初始化时的 `sessionMetadata`，
 保留输入框草稿和待发送附件，只携带调用时通过 `files` 显式传入的附件。它使用后端的非交互模式，不等待用户填写问题表单；

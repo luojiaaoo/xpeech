@@ -17,7 +17,7 @@ import {
   RobotOutlined,
 } from '@ant-design/icons';
 import { chatSync, downloadFile, getFile, historyApi, stopChat, streamChat } from './api';
-import { connectEmbedBridge, postChatEvent } from './embedBridge';
+import { connectEmbedBridge, postChatEvent, postFinalReply } from './embedBridge';
 import type { SyncOptions } from './embedBridge';
 import { appendChatEvent, chatDisplayItems, chatMessagesFromEvents, finishChatTurn } from './chatState';
 import ToolCallCard from './ToolCallCard';
@@ -386,7 +386,7 @@ export default function ChatPage({
     const controller = new AbortController();
     let turnId: string | undefined;
     // 同步交互纯后台执行：不写入对话、不影响输入框和加载状态，
-    // 结果只经 Promise 与 onReply（xpeech:reply）回传主页面。
+    // 结果经 Promise 回传，片段另由 onFragmentCall 通知主页面。
     if (sync) {
       syncRequests.current.add(controller);
     } else {
@@ -404,6 +404,10 @@ export default function ChatPage({
     try {
       if (sync) return await chatSync(text, sentFiles, { sessionId, signal: controller.signal });
 
+      let replyText = '';
+      let replyEnded = false;
+      let turnCompleted = false;
+      let turnFailed = false;
       const receive = (event: ChatEvent) => {
         if (controller.signal.aborted) return;
         if (turnId === undefined && event.turn_id) {
@@ -413,9 +417,24 @@ export default function ChatPage({
           setRunningTurns((current) => new Set(current).add(receivedTurnId));
         }
         appendEvent(event);
-        if (embedded) postChatEvent(sessionId, event);
+        if (!embedded) return;
+        postChatEvent(sessionId, event);
+        if (event.event === 'assistant' && typeof event.context === 'string') {
+          replyText = replyEnded ? event.context : replyText + event.context;
+          replyEnded = false;
+        } else if (event.event === 'assistant_end') {
+          replyEnded = true;
+        } else if (event.event === 'token_usage') {
+          turnCompleted = true;
+        } else if (event.event === 'error') {
+          turnFailed = true;
+        }
       };
       await streamChat(text, sentFiles, receive, { sessionId, signal: controller.signal });
+      // Stopping the Agent can close the stream normally without a completed turn.
+      if (turnId && replyText && turnCompleted && !turnFailed && !controller.signal.aborted) {
+        postFinalReply(sessionId, turnId, replyText);
+      }
       return [];
     } catch (error) {
       if (!controller.signal.aborted && !sync) {

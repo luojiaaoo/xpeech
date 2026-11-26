@@ -5,7 +5,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-test('the embedded page notifies fragment calls and dialog files, and stops notifications after unmount', async () => {
+test('the embedded page notifies the completed reply, fragments and dialog files', async () => {
   const sent: any[] = [];
   const effects: Function[] = [];
   const listeners = new Set<Function>();
@@ -53,10 +53,11 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
       async streamChat(text: string, files: File[], receive: (event: any) => void, options: any) {
         streamCalls.push({ text, files, options });
         receiveStream = receive;
-        receive({ event: 'assistant', context: '普通回答' });
-        receive({ event: 'assistant_end', context: '' });
-        receive({ event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: '对话片段' } }]) });
-        receive({ event: 'send_file', context: 'reports/对话框.pdf' });
+        const turn_id = `turn-${streamCalls.length}`;
+        receive({ event: 'assistant', context: '正在准备', turn_id });
+        receive({ event: 'assistant_end', context: '', turn_id });
+        receive({ event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: '对话片段' } }]), turn_id });
+        receive({ event: 'send_file', context: 'reports/对话框.pdf', turn_id });
         await new Promise<void>(resolve => { finishStream = resolve; });
       },
       async chatSync() {
@@ -142,19 +143,34 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
   assert.deepEqual(structuredClone(sync.data.result), {
     session_id: 'first', text: '完成', fragments: ['结果片段'], files: ['reports/sync.pdf'],
   });
-  const fragments = sent.filter(item => item.data.type === 'xpeech:reply');
+  const fragments = sent.filter(item => item.data.type === 'xpeech:fragment-call');
   assert.deepEqual(structuredClone(fragments.map(item => item.data)), [
-    { type: 'xpeech:reply', session_id: 'first', text: '对话片段' },
-    { type: 'xpeech:reply', session_id: 'first', text: '结果片段' },
+    { type: 'xpeech:fragment-call', session_id: 'first', text: '对话片段' },
+    { type: 'xpeech:fragment-call', session_id: 'first', text: '结果片段' },
   ]);
   assert.ok(files.every(item => item.data.session_id === 'first' && item.origin === 'https://portal.test'));
+  const finalReplies = () => sent.filter(item => item.data.type === 'xpeech:reply');
+  receiveStream({ event: 'assistant', context: '  报告', turn_id: 'turn-1' });
+  receiveStream({ event: 'assistant', context: '已生成\n', turn_id: 'turn-1' });
+  receiveStream({ event: 'assistant_end', context: '', turn_id: 'turn-1' });
+  receiveStream({ event: 'token_usage', context: '{}', turn_id: 'turn-1' });
+  assert.deepEqual(finalReplies(), []);
   finishStream();
   await new Promise<void>(resolve => setImmediate(resolve));
+  assert.deepEqual(structuredClone(finalReplies()), [{
+    data: { type: 'xpeech:reply', session_id: 'first', turn_id: 'turn-1', text: '  报告已生成\n' },
+    origin: 'https://portal.test',
+  }]);
+  await command('setInput', { text: '模拟服务端停止' });
+  await command('send');
+  finishStream();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(finalReplies().length, 1);
   assert.match((await command('send')).error, /不能为空/);
   await command('addFiles', { files: [first] });
   await command('send');
-  assert.equal(streamCalls[1].text, '');
-  assert.deepEqual(Array.from(streamCalls[1].files), [first]);
+  assert.equal(streamCalls[2].text, '');
+  assert.deepEqual(Array.from(streamCalls[2].files), [first]);
   assert.equal((await command('newConversation')).result.session_id, 'second');
   assert.equal(newConversations, 1);
   const targetId = '018f0000-0000-7000-8000-000000000002';
@@ -163,10 +179,11 @@ test('the embedded page notifies fragment calls and dialog files, and stops noti
   disposeRequests();
   receiveStream({ event: 'send_file', context: 'stale.pdf' });
   receiveStream({ event: 'tool_call', context: JSON.stringify([{ name: 'fragment', arguments: { text: 'stale' } }]) });
-  assert.equal(sent.filter(item => item.data.type === 'xpeech:file').length, 2);
-  assert.equal(sent.filter(item => item.data.type === 'xpeech:reply').length, 3);
+  assert.equal(sent.filter(item => item.data.type === 'xpeech:file').length, 3);
+  assert.equal(sent.filter(item => item.data.type === 'xpeech:fragment-call').length, 4);
   finishStream();
   await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(finalReplies().length, 1);
   disposeBridge();
   disposeHistory();
 });
