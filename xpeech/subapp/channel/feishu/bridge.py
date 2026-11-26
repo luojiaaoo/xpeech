@@ -13,6 +13,7 @@ from lark_channel import (
 )
 from loguru import logger
 
+from ....utils.helper import stack_ensure_aclosing
 from ..helper import stop_chat
 from ..schema import ChatEvent, ChatEventType, Message
 from .channel import XpeechFeishuChannel
@@ -76,21 +77,25 @@ class FeishuBridge:
         self.channel.on(Events.CARD_ACTION, self.questions.handle_action)
 
     async def _on_message(self, inbound_message: InboundMessage) -> None:
-        messages: list[Message] = []
-        for source in inbound_message.batched_sources or [inbound_message]:
-            if (
-                source.chat_type == "p2p"
-                and isinstance(source.content, TextContent)
-                and source.content.text.strip() == "/stop"
-            ):
-                await self._stop(source)
-                continue
-            try:
-                messages.append(await self.inbound.parse_message(source))
-            except UnsupportedFeishuMessageError as exc:
-                logger.warning(str(exc))
-        if messages:
-            await self.consume(messages)
+        async with stack_ensure_aclosing() as resources:
+            messages: list[Message] = []
+            for source in inbound_message.batched_sources or [inbound_message]:
+                if (
+                    source.chat_type == "p2p"
+                    and isinstance(source.content, TextContent)
+                    and source.content.text.strip() == "/stop"
+                ):
+                    await self._stop(source)
+                    continue
+                try:
+                    message = await self.inbound.parse_message(source, resources)
+                except UnsupportedFeishuMessageError as exc:
+                    logger.warning(str(exc))
+                    continue
+                if message.content:
+                    messages.append(message)
+            if messages:
+                await self.consume(messages)
 
     async def _stop(self, source: InboundMessage) -> None:
         """A channel control command: never turn it into an agent message."""

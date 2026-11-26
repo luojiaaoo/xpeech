@@ -1,10 +1,13 @@
 import asyncio
 import json
+from contextlib import AsyncExitStack, asynccontextmanager
 from html import unescape
+from io import BytesIO
 from pathlib import Path
 from time import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from zipfile import ZipFile
 
 import httpx
 import pytest
@@ -15,6 +18,7 @@ from lark_channel import (
     EventOperator,
     FeishuChannel,
     FileContent,
+    FolderContent,
     Identity,
     ImageContent,
     InboundMessage,
@@ -24,7 +28,9 @@ from lark_channel import (
     TextContent,
 )
 from lark_channel.channel.safety.pipeline import SafetyPipeline
+from lark_channel.core import AccessTokenType, HttpMethod
 
+import xpeech.subapp.channel.feishu.backend as feishu_backend
 import xpeech.subapp.channel.feishu.bridge as feishu_bridge
 import xpeech.subapp.channel.feishu.conversation as feishu_conversation
 import xpeech.subapp.channel.feishu.delivery as feishu_delivery
@@ -353,7 +359,8 @@ async def test_get_user_identity_supports_enterprise_or_missing_email(email, ent
 async def test_parse_text_message_uses_employee_number_and_feishu_user_metadata():
     bridge = _bridge_with_channel(SimpleNamespace())
 
-    message = await bridge.inbound.parse_message(_inbound_message(TextContent(text="hello")))
+    async with AsyncExitStack() as resources:
+        message = await bridge.inbound.parse_message(_inbound_message(TextContent(text="hello")), resources)
 
     assert message.message_id == "om_message"
     assert message.chat_id == "oc_chat"
@@ -371,7 +378,8 @@ async def test_parse_text_message_uses_employee_number_and_feishu_user_metadata(
 async def test_parse_text_message_allows_missing_email():
     bridge = _bridge_with_channel(SimpleNamespace(), email=None)
 
-    message = await bridge.inbound.parse_message(_inbound_message(TextContent(text="hello")))
+    async with AsyncExitStack() as resources:
+        message = await bridge.inbound.parse_message(_inbound_message(TextContent(text="hello")), resources)
 
     assert message.user_id == "E1001"
     assert message.session_metadata == {
@@ -487,7 +495,8 @@ async def test_parse_resource_message_uses_channel_download_helper(
     download_resource = AsyncMock(return_value=downloaded_path)
     bridge = _bridge_with_channel(SimpleNamespace(download_resource_to_file=download_resource))
 
-    message = await bridge.inbound.parse_message(_inbound_message(content))
+    async with AsyncExitStack() as resources:
+        message = await bridge.inbound.parse_message(_inbound_message(content), resources)
 
     expected_kwargs = {
         "resource_type": resource_type,
@@ -523,7 +532,8 @@ async def test_parse_post_reads_content_v2_document_and_preserves_attachment_ord
         }
     )
 
-    message = await bridge.inbound.parse_message(_inbound_message(post))
+    async with AsyncExitStack() as resources:
+        message = await bridge.inbound.parse_message(_inbound_message(post), resources)
 
     assert message.content == [
         TextData(text="before\n[link](https://example.com)"),
@@ -537,6 +547,134 @@ async def test_parse_post_reads_content_v2_document_and_preserves_attachment_ord
         message_id="om_message",
         dest_dir=tmp_path / "E1001",
     )
+
+
+@pytest.mark.parametrize("as_post", [False, True])
+@pytest.mark.asyncio
+async def test_on_message_archives_feishu_folder(tmp_path, monkeypatch, as_post):
+    monkeypatch.setattr(feishu_inbound, "FEISHU_CACHE_DIR", tmp_path)
+    channel = XpeechFeishuChannel(app_id="cli_test", app_secret="secret")
+    bridge = _bridge_with_channel(channel)
+    folders = {
+        "root": [
+            {"file_key": "root_file", "name": "同名.txt", "is_folder": False},
+            {"file_key": "nested", "name": "子目录", "is_folder": True},
+            {"file_key": "empty", "name": "空目录", "is_folder": True},
+        ],
+        "nested": [{"file_key": "nested_file", "name": "同名.txt", "is_folder": False}],
+        "empty": [],
+    }
+
+    async def request(req):
+        assert req.http_method == HttpMethod.GET
+        assert req.uri == "/open-apis/im/v1/files/:file_key/folder"
+        assert req.token_types == {AccessTokenType.TENANT}
+        assert dict(req.queries) == {"srctype": "message", "srcid": "om_message", "recursive": "false"}
+        items = folders[req.paths["file_key"]]
+        return SimpleNamespace(
+            success=lambda: True,
+            raw=SimpleNamespace(content=json.dumps({"data": {"items": items, "all_count": len(items)}}).encode()),
+        )
+
+    async def download(file_key, *, resource_type, message_id, dest_dir, file_name):
+        assert resource_type == "file"
+        assert message_id == "om_message"
+        path = dest_dir / file_name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(file_key.encode())
+        return path
+
+    monkeypatch.setattr(channel.client, "arequest", request)
+    channel.download_resource_to_file = AsyncMock(side_effect=download)
+    channel.add_reaction = AsyncMock()
+    channel.send = AsyncMock()
+
+    uploads = []
+
+    async def events():
+        yield {"event": "user"}
+
+    @asynccontextmanager
+    async def open_chat_stream(_auth, _sender, content, _metadata, url, *, session_id, files):
+        uploads.append((url, json.loads(content), [(field, name, file.read()) for field, (name, file, _) in files]))
+        yield httpx.Response(200, request=httpx.Request("POST", url)), events()
+
+    monkeypatch.setattr(feishu_backend, "open_chat_stream", open_chat_stream)
+    content = FolderContent(file_key="root", file_name="教程")
+    if as_post:
+        content = PostContent(post={
+            "content_v2": [[{"tag": "text", "text": "嗨嗨"}]],
+            "files": [
+                {"file_key": "root", "file_name": "教程", "is_folder": True},
+                {"file_key": "ordinary_file", "file_name": "普通.txt"},
+            ],
+        })
+
+    await bridge._on_message(_inbound_message(content))
+
+    ((url, text, files),) = uploads
+    assert url == "http://backend.test/chat"
+    if as_post:
+        assert text == [{"text": "嗨嗨"}]
+        assert files[1:] == [("files", "普通.txt", b"ordinary_file")]
+    else:
+        assert text == []
+        assert len(files) == 1
+    field, name, data = files[0]
+    assert (field, name) == ("files", "教程.zip")
+    with ZipFile(BytesIO(data)) as archive:
+        assert set(archive.namelist()) == {
+            "教程/", "教程/同名.txt", "教程/子目录/", "教程/子目录/同名.txt", "教程/空目录/",
+        }
+        assert archive.read("教程/同名.txt") == b"root_file"
+        assert archive.read("教程/子目录/同名.txt") == b"nested_file"
+    channel.send.assert_not_awaited()
+    assert not list(tmp_path.glob("xpeech-feishu-folder-*"))
+
+
+@pytest.mark.asyncio
+async def test_list_message_folder_rejects_truncated_listing(monkeypatch):
+    channel = XpeechFeishuChannel(app_id="cli_test", app_secret="secret")
+    request = AsyncMock(return_value=SimpleNamespace(
+        success=lambda: True,
+        raw=SimpleNamespace(content=b'{"data": {"items": [], "all_count": 1}}'),
+    ))
+    monkeypatch.setattr(channel.client, "arequest", request)
+
+    with pytest.raises(ValueError, match="incomplete folder listing"):
+        await channel.list_message_folder("om_message", "folder_key")
+
+
+@pytest.mark.parametrize("as_post", [False, True])
+@pytest.mark.asyncio
+async def test_on_message_reports_folder_download_failure(tmp_path, monkeypatch, as_post):
+    monkeypatch.setattr(feishu_inbound, "FEISHU_CACHE_DIR", tmp_path)
+    channel = SimpleNamespace(
+        list_message_folder=AsyncMock(return_value=[{"file_key": "child", "name": "child.txt"}]),
+        download_resource_to_file=AsyncMock(side_effect=RuntimeError("child download failed")),
+        send=AsyncMock(return_value=SendResult(success=True)),
+    )
+    bridge = _bridge_with_channel(channel)
+    bridge.consume = AsyncMock()
+    content = FolderContent(file_key="root", file_name="教程")
+    if as_post:
+        content = PostContent(post={
+            "content_v2": [[{"tag": "text", "text": "嗨嗨"}]],
+            "files": [{"file_key": "root", "file_name": "教程", "is_folder": True}],
+        })
+
+    await bridge._on_message(_inbound_message(content))
+
+    channel.send.assert_awaited_once_with(
+        to="oc_chat",
+        message={"text": "读取飞书文件夹失败，请将文件夹压缩为 ZIP 后重新发送。"},
+        opts={"reply_to": "om_message"},
+    )
+    if as_post:
+        assert bridge.consume.await_args.args[0][0].content == [TextData(text="嗨嗨")]
+    else:
+        bridge.consume.assert_not_awaited()
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.asyncio

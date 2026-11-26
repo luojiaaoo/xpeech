@@ -206,6 +206,7 @@ RUN cd xpeech/subapp/channel/web_client/frontend && \
 COPY --from=lark-cli-builder /out/lark-cli /usr/local/bin/lark-cli
 COPY --from=lark-cli-builder /out/lark-cli-auth /usr/local/bin/lark-cli-auth
 
-RUN printf '0 0 * * * find /app/data/cache -type f -mmin +1440 -exec rm -f {} + > /dev/null 2>&1\n' | crontab -
+COPY docker/cleanup_cache.py ./docker/cleanup_cache.py
+RUN printf '%s\n' '0 0 * * * cd /app && /app/.venv/bin/python docker/cleanup_cache.py > /dev/null 2>&1' | crontab -
 
 ENTRYPOINT ["/bin/sh", "-c", "/etc/init.d/cron start && exec uv run -m xpeech \"$@\"", "--"]

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from itertools import chain
 from pathlib import Path
 from typing import Any
 
+import anyio
 from async_lru import alru_cache
 from lark_channel import (
     FileContent,
+    FolderContent,
     ImageContent,
     InboundMessage,
     MediaContent,
@@ -16,9 +19,12 @@ from lark_channel import (
 from lark_channel.api.contact.v3.model.get_user_request import GetUserRequest
 from loguru import logger
 
+from ....utils.helper import stack_ensure_aclosing
 from ..schema import FileData, Message, TextData
 from .channel import XpeechFeishuChannel
 from .config import FEISHU_CACHE_DIR, FEISHU_USER_CACHE_TTL_SECONDS
+from .delivery import ensure_send_success
+from .folder import archive_message_folder
 
 
 class UnsupportedFeishuMessageError(ValueError):
@@ -55,7 +61,7 @@ class FeishuInbound:
             )
         return employee_no, email
 
-    async def parse_message(self, inbound_msg: InboundMessage) -> Message:
+    async def parse_message(self, inbound_msg: InboundMessage, resources: AsyncExitStack) -> Message:
         timestamp = inbound_msg.create_time // 1000
 
         async def _save_resource(
@@ -73,6 +79,30 @@ class FeishuInbound:
             if file_name:
                 kwargs["file_name"] = file_name
             return await self.channel.download_resource_to_file(file_key, **kwargs)
+
+        async def _save_folder(file_key: str | None, folder_name: str | None) -> list[FileData]:
+            try:
+                async with stack_ensure_aclosing() as folder_resources:
+                    directory = await folder_resources.enter_async_context(
+                        anyio.TemporaryDirectory(prefix="xpeech-feishu-folder-", dir=FEISHU_CACHE_DIR),
+                    )
+                    saved_file = await archive_message_folder(
+                        self.channel, inbound_msg.message_id, file_key, folder_name, Path(directory),
+                    )
+                    resources.push_async_callback(folder_resources.pop_all().aclose)
+                    return [FileData(file=saved_file)]
+            except Exception:  # noqa: BLE001 - 单个文件夹失败时仍处理同一消息的其他内容。
+                logger.exception("Failed to archive Feishu folder message_id={}", inbound_msg.message_id)
+            try:
+                result = await self.channel.send(
+                    to=inbound_msg.chat_id,
+                    message={"text": "读取飞书文件夹失败，请将文件夹压缩为 ZIP 后重新发送。"},
+                    opts={"reply_to": inbound_msg.message_id},
+                )
+                ensure_send_success(result, operation="send folder failure notice")
+            except Exception:  # noqa: BLE001 - 回复失败时仍处理同一消息的其他内容。
+                logger.exception("Failed to notify Feishu folder failure message_id={}", inbound_msg.message_id)
+            return []
 
         if inbound_msg.chat_type == "p2p":
             user_id, email = await self.get_user_identity(inbound_msg.sender_id)
@@ -123,6 +153,12 @@ class FeishuInbound:
                     content=[FileData(file=saved_file)],
                 )
 
+            if isinstance(inbound_msg.content, FolderContent):
+                return Message(
+                    **common_fields,
+                    content=await _save_folder(inbound_msg.content.file_key, inbound_msg.content.file_name),
+                )
+
             if isinstance(inbound_msg.content, PostContent):
                 parsed_content: list[TextData | FileData] = []
                 text_buffer: list[str] = []
@@ -161,9 +197,10 @@ class FeishuInbound:
 
                 post_files = post.get("files") or []
                 for file_item in post_files:
-                    if file_item.get("is_folder"):
-                        continue
                     file_key = file_item.get("file_key")
+                    if file_item.get("is_folder") is True:
+                        parsed_content.extend(await _save_folder(file_key, file_item.get("file_name")))
+                        continue
                     if not file_key:
                         continue
                     saved_file = await _save_resource(

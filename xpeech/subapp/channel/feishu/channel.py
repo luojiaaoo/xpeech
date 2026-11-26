@@ -5,10 +5,38 @@ from typing import Any
 from lark_channel import FeishuChannel
 from lark_channel.api.cardkit.v1.model.patch_card_element_request import PatchCardElementRequest
 from lark_channel.api.cardkit.v1.model.patch_card_element_request_body import PatchCardElementRequestBody
+from lark_channel.core import AccessTokenType, BaseRequest, HttpMethod
 
 
 class XpeechFeishuChannel(FeishuChannel):
     """Keep card answers independent of messages waiting for those answers."""
+
+    async def list_message_folder(self, message_id: str, file_key: str) -> list[dict[str, Any]]:
+        """List the immediate children of a folder attached to a chat message."""
+        request = (
+            BaseRequest.builder()
+            .http_method(HttpMethod.GET)
+            .uri("/open-apis/im/v1/files/:file_key/folder")
+            .paths({"file_key": file_key})
+            .queries([("srctype", "message"), ("srcid", message_id), ("recursive", "false")])
+            .token_types({AccessTokenType.TENANT})
+            .build()
+        )
+        response = await self.client.arequest(request)
+        if not response.success():
+            raise RuntimeError(f"Feishu folder listing failed: {response.code}: {response.msg}")
+        data = json.loads(response.raw.content)["data"]
+        count = data.get("all_count")
+        items = data.get("items")
+        if items is None and count == 0:
+            items = []
+        if (
+            not isinstance(items, list)
+            or data.get("has_more")
+            or (count is not None and count != len(items))
+        ):
+            raise ValueError("Feishu returned an incomplete folder listing")
+        return items
 
     async def patch_card_element(
         self,
