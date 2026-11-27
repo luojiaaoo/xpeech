@@ -114,7 +114,7 @@ secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
 通道名就是 JWT header 的 `kid`，由服务端 `jwt.channels` 配置确定，JWT payload 或会话元数据不授予任何权限。
 鉴权后的通道名以必填字符串显式传递到 Runner、技能加载、提示词构建、工具注册和执行，供资源过滤表达式及工具上下文使用。
 飞书定时任务通过带 `feishu` 通道的用户 JWT 调用 `/chat_sync`，执行时的通道同样为 `feishu`。
-独立调用 `ToolExecutor.execute_one` 时可省略 `channel`，默认 `None`；Agent 主调用链始终显式传入通道。
+`ToolExecutor.execute` 和 `execute_one` 的 `channel` 默认均为 `None`。聊天工具调用显式传入通道，记忆整理直接调用 `execute`，使用默认值。
 
 Skill 的 YAML frontmatter 和 MCP 配置都支持 `filter` 过滤表达式。配置了 `filter` 的资源仅在表达式
 求值为真时展示或注册；省略 `filter` 的资源是公共资源，一律可见。同一条件作用于内建技能、
