@@ -10,8 +10,6 @@ metadata:
 
 # markdown (v1)
 
-**CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
-
 ## 快速决策
 
 - 身份：使用 `--as user`，未提供令牌或权限不足时报告问题，由调用方提供有效令牌，不主动授权。

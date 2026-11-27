@@ -126,7 +126,7 @@ lark-cli drive +status \
 | 列出文件夹 / 子目录 | `drive:drive.metadata:readonly` |
 | 下载并 hash 文件 | `drive:file:download` |
 
-默认会先要求 `drive:drive.metadata:readonly`。在 `detection=exact` 路径（默认，不传 `--quick`）下，CLI 还会额外要求 `drive:file:download`；传 `--quick` 时不会要求下载 scope。如果当前 token 缺本次执行路径需要的 scope，命令会报 `missing_scope` 并提示重新登录。`drive:drive` 在部分企业被策略禁用，所以 +status 故意只依赖上面这些细粒度 scope。
+默认会先要求 `drive:drive.metadata:readonly`。在 `detection=exact` 路径（默认，不传 `--quick`）下，CLI 还会额外要求 `drive:file:download`；传 `--quick` 时不会要求下载 scope。如果当前 token 缺本次执行路径需要的 scope，命令会报 `missing_scope`。报告具体缺少的 scope，由调用方提供具备相应权限的有效用户令牌。`drive:drive` 在部分企业被策略禁用，所以 +status 故意只依赖上面这些细粒度 scope。
 
 ## 参考
 

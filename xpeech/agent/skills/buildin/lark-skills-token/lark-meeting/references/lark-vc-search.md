@@ -131,7 +131,7 @@ lark-cli vc +search --query "周会" --page-size 15 --page-token "<PAGE_TOKEN>"
 | 命令直接报错，要求提供过滤条件 | 没有传入 `--query`、时间范围或任何过滤 ID | 至少补充一个过滤条件后重试 |
 | 时间参数校验失败 | `--start` 或 `--end` 格式不合法 | 改用 ISO 8601 或 `YYYY-MM-DD` |
 | 搜不到未来会议 | `vc +search` 只查历史会议 | 改用 [lark-calendar](../../lark-calendar/SKILL.md) 查询未来日程 |
-| 权限不足 | 未授权 `vc:meeting.search:read` | 使用 `auth login` 完成授权 |
+| 权限不足 | 未授权 `vc:meeting.search:read` | 由调用方提供具有 `vc:meeting.search:read` 的有效用户令牌 |
 
 ## 提示
 - 必须使用 `--format json` 输出，便于稳定解析。

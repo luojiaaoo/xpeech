@@ -10,8 +10,6 @@ metadata:
 
 # mail (v1)
 
-**CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、身份切换、权限处理和 `_notice` 处理。**
-
 ## 核心概念
 
 - **邮件（Message）**：一封具体的邮件，包含发件人、收件人、主题、正文（纯文本/HTML）、附件。每封邮件有唯一 `message_id`。

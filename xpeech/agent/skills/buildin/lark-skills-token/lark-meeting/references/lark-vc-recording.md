@@ -80,7 +80,7 @@ lark-cli vc +recording --meeting-ids 69xxxxxxxxxxxxx28 --dry-run
 | `no recording available` | 该会议无录制或录制未完成 | 确认会议已结束且开启了录制 |
 | `121005 no permission` | 无权查看该会议录制 | 确认是会议参与者或有录制权限 |
 | `124002 recording generating` | 录制文件仍在生成中 | 等待录制完成后重试 |
-| `missing required scope(s)` | 权限不足 | `--as user`：按提示运行 `auth login --scope`；`--as bot`：使用错误中的 `console_url` 去开发者后台开通，**禁止**对 bot 执行 `auth login`（见 [lark-shared](../../lark-shared/SKILL.md) 的权限管理） |
+| `missing required scope(s)` | 权限不足 | 按错误提示报告缺少的 scope，由调用方提供具备相应权限的有效用户令牌（见 [lark-shared](../../lark-shared/SKILL.md) 的权限管理） |
 
 ## 提示
 

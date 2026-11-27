@@ -121,7 +121,7 @@ lark-cli drive +pull --local-dir ./repo --folder-token fldcnxxxxxxxxx \
 | 列出文件夹 / 子目录 | `drive:drive.metadata:readonly` |
 | 下载文件 | `drive:file:download` |
 
-如果当前 token 缺这些 scope，命令会直接报 `missing_scope` 并提示重新登录。`drive:drive` 在部分企业被策略禁用，所以 +pull 故意只声明上面这两个细粒度 scope。
+如果当前 token 缺这些 scope，命令会直接报 `missing_scope`。报告具体缺少的 scope，由调用方提供具备相应权限的有效用户令牌。`drive:drive` 在部分企业被策略禁用，所以 +pull 故意只声明上面这两个细粒度 scope。
 
 ## 范围限制
 

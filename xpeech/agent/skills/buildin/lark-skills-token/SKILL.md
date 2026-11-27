@@ -8,16 +8,16 @@ description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审
 
 本技能将飞书/Lark 的业务能力整合在一个入口中。各业务目录下的 `SKILL.md` 是本技能的参考文档，保留原始文件名便于维护，不作为独立技能注册，也不通过 `read_skill` 加载。
 
-> 认证、令牌缺失和权限不足处理统一读取 `lark-shared/SKILL.md`，不主动发起授权。
+> 使用调用方提供的飞书用户令牌，不主动发起授权。
 
 ## 使用方法（路由规则）
 
-1. 收到飞书/Lark 相关需求后，在下方「目录」里按需求匹配最合适的子技能库。
-2. 通过 `read_file` 按路径读取对应参考文档，例如 `<本技能目录>/lark-im/SKILL.md`，按其指引执行。参考文档之间的 `SKILL.md` 链接也通过 `read_file` 读取。
-3. 涉及认证、身份切换、权限不足（`missing_scopes`）、输出契约、高风险操作等通用规则时，先读取 `lark-shared/SKILL.md`。
-4. 普通业务直接执行 `lark-cli ... --as user`。令牌缺失、失效或缺少 scope 时，报告问题，由调用方提供有效令牌。
+1. 首先通过 `read_file` 读取 `lark-shared/SKILL.md`，遵守其中的身份、认证、权限、输出契约和高风险操作规则。
+2. 按下方速查表选择业务参考文档，通过 `read_file` 按路径读取，例如 `<本技能目录>/lark-im/SKILL.md`，再按任务读取文档中引用的详细资料。标为必读的内容须完整读取。
+3. 参考文档之间的 `SKILL.md` 链接也通过 `read_file` 读取。
+4. 业务命令使用 `lark-cli ... --as user`。遇到令牌缺失、失效或缺少 scope 时，报告问题和所需 scope，由调用方提供具备相应权限的有效令牌。
 
-## 目录（子技能库一览）
+## 目录（业务参考文档）
 
 ```
 lark-skills-token/
@@ -52,9 +52,9 @@ lark-skills-token/
 └── lark-workflow-standup-report/   工作流：日程 + 任务待办摘要
 ```
 
-## 路由速查（高频需求 → 子技能库）
+## 路由速查（高频需求 → 参考文档）
 
-| 用户想要… | 读取 |
+| 用户想要… | 参考文档（相对本技能目录） |
 |---|---|
 | 发消息、搜聊天记录、管群、发卡片 | `lark-im/SKILL.md` |
 | 查/建日程、订会议室 | `lark-calendar/SKILL.md` |
@@ -78,12 +78,9 @@ lark-skills-token/
 | 封装新的飞书 Skill | `lark-skill-maker/SKILL.md` |
 | 会议纪要周报 | `lark-workflow-meeting-summary/SKILL.md` |
 | 今日/本周日程与待办摘要 | `lark-workflow-standup-report/SKILL.md` |
-| 认证 / 令牌 / scope | `lark-shared/SKILL.md`（不主动登录） |
-| 认证、身份切换、权限通用规则 | `lark-shared/SKILL.md` |
+| 认证、令牌、scope 和权限通用规则 | `lark-shared/SKILL.md` |
 
 ## 重要：相对路径说明
 
-- 每个子技能库（如 `lark-approval/`）内部出现的**相对路径，都是相对该子技能库自己的目录**而言的——不是相对本路由 `lark-skills-token/SKILL.md`，也不是相对仓库根目录。
-- 例如 `lark-approval/SKILL.md` 里写的 `../lark-shared/SKILL.md`，实际指向 `lark-skills-token/lark-shared/SKILL.md`（因为 `lark-approval` 与 `lark-shared` 都是 `lark-skills-token/` 下的同级目录）。
-- 同理，子技能库 `references/`、`scripts/`、`scenes/` 等子目录里的 `../../xxx` 相对路径，也是从该文件自己所在的子目录逐级向上解析，最终仍落在 `lark-skills-token/` 内。
-- 总之：**看到一个相对路径时，先确定它写在哪个子技能库的哪个文件里，再以那个文件所在目录为基准去解析。**
+- 以 `read_skill` 返回的本技能目录为基准解析速查表中的路径。
+- 以参考文档所在的目录为基准解析正文中的相对路径。例如从 `lark-approval/SKILL.md` 读取 `../lark-shared/SKILL.md`，对应 `<本技能目录>/lark-shared/SKILL.md`。

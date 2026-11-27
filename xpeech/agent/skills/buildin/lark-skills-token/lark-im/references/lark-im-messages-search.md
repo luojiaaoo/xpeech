@@ -224,7 +224,7 @@ lark-cli im +messages-search --query "" --chat-id oc_xxx --sender ou_me --start 
 |---------|---------|---------|
 | Too few results | The time range is too narrow or the keyword is too specific | Expand the time range and try broader keywords |
 | No results | Missing permission or no match | Confirm `search:message` is authorized and relax the filters |
-| Permission denied | Search scope not authorized | Run `auth login --scope "search:message"` |
+| Permission denied | Search scope not authorized | Ask the caller to provide a valid user token with `search:message` |
 
 ## References
 

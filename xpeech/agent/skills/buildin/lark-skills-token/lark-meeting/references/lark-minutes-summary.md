@@ -111,7 +111,7 @@ lark-cli minutes +summary --minute-token obcnxxxxxxxxxxxxxxxxxxxx --summary @sum
 |---------|--------|---------|---------|
 | 总结展示为原始 Markdown 文本 | — | 总结含链接、四级标题等妙记端无法渲染的语法 | 改用标题（#～###）、加粗、列表等可展示格式；接口不会因此报错 |
 | 参数无效 | — | `minute_token` 缺失或格式错误 | 检查 token 是否完整 |
-| 权限不足 | — | 缺少 `minutes:minutes:update` | 运行 `auth login --scope "minutes:minutes:update"` |
+| 权限不足 | — | 缺少 `minutes:minutes:update` | 由调用方提供具有 `minutes:minutes:update` 的有效用户令牌 |
 
 ## 相关场景
 - [生成和修改妙记](../scenes/create-and-edit-minutes.md)

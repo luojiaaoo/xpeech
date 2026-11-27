@@ -153,9 +153,9 @@ lark-cli minutes +search --query "预算复盘" --page-size 20 --page-token '<PA
 | ---------------------- | ----------------------------------------------------- | -------------------------------------------- |
 | 命令直接报错，要求提供过滤条件        | 没有传入 `--query`、时间范围或任何过滤 ID                           | 至少补充一个过滤条件后重试                                |
 | 时间参数校验失败               | `--start` 或 `--end` 格式不合法                             | 改用 ISO 8601 或 `YYYY-MM-DD`                   |
-| `owner-ids` 校验失败       | 传入的不是 open\_id，且也不是 `me`；或传了 `me` 但当前用户 open\_id 不可解析 | 改为 `ou_` 开头的用户 ID，或先完成 `auth login` 后再传 `me` |
-| `participant-ids` 校验失败 | 传入的不是 open\_id，且也不是 `me`；或传了 `me` 但当前用户 open\_id 不可解析 | 改为 `ou_` 开头的用户 ID，或先完成 `auth login` 后再传 `me` |
-| 权限不足                   | 未授权 `minutes:minutes.search:read`                     | user 身份使用 `auth login` 完成用户授权；bot 身份检查 tenant access token 和应用 scope |
+| `owner-ids` 校验失败       | 传入的不是 open\_id，且也不是 `me`；或传了 `me` 但当前用户 open\_id 不可解析 | 改用 `ou_` 开头的用户 ID |
+| `participant-ids` 校验失败 | 传入的不是 open\_id，且也不是 `me`；或传了 `me` 但当前用户 open\_id 不可解析 | 改用 `ou_` 开头的用户 ID |
+| 权限不足                   | 未授权 `minutes:minutes.search:read`                     | 由调用方提供具有 `minutes:minutes.search:read` 的有效用户令牌 |
 
 ## 提示
 

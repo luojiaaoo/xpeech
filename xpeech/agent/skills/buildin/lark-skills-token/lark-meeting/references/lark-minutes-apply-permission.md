@@ -39,7 +39,7 @@ lark-cli minutes +apply-permission --minute-token obcnxxxxxxxxxxxxxxxxxxxx --per
 
 ### 2. missing scope 与资源 ACL 是两类不同问题
 
-- **missing scope**（当前身份完全没有 `minutes:permission:apply` / `minutes:minutes.basic:read` 等 scope）：这不是"没有这条妙记的权限"，`+apply-permission` 解决不了。`--as user` 用 `auth login --scope` 补权限；`--as bot` 去开发者后台开通，**禁止**对 bot 执行 `auth login`。完整规则见 [lark-shared](../../lark-shared/SKILL.md)。
+- **missing scope**（当前身份完全没有 `minutes:permission:apply` / `minutes:minutes.basic:read` 等 scope）：这不是"没有这条妙记的权限"，`+apply-permission` 解决不了。报告具体缺少的 scope，由调用方提供具备相应权限的有效用户令牌。完整规则见 [lark-shared](../../lark-shared/SKILL.md)。
 - **资源 ACL**（scope 都有，但对**这一条具体妙记**没有查看/编辑权限）：这才是 `+apply-permission` 要解决的场景。
 
 先看错误的 `error.subtype` 是 `missing_scope` 还是资源级别的权限拒绝，再决定要不要调用本命令。

@@ -41,7 +41,7 @@ metadata:
 
 ### 认证与 Scope
 
-执行 Shortcut 时，不预读 [`lark-shared`](../lark-shared/SKILL.md) 或预跑 `auth status --verify`；仅遇到未认证、token / 身份或 scope 错误时读取该 Skill，修复后重试。认证、身份或 scope 管理请求则直接使用该 Skill。
+令牌缺失、失效或 scope 不足时，按[共享规则](../lark-shared/SKILL.md)报告问题并等待调用方更新令牌。
 
 ## 不在本 Skill 范围
 
