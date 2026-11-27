@@ -10,6 +10,8 @@ metadata:
 
 # okr (v2)
 
+**CRITICAL — 开始前 MUST 先用 `read_file` 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
+
 **身份**：OKR 操作默认使用 `--as user`（查看当前用户/上下级的 OKR 时）。也支持 `--as bot` 查看他人 OKR（需相应权限）。
 
 ## 快速决策
