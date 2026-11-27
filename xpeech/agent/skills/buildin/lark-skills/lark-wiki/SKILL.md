@@ -10,6 +10,8 @@ metadata:
 
 # wiki (v2)
 
+**CRITICAL — 开始前 MUST 先用 `read_file` 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
+
 > **成员管理硬限制：**
 > - 如果目标是“部门”，先判断身份，再决定是否继续。
 > - `--as bot` 对应 `tenant_access_token`。官方限制：这种身份下不能使用部门 ID (`opendepartmentid`) 添加知识空间成员。

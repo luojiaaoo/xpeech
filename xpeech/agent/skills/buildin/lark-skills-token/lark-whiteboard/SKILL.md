@@ -14,6 +14,8 @@ metadata:
 > - 运行 `lark-cli --version`，确认可用，无需询问用户。
 > - 运行 `npx -y @larksuite/whiteboard-cli@^0.2.13 -v`，确认可用，无需询问用户。
 
+**CRITICAL — 开始前 MUST 先用 `read_file` 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
+
 ---
 
 ## 快速决策

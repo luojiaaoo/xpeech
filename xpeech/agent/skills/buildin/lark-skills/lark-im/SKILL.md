@@ -10,6 +10,8 @@ metadata:
 
 # im (v1)
 
+**CRITICAL — 开始前 MUST 先用 `read_file` 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
+
 ## Core Concepts
 
 - **Message**: A single message in a chat, identified by `message_id` (om_xxx). Supports types: text, post, image, file, audio, video, sticker, interactive (card), share_chat, share_user, merge_forward, etc.
