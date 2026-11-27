@@ -104,6 +104,12 @@ RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
 RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends tshark
 
+# Office 文档：无界面处理和转换文字文档、演示文稿、表格及绘图文件。
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-draw \
+        libreoffice-java-common openjdk-11-jre-headless
+
 # 邮件附件：从本地 MIME 邮件文件提取附件。
 RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends ripmime

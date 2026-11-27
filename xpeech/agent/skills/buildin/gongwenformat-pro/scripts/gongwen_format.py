@@ -652,11 +652,13 @@ def main():
     parser.add_argument('--recipient', default='', help='主送机关（如 县委办公室：）')
     parser.add_argument('--notes', nargs='*', default=[], help='附注（如 此件公开发布）')
     parser.add_argument('--no-page-num', action='store_true', help='不添加页码（默认添加，红头文件首页自动跳过）')
-    parser.add_argument('--format', choices=['docx'], default='docx', help='输出格式（docx）')
+    parser.add_argument('--format', default='docx', choices=['docx', 'pdf'], help='输出格式：docx（默认）或 pdf')
     args = parser.parse_args()
 
+    # 如果输出路径以 .pdf 结尾，自动切换为 pdf 格式
     if args.output.lower().endswith('.pdf'):
-        parser.error('请指定 Word (.docx) 输出路径')
+        args.format = 'pdf'
+        args.output = os.path.splitext(args.output)[0] + '.docx'
 
     content, _ = read_input(args.input)
 
@@ -767,6 +769,26 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
     doc.save(args.output)
     print(f"✅ 公文已生成: {args.output}")
+
+    # PDF 导出
+    if args.format == 'pdf':
+        import subprocess
+        pdf_output = os.path.splitext(args.output)[0] + '.pdf'
+        try:
+            result = subprocess.run(
+                ['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', out_dir or '.', os.path.abspath(args.output)],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0 and os.path.exists(pdf_output):
+                print(f"✅ PDF已生成: {pdf_output}")
+            else:
+                print(f"❌ PDF转换失败: {result.stderr.strip() or '未知错误'}")
+                print(f"   提示: 请确保已安装 LibreOffice (sudo apt install libreoffice-writer)")
+        except FileNotFoundError:
+            print("❌ PDF转换失败: 未找到 LibreOffice")
+            print("   请安装: sudo apt install libreoffice-writer")
+        except subprocess.TimeoutExpired:
+            print("❌ PDF转换超时（30秒），文件可能过大")
 
 
 if __name__ == '__main__':

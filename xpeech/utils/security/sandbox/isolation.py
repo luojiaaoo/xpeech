@@ -70,6 +70,7 @@ async def wrap_sandbox_command(
     workspace = workspace.resolve()
     workspace_python_env = workspace / ".venv"
     home = get_sandbox_home(workspace)
+    config_home = home / ".config"
     user_id = get_user_id()
     workspace_skills = workspace / "skills"
 
@@ -96,6 +97,7 @@ async def wrap_sandbox_command(
 
     sandbox_env: dict[str, str] = {
         "HOME": str(home),
+        "XDG_CONFIG_HOME": str(config_home),
         "PATH": _sandbox_path(home),
         "PIP_REQUIRE_VIRTUALENV": "true",  # 确保 pip 在虚拟环境中运行
         "UV_PROJECT_ENVIRONMENT": str(workspace_python_env),  # uv虚拟py环境路径
@@ -104,7 +106,7 @@ async def wrap_sandbox_command(
         "GOPATH": str(home / "go"),
         "GOMODCACHE": str(home / "go" / "pkg" / "mod"),
         "GOCACHE": str(home / ".cache" / "go-build"),
-        "GOENV": str(home / ".config" / "go" / "env"),
+        "GOENV": str(config_home / "go" / "env"),
         "SHELL_USER_ID": str(user_id), # 注入 user_id，给插件使用
     }
     for key, value in sandbox_env.items():
@@ -119,6 +121,9 @@ async def wrap_sandbox_command(
         "/etc/alternatives",
         # TShark uses system protocol preferences and Lua configuration here.
         "/etc/wireshark",
+        # Headless LibreOffice resolves shared registry links through /etc.
+        "/etc/libreoffice",
+        "/etc/papersize",
         # TeX Live stores configuration, generated formats and symlink targets here.
         "/etc/texmf",
         "/var/lib/texmf",
@@ -146,6 +151,7 @@ async def wrap_sandbox_command(
             *("--tmpfs", str(workspace.parent)),
             *("--dir", str(workspace)),
             *("--bind", str(workspace), str(workspace)),
+            *("--dir", str(config_home)),
         ]
     )
 

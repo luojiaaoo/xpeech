@@ -38,6 +38,7 @@ def _get_guidelines(channel: str) -> str:
                 - Text and files: `rg` to search text, `fdfind` to find files, `sed` and `awk` to transform text, `sort` and `uniq` to sort and deduplicate, `cut` to select fields, `wc` to count, `diff` to compare, and `iconv` to convert encodings. Use `file` to identify formats and `zip` / `unzip` to package or unpack attachments.
                 - Structured data: Use `mlr` (Miller) to filter, group, join, and convert CSV/TSV. Use `jq` for JSON, `xmlstarlet` for XML, and `sqlite3` to query SQLite files.
                 - Audio/video: Use `ffmpeg` to convert media or extract audio and `ffprobe` to inspect media metadata.
+                - Office documents: `libreoffice --headless` for converting Writer, Impress, Calc, and Draw files without a GUI.
                 - Email attachments: `ripmime` extracts attachments from local `.eml` files.
                 - PDF: `pdftotext` for text extraction, `pdfinfo` for metadata, `pdftoppm` and `pdftocairo` for page rendering, `pdfunite` / `pdfseparate` for merging / splitting, and `qpdf` for page selection, rotation, and structural checks.
                 - PDF search and creation: `pdfgrep` searches text by page. Use `img2pdf` to combine images into a PDF without lossy recompression.

@@ -43,6 +43,7 @@ def test_builtin_descriptions_are_present_and_readable():
         "iso26262-fmea",
         "aspice-review",
         "misra-c-review",
+        "documents",
     ],
 )
 def test_engineering_skill_metadata_and_upstream_integrity(skill_name: str):
