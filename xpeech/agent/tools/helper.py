@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ...config.settings import settings
 from ...exceptions import PathProtectionError
-from ...utils.file_io import is_relative_path
+from ...utils.helper import resolve_path_without_symlinks
 from ...utils.security import sandbox
 from ..skills.skill import BUILTIN_SKILLS_DIR
 
@@ -59,13 +59,9 @@ def safe_resolve_workspace_path(
     workspace = workspace.resolve()
     path = _expand_sandbox_home_path(user_path, workspace)
 
-    if path.is_absolute():
-        resolved_path = path.resolve()
-    else:
-        resolved_path = (workspace / path).resolve()
-
     # 先确保用户输入没有逃离工作区。
-    if not is_relative_path(path_target=resolved_path, base=workspace):
+    resolved_path = resolve_path_without_symlinks(workspace / path)
+    if not resolved_path.is_relative_to(workspace):
         raise PathProtectionError("Path escapes workspace")
 
     # shell 工具会把公共 HOME 配置映射到工作区 HOME，
@@ -82,7 +78,7 @@ def safe_resolve_workspace_path(
             if config_path.is_file():
                 if protect_read_only_file:
                     raise PathProtectionError("Sandbox HOME config files are read-only")
-                return config_path.resolve()
+                return resolve_path_without_symlinks(config_path)
 
     # 非 skills 目录下的路径无需进行内置技能转换。
     workspace_skills = workspace / "skills"
@@ -96,11 +92,11 @@ def safe_resolve_workspace_path(
         return resolved_path
 
     # 内置技能路径转换
-    builtin_skill = (BUILTIN_SKILLS_DIR / skill_relative.parts[0]).resolve()
+    builtin_skill = resolve_path_without_symlinks(BUILTIN_SKILLS_DIR / skill_relative.parts[0])
     if (builtin_skill / "SKILL.md").is_file():
         if protect_read_only_file:
             raise PathProtectionError("Built-in skills are read-only")
-        return builtin_skill.joinpath(*skill_relative.parts[1:]).resolve()
+        return resolve_path_without_symlinks(builtin_skill.joinpath(*skill_relative.parts[1:]))
     else:
         return resolved_path
 

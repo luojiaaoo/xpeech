@@ -23,7 +23,7 @@ class AgentRunner:
         *,
         config: Settings,
         not_interactive: bool = False,
-        channel: str | None = None,
+        channel: str,
     ) -> None:
         self.user_id = user_id
         self.config = config
@@ -41,7 +41,7 @@ class AgentRunner:
         openai_client: AsyncOpenAI,
         config: Settings = settings,
         not_interactive: bool = False,
-        channel: str | None = None,
+        channel: str,
     ) -> Self:
         """Create a fully initialized runner for one user."""
         runner = await anyio.to_thread.run_sync(

@@ -29,7 +29,7 @@ async def test_memos_survive_initialization_and_memory_save(tmp_path):
     await store.save_memory(MemoryArgs(history_entry="event", memory_update=rule + "\nproject facts"))
     await create_workspace_templates(tmp_path)
     prompt = "\n\n".join(message["content"] for message in await build_context_messages(
-        tmp_path, channel=None, user_organization=None, not_interactive=True, token_counts={},
+        tmp_path, user_id="test-user", channel="web_client", user_organization=None, not_interactive=True, token_counts={},
     ))
 
     assert f"## Long-term Memory\n{rule}\nproject facts" in prompt
@@ -56,10 +56,10 @@ async def test_only_current_users_tree_is_injected(tmp_path):
     other_tree = "self-improving/\n└── coding/\n    └── async.md"
 
     prompt = "\n\n".join(message["content"] for message in await build_context_messages(
-        first, channel=None, user_organization=None, not_interactive=False, token_counts={},
+        first, user_id="test-user", channel="web_client", user_organization=None, not_interactive=False, token_counts={},
     ))
     other_prompt = "\n\n".join(message["content"] for message in await build_context_messages(
-        second, channel=None, user_organization=None, not_interactive=False, token_counts={},
+        second, user_id="test-user", channel="web_client", user_organization=None, not_interactive=False, token_counts={},
     ))
 
     assert TREE in prompt
@@ -102,7 +102,7 @@ async def test_unreadable_directory_does_not_break_long_term_memory(tmp_path, mo
 
     monkeypatch.setattr(memory_module, "build_memo_tree", unreadable)
     prompt = "\n\n".join(message["content"] for message in await build_context_messages(
-        tmp_path, channel=None, user_organization=None, not_interactive=False, token_counts={},
+        tmp_path, user_id="test-user", channel="web_client", user_organization=None, not_interactive=False, token_counts={},
     ))
 
     assert "important-fact" in prompt
@@ -122,7 +122,7 @@ async def test_symlink_memo_root_is_ignored(tmp_path):
     memo_root.symlink_to(outside, target_is_directory=True)
 
     prompt = "\n\n".join(message["content"] for message in await build_context_messages(
-        workspace, channel=None, user_organization=None, not_interactive=False, token_counts={},
+        workspace, user_id="test-user", channel="web_client", user_organization=None, not_interactive=False, token_counts={},
     ))
 
     assert "another-user.md" not in prompt
@@ -133,8 +133,8 @@ async def test_symlink_memo_root_is_ignored(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("not_interactive", [False, True])
 async def test_self_improving_is_always_loaded_with_accessible_references(tmp_path, not_interactive):
-    loader = SkillsLoader(tmp_path, not_interactive=not_interactive)
-    skills = await loader.list_builtin_skill_info()
+    loader = SkillsLoader(tmp_path, channel="web_client", user_id="test-user", not_interactive=not_interactive)
+    skills = await loader.list_skill_info(builtin_only=True)
     skill = next(item for item in skills if item.metadata.name == "self-improving")
 
     assert skill.metadata.always is True

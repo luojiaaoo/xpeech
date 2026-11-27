@@ -67,11 +67,11 @@ def test_sandbox_home_rejects_symlink(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypatch):
+async def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, mock_builtin_skill_dirs, monkeypatch):
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
 
-    args = await sandbox.wrap_sandbox_command("true", tmp_path, skills_loader=SkillsLoader(tmp_path))
+    args = await sandbox.wrap_sandbox_command("true", tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"))
 
     assert args[:4] == [
         sys.executable, "-I", str(Path(sandbox.__file__).parent / "scripts" / "sandbox_network.py"), "bwrap",
@@ -83,11 +83,11 @@ async def test_sandbox_uses_private_network_with_outbound_nat(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monkeypatch):
+async def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, mock_builtin_skill_dirs, monkeypatch):
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
 
-    args = await sandbox.wrap_sandbox_command("true", tmp_path, network_isolation=False, skills_loader=SkillsLoader(tmp_path))
+    args = await sandbox.wrap_sandbox_command("true", tmp_path, network_isolation=False, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"))
 
     assert args[0] == "bwrap"
     assert "rootlesskit" not in args
@@ -103,18 +103,18 @@ async def test_sandbox_can_share_host_network_without_rootlesskit(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path, monkeypatch) -> None:
+async def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path, mock_builtin_skill_dirs, monkeypatch) -> None:
     backend_home = tmp_path / "backend-home"
     workspace = tmp_path / "~" / "workspace"
     workspace.mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(backend_home))
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
 
     relative_workspace = Path("~/workspace")
     assert sandbox.get_sandbox_home(relative_workspace) == workspace / "home"
-    args = await sandbox.wrap_sandbox_command("pwd", relative_workspace, skills_loader=SkillsLoader(relative_workspace))
+    args = await sandbox.wrap_sandbox_command("pwd", relative_workspace, skills_loader=SkillsLoader(relative_workspace, channel="web_client", user_id="test-user"))
     environment = dict(_option_pairs(args, "--setenv"))
     assert environment["HOME"] == str(workspace / "home")
     assert _option_pairs(args, "--bind") == [(str(workspace), str(workspace))]
@@ -246,6 +246,7 @@ async def test_file_tools_can_read_but_not_write_mapped_home_configs(
 @pytest.mark.asyncio
 async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
     tmp_path: Path,
+    mock_builtin_skill_dirs,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -264,14 +265,14 @@ async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
         config_file.write_text("mirror config", encoding="utf-8")
 
     monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     for key in ("GOPATH", "GOMODCACHE", "GOCACHE", "GOENV"):
         monkeypatch.setenv(key, str(tmp_path / "backend-go" / key))
     user_id = "test-session"
 
     session_token = user_id_var.set(user_id)
     try:
-        args = await sandbox.wrap_sandbox_command("pwd", workspace, skills_loader=SkillsLoader(workspace))
+        args = await sandbox.wrap_sandbox_command("pwd", workspace, skills_loader=SkillsLoader(workspace, channel="web_client", user_id="test-user"))
     finally:
         user_id_var.reset(session_token)
     environment = dict(_option_pairs(args, "--setenv"))
@@ -300,9 +301,9 @@ async def test_sandbox_command_uses_private_home_and_maps_mirror_configs(
 @pytest.mark.parametrize(
     ("channel", "organization", "expected"),
     [
-        (None, None, {"public"}),
+        ("web_client", None, {"public"}),
         ("crm", None, {"public", "tagged"}),
-        (None, "公司/研发/平台", {"public", "organization"}),
+        ("web_client", "公司/研发/平台", {"public", "organization"}),
         ("crm", "公司/研发/平台", {"public", "tagged", "organization", "both"}),
         ("crm", "公司/销售", {"public", "tagged"}),
         ("other", "公司/研发/平台", {"public", "organization"}),
@@ -328,8 +329,8 @@ async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
     custom_skill = workspace / "skills/custom/SKILL.md"
     custom_skill.parent.mkdir(parents=True)
     custom_skill.write_text("---\nname: custom\n---\nCustom instructions")
-    loader = SkillsLoader(workspace, channel=channel, user_organization=organization)
-    monkeypatch.setattr(loader, "list_skill_info", AsyncMock(side_effect=AssertionError("Workspace skills requested")))
+    loader = SkillsLoader(workspace, user_id="test-user", channel=channel, user_organization=organization)
+    monkeypatch.setattr(skill_module, "ensure_path_async", AsyncMock(side_effect=AssertionError("Workspace skills requested")))
 
     args = await sandbox.wrap_sandbox_command("true", workspace, skills_loader=loader)
 
@@ -347,7 +348,7 @@ async def test_sandbox_only_mounts_builtin_skills_visible_to_loader(
     reason="Requires Linux sandbox dependencies and Fontconfig",
 )
 @pytest.mark.asyncio
-async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
+async def test_sandbox_discovers_system_chinese_fonts(tmp_path, mock_builtin_skill_dirs, monkeypatch):
     font_command = ["fc-list", ":lang=zh", "file", "family"]
     host_fonts = subprocess.run(font_command, capture_output=True, check=True, timeout=10)
     assert b"Fontconfig error" not in host_fonts.stderr
@@ -358,10 +359,10 @@ async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
     if not host_system_fonts:
         pytest.skip("Requires system Chinese fonts (e.g. fonts-noto-cjk)")
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
 
     command = await sandbox.wrap_sandbox_command(
-        font_command, tmp_path, skills_loader=SkillsLoader(tmp_path), network_isolation=False,
+        font_command, tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"), network_isolation=False,
     )
     process = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -384,7 +385,7 @@ async def test_sandbox_discovers_system_chinese_fonts(tmp_path, monkeypatch):
 )
 @pytest.mark.asyncio
 @pytest.mark.parametrize("network_isolation", [False, True])
-async def test_sandbox_analyzes_ethernet_capture_with_tshark(tmp_path, monkeypatch, network_isolation):
+async def test_sandbox_analyzes_ethernet_capture_with_tshark(tmp_path, mock_builtin_skill_dirs, monkeypatch, network_isolation):
     workspace = tmp_path / "capture-workspace"
     workspace.mkdir()
     # Ethernet broadcast containing an ARP request: who has 192.0.2.2?
@@ -398,11 +399,11 @@ async def test_sandbox_analyzes_ethernet_capture_with_tshark(tmp_path, monkeypat
     capture += struct.pack("<IIII", 1, 0, len(frame), len(frame)) + frame
     (workspace / "sample.cap").write_bytes(capture)
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
 
     command = await sandbox.wrap_sandbox_command(
         ["tshark", "-n", "-r", "sample.cap", "-Y", "arp", "-T", "json"],
-        workspace, skills_loader=SkillsLoader(workspace), network_isolation=network_isolation,
+        workspace, skills_loader=SkillsLoader(workspace, channel="web_client", user_id="test-user"), network_isolation=network_isolation,
     )
     process = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -448,7 +449,7 @@ async def test_root_can_read_restricted_builtin_permissions_but_not_write_read_o
             "if echo changed > skills/weather/resources/data.txt 2>/dev/null; then exit 1; fi; "
             "if touch /usr/xpeech-should-stay-read-only 2>/dev/null; then exit 1; fi; "
             "awk '/^CapEff:/ {print $2}' /proc/self/status",
-            workspace, skills_loader=SkillsLoader(workspace), network_isolation=network_isolation,
+            workspace, skills_loader=SkillsLoader(workspace, channel="web_client", user_id="test-user"), network_isolation=network_isolation,
         )
         # Exercise UID 0 even when the test runner is an ordinary host user.
         if os.geteuid() != 0:
@@ -476,7 +477,7 @@ async def test_root_can_read_restricted_builtin_permissions_but_not_write_read_o
     reason="Requires Linux sandbox dependencies and Node.js/npm/npx",
 )
 @pytest.mark.asyncio
-async def test_node_npm_and_npx_work_with_only_file_access_capability(tmp_path, monkeypatch):
+async def test_node_npm_and_npx_work_with_only_file_access_capability(tmp_path, mock_builtin_skill_dirs, monkeypatch):
     workspace = tmp_path / "node-workspace"
     workspace.mkdir()
     dependency = workspace / "local-dependency"
@@ -520,13 +521,13 @@ try {
     await new Promise(resolve => server.close(resolve));
 }
 ''')
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "managed-home")
 
     result = await executor_module.sandbox_manager.run(
         "npm install --offline --ignore-scripts --no-audit --no-fund && npm run build && "
         "npx --offline --no-install sandbox-local-bin",
-        workspace, timeout_ms=20_000, skills_loader=SkillsLoader(workspace),
+        workspace, timeout_ms=20_000, skills_loader=SkillsLoader(workspace, channel="web_client", user_id="test-user"),
     )
 
     assert result.returncode == 0, result.stderr.decode()
@@ -551,7 +552,7 @@ try {
         reason="Set XPEECH_TEST_GO_NETWORK=1 to download a third-party Go module",
     )),
 ])
-async def test_go_cross_compiles_windows_and_linux_amd64(tmp_path, monkeypatch, network_isolation, third_party):
+async def test_go_cross_compiles_windows_and_linux_amd64(tmp_path, mock_builtin_skill_dirs, monkeypatch, network_isolation, third_party):
     workspace = tmp_path / "go-workspace"
     workspace.mkdir()
     (workspace / "go.mod").write_text("module example.com/crosshello\n\ngo 1.23\n")
@@ -575,7 +576,7 @@ async def test_go_cross_compiles_windows_and_linux_amd64(tmp_path, monkeypatch, 
         # Download and verify through the sandbox network, then build solely
         # from the workspace's module cache for both target platforms.
         download_command = "go mod download all; go mod verify >&2; export GOPROXY=off; "
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     monkeypatch.setattr(settings.path, "sandbox_home_path", Path("assets/sandbox-home").resolve())
 
     command = await sandbox.wrap_sandbox_command(
@@ -583,7 +584,7 @@ async def test_go_cross_compiles_windows_and_linux_amd64(tmp_path, monkeypatch, 
         "CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o app.exe .; "
         "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o app-linux .; "
         "CGO_ENABLED=0 go install .; crosshello",
-        workspace, skills_loader=SkillsLoader(workspace), network_isolation=network_isolation,
+        workspace, skills_loader=SkillsLoader(workspace, channel="web_client", user_id="test-user"), network_isolation=network_isolation,
     )
     process = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -627,6 +628,7 @@ async def test_go_cross_compiles_windows_and_linux_amd64(tmp_path, monkeypatch, 
 @pytest.mark.parametrize("termination", ["exit", "timeout", "cancel"])
 async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on_close(
     tmp_path: Path,
+    mock_builtin_skill_dirs,
     monkeypatch: pytest.MonkeyPatch,
     termination: str,
     shell_sessions,
@@ -638,7 +640,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
     managed_config = config_home / ".audit-config"
     managed_config.write_text("read-only config", encoding="utf-8")
     monkeypatch.setattr(settings.path, "sandbox_home_path", config_home)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     heartbeat = workspace / "heartbeat"
     worker = "for ((i=0; i<40; i++)); do printf x >> heartbeat; sleep 0.05; done"
     command = (
@@ -653,7 +655,7 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
         + ("true" if termination == "exit" else "sleep 30")
     )
     task = asyncio.create_task(
-        executor_module.sandbox_manager.run(command, workspace, timeout_ms=1_000 if termination == "timeout" else 10_000, skills_loader=SkillsLoader(workspace))
+        executor_module.sandbox_manager.run(command, workspace, timeout_ms=1_000 if termination == "timeout" else 10_000, skills_loader=SkillsLoader(workspace, channel="web_client", user_id="test-user"))
     )
     if termination == "cancel":
         try:
@@ -694,9 +696,9 @@ async def test_shell_sandbox_isolates_processes_and_cleans_up_background_jobs_on
     reason="Requires Linux sandbox dependencies and system Python",
 )
 @pytest.mark.asyncio
-async def test_concurrent_sandboxes_have_private_ports_and_ipc(tmp_path, monkeypatch):
+async def test_concurrent_sandboxes_have_private_ports_and_ipc(tmp_path, mock_builtin_skill_dirs, monkeypatch):
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     program = """
 import json, os, socket, sys
 tcp = socket.socket()
@@ -721,7 +723,7 @@ sys.stdin.readline()
                 workspace = tmp_path / name
                 workspace.mkdir()
                 process = await asyncio.create_subprocess_exec(
-                    *(await sandbox.wrap_sandbox_command(["/usr/bin/python3", "-c", program, str(host_port)], workspace, skills_loader=SkillsLoader(workspace))),
+                    *(await sandbox.wrap_sandbox_command(["/usr/bin/python3", "-c", program, str(host_port)], workspace, skills_loader=SkillsLoader(workspace, channel="web_client", user_id="test-user"))),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,

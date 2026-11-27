@@ -26,7 +26,7 @@ async def chat_command_choices(
             {"name": "clear", "description": "清空上下文，不进行记忆总结"},
         ],
         "skills": [
-            {"name": skill.metadata.name, "description": skill.metadata.description, "path": skill.path}
+            {"name": skill.metadata.name, "description": skill.metadata.description, "sandbox_filepath": skill.sandbox_filepath}
             for skill in skills if not skill.metadata.internal
         ],
     }, headers={"Cache-Control": "no-store"})

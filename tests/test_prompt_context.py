@@ -33,7 +33,7 @@ async def test_context_breakdown_accumulates_blocks_and_leaves_messages_clean(tm
     provider = OpenAIProvider(
         client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
     )
-    agent = AgentLoop(provider=provider, workspace=tmp_path)
+    agent = AgentLoop(channel="test", provider=provider, workspace=tmp_path)
     agent.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
     agent.records = SimpleNamespace(append=AsyncMock())
     provider.chat = AsyncMock(side_effect=lambda **_: response("final answer " * 100))
@@ -76,10 +76,10 @@ async def test_dynamic_contexts_are_separate_and_do_not_change_system_prompt(tmp
     monkeypatch.setattr(SkillsLoader, "build_skills_prompt", AsyncMock(return_value="skill catalog"))
     monkeypatch.setattr(settings.llm, "system_identity_prompt", "original identity")
 
-    system = await build_system_prompt()
+    system = await build_system_prompt(channel="web_client")
     token_counts = {}
     contexts = await build_context_messages(
-        tmp_path, channel=None, user_organization=None, not_interactive=False, token_counts=token_counts,
+        tmp_path, user_id="test-user", channel="web_client", user_organization=None, not_interactive=False, token_counts=token_counts,
     )
 
     assert len(contexts) == 9
@@ -107,9 +107,9 @@ async def test_dynamic_contexts_are_separate_and_do_not_change_system_prompt(tmp
     (tmp_path / "AGENTS.md").write_text("updated rules", encoding="utf-8")
     await MemoryStore(tmp_path).write_long_term("updated preference")
     monkeypatch.setattr(settings.llm, "system_identity_prompt", "updated identity")
-    assert await build_system_prompt() == system
+    assert await build_system_prompt(channel="web_client") == system
     updated = await build_context_messages(
-        tmp_path, channel=None, user_organization=None, not_interactive=False, token_counts={},
+        tmp_path, user_id="test-user", channel="web_client", user_organization=None, not_interactive=False, token_counts={},
     )
     assert "updated identity" in updated[0]["content"]
     assert "updated rules" in updated[2]["content"]

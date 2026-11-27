@@ -7,6 +7,7 @@ from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import filesystem
 from xpeech.agent.tools.filesystem import EditFileArgs, ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import get_mime_type
+from xpeech.exceptions import PathProtectionError
 from xpeech.provider.schema import ToolCallRequest
 
 
@@ -121,14 +122,17 @@ async def test_read_file_returns_paginated_result_under_limit(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_edit_file_preserves_line_endings_and_symlink(tmp_path):
+async def test_edit_file_preserves_line_endings_and_rejects_symlinks(tmp_path):
     path = tmp_path / "notes.txt"
     path.write_bytes(b"first=old\r\nsecond=old\r\n")
     (tmp_path / "alias.txt").symlink_to(path.name)
     *_, edit = build_file_tools(tmp_path)
 
-    await edit(EditFileArgs(path="alias.txt", old_text="first=old", new_text="first=new"))
+    with pytest.raises(PathProtectionError, match="Symbolic links are not allowed"):
+        await edit(EditFileArgs(path="alias.txt", old_text="first=old", new_text="first=new"))
 
+    assert path.read_bytes() == b"first=old\r\nsecond=old\r\n"
+    await edit(EditFileArgs(path="notes.txt", old_text="first=old", new_text="first=new"))
     assert path.read_bytes() == b"first=new\r\nsecond=old\r\n"
     assert (tmp_path / "alias.txt").is_symlink()
 
@@ -143,7 +147,7 @@ async def test_edit_file_ambiguous_match_reports_failure_unless_replace_all(tmp_
     result = await executor.execute_one(ToolCallRequest(
         id="edit", name="edit_file",
         arguments={"path": path.name, "old_text": "old", "new_text": "new", "replace_all": replace_all},
-    ))
+    ), channel="web_client")
     assert result.succeeded is replace_all
     assert path.read_text() == ("new\nnew\n" if replace_all else "old\nold\n")
     if not replace_all:

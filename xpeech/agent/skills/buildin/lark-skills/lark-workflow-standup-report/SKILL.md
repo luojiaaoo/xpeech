@@ -9,8 +9,6 @@ metadata:
 
 # 日程待办摘要工作流
 
-**CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
-
 ## 适用场景
 
 - "今天有什么安排" / "今天的日程和待办"

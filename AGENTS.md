@@ -112,7 +112,9 @@ secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
 `internal`。所有通道使用统一的 JWT 算法和有效期，支持业务接口，
 也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口和内部接口使用内部 JWT。
 通道名就是 JWT header 的 `kid`，由服务端 `jwt.channels` 配置确定，JWT payload 或会话元数据不授予任何权限。
-鉴权后的通道名（内部调用和定时任务为 `None`）以单个字符串显式传递到 Runner、技能加载和工具注册，供资源过滤表达式使用。
+鉴权后的通道名以必填字符串显式传递到 Runner、技能加载、提示词构建、工具注册和执行，供资源过滤表达式及工具上下文使用。
+飞书定时任务通过带 `feishu` 通道的用户 JWT 调用 `/chat_sync`，执行时的通道同样为 `feishu`。
+独立调用 `ToolExecutor.execute_one` 时可省略 `channel`，默认 `None`；Agent 主调用链始终显式传入通道。
 
 Skill 的 YAML frontmatter 和 MCP 配置都支持 `filter` 过滤表达式。配置了 `filter` 的资源仅在表达式
 求值为真时展示或注册；省略 `filter` 的资源是公共资源，一律可见。同一条件作用于内建技能、
@@ -460,8 +462,11 @@ docker compose up -d --build --force-recreate backend
 每条前置消息的正文都用 `<system-reminder>...</system-reminder>` 包裹，内部按系统提示词上下文管理，消息角色仍为 `user`。
 
 每次处理用户消息时重新读取这些内容，直接替换前置上下文；缺失文件或空内容不生成对应消息，
-不保留旧版本或追加更新记录。普通技能仍按需读取 `SKILL.md`。上下文压缩保留这些前置消息，
+不保留旧版本或追加更新记录。技能通过 `read_skill` 按技能列表中的名称加载，首行给出技能目录，随后一次返回去除 YAML frontmatter 的完整正文；`always` 技能注入使用同一格式，保留解析相对引用所需的基准目录。技能文件的沙盒路径统一使用 `sandbox_filepath` 字段。技能内部的参考文档通过 `read_file` 按路径读取，即使文件名为 `SKILL.md`，也不作为独立技能加载。上下文压缩保留这些前置消息，
 连续对话加载历史及记忆整理时，通过 `<system-reminder>` 外层标签识别前置上下文，与 `system` 消息一起剔除，再为新一轮对话构建最新内容。
+技能文件的完整 `SkillInfo`（含正文和解析后的元数据）通过模块级读取函数上的 `alru_cache` 装饰器缓存，最多保留 1024 项，按最近使用顺序淘汰，由各 `SkillsLoader` 实例共享。
+每次加载检查纳秒级修改时间、状态变更时间、文件大小和文件标识，将文件版本与实际路径、来源、工作区映射路径一起作为缓存键；文件变化后重新读取。
+当前用户的过滤条件在每次加载时重新应用，不缓存访问权限判断；返回缓存对象的副本，避免调用方修改污染其他请求。
 动态内容变化仍可能降低其所在位置及后续内容的前缀缓存命中率。
 
 模型必须实际支持至少 200,000 tokens 的上下文，`llm.parameters.max_context_tokens` 低于此值时配置加载失败。

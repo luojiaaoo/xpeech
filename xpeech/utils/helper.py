@@ -12,6 +12,8 @@ from io import BytesIO
 from PIL import Image
 from async_lru import alru_cache
 
+from ..exceptions import PathProtectionError
+
 # PIL.Image.ANTIALIAS is deprecated, use PIL.Image.Resampling.LANCZOS instead
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.Resampling.LANCZOS
@@ -70,6 +72,33 @@ def format_exception2llm(e: Exception) -> str:
 
 def format_now(format_string: str = "%Y-%m-%d") -> str:
     return datetime.now().astimezone().strftime(format_string)
+
+
+def _absolute_path_components(path: Path) -> list[Path]:
+    path = Path(path).absolute()
+    components = [Path(path.anchor)]
+    for part in path.parts[1:]:
+        parent = components[-1]
+        components.append(parent.parent if part == ".." else parent / part)
+    return components
+
+
+def resolve_path_without_symlinks(path: Path) -> Path:
+    """Return an absolute path and reject symbolic links in any component."""
+    components = _absolute_path_components(path)
+    for component in components:
+        if component.is_symlink():
+            raise PathProtectionError(f"Symbolic links are not allowed: {component}")
+    return components[-1]
+
+
+async def resolve_path_without_symlinks_async(path: Path) -> Path:
+    """Validate a path without blocking the event loop."""
+    components = _absolute_path_components(path)
+    for component in components:
+        if await anyio.Path(component).is_symlink():
+            raise PathProtectionError(f"Symbolic links are not allowed: {component}")
+    return components[-1]
 
 
 async def _vllm_tokenize(payload: dict) -> dict:

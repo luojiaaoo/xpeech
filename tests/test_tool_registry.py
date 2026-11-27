@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.agent.tools import mcp_client, registry
@@ -57,6 +58,89 @@ class FakeProvider:
     def register_mcp_tool(self, tool, *, tool_json):
         self.registered.append(tool.__name__)
         self.mcp_tools.append((tool_json, tool))
+
+
+@pytest.mark.asyncio
+async def test_read_skill_loads_available_instructions_through_the_tool_executor(tmp_path, monkeypatch):
+    builtin_root = tmp_path / "builtin"
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(skill_module, "BUILTIN_SKILLS_DIR", builtin_root)
+    monkeypatch.setattr("xpeech.agent.tools.helper.BUILTIN_SKILLS_DIR", builtin_root)
+    long_body = "    " + "中文" * 600 + "  "
+    fixtures = {
+        builtin_root / "parent-folder": ("parent", "", "Parent instructions"),
+        builtin_root / "parent-folder" / "child-folder": ("child", "", "\nChild instructions"),
+        builtin_root / "parent-folder" / "private-child": ("private-child", 'filter: channel("crm")\n', "Hidden"),
+        builtin_root / "private": ("private", 'filter: channel("crm")\n', "Hidden"),
+        builtin_root / "private" / "hidden-folder": ("hidden-by-parent", "", "Hidden"),
+        builtin_root / "ask-user-question": ("ask-user-question", "", "Interactive instructions"),
+        workspace / "skills" / "workspace-folder": ("custom", "", long_body),
+        workspace / "skills" / "workspace-folder" / "reference": ("workspace-reference", "", "Workspace reference"),
+        tmp_path / "outside": ("external", "", "Outside of the workspace and built-ins"),
+    }
+    for directory, (name, metadata, body) in fixtures.items():
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text(f"---\nname: {name}\n{metadata}---\n{body}\n", encoding="utf-8")
+    provider = FakeProvider()
+    config = ToolConfig(max_result_chars=1000)
+    await registry.register_tools(
+        user_id="alice", channel="web_client", not_interactive=True,
+        provider=provider, workspace=workspace, config=config,
+    )
+    executor = ToolExecutor(
+        workspace=workspace, max_result_chars=config.max_result_chars, mapping_tool_call_funcs=provider.function_tools,
+    )
+    schema = as_tool(provider.function_tools["read_skill"])["function"]["parameters"]
+    assert set(schema["properties"]) == {"name"}
+    assert schema["required"] == ["name"]
+
+    async def read_skill(**arguments):
+        return await executor.execute_one(ToolCallRequest(id="skill", name="read_skill", arguments=arguments), channel="web_client")
+
+    result = await read_skill(name="custom")
+    assert result.succeeded
+    custom_dir = workspace / "skills" / "workspace-folder"
+    assert result.value == f"Base directory for this skill: {custom_dir}\n\n{long_body}\n"
+    assert not (workspace / "tool-results").exists()
+
+    parent = await read_skill(name="parent")
+    assert parent.succeeded
+    parent_dir = workspace / "skills" / "parent-folder"
+    assert parent.value == f"Base directory for this skill: {parent_dir}\n\nParent instructions\n"
+
+    for path, instructions in (
+        (parent_dir / "child-folder" / "SKILL.md", "Child instructions"),
+        (custom_dir / "reference" / "SKILL.md", "Workspace reference"),
+    ):
+        reference = await executor.execute_one(ToolCallRequest(
+            id="reference", name="read_file", arguments={"path": str(path)},
+        ), channel="web_client")
+        assert reference.succeeded
+        assert instructions in reference.value
+
+    write = await executor.execute_one(ToolCallRequest(
+        id="write-reference", name="write_file",
+        arguments={"path": str(parent_dir / "child-folder" / "SKILL.md"), "content": "changed"},
+    ), channel="web_client")
+    assert not write.succeeded
+    assert "Built-in skills are read-only" in write.value
+
+    for name in (
+        "workspace-folder", "child", "child-folder", "workspace-reference", "private", "private-child", "hidden-by-parent",
+        "ask-user-question", "../private",
+    ):
+        assert not (await read_skill(name=name)).succeeded
+
+    (builtin_root / "parent-folder" / "external").symlink_to(tmp_path / "outside", target_is_directory=True)
+    result = await read_skill(name="external")
+    assert not result.succeeded
+    assert "not available" in result.value
+    assert (await read_skill(name="parent")).succeeded
+
+    (workspace / "skills" / "external").symlink_to(tmp_path / "outside", target_is_directory=True)
+    result = await read_skill(name="external")
+    assert not result.succeeded
+    assert "Symbolic links are not allowed" in result.value
 
 
 @pytest.mark.asyncio
@@ -210,6 +294,7 @@ async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch,
     monkeypatch.setattr(shell_module.asyncio, "create_subprocess_exec", spawn)
     provider = FakeProvider()
     await registry.register_tools(
+        channel="web_client",
         user_id="shell-dcg-test",
         provider=provider,
         workspace=tmp_path,
@@ -226,7 +311,7 @@ async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch,
                 ToolCallRequest(
                     id="1", name="shell", arguments={"command": command, "execution_description": "测试检查"}
                 )
-            ],
+            ], channel="web_client",
         )
     ]
     process.communicate.assert_awaited_once_with(command.encode())
@@ -248,12 +333,12 @@ async def test_registered_shell_uses_dcg_before_execution(tmp_path, monkeypatch,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("not_interactive", [False, True])
-@pytest.mark.parametrize("channel", [None, "web_client", "feishu"])
+@pytest.mark.parametrize("channel", ["crm", "web_client", "feishu"])
 async def test_registers_supported_default_and_mcp_tools(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     not_interactive: bool,
-    channel: str | None,
+    channel: str,
 ):
     # This test uses an argument-free shell stub; exercise only registration
     # and leave command validation to the dcg tests above.
@@ -270,7 +355,7 @@ async def test_registers_supported_default_and_mcp_tools(
     monkeypatch.setattr(registry, "build_file_message_tools", lambda **_kwargs: named_tool("send_file"))
     monkeypatch.setattr(registry, "ask_user_question", named_tool("ask_user_question"))
 
-    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
+    registration = mcp_client.create_mcp_registration(server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"))
     registration_calls = []
 
     async def get_registration(*args, **kwargs):
@@ -308,6 +393,7 @@ async def test_registers_supported_default_and_mcp_tools(
         "read_file",
         "write_file",
         "edit_file",
+        "read_skill",
         "shell",
         "web_fetch",
         "baidu_search",
@@ -345,7 +431,7 @@ async def test_registers_supported_default_and_mcp_tools(
         async for result in ToolExecutor(
             workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=provider.function_tools,
         ).execute(
-            [ToolCallRequest(id="shell-1", name="shell", arguments={"execution_description": "测试"})],
+            [ToolCallRequest(id="shell-1", name="shell", arguments={"execution_description": "测试"})], channel="web_client",
         )
     ]
     if not_interactive:
@@ -367,6 +453,7 @@ async def test_registers_supported_default_and_mcp_tools(
 async def test_fragment_accepts_only_a_text_parameter_and_returns_empty_output(tmp_path):
     provider = FakeProvider()
     await registry.register_tools(
+        channel="web_client",
         user_id="fragment-test", provider=provider, workspace=tmp_path, config=ToolConfig(),
     )
     schema = as_tool(provider.function_tools["fragment"])["function"]
@@ -380,7 +467,7 @@ async def test_fragment_accepts_only_a_text_parameter_and_returns_empty_output(t
         workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=provider.function_tools,
     )
     result = await executor.execute_one(
-        ToolCallRequest(id="fragment-1", name="fragment", arguments={"text": "这段文本不会被回显"}),
+        ToolCallRequest(id="fragment-1", name="fragment", arguments={"text": "这段文本不会被回显"}), channel="web_client",
     )
     assert result.succeeded
     assert result.value == ""
@@ -439,6 +526,7 @@ async def test_mcp_functions_call_the_bound_server_with_original_schema_and_argu
 
     try:
         await registry.register_tools(
+            channel="web_client",
             user_id="mcp-binding-test",
             provider=provider,
             workspace=tmp_path,
@@ -464,7 +552,7 @@ async def test_mcp_functions_call_the_bound_server_with_original_schema_and_argu
                     ToolCallRequest(id="1", name="mcp_alpha_echo", arguments={"text": "hello", "extra": 1}),
                     ToolCallRequest(id="2", name="mcp_alpha_ping", arguments={}),
                     ToolCallRequest(id="3", name="mcp_beta_echo", arguments={"text": "world", "style": None}),
-                ],
+                ], channel="web_client",
             )
         ]
 
@@ -558,6 +646,7 @@ async def test_mcp_confirmation_selection_at_registration(
     )
     try:
         await registry.register_tools(
+            channel="web_client",
             user_id="mcp-confirmation-test",
             provider=provider,
             workspace=tmp_path,
@@ -585,7 +674,7 @@ async def test_mcp_confirmation_selection_at_registration(
                     max_result_chars=10_000,
                     mapping_tool_call_funcs={tool_name: tools[tool_name].func},
                 ).execute(
-                    [ToolCallRequest(id="1", name=tool_name, arguments=arguments)],
+                    [ToolCallRequest(id="1", name=tool_name, arguments=arguments)], channel="web_client",
                 )
             ]
             if needs_confirmation:
@@ -607,7 +696,7 @@ async def test_mcp_confirmation_selection_at_registration(
             "demo",
             config.mcp_servers["demo"],
             workspace=tmp_path,
-            skills_loader=SkillsLoader(tmp_path),
+            skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"),
         )
         for binding in await registration._get_tool_bindings():
             assert "execution_description" not in binding.schema["function"]["parameters"]["properties"]
@@ -634,7 +723,7 @@ async def test_register_mcp_bindings_passes_confirmation_prompt(
         call_tool=AsyncMock(return_value={"content": [{"type": "text", "text": "echo result"}]}),
     )
     registration = mcp_client.create_mcp_registration(
-        server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path),
+        server_name="demo", command="demo", workspace=tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"),
     )
     registration._session = session
     task = registration.start_tool_discovery()
@@ -651,6 +740,7 @@ async def test_register_mcp_bindings_passes_confirmation_prompt(
                 "execution_request_tool_prompts": {"e?ho": prompt},
             }}})
             await registry.register_tools(
+                channel="web_client",
                 user_id="prompt-test", provider=provider, workspace=tmp_path, config=config,
                 not_interactive=not_interactive,
             )
@@ -674,7 +764,7 @@ async def test_register_mcp_bindings_passes_confirmation_prompt(
             arguments["request_user_confirmation"] = request_user_confirmation
         result = await ToolExecutor(
             workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={tool.__name__: tool},
-        ).execute_one(ToolCallRequest(id="prompt", name=tool.__name__, arguments=arguments))
+        ).execute_one(ToolCallRequest(id="prompt", name=tool.__name__, arguments=arguments), channel="web_client")
         if request_user_confirmation:
             session.call_tool.assert_not_awaited()
             if not_interactive:
@@ -722,6 +812,7 @@ async def test_mcp_confirmation_prompts_only_apply_to_selected_tools(
     }}})
     try:
         await registry.register_tools(
+            channel="web_client",
             user_id="prompt-selection", provider=provider, workspace=tmp_path, config=config,
             not_interactive=not_interactive,
         )
@@ -778,6 +869,7 @@ async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(
     try:
         for index, provider in enumerate(providers):
             await asyncio.wait_for(registry.register_tools(
+                channel="web_client",
                 user_id=f"background-test-{index}", provider=provider, workspace=tmp_path, config=config,
             ), timeout=1)
         await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started.values())), timeout=1)
@@ -787,7 +879,7 @@ async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(
 
         [result] = [result async for result in ToolExecutor(
             workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs=providers[0].function_tools,
-        ).execute([ToolCallRequest(id="status", name="query_mcp_status", arguments={})])]
+        ).execute([ToolCallRequest(id="status", name="query_mcp_status", arguments={})], channel="web_client")]
         assert result.succeeded
         status = json.loads(result.value)["servers"]
         assert set(status) == {"slow", "fast"}
@@ -807,6 +899,7 @@ async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(
 
         cached_provider = FakeProvider()
         await registry.register_tools(
+            channel="web_client",
             user_id="background-test", provider=cached_provider, workspace=tmp_path, config=config,
         )
         assert len(cached_provider.mcp_tools) == 2
@@ -818,6 +911,7 @@ async def test_background_mcp_discovery_is_nonblocking_shared_and_visible_to_ai(
         release_slow.clear()
         reconnecting_provider = FakeProvider()
         await registry.register_tools(
+            channel="web_client",
             user_id="background-test", provider=reconnecting_provider, workspace=tmp_path, config=config,
         )
         assert [tool.__name__ for _, tool in reconnecting_provider.mcp_tools] == ["mcp_fast_echo"]
@@ -862,7 +956,7 @@ async def test_failed_mcp_reconnects_on_next_conversations_with_one_shared_attem
     config = ToolConfig.model_validate({"mcpServers": {"demo": {"command": "demo"}}})
     try:
         first = FakeProvider()
-        await registry.register_tools(user_id="retry-test", provider=first, workspace=tmp_path, config=config)
+        await registry.register_tools(channel="web_client", user_id="retry-test", provider=first, workspace=tmp_path, config=config)
         registration = next(iter(pooled_mcp_registrations()))
         assert await registration.start_tool_discovery() == []
         assert registration.get_status()["status"] == "unavailable"
@@ -870,6 +964,7 @@ async def test_failed_mcp_reconnects_on_next_conversations_with_one_shared_attem
         providers = [FakeProvider(), FakeProvider()]
         for provider in providers:
             await asyncio.wait_for(registry.register_tools(
+                channel="web_client",
                 user_id="retry-test", provider=provider, workspace=tmp_path, config=config,
             ), 1)
         await asyncio.wait_for(reconnect_started.wait(), 1)
@@ -890,7 +985,7 @@ async def test_failed_mcp_reconnects_on_next_conversations_with_one_shared_attem
 @pytest.mark.asyncio
 async def test_mcp_status_tool_is_not_registered_without_servers(tmp_path):
     provider = FakeProvider()
-    await registry.register_tools(user_id="no-mcp", provider=provider, workspace=tmp_path, config=ToolConfig())
+    await registry.register_tools(channel="web_client", user_id="no-mcp", provider=provider, workspace=tmp_path, config=ToolConfig())
     assert "query_mcp_status" not in provider.function_tools
     assert provider.mcp_tools == []
 
@@ -932,7 +1027,7 @@ async def test_ready_mcp_tools_are_sent_on_the_next_model_call(tmp_path, monkeyp
         "demo": {"command": "demo", "description": "查询模型评测、对比模型能力和成本"},
     }})
     try:
-        await registry.register_tools(user_id="next-model-call", provider=provider, workspace=tmp_path, config=config)
+        await registry.register_tools(channel="web_client", user_id="next-model-call", provider=provider, workspace=tmp_path, config=config)
         first = await provider.chat(messages=[])
         assert "query_mcp_status" in provider.mapping_tool_call_funcs
         status_schema = next(

@@ -23,6 +23,7 @@ from .research import build_research_tools
 from .schedule import feishu_schedule_cancel, feishu_schedule_cron, feishu_schedule_list, feishu_schedule_once
 from .sessions import build_session_tools
 from .shell import build_shell_tools
+from .skills import build_read_skill_tool
 from .web import baidu_search, bing_search, web_fetch
 
 
@@ -33,7 +34,7 @@ async def register_tools(
     workspace: Path,
     config: ToolConfig,
     not_interactive: bool = False,
-    channel: str | None = None,
+    channel: str,
     user_organization: str | None = None,
 ) -> None:
     """向模型提供方注册内置工具及配置中的 MCP 工具。"""
@@ -54,6 +55,9 @@ async def register_tools(
         provider.register_function_tool(read_video)
     for tool in (read_file, write_file, edit_file):
         provider.register_function_tool(tool)
+
+    # skill 加载专属技能
+    provider.register_function_tool(build_read_skill_tool(skills_loader=skills_loader))
 
     # Shell 命令在执行前经过安全检查，需要确认时走用户确认流程。
     provider.register_function_tool(

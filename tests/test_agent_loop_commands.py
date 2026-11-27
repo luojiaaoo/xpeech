@@ -57,7 +57,7 @@ async def test_context_commands_continue_with_trailing_prompt(
         chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
     )
     agent_loop.workspace = tmp_path
-    agent_loop.channel = None
+    agent_loop.channel = "test"
     agent_loop.user_organization = "公司/研发/平台"
     load_results = (
         [[{"role": "user", "content": "old context"}], []]

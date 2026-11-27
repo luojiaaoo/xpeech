@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -45,7 +46,7 @@ async def test_context_reads_memory(tmp_path, monkeypatch, memory):
     )
 
     contexts = await asyncio.wait_for(context_prompt_module.build_context_messages(
-        tmp_path, channel=None, user_organization=None, not_interactive=False, token_counts={},
+        tmp_path, user_id="test-user", channel="web_client", user_organization=None, not_interactive=False, token_counts={},
     ), 5)
     memories = [message for message in contexts if message["content"].startswith("<system-reminder>\n## Long-term Memory\n")]
 
@@ -179,7 +180,7 @@ class TestMemoryConsolidator:
         def make_consolidator(workspace):
             return MemoryConsolidator(
                 store=MemoryStore(workspace), chat=chat,
-                execute_tools=executor.execute,
+                execute_tools=partial(executor.execute, channel="web_client"),
             )
 
         consolidator = make_consolidator(tmp_path)

@@ -284,7 +284,7 @@ async def test_executor_injects_current_session_id_and_ignores_spoofed_arguments
             [
                 ToolCallRequest(id="list", name="list_sessions", arguments={"session_id": SESSION_IDS[1]}),
                 ToolCallRequest(id="read", name="read_session", arguments={"session_id": SESSION_IDS[0]}),
-            ],
+            ], channel="web_client",
             session_id=SESSION_IDS[0],
         )
     ]

@@ -12,7 +12,7 @@ from xpeech.agent.loop import AgentLoop
 from xpeech.agent.server.schema import InboundMessage, InputText
 from xpeech.agent.tool_executor import ToolExecutor
 from xpeech.provider.openai_provider import OpenAIProvider
-from xpeech.provider.schema import LLMParameters, LLMResponse, ToolCallChunk
+from xpeech.provider.schema import LLMParameters, LLMResponse, ToolCallChunk, ToolCallRequest
 from xpeech.utils.helper import token_counter
 
 pytestmark = pytest.mark.usefixtures("fake_vllm_tokenizer")
@@ -29,6 +29,27 @@ def make_response(content: str) -> LLMResponse:
         yield "content", content
 
     return LLMResponse(iter_mix_chunks=chunks())
+
+
+@pytest.mark.asyncio
+async def test_memory_tools_receive_agent_channel(tmp_path, make_openai_sdk_client):
+    async def current_channel(channel: str) -> str:
+        """Return the injected channel."""
+        return channel
+
+    provider = OpenAIProvider(
+        client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
+    )
+    agent = AgentLoop(
+        provider=provider, workspace=tmp_path, channel="crm",
+        mapping_tool_call_funcs={"current_channel": current_channel},
+    )
+    results = [result async for result in agent.memory_consolidator._execute_tools([
+        ToolCallRequest(id="memory-channel", name="current_channel", arguments={}),
+    ])]
+    assert len(results) == 1
+    assert results[0].succeeded
+    assert results[0].value == "crm"
 
 
 @pytest.mark.asyncio
@@ -62,7 +83,7 @@ async def test_final_response_is_emitted_and_persisted_when_model_returns_no_tex
         chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
     )
     agent_loop.workspace = tmp_path
-    agent_loop.channel = None
+    agent_loop.channel = "test"
     agent_loop.user_organization = None
     agent_loop.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
     agent_loop.compressor = SimpleNamespace(should_compress=AsyncMock(return_value=False))
@@ -108,7 +129,7 @@ async def test_token_usage_is_emitted_after_saved_record_expires(tmp_path, make_
         client=make_openai_sdk_client(), default_model="test", parameters=LLMParameters(),
     )
     provider.chat = AsyncMock(return_value=response)
-    agent_loop = AgentLoop(provider=provider, workspace=tmp_path)
+    agent_loop = AgentLoop(channel="test", provider=provider, workspace=tmp_path)
     agent_loop.history = SimpleNamespace(load=AsyncMock(return_value=[]), save=AsyncMock())
 
     async def save_record(record, *, messages):
@@ -152,7 +173,7 @@ async def test_compression_uses_90_percent_of_context_window(
         default_model="test",
         parameters=LLMParameters(max_context_tokens=context_tokens, max_tokens=output_tokens),
     )
-    agent_loop = AgentLoop(provider=provider, workspace=tmp_path)
+    agent_loop = AgentLoop(channel="test", provider=provider, workspace=tmp_path)
 
     assert agent_loop.max_accept_token == expected_threshold
     assert agent_loop.compressor._target_tokens == expected_threshold // 2
@@ -186,7 +207,7 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
             },
         },
     )
-    agent_loop = AgentLoop(provider=provider, workspace=tmp_path)
+    agent_loop = AgentLoop(channel="test", provider=provider, workspace=tmp_path)
     # 使用较小预算验证工具定义也会触发压缩。
     agent_loop.max_accept_token = 170
     agent_loop.compressor = loop_module.ConversationCompressor(
@@ -259,7 +280,7 @@ async def test_not_interactive_run_saves_yaml_history(tmp_path: Path, monkeypatc
         chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
     )
     agent_loop.workspace = tmp_path
-    agent_loop.channel = None
+    agent_loop.channel = "test"
     agent_loop.user_organization = "公司/研发/平台"
     agent_loop.history = SimpleNamespace(
         load=AsyncMock(return_value=[{"role": "user", "content": "old context"}]),
@@ -339,7 +360,7 @@ async def test_provider_failure_persists_messages_and_raises_http_exception(
         chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
     )
     agent_loop.workspace = tmp_path
-    agent_loop.channel = None
+    agent_loop.channel = "test"
     agent_loop.user_organization = None
     agent_loop.history = SimpleNamespace(
         load=AsyncMock(return_value=[]),
@@ -405,7 +426,7 @@ async def test_request_yaml_retains_new_messages_across_multiple_compressions(tm
         chat_count_tool_tokens=AsyncMock(return_value={"system_tools": 0, "mcp_tools": 0}),
     )
     agent_loop.workspace = tmp_path
-    agent_loop.channel = None
+    agent_loop.channel = "test"
     agent_loop.user_organization = None
     agent_loop.history = SimpleNamespace(
         load=AsyncMock(return_value=[{"role": "user", "content": "previous question"}]),

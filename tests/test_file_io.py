@@ -5,6 +5,7 @@ from threading import Event
 
 import pytest
 
+from xpeech.exceptions import PathProtectionError
 from xpeech.utils import file_io
 from xpeech.utils.file_io import LockedFile
 from xpeech.utils.helper import ensure_finish_async
@@ -15,8 +16,6 @@ from xpeech.utils.helper import ensure_finish_async
 async def test_standalone_operations_are_serial_for_same_path(tmp_path, monkeypatch, shared_instance):
     path = tmp_path / "content.txt"
     path.write_text("initial", encoding="utf-8")
-    alias = tmp_path / "alias.txt"
-    alias.symlink_to(path.name)
     file = LockedFile(path)
     active = 0
     maximum = 0
@@ -38,7 +37,7 @@ async def test_standalone_operations_are_serial_for_same_path(tmp_path, monkeypa
         ("write_bytes", (b"bytes",)), ("create_text", ("keep existing",)),
     ]
     calls = [
-        getattr(file if shared_instance else LockedFile(alias), method)(*args)
+        getattr(file if shared_instance else LockedFile(path), method)(*args)
         for method, args in methods
     ]
 
@@ -148,8 +147,6 @@ async def test_child_cannot_reuse_transaction_after_it_ends(tmp_path):
 async def test_readers_share_the_transaction_lock_but_other_files_do_not_wait(tmp_path, reader_name):
     path = tmp_path / "content.txt"
     path.write_text("before", encoding="utf-8")
-    alias = tmp_path / "alias.txt"
-    alias.symlink_to(path.name)
     other = tmp_path / "other.txt"
     other.write_text("independent", encoding="utf-8")
     file = LockedFile(path)
@@ -158,9 +155,9 @@ async def test_readers_share_the_transaction_lock_but_other_files_do_not_wait(tm
     try:
         async with file.transaction():
             read = (
-                file_io.super_read_text(file_path=alias)
+                file_io.super_read_text(file_path=path)
                 if reader_name == "super_read_text"
-                else getattr(LockedFile(alias), reader_name)()
+                else getattr(LockedFile(path), reader_name)()
             )
             reader = asyncio.create_task(read)
             await asyncio.sleep(0)
@@ -183,6 +180,19 @@ async def test_readers_share_the_transaction_lock_but_other_files_do_not_wait(tm
         assert result[0] == "after"
     else:
         assert result == (b"after" if reader_name == "read_bytes" else "after")
+
+
+@pytest.mark.asyncio
+async def test_file_io_rejects_dangling_links_in_paths(tmp_path):
+    alias = tmp_path / "alias"
+    alias.symlink_to("missing")
+
+    with pytest.raises(PathProtectionError, match="Symbolic links are not allowed"):
+        LockedFile(alias)
+    with pytest.raises(PathProtectionError, match="Symbolic links are not allowed"):
+        file_io.ensure_path(alias / "child")
+    with pytest.raises(PathProtectionError, match="Symbolic links are not allowed"):
+        await file_io.ensure_path_async(alias / "child")
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,6 @@
+import asyncio
 import json
+import os
 import re
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -10,12 +12,13 @@ from pydantic import ValidationError
 from xpeech.agent.prompt.context import build_context_messages
 from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillInfo, SkillMetadata, SkillsLoader
+from xpeech.exceptions import PathProtectionError
 
 
 def test_builtin_descriptions_are_present_and_readable():
     for skill_file in sorted(skill_module.BUILTIN_SKILLS_DIR.glob("*/SKILL.md")):
         content = skill_file.read_bytes().decode("utf-8")
-        skill = SkillInfo(source="builtin", path=str(skill_file), content=content)
+        skill = SkillInfo(source="builtin", sandbox_filepath=str(skill_file), content=content)
         assert skill.metadata.description.strip(), skill_file
         assert "short_description" not in skill.metadata.kwargs, skill_file
         assert not re.search(r"\?{3,}|\ufffd|\u951f\u65a4\u62f7", content), skill_file
@@ -45,7 +48,7 @@ def test_builtin_descriptions_are_present_and_readable():
 def test_engineering_skill_metadata_and_upstream_integrity(skill_name: str):
     root = skill_module.BUILTIN_SKILLS_DIR / skill_name
     content = (root / "SKILL.md").read_bytes().decode("utf-8")
-    skill = SkillInfo(source="builtin", path=str(root / "SKILL.md"), content=content)
+    skill = SkillInfo(source="builtin", sandbox_filepath=str(root / "SKILL.md"), content=content)
 
     assert skill.metadata.name == {"automotive-ethernet-analysis": "wireshark"}.get(skill_name, skill_name)
     assert skill.metadata.description.strip()
@@ -64,27 +67,53 @@ def test_engineering_skill_metadata_and_upstream_integrity(skill_name: str):
 
 
 @pytest.mark.asyncio
-async def test_skills_loader_creates_workspace_when_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+async def test_skills_loader_creates_workspace_when_listing(tmp_path: Path, mock_builtin_skill_dirs, monkeypatch: pytest.MonkeyPatch):
+    builtin_scan = mock_builtin_skill_dirs([])
     workspace = tmp_path / "workspace"
 
-    loader = SkillsLoader(workspace)
+    loader = SkillsLoader(workspace, channel="web_client", user_id="test-user")
 
     assert not workspace.exists()
     assert loader.workspace_skills == workspace / "skills"
     assert await loader.list_skill_info() == []
+    builtin_scan.assert_awaited_once()
     assert (workspace / "skills").is_dir()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("workspace_kind", ["none", "missing", "existing"])
-async def test_list_builtin_skill_info_does_not_access_workspace(tmp_path, monkeypatch, workspace_kind):
+@pytest.mark.parametrize("outside_workspace", [False, True])
+async def test_workspace_skill_directory_rejects_symlinks(tmp_path, mock_builtin_skill_dirs, monkeypatch, outside_workspace):
+    mock_builtin_skill_dirs([])
+    workspace = tmp_path / "workspace"
+    target = (tmp_path if outside_workspace else workspace) / "linked-skills"
+    skill_dir = target / "custom"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: custom\n---\nInstructions\n", encoding="utf-8")
+    workspace.mkdir(exist_ok=True)
+    (workspace / "skills").symlink_to(target, target_is_directory=True)
+
+    scanned_paths = []
+    iterdir = skill_module.anyio.Path.iterdir
+
+    def record_scan(path):
+        scanned_paths.append(Path(path))
+        return iterdir(path)
+
+    monkeypatch.setattr(skill_module.anyio.Path, "iterdir", record_scan)
+    with pytest.raises(PathProtectionError, match="Symbolic links are not allowed"):
+        await SkillsLoader(workspace, channel="web_client", user_id="test-user").list_skill_info()
+    assert scanned_paths == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace_kind", ["missing", "existing"])
+async def test_builtin_only_does_not_access_workspace(tmp_path, mock_builtin_skill_dirs, monkeypatch, workspace_kind):
     builtin_dir = tmp_path / "builtin-folder"
     builtin_dir.mkdir()
     skill_file = builtin_dir / "SKILL.md"
     skill_file.write_text("---\nname: builtin-name\n---\nBuilt-in instructions")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[builtin_dir]))
-    workspace = None if workspace_kind == "none" else tmp_path / "workspace"
+    mock_builtin_skill_dirs([builtin_dir])
+    workspace = tmp_path / "workspace"
     if workspace_kind == "existing":
         workspace_skill = workspace / "skills/custom/SKILL.md"
         workspace_skill.parent.mkdir(parents=True)
@@ -95,18 +124,18 @@ async def test_list_builtin_skill_info_does_not_access_workspace(tmp_path, monke
 
     monkeypatch.setattr(skill_module.anyio.Path, "iterdir", fail_workspace_scan)
 
-    [skill] = await SkillsLoader(workspace).list_builtin_skill_info()
+    [skill] = await SkillsLoader(workspace, channel="web_client", user_id="test-user").list_skill_info(builtin_only=True)
 
     assert skill.source == "builtin"
     assert skill.metadata.name == "builtin-name"
-    assert skill.path == (str(workspace / "skills/builtin-folder/SKILL.md") if workspace is not None else "")
+    assert skill.sandbox_filepath == str(workspace / "skills/builtin-folder/SKILL.md")
     if workspace_kind == "missing":
         assert not workspace.exists()
 
 
 def test_skill_content_is_frozen_after_creation():
     content = "---\nname: original\n---\n# Original"
-    skill = SkillInfo(source="workspace", path="SKILL.md", content=content)
+    skill = SkillInfo(source="workspace", sandbox_filepath="SKILL.md", content=content)
     assert skill.metadata.name == "original"
     assert skill.body == "# Original"
 
@@ -121,7 +150,7 @@ def test_skill_content_is_frozen_after_creation():
 @pytest.mark.parametrize("skill_name", ["ask-user-question", "memory", "skill-creator"])
 def test_internal_builtin_skills_are_marked(skill_name: str):
     skill_file = skill_module.BUILTIN_SKILLS_DIR / skill_name / "SKILL.md"
-    skill = SkillInfo(source="builtin", path=str(skill_file), content=skill_file.read_text(encoding="utf-8"))
+    skill = SkillInfo(source="builtin", sandbox_filepath=str(skill_file), content=skill_file.read_text(encoding="utf-8"))
 
     assert skill.metadata.internal is True
     assert skill.metadata.kwargs == {}
@@ -131,7 +160,7 @@ def test_internal_builtin_skills_are_marked(skill_name: str):
 @pytest.mark.parametrize("not_interactive", [False, True])
 async def test_context_filters_builtin_interactive_skill(tmp_path: Path, not_interactive: bool):
     prompt = "\n\n".join(message["content"] for message in await build_context_messages(
-        tmp_path, channel=None, user_organization=None, not_interactive=not_interactive, token_counts={},
+        tmp_path, user_id="test-user", channel="web_client", user_organization=None, not_interactive=not_interactive, token_counts={},
     ))
 
     assert ("<name>ask-user-question</name>" in prompt) is not not_interactive
@@ -147,6 +176,7 @@ async def test_context_filters_builtin_interactive_skill(tmp_path: Path, not_int
 @pytest.mark.parametrize("not_interactive", [False, True])
 async def test_interactive_skill_filter_applies_to_list_and_prompt(
     tmp_path: Path,
+    mock_builtin_skill_dirs,
     monkeypatch: pytest.MonkeyPatch,
     source: str,
     always: bool,
@@ -159,17 +189,17 @@ async def test_interactive_skill_filter_applies_to_list_and_prompt(
         "# Interactive instructions\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[skill_dir] if source == "builtin" else []))
+    mock_builtin_skill_dirs([skill_dir] if source == "builtin" else [])
     regular_dir = tmp_path / "skills" / "regular-skill"
     regular_dir.mkdir(parents=True)
     (regular_dir / "SKILL.md").write_text(
         "---\nname: regular-skill\n---\n# Regular instructions\n", encoding="utf-8",
     )
-    loader = SkillsLoader(tmp_path, not_interactive=not_interactive)
+    loader = SkillsLoader(tmp_path, channel="web_client", user_id="test-user", not_interactive=not_interactive)
 
     skills = await loader.list_skill_info()
     if source == "builtin":
-        assert await loader.list_builtin_skill_info() == [skill for skill in skills if skill.source == "builtin"]
+        assert await loader.list_skill_info(builtin_only=True) == [skill for skill in skills if skill.source == "builtin"]
     names = {skill.metadata.name for skill in skills}
     expected = {"regular-skill"}
     if not not_interactive:
@@ -183,8 +213,8 @@ async def test_interactive_skill_filter_applies_to_list_and_prompt(
 
 
 @pytest.mark.asyncio
-async def test_builtin_lark_skills_use_managed_auth():
-    skills = await SkillsLoader(None).list_builtin_skill_info()
+async def test_builtin_lark_skills_use_managed_auth(tmp_path):
+    skills = await SkillsLoader(tmp_path, channel="web_client", user_id="test-user").list_skill_info(builtin_only=True)
     names = {skill.metadata.name for skill in skills}
 
     assert {"lark-skills", "lark-cli-auth"} <= names
@@ -192,7 +222,7 @@ async def test_builtin_lark_skills_use_managed_auth():
 
 @pytest.mark.parametrize("content", ["# Instructions", "---\nname: example\n# Missing closing delimiter"])
 def test_skill_body_requires_frontmatter(content: str):
-    skill = SkillInfo(source="workspace", path="SKILL.md", content=content)
+    skill = SkillInfo(source="workspace", sandbox_filepath="SKILL.md", content=content)
 
     with pytest.raises(ValueError, match="Invalid SKILL.md frontmatter"):
         _ = skill.body
@@ -201,9 +231,10 @@ def test_skill_body_requires_frontmatter(content: str):
 @pytest.mark.asyncio
 async def test_skill_metadata_drives_list_and_prompt(
     tmp_path: Path,
+    mock_builtin_skill_dirs,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     workspace = tmp_path / "workspace"
     skill_dir = workspace / "skills" / "custom-skill"
     skill_dir.mkdir(parents=True)
@@ -211,7 +242,7 @@ async def test_skill_metadata_drives_list_and_prompt(
         '---\nname: custom-skill\ndescription: "Useful & focused"\nalways: true\nextra: ignored\n---\n',
         encoding="utf-8",
     )
-    loader = SkillsLoader(workspace)
+    loader = SkillsLoader(workspace, channel="web_client", user_id="test-user")
 
     assert (await loader.list_skill_info())[0].metadata == SkillMetadata(
         name="custom-skill",
@@ -235,29 +266,35 @@ async def test_skill_metadata_drives_list_and_prompt(
 @pytest.mark.asyncio
 async def test_skill_name_comes_from_document_not_directory(
     tmp_path: Path,
+    mock_builtin_skill_dirs,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     workspace = tmp_path / "workspace"
     skill_file = workspace / "skills" / "folder-name" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     content = "---\nname: document-name\ndescription: From markdown\n---\n# Instructions\n"
     skill_file.write_text(content, encoding="utf-8")
-    loader = SkillsLoader(workspace)
+    loader = SkillsLoader(workspace, channel="web_client", user_id="test-user")
 
     skills = await loader.list_skill_info()
-    assert [(skill.metadata.name, skill.path) for skill in skills] == [("document-name", str(skill_file))]
+    assert [(skill.metadata.name, skill.sandbox_filepath) for skill in skills] == [("document-name", str(skill_file))]
     assert skills[0].metadata == SkillMetadata(name="document-name", description="From markdown")
     assert skills[0].content == content
-    assert skills[0].body == "# Instructions"
+    assert skills[0].body == "# Instructions\n"
     prompt = await loader.build_skills_prompt()
     assert "<name>document-name</name>" in prompt
-    assert f"<location>{skill_file}</location>" in prompt
+    assert "<directory>" not in prompt
+    assert str(skill_file.parent) not in prompt
+    assert "Use the read_skill tool" in prompt
+    assert "SKILL.md" not in prompt
+    assert "# Instructions" not in prompt
 
 
 @pytest.mark.asyncio
 async def test_builtin_name_takes_precedence_over_workspace_name(
     tmp_path: Path,
+    mock_builtin_skill_dirs,
     monkeypatch: pytest.MonkeyPatch,
 ):
     builtin_dir = tmp_path / "builtin-folder"
@@ -266,7 +303,7 @@ async def test_builtin_name_takes_precedence_over_workspace_name(
         "---\nname: shared-name\ndescription: Built-in\n---\n# Built-in\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[builtin_dir]))
+    mock_builtin_skill_dirs([builtin_dir])
     workspace = tmp_path / "workspace"
     workspace_skill = workspace / "skills" / "workspace-folder" / "SKILL.md"
     workspace_skill.parent.mkdir(parents=True)
@@ -274,48 +311,48 @@ async def test_builtin_name_takes_precedence_over_workspace_name(
         "---\nname: shared-name\ndescription: Workspace\n---\n# Workspace\n",
         encoding="utf-8",
     )
-    loader = SkillsLoader(workspace)
+    loader = SkillsLoader(workspace, channel="web_client", user_id="test-user")
 
     skills = await loader.list_skill_info()
     assert len(skills) == 1
     assert skills[0].metadata.name == "shared-name"
     assert skills[0].source == "builtin"
     assert skills[0].metadata.description == "Built-in"
-    assert skills[0].path == str(workspace / "skills" / "builtin-folder" / "SKILL.md")
+    assert skills[0].sandbox_filepath == str(workspace / "skills" / "builtin-folder" / "SKILL.md")
 
 
 @pytest.mark.asyncio
-async def test_filtered_builtin_directory_still_takes_precedence_over_workspace(tmp_path, monkeypatch):
+async def test_filtered_builtin_directory_still_takes_precedence_over_workspace(tmp_path, mock_builtin_skill_dirs, monkeypatch):
     builtin_dir = tmp_path / "builtin/shared-folder"
     builtin_dir.mkdir(parents=True)
     (builtin_dir / "SKILL.md").write_text('---\nname: shared-name\nfilter: channel("crm")\n---\nBuilt-in')
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[builtin_dir]))
+    mock_builtin_skill_dirs([builtin_dir])
     workspace = tmp_path / "workspace"
     for folder in ("shared-folder", "other-folder"):
         skill_file = workspace / "skills" / folder / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
         skill_file.write_text("---\nname: shared-name\n---\nWorkspace")
-    loader = SkillsLoader(workspace)
+    loader = SkillsLoader(workspace, channel="web_client", user_id="test-user")
 
-    assert await loader.list_builtin_skill_info() == []
+    assert await loader.list_skill_info(builtin_only=True) == []
     [skill] = await loader.list_skill_info()
     assert skill.source == "workspace"
-    assert skill.path == str(workspace / "skills/other-folder/SKILL.md")
+    assert skill.sandbox_filepath == str(workspace / "skills/other-folder/SKILL.md")
 
 
 @pytest.mark.asyncio
-async def test_workspace_skills_ignore_filter_while_builtins_enforce_it(tmp_path, monkeypatch):
+async def test_workspace_skills_ignore_filter_while_builtins_enforce_it(tmp_path, mock_builtin_skill_dirs, monkeypatch):
     builtin_dir = tmp_path / "builtin/gated-skill"
     builtin_dir.mkdir(parents=True)
     (builtin_dir / "SKILL.md").write_text('---\nname: gated-skill\nfilter: channel("crm")\n---\nBuilt-in')
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[builtin_dir]))
+    mock_builtin_skill_dirs([builtin_dir])
     workspace = tmp_path / "workspace"
     skill_file = workspace / "skills" / "workspace-skill" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text('---\nname: workspace-skill\nfilter: channel("crm")\n---\nWorkspace')
-    loader = SkillsLoader(workspace, channel="other")
+    loader = SkillsLoader(workspace, user_id="test-user", channel="other")
 
-    assert await loader.list_builtin_skill_info() == []
+    assert await loader.list_skill_info(builtin_only=True) == []
     [skill] = await loader.list_skill_info()
     assert skill.source == "workspace"
     assert skill.metadata.name == "workspace-skill"
@@ -324,9 +361,10 @@ async def test_workspace_skills_ignore_filter_while_builtins_enforce_it(tmp_path
 @pytest.mark.asyncio
 async def test_skill_metadata_defaults_and_invalid_name_is_skipped(
     tmp_path: Path,
+    mock_builtin_skill_dirs,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     workspace = tmp_path / "workspace"
     skill_dir = workspace / "skills" / "custom-skill"
     skill_dir.mkdir(parents=True)
@@ -337,7 +375,7 @@ async def test_skill_metadata_defaults_and_invalid_name_is_skipped(
     invalid_skill = workspace / "skills" / "missing-name" / "SKILL.md"
     invalid_skill.parent.mkdir()
     invalid_skill.write_text("---\ndescription: Missing name\n---\n", encoding="utf-8")
-    loader = SkillsLoader(workspace)
+    loader = SkillsLoader(workspace, channel="web_client", user_id="test-user")
 
     skills = await loader.list_skill_info()
     assert len(skills) == 1
@@ -349,9 +387,9 @@ async def test_skill_metadata_defaults_and_invalid_name_is_skipped(
 
 
 @pytest.mark.asyncio
-async def test_build_prompt_reads_each_skill_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
-    skill_file = tmp_path / "workspace" / "skills" / "always-skill" / "SKILL.md"
+async def test_build_prompt_reads_each_skill_once(tmp_path: Path, mock_builtin_skill_dirs, monkeypatch: pytest.MonkeyPatch):
+    mock_builtin_skill_dirs([])
+    skill_file = tmp_path / "workspace" / "skills" / "different-folder" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text(
         "---\nname: always-skill\ndescription: Always useful\nalways: true\n---\n# Do this\n",
@@ -372,19 +410,119 @@ async def test_build_prompt_reads_each_skill_once(tmp_path: Path, monkeypatch: p
 
     monkeypatch.setattr(skill_module.LockedFile, "read_text", count_reads)
     monkeypatch.setattr(skill_module.yaml, "safe_load", count_parses)
-    prompt = await SkillsLoader(tmp_path / "workspace").build_skills_prompt()
+    prompt = await SkillsLoader(tmp_path / "workspace", channel="web_client", user_id="test-user").build_skills_prompt()
+    assert await SkillsLoader(tmp_path / "workspace", channel="web_client", user_id="test-user").build_skills_prompt() == prompt
 
     assert reads == [skill_file]
     assert len(parses) == 1
-    assert "### Skill: always-skill\n\n# Do this" in prompt
+    assert (
+        f"### Skill: always-skill\n\nBase directory for this skill: {skill_file.parent}\n\n# Do this\n"
+    ) in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("atomic_replace", [False, True])
+async def test_skill_cache_refreshes_when_file_changes(tmp_path, mock_builtin_skill_dirs, monkeypatch, atomic_replace):
+    mock_builtin_skill_dirs([])
+    path = tmp_path / "skills" / "sample" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    original = "---\nname: sample\ndescription: Old\n---\nOld instructions\n"
+    updated = original.replace("Old", "New")
+    path.write_text(original)
+    loader = SkillsLoader(tmp_path, channel="web_client", user_id="test-user")
+    before = await loader.get_skill("sample")
+    old_stat = path.stat()
+
+    if atomic_replace:
+        replacement = path.with_suffix(".tmp")
+        replacement.write_text(updated)
+        # Replacing a file can preserve both its mtime and its size.
+        os.utime(replacement, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns))
+        replacement.replace(path)
+    else:
+        path.write_text(updated)
+        os.utime(path, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns + 1))
+
+    after = await loader.get_skill("sample")
+    assert after.content == updated
+    assert after.metadata.description == "New"
+    assert after.body == "New instructions\n"
+    assert before.content == original
+    assert before.metadata.description == "Old"
+    assert before.body == "Old instructions\n"
+
+
+@pytest.mark.asyncio
+async def test_skill_cache_does_not_cache_access_or_share_mutable_results(tmp_path, mock_builtin_skill_dirs, monkeypatch):
+    path = tmp_path / "builtin" / "sample" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text('---\nname: sample\nfilter: channel("crm")\n---\nInstructions\n')
+    mock_builtin_skill_dirs([path.parent])
+    read_text = AsyncMock(side_effect=skill_module.LockedFile.read_text)
+    monkeypatch.setattr(skill_module.LockedFile, "read_text", lambda file: read_text(file))
+    workspace = tmp_path / "workspace"
+
+    first = await SkillsLoader(workspace, user_id="test-user", channel="crm").get_skill("sample")
+    first.sandbox_filepath = "changed"
+    first.metadata.name = "changed"
+    assert await SkillsLoader(workspace, user_id="test-user", channel="web_client").list_skill_info(builtin_only=True) == []
+    again = await SkillsLoader(workspace, user_id="test-user", channel="crm").get_skill("sample")
+    assert again.metadata.name == "sample"
+    assert again.sandbox_filepath == str(workspace / "skills" / "sample" / "SKILL.md")
+    assert read_text.await_count == 1
+
+    other_workspace = tmp_path / "other-workspace"
+    other = await SkillsLoader(other_workspace, user_id="test-user", channel="crm").get_skill("sample")
+    assert other.sandbox_filepath == str(other_workspace / "skills" / "sample" / "SKILL.md")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_skill_loads_share_one_file_read(tmp_path, mock_builtin_skill_dirs, monkeypatch):
+    mock_builtin_skill_dirs([])
+    path = tmp_path / "skills" / "sample" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("---\nname: sample\n---\nInstructions\n")
+    read_text = AsyncMock(side_effect=skill_module.LockedFile.read_text)
+    monkeypatch.setattr(skill_module.LockedFile, "read_text", lambda file: read_text(file))
+
+    results = await asyncio.gather(*(SkillsLoader(tmp_path, channel="web_client", user_id="test-user").get_skill("sample") for _ in range(5)))
+    assert read_text.await_count == 1
+    assert all(skill.body == "Instructions\n" for skill in results)
+    assert len({id(skill) for skill in results}) == 5
+
+
+@pytest.mark.asyncio
+async def test_skill_cache_does_not_return_deleted_invalid_or_symlinked_files(tmp_path, mock_builtin_skill_dirs, monkeypatch):
+    mock_builtin_skill_dirs([])
+    path = tmp_path / "skills" / "sample" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    valid = "---\nname: sample\n---\nInstructions\n"
+    path.write_text(valid)
+    loader = SkillsLoader(tmp_path, channel="web_client", user_id="test-user")
+    assert (await loader.get_skill("sample")).content == valid
+
+    path.unlink()
+    assert await loader.list_skill_info() == []
+    path.write_text("Invalid frontmatter")
+    assert await loader.list_skill_info() == []
+    path.write_text(valid)
+    assert (await loader.get_skill("sample")).content == valid
+
+    outside = tmp_path / "outside.md"
+    outside.write_text(valid)
+    path.unlink()
+    path.symlink_to(outside)
+    with pytest.raises(PathProtectionError, match="Symbolic links are not allowed"):
+        await loader.get_skill("sample")
 
 
 @pytest.mark.asyncio
 async def test_build_prompt_marks_internal_skill_without_activating_it(
     tmp_path: Path,
+    mock_builtin_skill_dirs,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     skill_file = tmp_path / "workspace" / "skills" / "internal-skill" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text(
@@ -392,7 +530,7 @@ async def test_build_prompt_marks_internal_skill_without_activating_it(
         encoding="utf-8",
     )
 
-    prompt = await SkillsLoader(tmp_path / "workspace").build_skills_prompt()
+    prompt = await SkillsLoader(tmp_path / "workspace", channel="web_client", user_id="test-user").build_skills_prompt()
 
     assert "# Active Skills" not in prompt
     assert "# Internal instructions" not in prompt

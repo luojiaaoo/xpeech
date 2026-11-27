@@ -10,8 +10,6 @@ metadata:
 
 # task (v2)
 
-**CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
-
 ## 命令选择与渐进式发现（必读）
 
 执行任何 Task 命令前，必须先确认能力真实存在，禁止根据用户意图自行拼接或猜测 `+<verb>`：

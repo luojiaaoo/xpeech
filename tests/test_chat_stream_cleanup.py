@@ -89,7 +89,7 @@ def streaming_chat(monkeypatch, tmp_path, model_permits, make_openai_sdk_client)
     agent = AgentLoop.__new__(AgentLoop)
     agent.provider = provider
     agent.workspace = tmp_path
-    agent.channel = None
+    agent.channel = "test"
     agent.user_organization = None
     agent.history = YamlHistoryRepository(tmp_path / "history")
     state.history = agent.history
@@ -97,7 +97,7 @@ def streaming_chat(monkeypatch, tmp_path, model_permits, make_openai_sdk_client)
     agent.max_accept_token = 147_000
     agent.chat = call_provider
     monkeypatch.setattr(settings.path, "workspace_base_path", tmp_path)
-    runner = AgentRunner("cleanup-user", config=settings)
+    runner = AgentRunner("cleanup-user", channel="test", config=settings)
     runner._agent_loop = agent
     message = InboundMessage(
         user_id="cleanup-user",

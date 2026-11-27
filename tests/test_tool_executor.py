@@ -221,7 +221,7 @@ class TestToolExecutor:
         monkeypatch.setattr(executor_module.platform, "system", lambda: "Linux")
         monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
 
-        assert build_shell_tools(workspace, skills_loader=SkillsLoader(workspace)).__name__ == "shell"
+        assert build_shell_tools(workspace, skills_loader=SkillsLoader(workspace, channel="web_client", user_id="test-user")).__name__ == "shell"
 
     @pytest.mark.skipif(
         platform.system() != "Linux" or any(shutil.which(name) is None for name in SANDBOX_EXECUTABLES),
@@ -239,7 +239,7 @@ class TestToolExecutor:
         )
 
         result = await asyncio.wait_for(
-            executor_module.sandbox_manager.run("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500, skills_loader=SkillsLoader(tmp_path)),
+            executor_module.sandbox_manager.run("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user")),
             timeout=5,
         )
 
@@ -265,7 +265,7 @@ class TestToolExecutor:
     @pytest.mark.asyncio
     async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, shell_session_manager):
 
-        result = await executor_module.sandbox_manager.run("printf done", tmp_path, timeout_ms=1_000, skills_loader=SkillsLoader(tmp_path))
+        result = await executor_module.sandbox_manager.run("printf done", tmp_path, timeout_ms=1_000, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"))
 
         assert result.stdout == b"done"
         assert result.returncode == 0
@@ -288,14 +288,14 @@ class TestToolExecutor:
         monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
         monkeypatch.setattr(executor_module.SandboxExecutor, "ensure_python_environment", skip_venv)
         monkeypatch.setattr(executor_module.sandbox_manager, "run", timed_out_command)
-        shell = build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
+        shell = build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"))
 
         [result] = [
             result
             async for result in ToolExecutor(
                 workspace=tmp_path, max_result_chars=32, mapping_tool_call_funcs={"shell": shell},
             ).execute(
-                [ToolCallRequest(id="1", name="shell", arguments={"command": "sleep 10", "timeout_ms": 500})],
+                [ToolCallRequest(id="1", name="shell", arguments={"command": "sleep 10", "timeout_ms": 500})], channel="web_client",
             )
         ]
 
@@ -319,12 +319,12 @@ class TestToolExecutor:
             run=AsyncMock(return_value=CommandResult(b"partial output", b"diagnostic", returncode, timed_out)),
         )
         monkeypatch.setattr(shell_module.sandbox, "SandboxExecutor", lambda *_args, **_kwargs: sandbox)
-        shell = build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
+        shell = build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"))
         executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={"shell": shell})
         call = ToolCallRequest(id="shell-status", name="shell", arguments={"command": "example"})
         result = (
-            await executor.execute_function(call, shell, call.arguments)
-            if confirmed else await executor.execute_one(call)
+            await executor.execute_function(call, shell, call.arguments, channel="web_client")
+            if confirmed else await executor.execute_one(call, channel="web_client")
         )
 
         assert result.succeeded is succeeded
@@ -355,7 +355,7 @@ class TestToolExecutor:
             async for result in ToolExecutor(
                 workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={"echo": echo},
             ).execute(
-                calls,
+                calls, channel="web_client",
                 loop_count=3,
             )
         ]
@@ -388,7 +388,7 @@ class TestToolExecutor:
         )
         results = []
         async with asyncio.timeout(1):
-            async for result in executor.execute(calls):
+            async for result in executor.execute(calls, channel="web_client"):
                 results.append(result)
                 if result.call.id == "fast":
                     assert not release_slow.is_set()
@@ -424,7 +424,7 @@ class TestToolExecutor:
                 [
                     ToolCallRequest(id="stuck", name="stuck_tool", arguments={}),
                     ToolCallRequest(id="fast", name="fast_tool", arguments={}),
-                ],
+                ], channel="web_client",
             ):
                 assert result.call.id == "fast"
                 result_received.set()
@@ -463,7 +463,7 @@ class TestToolExecutor:
         results = executor.execute([
             ToolCallRequest(id="stuck", name="stuck_tool", arguments={}),
             ToolCallRequest(id="fast", name="fast_tool", arguments={}),
-        ])
+        ], channel="web_client")
         try:
             assert (await anext(results)).call.id == "fast"
         finally:
@@ -473,7 +473,7 @@ class TestToolExecutor:
     @pytest.mark.asyncio
     async def test_empty_tool_calls_end_iteration(self, tmp_path: Path):
         executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={})
-        assert [result async for result in executor.execute([])] == []
+        assert [result async for result in executor.execute([], channel="web_client")] == []
 
     @pytest.mark.asyncio
     async def test_timed_out_tool_does_not_block_other_results(self, tmp_path: Path):
@@ -499,7 +499,7 @@ class TestToolExecutor:
                 max_result_chars=10_000,
                 mapping_tool_call_funcs={"stuck_tool": stuck_tool, "fast_tool": fast_tool},
                 max_tool_timeout=0.02,
-            ).execute(calls)
+            ).execute(calls, channel="web_client")
         ]
 
         assert cancelled.is_set()
@@ -522,7 +522,7 @@ class TestToolExecutor:
                 mapping_tool_call_funcs={"network_tool": network_tool},
                 max_tool_timeout=300,
             ).execute(
-                [ToolCallRequest(id="1", name="network_tool", arguments={})],
+                [ToolCallRequest(id="1", name="network_tool", arguments={})], channel="web_client",
             )
         ]
 
@@ -560,7 +560,7 @@ class TestToolExecutor:
                 max_result_chars=10_000,
                 mapping_tool_call_funcs={"echo": echo, "context": context_only, "plain": plain},
             ).execute(
-                calls,
+                calls, channel="web_client",
                 session_metadata=metadata,
             )
         ]
@@ -597,7 +597,7 @@ class TestToolExecutor:
 
     @pytest.mark.asyncio
     async def test_injects_channel_only_when_declared(self, tmp_path: Path):
-        async def with_channel(args: EchoArgs, channel: str | None) -> str:
+        async def with_channel(args: EchoArgs, channel: str) -> str:
             """Echo with channel context."""
             assert channel == "feishu"
             return args.text
@@ -625,13 +625,32 @@ class TestToolExecutor:
         assert [result.value for result in results] == ["a", "b"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("channel", [None, "feishu"])
+    async def test_execute_one_allows_omitted_channel(self, tmp_path: Path, channel):
+        async def echo_channel(args: EchoArgs, channel: str | None) -> str:
+            """Echo with optional channel context."""
+            return f"{args.text}:{channel}"
+
+        executor = ToolExecutor(
+            workspace=tmp_path, max_result_chars=10_000,
+            mapping_tool_call_funcs={"echo_channel": echo_channel},
+        )
+        kwargs = {} if channel is None else {"channel": channel}
+        result = await executor.execute_one(
+            ToolCallRequest(id="optional-channel", name="echo_channel", arguments={"text": "ok"}),
+            **kwargs,
+        )
+        assert result.succeeded
+        assert result.value == f"ok:{channel}"
+
+    @pytest.mark.asyncio
     async def test_returns_failure_for_unregistered_tool(self, tmp_path: Path):
         call = ToolCallRequest(id="1", name="missing", arguments={})
 
         [result] = [
             result async for result in ToolExecutor(
                 workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={},
-            ).execute([call])
+            ).execute([call], channel="web_client")
         ]
 
         assert not result.succeeded
@@ -650,7 +669,7 @@ class TestToolExecutor:
             async for result in ToolExecutor(
                 workspace=tmp_path, max_result_chars=12, mapping_tool_call_funcs={"large_tool": large_result},
             ).execute(
-                [call],
+                [call], channel="web_client",
             )
         ]
 
@@ -675,7 +694,7 @@ class TestToolExecutor:
             async for result in ToolExecutor(
                 workspace=tmp_path, max_result_chars=12, mapping_tool_call_funcs={"read_file": read_file},
             ).execute(
-                [call],
+                [call], channel="web_client",
             )
         ]
 
@@ -701,7 +720,7 @@ class TestToolExecutor:
             async for result in ToolExecutor(
                 workspace=tmp_path, max_result_chars=8, mapping_tool_call_funcs={"multimodal": multimodal_result},
             ).execute(
-                [call],
+                [call], channel="web_client",
             )
         ]
 
@@ -720,7 +739,7 @@ class TestToolExecutor:
             async for result in ToolExecutor(
                 workspace=tmp_path, max_result_chars=16, mapping_tool_call_funcs={"failure": failing_tool},
             ).execute(
-                [call],
+                [call], channel="web_client",
             )
         ]
 

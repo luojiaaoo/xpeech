@@ -565,7 +565,7 @@ async def test_shell_command_results_color_matching_card_titles(tmp_path, monkey
     sandbox = SimpleNamespace(idle_timeout=60, run=run)
     monkeypatch.setattr(shell_module.sandbox, "SandboxExecutor", lambda *_args, **_kwargs: sandbox)
     shell = build_execution_request_tool(
-        shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)),
+        shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user")),
         ExecutionConfirmation(callback=lambda _: ExecutionDecision.ALLOW),
     )
     calls = [
@@ -579,7 +579,7 @@ async def test_shell_command_results_color_matching_card_titles(tmp_path, monkey
     results = {}
 
     async def events(*_args, **_kwargs):
-        async for event in agent.tool_call(SimpleNamespace(tool_calls=calls, content=""), [], 0, "alice", "session", "Alice"):
+        async for event in agent.tool_call(SimpleNamespace(tool_calls=calls, content=""), [], 0, "alice", "session", "Alice", channel="test"):
             if event["event"] == "tool_call_result":
                 result = json.loads(event["context"])
                 results[result["tool_call_id"]] = result["success"]

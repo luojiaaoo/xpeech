@@ -8,7 +8,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import xpeech.agent.skills.skill as skill_module
 from xpeech.agent.server.api import app
 from xpeech.config.settings import settings
 from xpeech.subapp.channel.web_client.dao import User
@@ -18,9 +17,9 @@ from xpeech.utils.channel_jwt import UserJWTAuth, UserTokenParams, create_token
 
 
 @pytest.fixture
-def chat_command_client(tmp_path, monkeypatch):
+def chat_command_client(tmp_path, mock_builtin_skill_dirs, monkeypatch):
     monkeypatch.setattr(settings.path, "workspace_base_path", tmp_path)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     workspace = tmp_path / "alice"
     workspace.mkdir()
     token = create_token(UserTokenParams("web_client", user_id="alice"))
@@ -38,12 +37,12 @@ def test_catalog_returns_public_skills_and_real_commands(chat_command_client):
     assert response.headers["cache-control"] == "no-store"
     assert {item["name"] for item in response.json()["commands"]} == {"help", "new", "clear"}
     assert response.json()["skills"] == [{
-        "name": "demo", "description": "Describe demo", "path": str(workspace / "skills/demo/SKILL.md"),
+        "name": "demo", "description": "Describe demo", "sandbox_filepath": str(workspace / "skills/demo/SKILL.md"),
     }]
     assert client.get("/chat_command").status_code == 401
 
 
-def test_skill_catalog_orders_filtered_builtins_then_workspace_then_public_builtins(chat_command_client, tmp_path, monkeypatch):
+def test_skill_catalog_orders_filtered_builtins_then_workspace_then_public_builtins(chat_command_client, mock_builtin_skill_dirs, tmp_path, monkeypatch):
     client, workspace, headers = chat_command_client
     builtins = []
     for name, expression in (
@@ -56,7 +55,7 @@ def test_skill_catalog_orders_filtered_builtins_then_workspace_then_public_built
         filter_line = f"filter: {expression}\n" if expression else ""
         (directory / "SKILL.md").write_text(f"---\nname: {name}\n{filter_line}---\nBody")
         builtins.append(directory)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtins))
+    mock_builtin_skill_dirs(builtins)
     monkeypatch.setattr(type(settings.extra_user_info), "resolve_user_organization", AsyncMock(return_value="公司/研发/平台"))
     for name, expression in (("workspace-denied", "False"), ("workspace-match", "True"), ("workspace-public", None)):
         path = workspace / "skills" / name / "SKILL.md"

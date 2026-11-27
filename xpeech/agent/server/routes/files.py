@@ -148,8 +148,8 @@ async def download_session_file(
         file_path = await anyio.to_thread.run_sync(
             lambda: safe_resolve_workspace_path(Path(path), workspace, protect_read_only_file=False),
         )
-    except PathProtectionError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File is outside the workspace")
+    except PathProtectionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from None
     if not await anyio.Path(file_path).is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 

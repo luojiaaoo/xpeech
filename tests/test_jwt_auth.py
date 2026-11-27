@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 
 from xpeech.agent import execute as execute_module
 from xpeech.agent.server.api import app
-from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, settings
 from xpeech.utils import internal_jwt
@@ -120,10 +119,10 @@ def test_access_token_does_not_carry_lark_user_access_token():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["/chat", "/chat_sync"])
-async def test_chat_ignores_lark_user_access_tokens(tmp_path, monkeypatch, endpoint, backend_openai_client):
+async def test_chat_ignores_lark_user_access_tokens(tmp_path, mock_builtin_skill_dirs, monkeypatch, endpoint, backend_openai_client):
     monkeypatch.setattr(settings.path, "cache_path", tmp_path / "cache")
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "sandbox-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     monkeypatch.setenv("LARKSUITE_CLI_USER_ACCESS_TOKEN", "u-process-token")
     both_started = asyncio.Event()
     started = []
@@ -136,7 +135,7 @@ async def test_chat_ignores_lark_user_access_tokens(tmp_path, monkeypatch, endpo
         if len(started) <= 2:
             await asyncio.wait_for(both_started.wait(), timeout=5)
         await asyncio.sleep(0)
-        args = await sandbox.wrap_sandbox_command("lark-cli whoami", tmp_path, skills_loader=SkillsLoader(tmp_path))
+        args = await sandbox.wrap_sandbox_command("lark-cli whoami", tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"))
         assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in args
         observed.append(message.user_id)
         assert "lark_user_access_token" not in message.model_dump_json()

@@ -157,9 +157,9 @@ async def wrap_sandbox_command(
     # Present built-in and custom skills through one workspace/skills tree.
     # Built-in directories are mounted read-only over same-named workspace
     # skills so the built-in version always has priority inside the sandbox.
-    for skill in await skills_loader.list_builtin_skill_info():
+    for skill in await skills_loader.list_skill_info(builtin_only=True):
         # Use the directory name, which can differ from frontmatter's name.
-        target = workspace_skills / Path(skill.path).parent.name
+        target = workspace_skills / Path(skill.sandbox_filepath).parent.name
         builtin_skill = skills_loader.builtin_skills / target.name
         args.extend(["--ro-bind", str(builtin_skill.resolve()), str(target)])
 

@@ -278,7 +278,7 @@ async def test_baidu_library_swallowed_error_and_empty_result_count_as_success(t
 
     monkeypatch.setattr(baidusearch.session, "get", offline)
     executor = ToolExecutor(tmp_path, 10000, {"baidu_search": web.baidu_search})
-    result = await executor.execute_one(ToolCallRequest(id="baidu-empty", name="baidu_search", arguments={"query": "test"}))
+    result = await executor.execute_one(ToolCallRequest(id="baidu-empty", name="baidu_search", arguments={"query": "test"}), channel="web_client")
     assert result.succeeded is True
     assert "未找到" in result.value
 
@@ -311,7 +311,7 @@ async def test_search_error_is_reported_as_failed_execution(tmp_path, monkeypatc
     results = [
         result
         async for result in executor.execute(
-            [ToolCallRequest(id="search-1", name=name, arguments={"query": "test"})],
+            [ToolCallRequest(id="search-1", name=name, arguments={"query": "test"})], channel="web_client",
         )
     ]
     assert not results[0].succeeded

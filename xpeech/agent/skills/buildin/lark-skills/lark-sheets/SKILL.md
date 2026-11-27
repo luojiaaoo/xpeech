@@ -11,8 +11,6 @@ metadata:
 
 # sheets
 
-**CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理。**
-
 ## 术语约定
 
 同一对象的交替说法，按此映射解析用户口语：**工作表（sheet）**= 子表 / tab / 标签页（`sheet_id` 是稳定标识）；**电子表格（spreadsheet）**= 工作簿 / 表格（顶层容器，由 `--url` 或 `--spreadsheet-token` 定位）；**reference_id** = 表内对象的稳定标识，即各对象主键 flag 接受的值（与 `--image-uri` 图片上传句柄不是一回事）。

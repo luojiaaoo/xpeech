@@ -16,9 +16,9 @@ from .helper import build_system_reminder
 BOOTSTRAP_FILES = ("AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md")
 
 
-def _get_identity(channel: str | None = None) -> str:
+def _get_identity(channel: str) -> str:
     """生成身份上下文，渠道配置优先，否则使用全局配置或默认身份。"""
-    channel_config = settings.jwt.channels.get(channel) if channel else None
+    channel_config = settings.jwt.channels.get(channel)
     system_identity_prompt = (
         channel_config.system_identity_prompt.strip()
         if channel_config and channel_config.system_identity_prompt.strip()
@@ -67,7 +67,7 @@ def _workspace_context(workspace: Path) -> str:
         - Tool results: {workspace}/tool-results/YYYY-MM-DD/ (oversized full outputs grouped by creation date and named with the tool name and a unique ID)
         - Long-term memory: {workspace}/memory/MEMORY.md (write important facts here)
         - History log: {workspace}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
-        - Skills: {workspace}/skills/{{skill-name}}/SKILL.md
+        - Workspace skills directory: {workspace}/skills
         - Tool notes: {workspace}/TOOLS.md. Private configurations for tools
         """
     ).strip().format(workspace=workspace.as_posix())
@@ -76,8 +76,8 @@ def _workspace_context(workspace: Path) -> str:
 async def build_context_messages(
     workspace: Path,
     *,
-    user_id: str | None = None,
-    channel: str | None,
+    user_id: str,
+    channel: str,
     user_organization: str | None,
     not_interactive: bool,
     token_counts: dict[str, int],

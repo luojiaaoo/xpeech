@@ -13,6 +13,27 @@ from sqlmodel import create_engine
 
 
 @pytest.fixture
+def mock_builtin_skill_dirs(monkeypatch):
+    """Stub built-in discovery while preserving real workspace scans."""
+    from xpeech.agent.skills import skill
+
+    iter_skill_files = skill._iter_skill_files
+
+    def configure(directories):
+        builtin_scan = AsyncMock(return_value=[directory / "SKILL.md" for directory in directories])
+
+        async def scan(directory, excluded_names=()):
+            if directory == skill.BUILTIN_SKILLS_DIR:
+                return await builtin_scan()
+            return await iter_skill_files(directory, excluded_names)
+
+        monkeypatch.setattr(skill, "_iter_skill_files", scan)
+        return builtin_scan
+
+    return configure
+
+
+@pytest.fixture
 def postgres_database(monkeypatch, tmp_path):
     url = os.environ.get("XPEECH_TEST_DATABASE_URL")
     if not url:

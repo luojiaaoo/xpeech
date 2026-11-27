@@ -10,8 +10,6 @@ metadata:
 
 # markdown (v1)
 
-**CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
-
 ## 快速决策
 
 - 身份：Markdown 文件通常属于用户云空间资源，优先使用 `--as user`。如为自动化场景，或应用已创建并持有目标文件权限，可按场景使用 `--as bot`。首次以 `user` 身份访问前执行 `lark-cli-auth login --scope "<本次操作所需 scope>"`

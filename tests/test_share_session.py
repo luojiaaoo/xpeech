@@ -121,11 +121,11 @@ def test_cli_and_browser_preview_publish_only_html(tmp_path: Path, conversation)
 
 @pytest.mark.asyncio
 async def test_share_skill_is_discovered_and_form_uses_supported_schema(tmp_path: Path):
-    skills = await SkillsLoader(tmp_path).list_builtin_skill_info()
+    skills = await SkillsLoader(tmp_path, channel="web_client", user_id="test-user").list_skill_info(builtin_only=True)
     [skill] = [skill for skill in skills if skill.metadata.name == "share-session"]
     assert skill.metadata.description.strip()
     assert skill.metadata.internal is False
-    assert skill.path == str(tmp_path / "skills/share-session/SKILL.md")
+    assert skill.sandbox_filepath == str(tmp_path / "skills/share-session/SKILL.md")
     form = json.loads(skill.body.split("```json\n", 1)[1].split("```", 1)[0])
     question = QuestionArgs(question=json.dumps(form))
     validated_form = json.loads(question.question)

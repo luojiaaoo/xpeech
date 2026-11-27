@@ -42,7 +42,7 @@ async def test_tool_results_are_sent_individually_as_tools_finish(tmp_path, fast
     events = []
     results = []
     async with asyncio.timeout(1):
-        async for event in agent_loop.tool_call(response, history, 0, "user", "session", "Alice"):
+        async for event in agent_loop.tool_call(response, history, 0, "user", "session", "Alice", channel="test"):
             events.append(event)
             if event["event"] == "tool_call":
                 assert [call["id"] for call in history[0]["tool_calls"]] == ["slow", "fast"]
@@ -109,7 +109,7 @@ async def test_cancelling_tool_events_cancels_pending_tools(tmp_path):
     )
 
     async def consume():
-        async for event in agent_loop.tool_call(response, [], 0, "user", "session", "Alice"):
+        async for event in agent_loop.tool_call(response, [], 0, "user", "session", "Alice", channel="test"):
             if event["event"] == "tool_call_result":
                 result_received.set()
 

@@ -185,7 +185,7 @@ async def test_chat_inserts_each_queued_message_before_next_model_call(
     auth = SimpleNamespace(user_id=message.user_id, channel=message.channel)
     app.dependency_overrides[require_user_jwt] = lambda: auth
     monkeypatch.setattr(settings.path, "workspace_base_path", agent.workspace)
-    runner = AgentRunner(message.user_id, config=settings)
+    runner = AgentRunner(message.user_id, channel="test", config=settings)
     agent.workspace = runner.workspace
     runner._agent_loop = agent
     create = AsyncMock(return_value=runner)

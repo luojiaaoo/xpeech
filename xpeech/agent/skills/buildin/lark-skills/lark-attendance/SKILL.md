@@ -10,8 +10,6 @@ metadata:
 
 # attendance (v1)
 
-**CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
-
 ## 默认参数自动填充规则
 
 调用任何 API 时，以下参数 **必须自动填充，禁止向用户询问**：

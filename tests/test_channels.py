@@ -14,7 +14,6 @@ from xpeech.agent.prompt.context import build_context_messages
 from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app
-from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import mcp_client, registry
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, MCPServerSettings, ToolConfig, settings
@@ -46,7 +45,7 @@ async def test_channel_prompt_replaces_identity_and_appends_custom_prompt(
     channels["crm"].custom_system_prompt = "CRM custom prompt"
 
     contexts = await build_context_messages(
-        tmp_path, channel="crm", user_organization=None, not_interactive=False, token_counts={},
+        tmp_path, user_id="test-user", channel="crm", user_organization=None, not_interactive=False, token_counts={},
     )
     identity = contexts[0]
     system = await build_system_prompt(channel="crm")
@@ -61,7 +60,7 @@ async def test_channel_prompt_replaces_identity_and_appends_custom_prompt(
     assert system["content"].index("Global custom prompt") < system["content"].index("CRM custom prompt")
 
     fallback_identity = (await build_context_messages(
-        tmp_path, channel="erp", user_organization=None, not_interactive=False, token_counts={},
+        tmp_path, user_id="test-user", channel="erp", user_organization=None, not_interactive=False, token_counts={},
     ))[0]["content"]
     assert (global_identity or "You are xpeech") in fallback_identity
     assert "CRM identity" not in fallback_identity
@@ -129,6 +128,7 @@ def test_custom_channel_rejects_wrong_key(channels):
 
 def test_skill_api_filters_using_channel(
     channels,
+    mock_builtin_skill_dirs,
     monkeypatch,
     tmp_path,
 ):
@@ -148,7 +148,7 @@ def test_skill_api_filters_using_channel(
         filter_line = f"filter: {filter_expr}\n" if filter_expr else ""
         skill_file.write_text(f"---\nname: {name}\n{filter_line}---\n# {name}\n")
         builtin_dirs.append(skill_file.parent)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtin_dirs))
+    mock_builtin_skill_dirs(builtin_dirs)
     for name, filter_expr in [("user-public", None), ("user-crm", 'channel("crm")'), ("user-erp", 'channel("erp")')]:
         skill_file = tmp_path / "tag-user" / "skills" / name / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
@@ -183,13 +183,13 @@ def test_skill_api_filters_using_channel(
 
 
 @pytest.mark.asyncio
-async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tmp_path):
+async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, mock_builtin_skill_dirs, tmp_path):
     skill_dir = tmp_path / "builtin" / "classified"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("---\nname: classified\ntags: [finance, 'Long Form']\n---\n# Instructions\n")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[skill_dir]))
+    mock_builtin_skill_dirs([skill_dir])
 
-    [skill] = await SkillsLoader(tmp_path).list_skill_info()
+    [skill] = await SkillsLoader(tmp_path, channel="web_client", user_id="test-user").list_skill_info()
     assert skill.metadata.filter is None
     assert skill.metadata.kwargs["tags"] == ["finance", "Long Form"]
 
@@ -250,19 +250,19 @@ def test_chat_passes_verified_channel_to_registration(
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
 @pytest.mark.asyncio
-async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tmp_path, source):
+async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, mock_builtin_skill_dirs, tmp_path, source):
     skill_root = tmp_path / "builtin" if source == "builtin" else tmp_path / "skills"
     skill_file = skill_root / "dedicated" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text('---\nname: dedicated\nfilter: channel("crm")\nalways: true\n---\n# CRM instructions')
     builtin_dirs = [skill_file.parent] if source == "builtin" else []
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtin_dirs))
-    loader = SkillsLoader(tmp_path)
+    mock_builtin_skill_dirs(builtin_dirs)
+    loader = SkillsLoader(tmp_path, channel="web_client", user_id="test-user")
     prompt = await loader.build_skills_prompt()
     if source == "builtin":
         # 内置技能受过滤表达式限制。
         assert prompt == ""
-        loader = SkillsLoader(tmp_path, channel="crm")
+        loader = SkillsLoader(tmp_path, user_id="test-user", channel="crm")
         prompt = await loader.build_skills_prompt()
     # 工作区技能由用户自己放置，不受访问过滤表达式限制。
     assert "# CRM instructions" in prompt
@@ -270,25 +270,25 @@ async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tm
     assert skill.metadata.filter == 'channel("crm")'
     assert "filter" not in skill.metadata.kwargs
     contexts = await build_context_messages(
-        tmp_path, channel="crm", user_organization=None, not_interactive=False, token_counts={},
+        tmp_path, user_id="test-user", channel="crm", user_organization=None, not_interactive=False, token_counts={},
     )
     assert "# CRM instructions" in "\n\n".join(item["content"] for item in contexts)
 
 
 @pytest.mark.parametrize("filter_yaml", ["channel()", "[1]", "['crm']", "import os", "123"])
 @pytest.mark.asyncio
-async def test_invalid_skill_filters_are_skipped(monkeypatch, tmp_path, filter_yaml):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+async def test_invalid_skill_filters_are_skipped(monkeypatch, mock_builtin_skill_dirs, tmp_path, filter_yaml):
+    mock_builtin_skill_dirs([])
     skill_file = tmp_path / "skills" / "invalid" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text(f"---\nname: invalid\nfilter: {filter_yaml}\n---\n# Invalid")
-    assert await SkillsLoader(tmp_path).list_skill_info() == []
+    assert await SkillsLoader(tmp_path, channel="web_client", user_id="test-user").list_skill_info() == []
 
 
 @pytest.mark.parametrize(
     "channel, expected",
     [
-        (None, ["public"]),
+        ("web_client", ["public"]),
         ("crm", ["public", "crm", "shared"]),
         ("erp", ["public", "erp", "shared"]),
         ("sales", ["public"]),
@@ -372,9 +372,9 @@ async def test_mcp_only_registers_public_and_matching_servers(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("user_id", [None, "alice", "bob", "Alice"])
+@pytest.mark.parametrize("user_id", ["unknown", "alice", "bob", "Alice"])
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
-async def test_user_id_skill_filter_in_list_and_context(monkeypatch, tmp_path, user_id, source):
+async def test_user_id_skill_filter_in_list_and_context(monkeypatch, mock_builtin_skill_dirs, tmp_path, user_id, source):
     root = tmp_path / ("builtin" if source == "builtin" else "skills")
     skill_file = root / "dedicated" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
@@ -382,15 +382,12 @@ async def test_user_id_skill_filter_in_list_and_context(monkeypatch, tmp_path, u
         '---\nname: dedicated\nalways: true\nfilter: user_id("alice")\n---\n# Dedicated instructions',
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        skill_module, "iter_builtin_skill_dirs",
-        AsyncMock(return_value=[skill_file.parent] if source == "builtin" else []),
-    )
+    mock_builtin_skill_dirs([skill_file.parent] if source == "builtin" else [])
     visible = source == "workspace" or user_id == "alice"
-    skills = await SkillsLoader(tmp_path, user_id=user_id).list_skill_info()
+    skills = await SkillsLoader(tmp_path, channel="web_client", user_id=user_id).list_skill_info()
     assert bool(skills) is visible
     messages = await build_context_messages(
-        tmp_path, user_id=user_id, channel=None, user_organization=None,
+        tmp_path, user_id=user_id, channel="web_client", user_organization=None,
         not_interactive=False, token_counts={},
     )
     context = "\n".join(message["content"] for message in messages)
@@ -401,13 +398,13 @@ async def test_user_id_skill_filter_in_list_and_context(monkeypatch, tmp_path, u
 def test_mcp_preserves_filter_in_registration_and_cache_key(tmp_path):
     public = mcp_client.create_mcp_registration_from_config(
         "demo", MCPServerSettings(command="demo"), workspace=tmp_path,
-        skills_loader=SkillsLoader(tmp_path),
+        skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"),
     )
     dedicated = mcp_client.create_mcp_registration_from_config(
         "demo",
         MCPServerSettings(command="demo", filter='channel("crm")'),
         workspace=tmp_path,
-        skills_loader=SkillsLoader(tmp_path),
+        skills_loader=SkillsLoader(tmp_path, channel="web_client", user_id="test-user"),
     )
     assert dedicated.config.filter == 'channel("crm")'
     assert mcp_client._persistent_registration_key(public.config) != mcp_client._persistent_registration_key(

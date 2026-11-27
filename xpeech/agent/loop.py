@@ -5,6 +5,7 @@ from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from itertools import count
 from pathlib import Path
 from typing import Any, ClassVar
@@ -74,7 +75,7 @@ class AgentLoop:
         self,
         provider: OpenAIProvider,
         workspace: Path,
-        channel: str | None = None,
+        channel: str,
         user_organization: str | None = None,
         mapping_tool_call_funcs: dict[str, Any] | None = None,
     ):
@@ -111,7 +112,7 @@ class AgentLoop:
         self.memory_consolidator = MemoryConsolidator(
             store=MemoryStore(workspace=self.workspace),
             chat=self.chat,
-            execute_tools=self.tool_executor.execute,
+            execute_tools=partial(self.tool_executor.execute, channel=self.channel),
         )
 
     async def tool_call(
@@ -122,8 +123,8 @@ class AgentLoop:
         user_id: str,
         session_id: str,
         sender_name: str,
+        channel: str,
         session_metadata: dict[str, str] | None = None,
-        channel: str | None = None,
         turn_messages: list[dict[str, Any]] | None = None,
     ):
         """执行模型发起的工具调用，并逐步产生工具相关事件。"""
