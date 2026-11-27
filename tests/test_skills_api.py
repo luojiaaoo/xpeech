@@ -58,7 +58,7 @@ def test_import_and_list_session_skill(skill_api: tuple[TestClient, Path, dict[s
             "kwargs": {},
         },
         "source": "workspace",
-        "sandbox_filepath": str(workspace_root / "session-1" / "skills" / name / "SKILL.md"),
+        "path": str(workspace_root / "session-1" / "skills" / name / "SKILL.md"),
         "content": _skill_file(name, always=True).decode("utf-8"),
         "body": "\n# Instructions\n",
     }
@@ -88,7 +88,7 @@ def test_skill_list_is_isolated_by_session(skill_api: tuple[TestClient, Path, di
     assert other_session.status_code == 200
     assert {skill["source"] for skill in other_session.json()} == {"builtin"}
     assert all(
-        Path(skill["sandbox_filepath"]).is_relative_to(workspace_root / "session-b" / "skills")
+        Path(skill["path"]).is_relative_to(workspace_root / "session-b" / "skills")
         for skill in other_session.json()
     )
     assert "hello-skill" not in {skill["metadata"]["name"] for skill in other_session.json()}
