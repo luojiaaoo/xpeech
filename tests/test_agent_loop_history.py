@@ -115,7 +115,7 @@ async def test_tool_schemas_count_toward_compression_and_context_usage(tmp_path,
             },
         },
     )
-    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[], summary_tokens=10, max_iterations=1)
+    agent_loop = AgentLoop(provider=provider, workspace=tmp_path, tools=[], summary_tokens=10, max_iterations=1, channel="web_client")
     messages = [{"role": "user", "timestamp": 1.0, "content": "hello"}]
     assert await token_counter(messages) < agent_loop.max_accept_token
     assert await agent_loop.compressor.should_compress(messages)

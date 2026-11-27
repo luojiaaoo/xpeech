@@ -1,5 +1,4 @@
 """Custom JWT channels select public and matching Skill/MCP resources."""
-from unittest.mock import AsyncMock
 
 import asyncio
 import json
@@ -13,7 +12,6 @@ from fastapi.testclient import TestClient
 from xpeech.agent.prompt.system import _get_identity, build_system_prompt
 from xpeech.agent.runner import AgentRunner
 from xpeech.agent.server.api import app
-from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import mcp_client, registry
 from xpeech.config.settings import JWTChannelConfig, JWTConfig, MCPServerSettings, ToolConfig, settings
@@ -111,7 +109,7 @@ def test_custom_channel_rejects_wrong_key(channels):
 
 def test_skill_api_filters_using_channel(
     channels,
-    monkeypatch,
+    mock_builtin_skill_dirs, monkeypatch,
     tmp_path,
 ):
     monkeypatch.setattr(settings.path, "workspace_base_path", tmp_path)
@@ -128,7 +126,7 @@ def test_skill_api_filters_using_channel(
         filter_line = f"filter: {filter_expr}\n" if filter_expr else ""
         skill_file.write_text(f"---\nname: {name}\n{filter_line}---\n# {name}\n")
         builtin_dirs.append(skill_file.parent)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtin_dirs))
+    mock_builtin_skill_dirs(builtin_dirs)
     for name, filter_expr in [("user-public", None), ("user-crm", 'channel("crm")'), ("user-erp", 'channel("erp")')]:
         skill_file = tmp_path / "tag-user" / "skills" / name / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
@@ -163,13 +161,13 @@ def test_skill_api_filters_using_channel(
 
 
 @pytest.mark.asyncio
-async def test_generic_skill_tags_do_not_restrict_channel_access(monkeypatch, tmp_path):
+async def test_generic_skill_tags_do_not_restrict_channel_access(mock_builtin_skill_dirs, monkeypatch, tmp_path):
     skill_dir = tmp_path / "builtin" / "classified"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("---\nname: classified\ntags: [finance, 'Long Form']\n---\n# Instructions\n")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[skill_dir]))
+    mock_builtin_skill_dirs([skill_dir])
 
-    [skill] = await SkillsLoader(tmp_path).list_skill_info()
+    [skill] = await SkillsLoader(tmp_path, channel="web_client").list_skill_info()
     assert skill.metadata.filter is None
     assert skill.metadata.kwargs["tags"] == ["finance", "Long Form"]
 
@@ -228,23 +226,23 @@ def test_chat_passes_verified_channel_and_profile_to_registration(
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
 @pytest.mark.asyncio
-async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tmp_path, source):
+async def test_always_skill_filter_restricts_builtin_skills_only(mock_builtin_skill_dirs, monkeypatch, tmp_path, source):
     skill_root = tmp_path / "builtin" if source == "builtin" else tmp_path / "skills"
     skill_file = skill_root / "dedicated" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     expression = 'channel("crm") and profile("finance")'
     skill_file.write_text(f'---\nname: dedicated\nfilter: {expression}\nalways: true\n---\n# CRM instructions')
     builtin_dirs = [skill_file.parent] if source == "builtin" else []
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtin_dirs))
-    loader = SkillsLoader(tmp_path)
+    mock_builtin_skill_dirs(builtin_dirs)
+    loader = SkillsLoader(tmp_path, channel="web_client")
     prompt = await loader.build_skills_prompt()
     if source == "builtin":
         # 内置技能受过滤表达式限制。
         assert prompt == ""
-        assert await SkillsLoader(tmp_path, channel="crm").list_builtin_skill_info() == []
-        assert await SkillsLoader(tmp_path, profile="finance").list_builtin_skill_info() == []
+        assert await SkillsLoader(tmp_path, channel="crm").list_skill_info(builtin_only=True) == []
+        assert await SkillsLoader(tmp_path, channel="web_client", profile="finance").list_skill_info(builtin_only=True) == []
         loader = SkillsLoader(tmp_path, channel="crm", profile="finance")
-        assert len(await loader.list_builtin_skill_info()) == 1
+        assert len(await loader.list_skill_info(builtin_only=True)) == 1
         prompt = await loader.build_skills_prompt()
     # 工作区技能由用户自己放置，不受访问过滤表达式限制。
     assert "# CRM instructions" in prompt
@@ -257,12 +255,12 @@ async def test_always_skill_filter_restricts_builtin_skills_only(monkeypatch, tm
 
 @pytest.mark.parametrize("filter_yaml", ["channel()", "[1]", "['crm']", "import os", "123"])
 @pytest.mark.asyncio
-async def test_invalid_skill_filters_are_skipped(monkeypatch, tmp_path, filter_yaml):
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+async def test_invalid_skill_filters_are_skipped(mock_builtin_skill_dirs, monkeypatch, tmp_path, filter_yaml):
+    mock_builtin_skill_dirs([])
     skill_file = tmp_path / "skills" / "invalid" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text(f"---\nname: invalid\nfilter: {filter_yaml}\n---\n# Invalid")
-    assert await SkillsLoader(tmp_path).list_skill_info() == []
+    assert await SkillsLoader(tmp_path, channel="web_client").list_skill_info() == []
 
 
 @pytest.mark.parametrize(
@@ -353,13 +351,13 @@ async def test_mcp_only_registers_public_and_matching_servers(
 def test_mcp_preserves_filter_in_registration_and_cache_key(tmp_path):
     public = mcp_client.create_mcp_registration_from_config(
         "demo", MCPServerSettings(command="demo"), workspace=tmp_path,
-        skills_loader=SkillsLoader(tmp_path),
+        skills_loader=SkillsLoader(tmp_path, channel="web_client"),
     )
     dedicated = mcp_client.create_mcp_registration_from_config(
         "demo",
         MCPServerSettings(command="demo", filter='channel("crm")'),
         workspace=tmp_path,
-        skills_loader=SkillsLoader(tmp_path),
+        skills_loader=SkillsLoader(tmp_path, channel="web_client"),
     )
     assert dedicated.config.filter == 'channel("crm")'
     assert mcp_client._persistent_registration_key(public.config) != mcp_client._persistent_registration_key(
@@ -371,7 +369,7 @@ def test_stdio_mcp_cache_separates_skill_mounts_by_profile(tmp_path):
     config = MCPServerSettings(command="demo")
     first, second = (
         mcp_client.create_mcp_registration_from_config(
-            "demo", config, workspace=tmp_path, skills_loader=SkillsLoader(tmp_path, profile=profile),
+            "demo", config, workspace=tmp_path, skills_loader=SkillsLoader(tmp_path, profile=profile, channel="web_client"),
         )
         for profile in ("finance", "hr")
     )

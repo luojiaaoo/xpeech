@@ -9,8 +9,6 @@ metadata:
 ---
 
 
-**CRITICAL — 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)，其中包含认证、权限处理**
-
 所有命令默认 `--as user`（审批是人的动作）。调用前先按需读取 references 下对应的文件，查参数结构，不要猜字段；**references 是第一信息源**，只有在 reference 未覆盖的原生 / 高级场景下，才额外用 `lark-cli ... --help`、`lark-cli schema` 等方式补充确认字段。
 
 ## 路由优先级（先判断是不是审批，再选命令）

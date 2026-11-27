@@ -298,6 +298,7 @@ async def test_search_error_is_reported_as_failed_execution(tmp_path, monkeypatc
         result
         async for result in executor.execute(
             [ToolCallRequest(id="search-1", name=name, arguments={"query": "test"})],
+            channel="web_client",
         )
     ]
     assert not results[0].succeeded

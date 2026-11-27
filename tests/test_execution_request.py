@@ -94,7 +94,7 @@ async def test_placeholder_returns_marker_without_running_original_function(tmp_
             workspace=tmp_path,
             max_result_chars=10_000,
             mapping_tool_call_funcs={"shell": current_provider.default_tools["shell"].func},
-        ).execute([call])
+        ).execute([call], channel="web_client")
     ]
     assert result.succeeded
     assert result.value == EXECUTION_REQUEST
@@ -127,7 +127,7 @@ async def test_power_commands_are_rejected_without_prompting(tmp_path, monkeypat
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(
-            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
+            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client")), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
         )
     )
     call = ToolCallRequest(
@@ -158,7 +158,7 @@ async def test_shell_checks_once_before_confirmed_execution(tmp_path, monkeypatc
     current_provider = provider()
     current_provider.register_function_tool(
         build_execution_request_tool(
-            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
+            shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client")), partial(dcg_module.shell_requires_confirmation, workspace=tmp_path)
         )
     )
     call = ToolCallRequest(
@@ -561,7 +561,7 @@ async def test_mcp_placeholder_preserves_schema_and_only_sends_original_argument
             remote_calls.append((name, arguments))
             return {"content": [{"type": "text", "text": "remote result"}]}
 
-    registration = create_mcp_registration(server_name="demo", command="demo", enabled_tools=["*"], workspace=tmp_path, skills_loader=SkillsLoader(tmp_path))
+    registration = create_mcp_registration(server_name="demo", command="demo", enabled_tools=["*"], workspace=tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client"))
     registration._session = Session()
     [binding] = await registration._discover_tool_bindings()
     original = deepcopy(binding.schema)

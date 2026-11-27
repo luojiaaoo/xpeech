@@ -1,5 +1,6 @@
 import asyncio
 import json
+from functools import partial
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -42,7 +43,7 @@ async def test_system_prompt_reads_memory(tmp_path, monkeypatch, memory):
         system_prompt_module.SkillsLoader, "build_skills_prompt", AsyncMock(return_value=""),
     )
 
-    prompt = await asyncio.wait_for(system_prompt_module.build_system_prompt(tmp_path), 5)
+    prompt = await asyncio.wait_for(system_prompt_module.build_system_prompt(tmp_path, channel="web_client"), 5)
 
     assert prompt["role"] == "system"
     if memory is not None:
@@ -163,7 +164,7 @@ class TestMemoryConsolidator:
         def make_consolidator(workspace):
             return MemoryConsolidator(
                 store=MemoryStore(workspace), chat=chat,
-                execute_tools=executor.execute, summary_tokens=100,
+                execute_tools=partial(executor.execute, channel="web_client"), summary_tokens=100,
             )
 
         consolidator = make_consolidator(tmp_path)

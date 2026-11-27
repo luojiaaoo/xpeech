@@ -15,8 +15,12 @@ from asyncer import asyncify
 from charset_normalizer import from_bytes
 from starlette.datastructures import UploadFile
 
-from .helper import ensure_finish_async, stack_ensure_aclosing
-
+from .helper import (
+    ensure_finish_async,
+    resolve_path_without_symlinks,
+    resolve_path_without_symlinks_async,
+    stack_ensure_aclosing,
+)
 
 _PATH_LOCKS: WeakKeyDictionary[
     asyncio.AbstractEventLoop, WeakValueDictionary[Path, asyncio.Lock]
@@ -35,7 +39,7 @@ class LockedFile:
 
     def __init__(self, path: Path):
         """规范化文件路径。"""
-        self.path = path.resolve()
+        self.path = resolve_path_without_symlinks(path)
         self._transaction_state: ContextVar[_Transaction | None] = ContextVar(
             "locked_file_transaction", default=None,
         )
@@ -154,12 +158,13 @@ class LockedFile:
 
 
 def ensure_path(path_: Path) -> Path:
-    path_.mkdir(parents=True, exist_ok=True)
+    resolve_path_without_symlinks(path_).mkdir(parents=True, exist_ok=True)
     return path_
 
 
 async def ensure_path_async(path_: Path) -> Path:
-    await anyio.Path(path_).mkdir(parents=True, exist_ok=True)
+    directory = await resolve_path_without_symlinks_async(path_)
+    await anyio.Path(directory).mkdir(parents=True, exist_ok=True)
     return path_
 
 
@@ -176,8 +181,8 @@ def is_relative_path(path_target: Path, base: Path):
 
 
 async def save_to_workspace(file: UploadFile, workspace: Path):
-    attachments_dir = workspace / "attachments" / datetime.now().astimezone().strftime("%Y-%m-%d")
-    await anyio.Path(attachments_dir).mkdir(parents=True, exist_ok=True)
+    date_folder = datetime.now().astimezone().strftime("%Y-%m-%d")
+    attachments_dir = await ensure_path_async(workspace / "attachments" / date_folder)
     original_path = attachments_dir / Path(file.filename).name
 
     async with stack_ensure_aclosing() as stack:
@@ -194,7 +199,8 @@ async def save_to_workspace(file: UploadFile, workspace: Path):
                     f"{original_path.stem}_{index}{original_path.suffix}"
                 )
                 try:
-                    await anyio.Path(candidate).hardlink_to(temporary)
+                    target = await resolve_path_without_symlinks_async(candidate)
+                    await anyio.Path(target).hardlink_to(temporary)
                 except FileExistsError:
                     index += 1
                 else:

@@ -20,7 +20,7 @@ class AgentRunner:
         *,
         config: Settings,
         not_interactive: bool = False,
-        channel: str | None = None,
+        channel: str,
         profile: str | None = None,
     ) -> None:
         self.user_id = user_id
@@ -39,7 +39,7 @@ class AgentRunner:
         *,
         config: Settings = settings,
         not_interactive: bool = False,
-        channel: str | None = None,
+        channel: str,
         profile: str | None = None,
     ) -> Self:
         """Create a fully initialized runner for one user."""

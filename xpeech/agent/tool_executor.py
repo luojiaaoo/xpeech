@@ -16,7 +16,8 @@ from .tools.helper import get_tool_model_cls
 
 TOOL_RESULT_DIRECTORY = "tool-results"
 # read_file 是持久化结果的恢复路径。将其豁免，以避免出现“工具结果 -> read_file -> 另一个持久化工具结果”的循环。
-TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS = frozenset({"read_file"})
+# read_skill 直接返回完整技能正文。
+TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS = frozenset({"read_file", "read_skill"})
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ class ToolExecutor:
         session_metadata: dict[str, str] | None = None,
         user_id: str | None = None,
         sender_name: str | None = None,
-        channel: str | None = None,
+        channel: str,
         session_id: str | None = None,
     ) -> ToolExecutionResult:
         """执行用户确认后的工具执行函数（EXECUTION_REQUEST 流程），与普通工具调用共用执行逻辑。"""
@@ -131,7 +132,7 @@ class ToolExecutor:
         session_metadata: dict[str, str] | None = None,
         user_id: str | None = None,
         sender_name: str | None = None,
-        channel: str | None = None,
+        channel: str | None,
         session_id: str | None = None,
     ) -> Any:
         """按工具声明组装运行时上下文并调用工具函数。"""
@@ -233,8 +234,9 @@ class ToolExecutor:
         session_metadata: dict[str, str] | None = None,
         user_id: str | None = None,
         sender_name: str | None = None,
-        channel: str | None = None,
         session_id: str | None = None,
+        *,
+        channel: str,
     ) -> AsyncIterator[ToolExecutionResult]:
         """并发执行工具调用，每完成一个就立即产出对应结果。"""
 

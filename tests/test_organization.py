@@ -1,5 +1,4 @@
 """验证技能和 MCP 服务统一按用户组织查询结果进行筛选。"""
-from unittest.mock import AsyncMock
 
 import asyncio
 import json
@@ -11,12 +10,11 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+import xpeech.config.settings as settings_module
 from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.server.api import app
-from xpeech.agent.skills import skill as skill_module
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.agent.tools import mcp_client, registry
-import xpeech.config.settings as settings_module
 from xpeech.config.settings import MCPServerSettings, OrganizationConfig, ToolConfig, settings
 
 
@@ -59,7 +57,7 @@ def test_empty_lookup_command_is_rejected(command):
 
 @pytest.mark.parametrize("source", ["builtin", "workspace"])
 @pytest.mark.asyncio
-async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_path, source):
+async def test_skills_and_always_prompt_filter_by_organization(mock_builtin_skill_dirs, monkeypatch, tmp_path, source):
     root = tmp_path / "builtin" if source == "builtin" else tmp_path / "skills"
     builtin_dirs = []
     for name, extra in [
@@ -74,20 +72,20 @@ async def test_skills_and_always_prompt_filter_by_organization(monkeypatch, tmp_
         path.write_text(f"---\nname: {name}\nalways: true\n{extra}---\n# Instructions for {name}\n")
         if source == "builtin":
             builtin_dirs.append(path.parent)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=builtin_dirs))
+    mock_builtin_skill_dirs(builtin_dirs)
 
     # org("") 是非法过滤表达式，在元数据解析阶段即被跳过，与来源无关。
     unfiltered = {"public", "engineering", "sales", "other-channel"}
     expected_public = unfiltered if source == "workspace" else {"public"}
     expected_engineering = unfiltered if source == "workspace" else {"public", "engineering"}
-    public = await SkillsLoader(tmp_path).list_skill_info()
+    public = await SkillsLoader(tmp_path, channel="web_client").list_skill_info()
     assert {skill.metadata.name for skill in public} == expected_public
-    loader = SkillsLoader(tmp_path, user_organization="公司/研发/平台")
+    loader = SkillsLoader(tmp_path, user_organization="公司/研发/平台", channel="web_client")
     skills = {skill.metadata.name: skill for skill in await loader.list_skill_info()}
     assert set(skills) == expected_engineering
     assert skills["engineering"].metadata.filter == 'org("公司/研发/", "公司/研发/")'
     assert "filter" not in skills["engineering"].metadata.kwargs
-    system = await build_system_prompt(tmp_path, user_organization="公司/研发/平台")
+    system = await build_system_prompt(tmp_path, user_organization="公司/研发/平台", channel="web_client")
     assert "# Instructions for engineering" in system["content"]
     if source == "workspace":
         # 工作区技能由用户自己放置，不受过滤表达式限制。
@@ -127,6 +125,7 @@ async def test_mcp_filters_before_connections_status_and_discovery(monkeypatch, 
     await registry.register_tools(
         user_id="alice", provider=provider, workspace=tmp_path, config=config,
         user_organization=user_organization,
+        channel="web_client",
     )
     expected = ["public"]
     if user_organization:
@@ -141,17 +140,17 @@ async def test_mcp_filters_before_connections_status_and_discovery(monkeypatch, 
 def test_mcp_filter_is_preserved_in_cache_key(tmp_path):
     public = mcp_client.create_mcp_registration_from_config(
         "demo", MCPServerSettings(command="demo"), workspace=tmp_path,
-        skills_loader=SkillsLoader(tmp_path),
+        skills_loader=SkillsLoader(tmp_path, channel="web_client"),
     )
     private = mcp_client.create_mcp_registration_from_config(
         "demo", MCPServerSettings(command="demo", filter='org("公司/")'), workspace=tmp_path,
-        skills_loader=SkillsLoader(tmp_path),
+        skills_loader=SkillsLoader(tmp_path, channel="web_client"),
     )
     assert private.config.filter == 'org("公司/")'
     assert mcp_client._persistent_registration_key(public.config) != mcp_client._persistent_registration_key(private.config)
 
 
-def test_skill_api_looks_up_authenticated_user_and_ignores_claims(monkeypatch, tmp_path):
+def test_skill_api_looks_up_authenticated_user_and_ignores_claims(mock_builtin_skill_dirs, monkeypatch, tmp_path):
     monkeypatch.setattr(settings.path, "workspace_base_path", tmp_path)
     monkeypatch.setattr(settings, "organization", OrganizationConfig(command_template="lookup $user_id"))
     directories = []
@@ -160,7 +159,7 @@ def test_skill_api_looks_up_authenticated_user_and_ignores_claims(monkeypatch, t
         path.parent.mkdir(parents=True)
         path.write_text(f'---\nname: {name}\nfilter: org("company/{name}/")\n---\n')
         directories.append(path.parent)
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=directories))
+    mock_builtin_skill_dirs(directories)
     calls = []
 
     async def execute(command, variables, **kwargs):

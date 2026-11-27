@@ -6,6 +6,7 @@ import pytest
 from xpeech.agent.tools import filesystem
 from xpeech.agent.tools.filesystem import EditFileArgs, ReadFileArgs, WriteFileArgs, build_file_tools
 from xpeech.agent.tools.helper import get_mime_type
+from xpeech.exceptions import PathProtectionError
 
 
 @pytest.mark.parametrize(
@@ -119,14 +120,17 @@ async def test_read_file_returns_paginated_result_under_limit(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_edit_file_preserves_line_endings_and_symlink(tmp_path):
+async def test_edit_file_preserves_line_endings_and_rejects_symlinks(tmp_path):
     path = tmp_path / "notes.txt"
     path.write_bytes(b"first=old\r\nsecond=old\r\n")
     (tmp_path / "alias.txt").symlink_to(path.name)
     *_, edit = build_file_tools(tmp_path)
 
-    await edit(EditFileArgs(path="alias.txt", old_text="first=old", new_text="first=new"))
+    with pytest.raises(PathProtectionError, match="Symbolic links are not allowed"):
+        await edit(EditFileArgs(path="alias.txt", old_text="first=old", new_text="first=new"))
 
+    assert path.read_bytes() == b"first=old\r\nsecond=old\r\n"
+    await edit(EditFileArgs(path="notes.txt", old_text="first=old", new_text="first=new"))
     assert path.read_bytes() == b"first=new\r\nsecond=old\r\n"
     assert (tmp_path / "alias.txt").is_symlink()
 

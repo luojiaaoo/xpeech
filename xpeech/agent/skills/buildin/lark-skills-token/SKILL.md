@@ -1,19 +1,19 @@
 ---
 name: lark-skills-token
 short_description: 飞书全能力助手
-description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审批、妙搭应用开发、考勤、多维表格 Base、日历、通讯录、云文档 Docx/Wiki、云盘 Drive、事件订阅、即时通讯 IM、邮箱、Markdown、视频会议与纪要/妙记、OKR、原生 OpenAPI、电子表格 Sheets、幻灯片 Slides、任务 Task、画板 Whiteboard、知识库 Wiki，以及会议纪要汇总、日程待办摘要两个工作流和 Skill 制作器。当用户有任一飞书/Lark 需求时使用本技能，按本文件目录读取对应子技能库的 SKILL.md 后执行。"
+description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审批、妙搭应用开发、考勤、多维表格 Base、日历、通讯录、云文档 Docx/Wiki、云盘 Drive、事件订阅、即时通讯 IM、邮箱、Markdown、视频会议与纪要/妙记、OKR、原生 OpenAPI、电子表格 Sheets、幻灯片 Slides、任务 Task、画板 Whiteboard、知识库 Wiki，以及会议纪要汇总、日程待办摘要两个工作流和 Skill 制作器。当用户有任一飞书/Lark 需求时使用本技能，按任务通过 read_file 读取对应参考文档后执行。"
 ---
 
 # lark-skills-token — 飞书/Lark 能力聚合路由
 
-本技能是 **`lark-*` 子技能库的聚合入口 / 路由**。它本身不包含具体操作指令，只负责把需求路由到正确的子技能库；每个能力的具体用法都在对应的子技能库 `SKILL.md` 里。
+本技能将飞书/Lark 的业务能力整合在一个入口中。各业务目录下的 `SKILL.md` 是本技能的参考文档，保留原始文件名便于维护，不作为独立技能注册，也不通过 `read_skill` 加载。
 
 > 认证、令牌缺失和权限不足处理统一读取 `lark-shared/SKILL.md`，不主动发起授权。
 
 ## 使用方法（路由规则）
 
 1. 收到飞书/Lark 相关需求后，在下方「目录」里按需求匹配最合适的子技能库。
-2. 用 Read 工具读取该子技能库的 `SKILL.md`，按其指引执行。
+2. 通过 `read_file` 按路径读取对应参考文档，例如 `<本技能目录>/lark-im/SKILL.md`，按其指引执行。参考文档之间的 `SKILL.md` 链接也通过 `read_file` 读取。
 3. 涉及认证、身份切换、权限不足（`missing_scopes`）、输出契约、高风险操作等通用规则时，先读取 `lark-shared/SKILL.md`。
 4. 普通业务直接执行 `lark-cli ... --as user`。令牌缺失、失效或缺少 scope 时，报告问题，由调用方提供有效令牌。
 

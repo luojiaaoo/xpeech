@@ -480,7 +480,7 @@ async def test_legacy_backend_tool_events_update_feishu_cards_without_protocol_c
     sandbox = SimpleNamespace(idle_timeout=60, run=run)
     monkeypatch.setattr(shell_module.sandbox, "SandboxExecutor", lambda *_args, **_kwargs: sandbox)
     shell = build_execution_request_tool(
-        shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path)),
+        shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client")),
         lambda _: ExecutionDecision.ALLOW,
     )
     calls = [
@@ -494,7 +494,7 @@ async def test_legacy_backend_tool_events_update_feishu_cards_without_protocol_c
     results = {}
 
     async def events(*_args, **_kwargs):
-        async for event in agent.tool_call(SimpleNamespace(tool_calls=calls, content=""), [], 0, "alice", "session", "Alice"):
+        async for event in agent.tool_call(SimpleNamespace(tool_calls=calls, content=""), [], 0, "alice", "session", "Alice", channel="web_client"):
             if event["event"] == "tool_call_result":
                 result = json.loads(event["context"])
                 assert set(result) == {"id", "name", "result", "duration_seconds"}

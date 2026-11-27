@@ -10,7 +10,6 @@ from xpeech.agent.skills.skill import BUILTIN_SKILLS_DIR, SkillsLoader
 from xpeech.agent.tools.ask_user_question import QuestionArgs
 from xpeech.agent.tools.browser_preview import BrowserPreviewArgs, build_browser_preview_tool
 
-
 SCRIPT_PATH = BUILTIN_SKILLS_DIR / "share-session/scripts/render_share.py"
 SPEC = spec_from_file_location("render_share", SCRIPT_PATH)
 renderer = module_from_spec(SPEC)
@@ -121,11 +120,11 @@ def test_cli_and_browser_preview_publish_only_html(tmp_path: Path, conversation)
 
 @pytest.mark.asyncio
 async def test_share_skill_is_discovered_and_form_uses_supported_schema(tmp_path: Path):
-    skills = await SkillsLoader(tmp_path).list_builtin_skill_info()
+    skills = await SkillsLoader(tmp_path, channel="web_client").list_skill_info(builtin_only=True)
     [skill] = [skill for skill in skills if skill.metadata.name == "share-session"]
     assert skill.metadata.kwargs["short_description"] == "当前会话分享"
     assert skill.metadata.internal is False
-    assert skill.path == str(tmp_path / "skills/share-session/SKILL.md")
+    assert skill.sandbox_filepath == str(tmp_path / "skills/share-session/SKILL.md")
     form = json.loads(skill.body.split("```json\n", 1)[1].split("```", 1)[0])
     question = QuestionArgs(question=json.dumps(form))
     validated_form = json.loads(question.question)

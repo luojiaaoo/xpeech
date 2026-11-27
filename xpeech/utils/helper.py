@@ -1,20 +1,23 @@
-from pathlib import Path
 import asyncio
 import base64
+import inspect
+import math
+import re
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
-import math
-import re
-import inspect
-from asyncer import asyncify
+from importlib.util import module_from_spec, spec_from_file_location
+from io import BytesIO
+from pathlib import Path
+
 import anyio
 import yaml
-from importlib.util import spec_from_file_location, module_from_spec
-import sys
-from io import BytesIO
-from PIL import Image
 from async_lru import alru_cache
+from asyncer import asyncify
+from PIL import Image
+
+from ..exceptions import PathProtectionError
 
 # PIL.Image.ANTIALIAS is deprecated, use PIL.Image.Resampling.LANCZOS instead
 if not hasattr(Image, "ANTIALIAS"):
@@ -99,6 +102,33 @@ def dynamic_import(path: str, module_name: str | None = None):
 
 def format_now(format_string: str = "%Y-%m-%d") -> str:
     return datetime.now().astimezone().strftime(format_string)
+
+
+def _absolute_path_components(path: Path) -> list[Path]:
+    path = Path(path).absolute()
+    components = [Path(path.anchor)]
+    for part in path.parts[1:]:
+        parent = components[-1]
+        components.append(parent.parent if part == ".." else parent / part)
+    return components
+
+
+def resolve_path_without_symlinks(path: Path) -> Path:
+    """Return an absolute path and reject symbolic links in any component."""
+    components = _absolute_path_components(path)
+    for component in components:
+        if component.is_symlink():
+            raise PathProtectionError(f"Symbolic links are not allowed: {component}")
+    return components[-1]
+
+
+async def resolve_path_without_symlinks_async(path: Path) -> Path:
+    """Validate a path without blocking the event loop."""
+    components = _absolute_path_components(path)
+    for component in components:
+        if await anyio.Path(component).is_symlink():
+            raise PathProtectionError(f"Symbolic links are not allowed: {component}")
+    return components[-1]
 
 
 async def token_counter(messages: list[dict], tools: list[dict] | None = None) -> int:

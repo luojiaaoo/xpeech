@@ -94,7 +94,7 @@ def streaming_chat(monkeypatch, tmp_path):
     agent.tools = []
     agent.max_iterations = 2
     agent.chat = call_provider
-    runner = AgentRunner("cleanup-user", config=SimpleNamespace(path=SimpleNamespace(workspace_base_path=tmp_path)))
+    runner = AgentRunner("cleanup-user", config=SimpleNamespace(path=SimpleNamespace(workspace_base_path=tmp_path)), channel="web_client")
     runner._agent_loop = agent
     message = InboundMessage(
         user_id="cleanup-user",

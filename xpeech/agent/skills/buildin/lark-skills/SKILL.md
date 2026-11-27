@@ -1,28 +1,28 @@
 ---
 name: lark-skills
 short_description: 飞书全能力助手
-description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审批、妙搭应用开发、考勤、多维表格 Base、日历、通讯录、云文档 Docx/Wiki、云盘 Drive、事件订阅、即时通讯 IM、邮箱、Markdown、视频会议与纪要/妙记、OKR、原生 OpenAPI、电子表格 Sheets、幻灯片 Slides、任务 Task、画板 Whiteboard、知识库 Wiki，以及会议纪要汇总、日程待办摘要两个工作流和 Skill 制作器。当用户有任一飞书/Lark 需求时使用本技能，按本文件目录读取对应子技能库的 SKILL.md 后执行。"
+description: "飞书/Lark 全能力聚合路由（基于 lark-cli）。涵盖审批、妙搭应用开发、考勤、多维表格 Base、日历、通讯录、云文档 Docx/Wiki、云盘 Drive、事件订阅、即时通讯 IM、邮箱、Markdown、视频会议与纪要/妙记、OKR、原生 OpenAPI、电子表格 Sheets、幻灯片 Slides、任务 Task、画板 Whiteboard、知识库 Wiki，以及会议纪要汇总、日程待办摘要两个工作流和 Skill 制作器。当用户有任一飞书/Lark 需求时使用本技能，按任务通过 read_file 读取对应参考文档后执行。"
 ---
 
 # lark-skills — 飞书/Lark 能力聚合路由
 
-本技能是 **`lark-*` 子技能库的聚合入口 / 路由**。它本身不包含具体操作指令，只负责把需求路由到正确的子技能库；每个能力的具体用法都在对应的子技能库 `SKILL.md` 里。
+本技能将飞书/Lark 的业务能力整合在一个入口中。各业务目录下的 `SKILL.md` 是本技能的参考文档，保留原始文件名便于维护，不作为独立技能注册，也不通过 `read_skill` 加载。
 
 > 本技能负责业务能力路由；授权、状态和 scope 申请由独立的 `lark-cli-auth` 技能处理。
 
 ## 使用方法（路由规则）
 
-1. 收到飞书/Lark 相关需求后，在下方「目录」里按需求匹配最合适的子技能库。
-2. 用 Read 工具读取该子技能库的 `SKILL.md`，按其指引执行。
-3. 涉及认证、身份切换、权限不足（`missing_scopes`）、输出契约、高风险操作等通用规则时，先读取 `lark-shared/SKILL.md`。
-4. 普通业务直接执行 `lark-cli`。遇到 `authorization_required` 时读取并原样发送其中的授权链接；授权、注销和追加 scope 走 `lark-cli-auth`。
+1. 首先通过 `read_file` 读取 `lark-shared/SKILL.md`，遵守其中的身份、认证、权限、输出契约和高风险操作规则。
+2. 按下方速查表选择业务参考文档，通过 `read_file` 按路径读取，例如 `<本技能目录>/lark-im/SKILL.md`；再按任务读取文档中引用的详细资料。
+3. 参考文档之间的 `SKILL.md` 链接同样通过 `read_file` 读取，不按 YAML 中的 `name` 调用 `read_skill`。文档较长时分段读取所需内容，标明必读的内容必须读完。
+4. 普通业务直接执行 `lark-cli`。遇到 `authorization_required` 时读取并原样发送其中的授权链接；授权、注销和追加 scope 通过 `read_skill(name="lark-cli-auth")` 加载独立的认证技能。
 
-## 目录（子技能库一览）
+## 目录（业务参考文档）
 
 ```
 lark-skills/
 ├── SKILL.md                        ← 本路由文件
-├── lark-shared/                    共享底座：认证、身份、权限、输出契约、高风险操作（其余子技能库普遍依赖它）
+├── lark-shared/                    共享底座：认证、身份、权限、输出契约、高风险操作（各业务文档共用）
 ├── lark-approval/                  审批：待办/已办/实例查询、搜索并发起审批
 ├── lark-apps/                      妙搭（Spark/Miaoda）应用：创建/开发/部署/发布、创意设计、环境变量、自动化触发器
 ├── lark-attendance/                考勤：打卡记录查询
@@ -52,9 +52,9 @@ lark-skills/
 └── lark-workflow-standup-report/   工作流：日程 + 任务待办摘要
 ```
 
-## 路由速查（高频需求 → 子技能库）
+## 路由速查（高频需求 → 参考文档）
 
-| 用户想要… | 读取 |
+| 用户想要… | 参考文档（相对本技能目录） |
 |---|---|
 | 发消息、搜聊天记录、管群、发卡片 | `lark-im/SKILL.md` |
 | 查/建日程、订会议室 | `lark-calendar/SKILL.md` |
@@ -83,7 +83,8 @@ lark-skills/
 
 ## 重要：相对路径说明
 
-- 每个子技能库（如 `lark-approval/`）内部出现的**相对路径，都是相对该子技能库自己的目录**而言的——不是相对本路由 `lark-skills/SKILL.md`，也不是相对仓库根目录。
+- 先以 `read_skill` 返回的本技能目录为基准，解析速查表中的参考文档路径。
+- 业务参考文档（如 `lark-approval/SKILL.md`）正文中的相对链接，以该文档所在目录为基准解析；例如其 `references/xxx.md` 对应 `<本技能目录>/lark-approval/references/xxx.md`。
 - 例如 `lark-approval/SKILL.md` 里写的 `../lark-shared/SKILL.md`，实际指向 `lark-skills/lark-shared/SKILL.md`（因为 `lark-approval` 与 `lark-shared` 都是 `lark-skills/` 下的同级目录）。
-- 同理，子技能库 `references/`、`scripts/`、`scenes/` 等子目录里的 `../../xxx` 相对路径，也是从该文件自己所在的子目录逐级向上解析，最终仍落在 `lark-skills/` 内。
-- 总之：**看到一个相对路径时，先确定它写在哪个子技能库的哪个文件里，再以那个文件所在目录为基准去解析。**
+- 同理，业务目录下 `references/`、`scripts/`、`scenes/` 等子目录里的 `../../xxx` 相对路径，也是从该文件自己所在的子目录逐级向上解析，最终仍落在 `lark-skills/` 内。
+- 总之：**看到一个相对路径时，先确定它写在哪个业务目录的哪个文件里，再以那个文件所在目录为基准去解析。**

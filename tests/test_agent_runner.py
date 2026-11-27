@@ -72,7 +72,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
 ):
     ensure_path, create_templates, register_tools = runner_dependencies
     config = make_config(tmp_path)
-    runner = await AgentRunner.create("session-1", config=config)
+    runner = await AgentRunner.create("session-1", config=config, channel="web_client")
     message = InboundMessage(
         user_id="session-1",
         session_id="chat-1",
@@ -95,7 +95,7 @@ async def test_runner_initializes_dependencies_once_and_yields_events(
         "user_id", "provider", "workspace", "config", "not_interactive", "channel", "user_organization", "profile",
     }
     assert register_tools.await_args.kwargs["not_interactive"] is False
-    assert register_tools.await_args.kwargs["channel"] is None
+    assert register_tools.await_args.kwargs["channel"] == "web_client"
     assert len(FakeAgentLoop.instances) == 1
     assert FakeAgentLoop.instances[0].messages == [message]
     assert FakeAgentLoop.instances[0].not_interactive_values == [False]
@@ -121,7 +121,7 @@ async def test_runner_resolves_organization_once_before_registering_tools(
         assert kwargs["profile"] == "finance"
 
     register_tools.side_effect = check_registration
-    runner = await AgentRunner.create("alice", config=config, profile="finance")
+    runner = await AgentRunner.create("alice", config=config, profile="finance", channel="web_client")
     assert runner.user_organization == "公司/研发/平台"
     assert FakeAgentLoop.instances[0].kwargs["user_organization"] == "公司/研发/平台"
     assert FakeAgentLoop.instances[0].kwargs["profile"] == "finance"
@@ -129,7 +129,7 @@ async def test_runner_resolves_organization_once_before_registering_tools(
 
 @pytest.mark.asyncio
 async def test_runner_rejects_message_for_another_session(tmp_path: Path):
-    runner = AgentRunner("session-1", config=make_config(tmp_path))
+    runner = AgentRunner("session-1", config=make_config(tmp_path), channel="web_client")
     message = InboundMessage(
         user_id="session-2",
         session_id="chat-1",
@@ -147,7 +147,7 @@ async def test_runner_rejects_message_for_another_session(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_runner_requires_async_factory(tmp_path: Path):
-    runner = AgentRunner("session-1", config=make_config(tmp_path))
+    runner = AgentRunner("session-1", config=make_config(tmp_path), channel="web_client")
     message = InboundMessage(
         user_id="session-1",
         session_id="chat-1",
@@ -190,7 +190,7 @@ async def test_runner_can_run_without_interaction(tmp_path: Path, runner_depende
 
 @pytest.mark.asyncio
 async def test_run_not_interactive_preserves_events_and_merges_text_chunks(tmp_path: Path):
-    runner = AgentRunner("session-1", config=make_config(tmp_path), not_interactive=True)
+    runner = AgentRunner("session-1", config=make_config(tmp_path), not_interactive=True, channel="web_client")
 
     class EventLoop:
         async def run(self, message, *, not_interactive=False):
@@ -268,7 +268,7 @@ async def test_run_not_interactive_preserves_events_and_merges_text_chunks(tmp_p
     ],
 )
 async def test_run_not_interactive_preserves_partial_and_non_assistant_output(tmp_path: Path, events, expected):
-    runner = AgentRunner("session-1", config=make_config(tmp_path), not_interactive=True)
+    runner = AgentRunner("session-1", config=make_config(tmp_path), not_interactive=True, channel="web_client")
 
     class EventLoop:
         async def run(self, message, *, not_interactive=False):

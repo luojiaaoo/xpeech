@@ -25,9 +25,9 @@ async def download_session_file(
             workspace,
             protect_read_only_file=False,
         )
-    except PathProtectionError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File is outside the workspace")
-    if not file_path.exists() or not file_path.is_file():
+    except PathProtectionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from None
+    if not file_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
     return FileResponse(file_path, filename=file_path.name)

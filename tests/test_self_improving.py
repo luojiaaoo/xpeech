@@ -6,7 +6,6 @@ from xpeech.agent.prompt.system import build_system_prompt
 from xpeech.agent.skills.skill import SkillsLoader
 from xpeech.utils.session import create_workspace_templates
 
-
 TREE = "self-improving/\n└── tool-use/\n    ├── 必读.md\n    └── errors.md"
 
 
@@ -28,7 +27,7 @@ async def test_memos_survive_initialization_and_memory_save(tmp_path):
 
     await store.save_memory(MemoryArgs(history_entry="event", memory_update=rule + "\nproject facts"))
     await create_workspace_templates(tmp_path)
-    prompt = await build_system_prompt(tmp_path, not_interactive=True)
+    prompt = await build_system_prompt(tmp_path, not_interactive=True, channel="web_client")
 
     assert f"## Long-term Memory\n{rule}\nproject facts" in prompt["content"]
     assert prompt["content"].count(rule) == 1
@@ -53,8 +52,8 @@ async def test_only_current_users_tree_is_injected(tmp_path):
     (other_category / "async.md").write_text("other-memo-body", encoding="utf-8")
     other_tree = "self-improving/\n└── coding/\n    └── async.md"
 
-    prompt = await build_system_prompt(first)
-    other_prompt = await build_system_prompt(second)
+    prompt = await build_system_prompt(first, channel="web_client")
+    other_prompt = await build_system_prompt(second, channel="web_client")
 
     assert TREE in prompt["content"]
     assert TREE not in other_prompt["content"]
@@ -95,7 +94,7 @@ async def test_unreadable_directory_does_not_break_long_term_memory(tmp_path, mo
         raise PermissionError("unreadable directory")
 
     monkeypatch.setattr(memory_module, "build_memo_tree", unreadable)
-    prompt = await build_system_prompt(tmp_path)
+    prompt = await build_system_prompt(tmp_path, channel="web_client")
 
     assert "important-fact" in prompt["content"]
     assert "Not loaded: the memo directory could not be scanned" in prompt["content"]
@@ -113,7 +112,7 @@ async def test_symlink_memo_root_is_ignored(tmp_path):
     memo_root.rmdir()
     memo_root.symlink_to(outside, target_is_directory=True)
 
-    prompt = await build_system_prompt(workspace)
+    prompt = await build_system_prompt(workspace, channel="web_client")
 
     assert "another-user.md" not in prompt["content"]
     assert "private body" not in prompt["content"]
@@ -123,8 +122,8 @@ async def test_symlink_memo_root_is_ignored(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("not_interactive", [False, True])
 async def test_self_improving_is_always_loaded_with_accessible_references(tmp_path, not_interactive):
-    loader = SkillsLoader(tmp_path, not_interactive=not_interactive)
-    skills = await loader.list_builtin_skill_info()
+    loader = SkillsLoader(tmp_path, not_interactive=not_interactive, channel="web_client")
+    skills = await loader.list_skill_info(builtin_only=True)
     skill = next(item for item in skills if item.metadata.name == "self-improving")
 
     assert skill.metadata.always is True

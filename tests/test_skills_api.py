@@ -58,9 +58,9 @@ def test_import_and_list_session_skill(skill_api: tuple[TestClient, Path, dict[s
             "kwargs": {},
         },
         "source": "workspace",
-        "path": str(workspace_root / "session-1" / "skills" / name / "SKILL.md"),
+        "sandbox_filepath": str(workspace_root / "session-1" / "skills" / name / "SKILL.md"),
         "content": _skill_file(name, always=True).decode("utf-8"),
-        "body": "# Instructions",
+        "body": "\n# Instructions\n",
     }
     assert (
         workspace_root / "session-1" / "skills" / name / "SKILL.md"
@@ -88,7 +88,7 @@ def test_skill_list_is_isolated_by_session(skill_api: tuple[TestClient, Path, di
     assert other_session.status_code == 200
     assert {skill["source"] for skill in other_session.json()} == {"builtin"}
     assert all(
-        Path(skill["path"]).is_relative_to(workspace_root / "session-b" / "skills")
+        Path(skill["sandbox_filepath"]).is_relative_to(workspace_root / "session-b" / "skills")
         for skill in other_session.json()
     )
     assert "hello-skill" not in {skill["metadata"]["name"] for skill in other_session.json()}
@@ -138,6 +138,24 @@ def test_import_rejects_unsafe_skill_destination(
 
     assert response.status_code == 422
     assert not (workspace_root / "session-1").exists()
+
+
+def test_skill_endpoints_reject_symlinked_directory(skill_api):
+    client, workspace_root, headers = skill_api
+    workspace = workspace_root / "session-1"
+    target = workspace / "linked-skills"
+    target.mkdir(parents=True)
+    (workspace / "skills").symlink_to(target, target_is_directory=True)
+
+    listed = client.get("/skills", headers=headers)
+    imported = client.post(
+        "/skills/import", files={"file": ("SKILL.md", _skill_file("custom"), "text/markdown")}, headers=headers,
+    )
+
+    for response in (listed, imported):
+        assert response.status_code == 403
+        assert "Symbolic links are not allowed" in response.json()["detail"]
+    assert not list(target.iterdir())
 
 
 def test_import_uses_loader_metadata_fallback(skill_api: tuple[TestClient, Path, dict[str, str]]):

@@ -58,15 +58,15 @@ async def test_manager_reuses_resets_idle_deadline_and_recreates_after_expiry(tm
     monkeypatch.setattr(SandboxSession, "execute", execute)
     monkeypatch.setattr(SandboxSession, "stop", stop)
     try:
-        first = await manager.run("one", tmp_path, 100, skills_loader=SkillsLoader(tmp_path))
+        first = await manager.run("one", tmp_path, 100, skills_loader=SkillsLoader(tmp_path, channel="web_client"))
         await asyncio.sleep(0.06)
-        assert await manager.run("two", tmp_path, 100, skills_loader=SkillsLoader(tmp_path)) is first
+        assert await manager.run("two", tmp_path, 100, skills_loader=SkillsLoader(tmp_path, channel="web_client")) is first
         await asyncio.sleep(0.06)
         assert not stopped.is_set()
         await asyncio.wait_for(first.idle_task, 1)
         assert stopped.is_set()
         assert not manager.sessions
-        assert await manager.run("three", tmp_path, 100, skills_loader=SkillsLoader(tmp_path)) is not first
+        assert await manager.run("three", tmp_path, 100, skills_loader=SkillsLoader(tmp_path, channel="web_client")) is not first
     finally:
         await manager.close()
 
@@ -140,9 +140,9 @@ async def test_sandbox_rebuilds_when_wrapped_command_changes(stubbed_sandbox, ch
     token_context = lark_user_access_token_var.set(None)
     try:
         async with session.lock:
-            await session.start(skills_loader=SkillsLoader(session.workspace))
+            await session.start(skills_loader=SkillsLoader(session.workspace, channel="web_client"))
             first = session.process
-            await session.start(skills_loader=SkillsLoader(session.workspace))
+            await session.start(skills_loader=SkillsLoader(session.workspace, channel="web_client"))
             assert session.process is first
             assert spawn.await_count == 1
             if change == "add_skill":
@@ -154,7 +154,7 @@ async def test_sandbox_rebuilds_when_wrapped_command_changes(stubbed_sandbox, ch
                 config_home.mkdir()
                 (config_home / ".npmrc").write_text("managed config")
 
-            await session.start(skills_loader=SkillsLoader(session.workspace))
+            await session.start(skills_loader=SkillsLoader(session.workspace, channel="web_client"))
             assert session.process is not first
             assert spawn.await_count == 2
             assert session.wrapped_command == list(spawn.call_args.args)
@@ -165,7 +165,7 @@ async def test_sandbox_rebuilds_when_wrapped_command_changes(stubbed_sandbox, ch
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("restrictions", "access"), [
     ('filter: channel("crm")\n', {"channel": "crm"}),
-    ('filter: org("company/engineering")\n', {"user_organization": "company/engineering"}),
+    ('filter: org("company/engineering")\n', {"channel": "web_client", "user_organization": "company/engineering"}),
 ])
 async def test_sandbox_rebuilds_when_skill_visibility_changes(stubbed_sandbox, restrictions, access):
     session, spawn, builtin_root = stubbed_sandbox
@@ -173,7 +173,7 @@ async def test_sandbox_rebuilds_when_skill_visibility_changes(stubbed_sandbox, r
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text(f"---\nname: restricted\n{restrictions}---\nInstructions")
     allowed = SkillsLoader(session.workspace, **access)
-    denied = SkillsLoader(session.workspace)
+    denied = SkillsLoader(session.workspace, channel="web_client")
     async with session.lock:
         await session.start(allowed)
         assert str(skill_dir) in spawn.call_args.args
@@ -189,7 +189,7 @@ async def test_sandbox_rebuilds_when_skill_visibility_changes(stubbed_sandbox, r
 async def test_sandbox_rebuild_waits_for_pending_commands(stubbed_sandbox):
     session, spawn, builtin_root = stubbed_sandbox
     async with session.lock:
-        await session.start(skills_loader=SkillsLoader(session.workspace))
+        await session.start(skills_loader=SkillsLoader(session.workspace, channel="web_client"))
         response = asyncio.get_running_loop().create_future()
         session.pending[0] = response
 
@@ -198,7 +198,7 @@ async def test_sandbox_rebuild_waits_for_pending_commands(stubbed_sandbox):
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("---\nname: new-skill\n---\nInstructions")
         async with session.lock:
-            await session.start(skills_loader=SkillsLoader(session.workspace))
+            await session.start(skills_loader=SkillsLoader(session.workspace, channel="web_client"))
 
     task = asyncio.create_task(restart())
     try:
@@ -235,13 +235,13 @@ async def test_concurrent_requests_prevent_expiry_and_users_are_independent(tmp_
 
     monkeypatch.setattr(SandboxSession, "execute", execute)
     monkeypatch.setattr(SandboxSession, "stop", stop)
-    first = asyncio.create_task(manager.run("long-first", tmp_path / "a", 100, skills_loader=SkillsLoader(tmp_path / "a")))
+    first = asyncio.create_task(manager.run("long-first", tmp_path / "a", 100, skills_loader=SkillsLoader(tmp_path / "a", channel="web_client")))
     second = None
     try:
         assert await asyncio.wait_for(started.get(), 1) == "long-first"
-        second = asyncio.create_task(manager.run("long-second", tmp_path / "a", 100, skills_loader=SkillsLoader(tmp_path / "a")))
+        second = asyncio.create_task(manager.run("long-second", tmp_path / "a", 100, skills_loader=SkillsLoader(tmp_path / "a", channel="web_client")))
         assert await asyncio.wait_for(started.get(), 1) == "long-second"
-        other = await manager.run("other", tmp_path / "b", 100, skills_loader=SkillsLoader(tmp_path / "b"))
+        other = await manager.run("other", tmp_path / "b", 100, skills_loader=SkillsLoader(tmp_path / "b", channel="web_client"))
         await asyncio.sleep(0.06)
         assert stopped == [other]
         assert not first.done() and not second.done()
@@ -274,9 +274,9 @@ async def test_request_during_expiry_waits_for_cleanup(tmp_path, monkeypatch):
 
     monkeypatch.setattr(SandboxSession, "execute", execute)
     monkeypatch.setattr(SandboxSession, "stop", stop)
-    await manager.run("before", tmp_path, 100, skills_loader=SkillsLoader(tmp_path))
+    await manager.run("before", tmp_path, 100, skills_loader=SkillsLoader(tmp_path, channel="web_client"))
     await asyncio.wait_for(stopping.wait(), 1)
-    after = asyncio.create_task(manager.run("after", tmp_path, 100, skills_loader=SkillsLoader(tmp_path)))
+    after = asyncio.create_task(manager.run("after", tmp_path, 100, skills_loader=SkillsLoader(tmp_path, channel="web_client")))
     try:
         await asyncio.sleep(0)
         assert not after.done()
@@ -306,7 +306,7 @@ async def test_request_credentials_are_refreshed_without_replaying_commands(tmp_
         for value in ("old-token", "new-token", None):
             context = lark_user_access_token_var.set(value)
             try:
-                await session.execute("true", 100, skills_loader=SkillsLoader(session.workspace))
+                await session.execute("true", 100, skills_loader=SkillsLoader(session.workspace, channel="web_client"))
             finally:
                 lark_user_access_token_var.reset(context)
         assert [r["env"]["LARKSUITE_CLI_USER_ACCESS_TOKEN"] for r in requests] == [
@@ -327,11 +327,11 @@ async def test_sandbox_reuses_process_when_only_request_token_changes(stubbed_sa
     token_context = lark_user_access_token_var.set(None)
     try:
         async with session.lock:
-            await session.start(skills_loader=SkillsLoader(session.workspace))
+            await session.start(skills_loader=SkillsLoader(session.workspace, channel="web_client"))
             first = session.process
             for value in ("old-token", "new-token", None):
                 lark_user_access_token_var.set(value)
-                await session.start(skills_loader=SkillsLoader(session.workspace))
+                await session.start(skills_loader=SkillsLoader(session.workspace, channel="web_client"))
                 assert session.process is first
                 assert spawn.await_count == 1
                 assert "LARKSUITE_CLI_USER_ACCESS_TOKEN" not in session.wrapped_command
@@ -363,8 +363,8 @@ async def test_concurrent_first_shell_calls_share_initialization_then_execute_in
     monkeypatch.setattr(executor_module.sandbox_manager, "run", run)
     monkeypatch.setattr(executor_module.platform, "system", lambda: "Linux")
     monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
-    first_shell = shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
-    second_shell = shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
+    first_shell = shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client"))
+    second_shell = shell_module.build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client"))
     first = asyncio.create_task(first_shell(ShellArgs(command="first")))
     second = None
     try:
@@ -393,9 +393,9 @@ linux_sandbox = pytest.mark.skipif(
 
 
 @pytest_asyncio.fixture
-async def manager(tmp_path, monkeypatch, request):
+async def manager(tmp_path, mock_builtin_skill_dirs, monkeypatch, request):
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
-    monkeypatch.setattr(skill_module, "iter_builtin_skill_dirs", AsyncMock(return_value=[]))
+    mock_builtin_skill_dirs([])
     if hasattr(request, "param"):
         monkeypatch.setattr(settings.tool.shell, "sandbox_idle_timeout_seconds", request.param)
     manager = SandboxManager()
@@ -424,7 +424,7 @@ async def test_commands_overlap_in_one_sandbox_and_route_out_of_order_output(tmp
             "printf slow; readlink /proc/self/ns/net; printf slow-error >&2",
             workspace,
             4_000,
-            skills_loader=SkillsLoader(workspace),
+            skills_loader=SkillsLoader(workspace, channel="web_client"),
         )
     )
     try:
@@ -433,7 +433,7 @@ async def test_commands_overlap_in_one_sandbox_and_route_out_of_order_output(tmp
             "printf fast; readlink /proc/self/ns/net; printf fast-error >&2",
             workspace,
             1_000,
-            skills_loader=SkillsLoader(workspace),
+            skills_loader=SkillsLoader(workspace, channel="web_client"),
         )
         assert not slow.done()
         assert fast.returncode == 0 and not fast.timed_out
@@ -466,7 +466,7 @@ async def test_concurrent_credentials_and_large_outputs_stay_with_their_request(
                 f"printf error-{index} >&2",
                 workspace,
                 3_000,
-                skills_loader=SkillsLoader(workspace),
+                skills_loader=SkillsLoader(workspace, channel="web_client"),
             )
         finally:
             user_id_var.reset(user_context)
@@ -490,7 +490,7 @@ async def test_real_sandbox_reuses_namespaces_tmp_and_background_processes_acros
             "readlink /proc/self/ns/net; readlink /proc/self/ns/pid",
             workspace,
             2_000,
-            skills_loader=SkillsLoader(workspace),
+            skills_loader=SkillsLoader(workspace, channel="web_client"),
         )
     finally:
         session_id_var.reset(context)
@@ -501,7 +501,7 @@ async def test_real_sandbox_reuses_namespaces_tmp_and_background_processes_acros
             "readlink /proc/self/ns/net && readlink /proc/self/ns/pid",
             workspace,
             2_000,
-            skills_loader=SkillsLoader(workspace),
+            skills_loader=SkillsLoader(workspace, channel="web_client"),
         )
     finally:
         session_id_var.reset(context)
@@ -509,7 +509,7 @@ async def test_real_sandbox_reuses_namespaces_tmp_and_background_processes_acros
     assert result.stdout == again.stdout
     other = tmp_path / "bob"
     other.mkdir()
-    isolated = await manager.run("test ! -f /tmp/state; readlink /proc/self/ns/net", other, 2_000, skills_loader=SkillsLoader(other))
+    isolated = await manager.run("test ! -f /tmp/state; readlink /proc/self/ns/net", other, 2_000, skills_loader=SkillsLoader(other, channel="web_client"))
     assert isolated.returncode == 0
     assert isolated.stdout != result.stdout.splitlines(keepends=True)[0]
 
@@ -520,14 +520,14 @@ async def test_real_sandbox_reuses_namespaces_tmp_and_background_processes_acros
 async def test_real_sandbox_survives_command_timeout_and_cancellation(tmp_path, manager, termination, monkeypatch):
     workspace = tmp_path / "alice"
     workspace.mkdir()
-    initial = await manager.run("readlink /proc/self/ns/net", workspace, 2_000, skills_loader=SkillsLoader(workspace))
+    initial = await manager.run("readlink /proc/self/ns/net", workspace, 2_000, skills_loader=SkillsLoader(workspace, channel="web_client"))
     manager.idle_timeout = 0.05
     sibling = asyncio.create_task(
         manager.run(
             "touch sibling.started; while [ ! -f release ]; do sleep 0.01; done; readlink /proc/self/ns/net",
             workspace,
             5_000,
-            skills_loader=SkillsLoader(workspace),
+            skills_loader=SkillsLoader(workspace, channel="web_client"),
         )
     )
     await wait_for_command_file(workspace / "sibling.started", sibling)
@@ -542,7 +542,7 @@ async def test_real_sandbox_survives_command_timeout_and_cancellation(tmp_path, 
 
     monkeypatch.setattr(session, "send", observe_send)
     command = "echo partial; echo ready > ready; sleep 30 & wait"
-    task = asyncio.create_task(manager.run(command, workspace, 100 if termination == "timeout" else 10_000, skills_loader=SkillsLoader(workspace)))
+    task = asyncio.create_task(manager.run(command, workspace, 100 if termination == "timeout" else 10_000, skills_loader=SkillsLoader(workspace, channel="web_client")))
     if termination.startswith("cancel"):
         if termination == "cancel_immediately":
             await asyncio.wait_for(sent.wait(), 5)
@@ -560,7 +560,7 @@ async def test_real_sandbox_survives_command_timeout_and_cancellation(tmp_path, 
         assert result.timed_out and result.stdout == b"partial\n"
     await asyncio.sleep(0.1)
     assert not sibling.done()
-    after = await manager.run("readlink /proc/self/ns/net", workspace, 2_000, skills_loader=SkillsLoader(workspace))
+    after = await manager.run("readlink /proc/self/ns/net", workspace, 2_000, skills_loader=SkillsLoader(workspace, channel="web_client"))
     assert after.returncode == 0 and after.stdout == initial.stdout
     (workspace / "release").touch()
     result = await sibling
@@ -579,7 +579,7 @@ async def test_shared_transport_loss_finishes_all_requests_without_replaying_the
                 f"echo once >> attempts-{index}; touch started-{index}; sleep 30",
                 workspace,
                 40_000,
-                skills_loader=SkillsLoader(workspace),
+                skills_loader=SkillsLoader(workspace, channel="web_client"),
             )
         )
         for index in range(2)
@@ -593,7 +593,7 @@ async def test_shared_transport_loss_finishes_all_requests_without_replaying_the
         process.kill()
     results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 5)
     assert all(isinstance(result, SandboxConnectionError) for result in results)
-    after = await manager.run("printf recovered", workspace, 1_000, skills_loader=SkillsLoader(workspace))
+    after = await manager.run("printf recovered", workspace, 1_000, skills_loader=SkillsLoader(workspace, channel="web_client"))
     assert after.returncode == 0 and after.stdout == b"recovered"
     assert all((workspace / f"attempts-{index}").read_text() == "once\n" for index in range(2))
 
@@ -609,7 +609,7 @@ async def test_real_idle_expiry_stops_detached_background_processes(tmp_path, ma
         "while [ ! -s heartbeat ]; do sleep 0.01; done; echo volatile > /tmp/state",
         workspace,
         2_000,
-        skills_loader=SkillsLoader(workspace),
+        skills_loader=SkillsLoader(workspace, channel="web_client"),
     )
     assert result.returncode == 0
     async with asyncio.timeout(5):
@@ -618,5 +618,5 @@ async def test_real_idle_expiry_stops_detached_background_processes(tmp_path, ma
     heartbeat = (workspace / "heartbeat").read_bytes()
     await asyncio.sleep(0.1)
     assert (workspace / "heartbeat").read_bytes() == heartbeat
-    after = await manager.run("test ! -f /tmp/state && test -s heartbeat", workspace, 2_000, skills_loader=SkillsLoader(workspace))
+    after = await manager.run("test ! -f /tmp/state && test -s heartbeat", workspace, 2_000, skills_loader=SkillsLoader(workspace, channel="web_client"))
     assert after.returncode == 0

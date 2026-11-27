@@ -219,7 +219,7 @@ class TestToolExecutor:
         monkeypatch.setattr(executor_module.platform, "system", lambda: "Linux")
         monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
 
-        assert build_shell_tools(workspace, skills_loader=SkillsLoader(workspace)).__name__ == "shell"
+        assert build_shell_tools(workspace, skills_loader=SkillsLoader(workspace, channel="web_client")).__name__ == "shell"
 
     @pytest.mark.skipif(
         platform.system() != "Linux" or any(shutil.which(name) is None for name in SANDBOX_EXECUTABLES),
@@ -237,7 +237,7 @@ class TestToolExecutor:
         )
 
         result = await asyncio.wait_for(
-            executor_module.sandbox_manager.run("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500, skills_loader=SkillsLoader(tmp_path)),
+            executor_module.sandbox_manager.run("printf 'partial output\\n'; sleep 10 & wait", tmp_path, timeout_ms=500, skills_loader=SkillsLoader(tmp_path, channel="web_client")),
             timeout=5,
         )
 
@@ -263,7 +263,7 @@ class TestToolExecutor:
     @pytest.mark.asyncio
     async def test_shell_completed_command_is_not_marked_timed_out(self, tmp_path: Path, shell_session_manager):
 
-        result = await executor_module.sandbox_manager.run("printf done", tmp_path, timeout_ms=1_000, skills_loader=SkillsLoader(tmp_path))
+        result = await executor_module.sandbox_manager.run("printf done", tmp_path, timeout_ms=1_000, skills_loader=SkillsLoader(tmp_path, channel="web_client"))
 
         assert result.stdout == b"done"
         assert result.returncode == 0
@@ -286,7 +286,7 @@ class TestToolExecutor:
         monkeypatch.setattr(executor_module.shutil, "which", lambda name: f"/usr/bin/{name}")
         monkeypatch.setattr(executor_module.SandboxExecutor, "ensure_python_environment", skip_venv)
         monkeypatch.setattr(executor_module.sandbox_manager, "run", timed_out_command)
-        shell = build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path))
+        shell = build_shell_tools(tmp_path, skills_loader=SkillsLoader(tmp_path, channel="web_client"))
 
         [result] = [
             result
@@ -294,6 +294,7 @@ class TestToolExecutor:
                 workspace=tmp_path, max_result_chars=32, mapping_tool_call_funcs={"shell": shell},
             ).execute(
                 [ToolCallRequest(id="1", name="shell", arguments={"command": "sleep 10", "timeout_ms": 500})],
+                channel="web_client",
             )
         ]
 
@@ -330,6 +331,7 @@ class TestToolExecutor:
             ).execute(
                 calls,
                 loop_count=3,
+                channel="web_client",
             )
         ]
 
@@ -361,7 +363,7 @@ class TestToolExecutor:
         )
         results = []
         async with asyncio.timeout(1):
-            async for result in executor.execute(calls):
+            async for result in executor.execute(calls, channel="web_client"):
                 results.append(result)
                 if result.call.id == "fast":
                     assert not release_slow.is_set()
@@ -398,6 +400,7 @@ class TestToolExecutor:
                     ToolCallRequest(id="stuck", name="stuck_tool", arguments={}),
                     ToolCallRequest(id="fast", name="fast_tool", arguments={}),
                 ],
+                channel="web_client",
             ):
                 assert result.call.id == "fast"
                 result_received.set()
@@ -415,7 +418,7 @@ class TestToolExecutor:
     @pytest.mark.asyncio
     async def test_empty_tool_calls_end_iteration(self, tmp_path: Path):
         executor = ToolExecutor(workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={})
-        assert [result async for result in executor.execute([])] == []
+        assert [result async for result in executor.execute([], channel="web_client")] == []
 
     @pytest.mark.asyncio
     async def test_timed_out_tool_does_not_block_other_results(self, tmp_path: Path):
@@ -441,7 +444,7 @@ class TestToolExecutor:
                 max_result_chars=10_000,
                 mapping_tool_call_funcs={"stuck_tool": stuck_tool, "fast_tool": fast_tool},
                 max_tool_timeout=0.02,
-            ).execute(calls)
+            ).execute(calls, channel="web_client")
         ]
 
         assert cancelled.is_set()
@@ -465,6 +468,7 @@ class TestToolExecutor:
                 max_tool_timeout=300,
             ).execute(
                 [ToolCallRequest(id="1", name="network_tool", arguments={})],
+                channel="web_client",
             )
         ]
 
@@ -504,6 +508,7 @@ class TestToolExecutor:
             ).execute(
                 calls,
                 session_metadata=metadata,
+                channel="web_client",
             )
         ]
         assert all(result.succeeded for result in results)
@@ -560,6 +565,7 @@ class TestToolExecutor:
                     ToolCallRequest(id="1", name="orchestrator", arguments={"text": "a"}),
                     ToolCallRequest(id="2", name="plain", arguments={"text": "b"}),
                 ],
+                channel="web_client",
             )
         ]
         assert all(result.succeeded for result in results)
@@ -601,7 +607,7 @@ class TestToolExecutor:
         [result] = [
             result async for result in ToolExecutor(
                 workspace=tmp_path, max_result_chars=10_000, mapping_tool_call_funcs={},
-            ).execute([call])
+            ).execute([call], channel="web_client")
         ]
 
         assert not result.succeeded
@@ -621,6 +627,7 @@ class TestToolExecutor:
                 workspace=tmp_path, max_result_chars=12, mapping_tool_call_funcs={"large_tool": large_result},
             ).execute(
                 [call],
+                channel="web_client",
             )
         ]
 
@@ -646,6 +653,7 @@ class TestToolExecutor:
                 workspace=tmp_path, max_result_chars=12, mapping_tool_call_funcs={"read_file": read_file},
             ).execute(
                 [call],
+                channel="web_client",
             )
         ]
 
@@ -672,6 +680,7 @@ class TestToolExecutor:
                 workspace=tmp_path, max_result_chars=8, mapping_tool_call_funcs={"multimodal": multimodal_result},
             ).execute(
                 [call],
+                channel="web_client",
             )
         ]
 
@@ -691,6 +700,7 @@ class TestToolExecutor:
                 workspace=tmp_path, max_result_chars=16, mapping_tool_call_funcs={"failure": failing_tool},
             ).execute(
                 [call],
+                channel="web_client",
             )
         ]
 

@@ -48,7 +48,7 @@ async def test_context_commands_continue_with_trailing_prompt(
 
     agent_loop = AgentLoop.__new__(AgentLoop)
     agent_loop.workspace = tmp_path
-    agent_loop.channel = None
+    agent_loop.channel = "test"
     agent_loop.user_organization = "公司/研发/平台"
     agent_loop.profile = None
     load_results = (

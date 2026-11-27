@@ -1,17 +1,20 @@
 """Skills loader for agent capabilities."""
 
 import re
+from collections.abc import Collection
 from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import anyio
 import yaml
+from async_lru import alru_cache
 from loguru import logger
 from pydantic import BaseModel, Field, computed_field, field_validator
 
 from ...utils.file_io import LockedFile, ensure_path_async
 from ...utils.filter_expr import FilterContext, filter_allows_access, validate_filter_source
+from ...utils.helper import resolve_path_without_symlinks_async
 from ..server.context import get_lark_user_access_token
 
 # Default builtin skills directory (relative to this file)
@@ -43,7 +46,7 @@ class SkillInfo(BaseModel):
     """Information about an available skill."""
 
     source: Literal["builtin", "workspace"]
-    path: str
+    sandbox_filepath: str = Field(description="Absolute path to SKILL.md inside the sandbox")
     content: Annotated[str, Field(frozen=True)]
 
     @computed_field
@@ -88,30 +91,63 @@ class SkillInfo(BaseModel):
     @computed_field
     @cached_property
     def body(self) -> str:
-        """Return and cache the Markdown body without YAML frontmatter."""
+        """Return the Markdown body verbatim after the YAML frontmatter."""
         match = FRONTMATTER_PATTERN.match(self.content)
         if not match:
             raise ValueError("Invalid SKILL.md frontmatter")
-        return self.content[match.end() :].strip()
+        return self.content[match.end() :]
+
+    @property
+    def instructions(self) -> str:
+        """Return the base directory and full body for model context."""
+        base_directory = Path(self.sandbox_filepath).parent
+        body = self.body
+        separator = "\n" if body.startswith("\n") else "\n\n"
+        return f"Base directory for this skill: {base_directory}{separator}{body}"
 
 
-async def iter_builtin_skill_dirs() -> list[Path]:
-    """Return valid built-in skill directories in a stable order."""
-    if get_lark_user_access_token():
-        excluded_skill_names = {LARK_SKILLS_DIR_NAME, LARK_CLI_AUTH_SKILL_DIR_NAME}
-    else:
-        excluded_skill_names = {LARK_TOKEN_SKILLS_DIR_NAME}
+@alru_cache(maxsize=1024)
+async def _read_skill_cached(
+    skill_file: Path, source: Literal["builtin", "workspace"], sandbox_filepath: str, version: tuple[int, ...],
+) -> SkillInfo | None:
+    file = LockedFile(skill_file)
+    try:
+        skill = SkillInfo(source=source, sandbox_filepath=sandbox_filepath, content=await file.read_text())
+        # Validate frontmatter while loading so invalid skills are skipped below.
+        _ = skill.metadata
+    except (FileNotFoundError, IsADirectoryError):
+        return None
+    except ValueError as exc:
+        logger.warning("Skipping invalid skill '{}': {}", skill_file, exc)
+        return None
+    return skill
 
-    return sorted(
-        [
-            Path(skill_dir)
-            async for skill_dir in anyio.Path(BUILTIN_SKILLS_DIR).iterdir()
-            if skill_dir.name not in excluded_skill_names
-            and await skill_dir.is_dir()
-            and await (skill_dir / "SKILL.md").is_file()
-        ],
-        key=lambda skill_dir: skill_dir.name,
-    )
+
+async def _build_skill_reader(
+    skill_file: Path, source: Literal["builtin", "workspace"], sandbox_filepath: str,
+) -> SkillInfo | None:
+    """Check the current file version before looking up the cached SkillInfo."""
+    try:
+        skill_file = await resolve_path_without_symlinks_async(skill_file)
+        stat = await anyio.Path(skill_file).stat()
+    except FileNotFoundError:
+        return None
+    version = stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_dev, stat.st_ino
+    return await _read_skill_cached(skill_file, source, sandbox_filepath, version)
+
+
+async def _iter_skill_files(directory: Path, excluded_names: Collection[str] = ()) -> list[Path]:
+    """List SKILL.md files in direct children without following symbolic links."""
+    root = await resolve_path_without_symlinks_async(directory)
+    entries = sorted([entry async for entry in anyio.Path(root).iterdir()])
+    files = []
+    for entry in entries:
+        if entry.name in excluded_names:
+            continue
+        skill_file = await resolve_path_without_symlinks_async(Path(entry) / "SKILL.md")
+        if await anyio.Path(skill_file).is_file():
+            files.append(skill_file)
+    return files
 
 
 class SkillsLoader:
@@ -124,40 +160,19 @@ class SkillsLoader:
 
     def __init__(
         self,
-        workspace: Path | None,
+        workspace: Path,
         *,
-        channel: str | None = None,
+        channel: str,
         user_organization: str | None = None,
         not_interactive: bool = False,
         profile: str | None = None,
     ):
-        self.workspace_skills = workspace / "skills" if workspace is not None else None
+        self.workspace_skills = workspace.resolve() / "skills"
         self.builtin_skills = BUILTIN_SKILLS_DIR
         self.channel = channel
         self.user_organization = user_organization
         self.not_interactive = not_interactive
         self.profile = profile
-
-    async def _workspace_skill_files(self) -> list[tuple[Path, Literal["builtin", "workspace"]]]:
-        """Return workspace skill documents without shadowing built-in directories."""
-        builtin_dir_names = {
-            skill_dir.name
-            for skill_dir in await iter_builtin_skill_dirs()
-        }
-        files: list[tuple[Path, Literal["builtin", "workspace"]]] = []
-        if self.workspace_skills is not None:
-            await ensure_path_async(self.workspace_skills)
-            entries = [entry async for entry in anyio.Path(self.workspace_skills).iterdir()]
-            for entry in sorted(entries, key=lambda item: item.name):
-                skill_dir = self.workspace_skills / entry.name
-                skill_file = skill_dir / "SKILL.md"
-                if (
-                    entry.name not in builtin_dir_names
-                    and await anyio.Path(skill_dir).is_dir()
-                    and await anyio.Path(skill_file).is_file()
-                ):
-                    files.append((skill_file, "workspace"))
-        return files
 
     async def _load_skill_info(
         self,
@@ -170,22 +185,15 @@ class SkillsLoader:
         )
         skills = []
         for skill_file, source in skill_files:
-            content = await LockedFile(skill_file).read_text()
             # Built-in skills are mounted into the workspace by the shell sandbox.
             if source == "builtin":
-                visible_path = (
-                    str(self.workspace_skills / skill_file.parent.name / "SKILL.md")
-                    if self.workspace_skills is not None
-                    else ""
-                )
+                sandbox_filepath = str(self.workspace_skills / skill_file.parent.name / "SKILL.md")
             else:
-                visible_path = str(skill_file)
-            skill = SkillInfo(source=source, path=visible_path, content=content)
-            try:
-                metadata = skill.metadata
-            except ValueError as exc:
-                logger.warning("Skipping invalid skill '{}': {}", skill_file, exc)
+                sandbox_filepath = str(skill_file)
+            skill = await _build_skill_reader(skill_file, source, sandbox_filepath)
+            if skill is None:
                 continue
+            metadata = skill.metadata
             if self.not_interactive and metadata.name in INTERACTIVE_SKILL_NAMES:
                 continue
             # Workspace skills are placed by the user and are not subject to access filters.
@@ -195,27 +203,41 @@ class SkillsLoader:
                 logger.warning("Skipping duplicate skill '{}' at '{}'", metadata.name, skill_file)
                 continue
             seen_names.add(metadata.name)
-            skills.append(skill)
+            # Callers may edit metadata or paths without changing the shared cached snapshot.
+            skills.append(skill.model_copy(deep=True))
         return skills
 
-    async def list_builtin_skill_info(self) -> list[SkillInfo]:
-        """Return available built-in skills without accessing workspace skills."""
-        return await self._load_skill_info(
-            [
-                (skill_dir / "SKILL.md", "builtin")
-                for skill_dir in await iter_builtin_skill_dirs()
-            ],
+    async def list_skill_info(self, *, builtin_only: bool = False) -> list[SkillInfo]:
+        """List available skills, optionally skipping all workspace access."""
+        if get_lark_user_access_token():
+            excluded_names = {LARK_SKILLS_DIR_NAME, LARK_CLI_AUTH_SKILL_DIR_NAME}
+        else:
+            excluded_names = {LARK_TOKEN_SKILLS_DIR_NAME}
+        builtin_files = await _iter_skill_files(self.builtin_skills, excluded_names)
+        builtin_skills = await self._load_skill_info(
+            [(file, "builtin") for file in builtin_files],
             set(),
         )
-
-    async def list_skill_info(self) -> list[SkillInfo]:
-        """Merge available built-in and workspace skills, preferring built-ins."""
-        builtin_skills = await self.list_builtin_skill_info()
+        if builtin_only:
+            return builtin_skills
+        await ensure_path_async(self.workspace_skills)
+        workspace_files = await _iter_skill_files(
+            self.workspace_skills, {file.parent.name for file in builtin_files},
+        )
         workspace_skills = await self._load_skill_info(
-            await self._workspace_skill_files(),
+            [(file, "workspace") for file in workspace_files],
             {skill.metadata.name for skill in builtin_skills},
         )
         return [*builtin_skills, *workspace_skills]
+
+    async def get_skill(self, name: str) -> SkillInfo:
+        """Look up a catalog skill by its frontmatter name."""
+        skills = await self.list_skill_info()
+        for skill in skills:
+            if skill.metadata.name == name:
+                return skill
+
+        raise LookupError(f"Skill {name!r} is not available in this session")
 
     async def build_skills_prompt(self) -> str:
         """Build the complete skills section for the system prompt."""
@@ -236,7 +258,6 @@ class SkillsLoader:
                 )
                 lines.append(f"    <name>{escape_xml(skill.metadata.name)}</name>")
                 lines.append(f"    <description>{escape_xml(skill.metadata.description)}</description>")
-                lines.append(f"    <location>{escape_xml(skill.path)}</location>")
                 lines.append("  </skill>")
             lines.append("</skills>")
 
@@ -248,7 +269,7 @@ class SkillsLoader:
 
         parts = []
         active_skills = [
-            f"### Skill: {skill.metadata.name}\n\n{skill.body}"
+            f"### Skill: {skill.metadata.name}\n\n{skill.instructions}"
             for skill in skills
             if skill.metadata.always
         ]
@@ -260,8 +281,8 @@ class SkillsLoader:
         if skills_summary:
             parts.append(
                 "# Skills\n\n"
-                "The following skills extend your capabilities. To use a skill, "
-                "read its SKILL.md file using the read_file tool.\n"
+                "Use the read_skill tool with the exact <name> to load a skill's instructions. "
+                "Skills in Active Skills are already loaded.\n"
                 "`builtin` means a shared skill built into the sandbox, `workspace` means a skill "
                 "placed in the workspace by the user, and `internal` marks a skill related to the "
                 "agent's runtime mechanics.\n\n"

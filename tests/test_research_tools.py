@@ -88,7 +88,7 @@ async def test_search_runs_through_provider_and_executor(tmp_path, monkeypatch, 
     results = [
         result
         async for result in executor.execute(
-            [ToolCallRequest(id="search-1", name="arxiv_search", arguments={"query": " AI "})],
+            [ToolCallRequest(id="search-1", name="arxiv_search", arguments={"query": " AI "})], channel="web_client",
         )
     ]
     assert results[0].succeeded
@@ -175,7 +175,7 @@ async def test_download_rejects_pdf_symlink_outside_workspace(tmp_path, monkeypa
     (workspace / "2103.03404v2.pdf").symlink_to(outside)
     monkeypatch.setattr(research, "_lookup_article", lambda _paper_id: research._article_payload(article))
     _, download = build_research_tools(workspace)
-    with pytest.raises(RuntimeError, match="Path escapes workspace"):
+    with pytest.raises(RuntimeError, match="Symbolic links are not allowed"):
         await download(ArxivDownloadArgs(id_list=["2103.03404v2"], download_dir="."))
     assert not outside.exists()
 

@@ -12,7 +12,7 @@ async def feishu_schedule_cron(
     session_metadata: dict[str, str] | None,
     sender_name: str | None,
     user_id: str | None,
-    channel: str | None,
+    channel: str,
 ) -> str:
     """创建飞书后台周期 Agent 任务，执行结果自动发送给当前用户。
 
@@ -38,7 +38,7 @@ async def feishu_schedule_once(
     session_metadata: dict[str, str] | None,
     sender_name: str | None,
     user_id: str | None,
-    channel: str | None,
+    channel: str,
 ) -> str:
     """创建飞书后台单次 Agent 任务，执行结果自动发送给当前用户。
 
@@ -61,7 +61,7 @@ async def _create_feishu_schedule(
     session_metadata: dict[str, str] | None,
     sender_name: str | None,
     user_id: str | None,
-    channel: str | None,
+    channel: str,
 ) -> str:
     if channel != "feishu":
         raise ValueError("Scheduling is only available for Feishu sessions")
