@@ -119,6 +119,7 @@ secret_key = "replace-with-a-distinct-crm-secret-of-at-least-32-characters"
 也可通过 `/token` 使用通道名和对应密钥获取令牌；统计接口和内部接口使用内部 JWT。
 通道名就是 JWT header 的 `kid`，由服务端 `jwt.channels` 配置确定，JWT payload 或会话元数据不授予任何权限。
 鉴权后的通道名（内部调用和定时任务为 `None`）以单个字符串显式传递到 Runner、技能加载和工具注册，供资源过滤表达式使用。
+`ToolExecutor.execute` 和 `execute_one` 的 `channel` 默认均为 `None`。聊天工具调用显式传入通道，记忆整理直接调用 `execute`，使用默认值。
 
 Skill 的 YAML frontmatter 和 MCP 配置都支持 `filter` 过滤表达式。配置了 `filter` 的资源仅在表达式
 求值为真时展示或注册；省略 `filter` 的资源是公共资源，一律可见。过滤表达式作用于内置技能（含 `always` 技能）、

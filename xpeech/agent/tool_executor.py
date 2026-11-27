@@ -236,7 +236,7 @@ class ToolExecutor:
         sender_name: str | None = None,
         session_id: str | None = None,
         *,
-        channel: str,
+        channel: str | None = None,
     ) -> AsyncIterator[ToolExecutionResult]:
         """并发执行工具调用，每完成一个就立即产出对应结果。"""
 

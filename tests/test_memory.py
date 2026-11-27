@@ -1,6 +1,5 @@
 import asyncio
 import json
-from functools import partial
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -164,7 +163,7 @@ class TestMemoryConsolidator:
         def make_consolidator(workspace):
             return MemoryConsolidator(
                 store=MemoryStore(workspace), chat=chat,
-                execute_tools=partial(executor.execute, channel="web_client"), summary_tokens=100,
+                execute_tools=executor.execute, summary_tokens=100,
             )
 
         consolidator = make_consolidator(tmp_path)

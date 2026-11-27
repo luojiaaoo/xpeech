@@ -4,7 +4,6 @@ import time
 from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass
-from functools import partial
 from itertools import count
 from pathlib import Path
 from typing import Any, ClassVar
@@ -113,7 +112,7 @@ class AgentLoop:
         self.memory_consolidator = MemoryConsolidator(
             store=MemoryStore(workspace=self.workspace),
             chat=self.chat,
-            execute_tools=partial(self.tool_executor.execute, channel=self.channel),
+            execute_tools=self.tool_executor.execute,
             summary_tokens=self.summary_tokens,
         )
 
