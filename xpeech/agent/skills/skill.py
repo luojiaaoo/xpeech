@@ -46,7 +46,9 @@ class SkillInfo(BaseModel):
     """Information about an available skill."""
 
     source: Literal["builtin", "workspace"]
-    sandbox_filepath: str = Field(description="Absolute path to SKILL.md inside the sandbox")
+    sandbox_filepath: str = Field(
+        serialization_alias="path", description="Absolute path to SKILL.md inside the sandbox",
+    )
     content: Annotated[str, Field(frozen=True)]
 
     @computed_field
