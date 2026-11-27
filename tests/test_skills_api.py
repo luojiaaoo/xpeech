@@ -95,6 +95,20 @@ def test_skill_list_is_isolated_by_session(skill_api: tuple[TestClient, Path, di
     assert (workspace_root / "session-b").is_dir()
 
 
+@pytest.mark.parametrize("has_token", [None, "false", "true"])
+def test_skill_list_selects_lark_skills_for_token_mode(skill_api, has_token):
+    client, _, headers = skill_api
+    params = {"has_lark_user_access_token": has_token} if has_token is not None else None
+
+    response = client.get("/skills", params=params, headers=headers)
+
+    assert response.status_code == 200
+    names = {skill["metadata"]["name"] for skill in response.json() if skill["source"] == "builtin"}
+    lark_skills = {"lark-skills", "lark-cli-auth", "lark-skills-token"}
+    expected = {"lark-skills-token"} if has_token == "true" else {"lark-skills", "lark-cli-auth"}
+    assert names & lark_skills == expected
+
+
 @pytest.mark.parametrize("params", [None, {"user_id": ""}, {"user_id": "session-b"}])
 def test_skill_list_ignores_user_query_parameter(skill_api, params):
     client, _, headers = skill_api

@@ -209,9 +209,13 @@ class SkillsLoader:
             skills.append(skill.model_copy(deep=True))
         return skills
 
-    async def list_skill_info(self, *, builtin_only: bool = False) -> list[SkillInfo]:
+    async def list_skill_info(
+        self, *, builtin_only: bool = False, has_lark_user_access_token: bool | None = None,
+    ) -> list[SkillInfo]:
         """List available skills, optionally skipping all workspace access."""
-        if get_lark_user_access_token():
+        if has_lark_user_access_token is None:
+            has_lark_user_access_token = bool(get_lark_user_access_token())
+        if has_lark_user_access_token:
             excluded_names = {LARK_SKILLS_DIR_NAME, LARK_CLI_AUTH_SKILL_DIR_NAME}
         else:
             excluded_names = {LARK_TOKEN_SKILLS_DIR_NAME}

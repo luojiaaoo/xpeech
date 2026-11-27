@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from ....config.settings import settings
 from ....exceptions import PathProtectionError
@@ -73,6 +73,10 @@ def _import_skill_file(data: bytes, workspace: Path) -> SkillInfo:
 async def list_skills(
     auth: Annotated[UserJWTAuth, Depends(require_user_jwt)],
     user_id: Annotated[str, Depends(authenticated_user_id)],
+    has_lark_user_access_token: Annotated[
+        bool,
+        Query(description="对应的聊天请求是否会注入飞书用户访问令牌"),
+    ] = False,
 ) -> list[SkillInfo]:
     """返回内置技能，以及 JWT 用户可用的 SKILL 列表。"""
     workspace = _user_workspace(user_id)
@@ -80,7 +84,7 @@ async def list_skills(
     try:
         return await SkillsLoader(
             workspace, channel=auth.channel, user_organization=user_organization,
-        ).list_skill_info()
+        ).list_skill_info(has_lark_user_access_token=has_lark_user_access_token)
     except PathProtectionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from None
 

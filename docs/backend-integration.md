@@ -144,19 +144,14 @@ SSE 一旦建立，不会因 Token 在流中途过期而中断；`/answer_questi
 
 ### 2.5 飞书用户令牌（可选）
 
-飞书通道需要以用户身份调用命令时，可在用户 JWT payload 中额外携带字符串 `lark_user_access_token`：
-
-```python
-claims = {
-    "sub": "demo-user",
-    "exp": datetime.now(UTC) + timedelta(seconds=60),
-    "lark_user_access_token": "<feishu-user-access-token>",
-}
-```
-
-使用 `jwt.channels.feishu.secret_key` 签名，header 设置 `kid="feishu"`。该声明仅用于当前请求，不保存到会话历史，后续请求需重新携带；内部 JWT 不接受此声明。
+调用方已有飞书用户访问令牌时，可通过 `POST /chat` 或 `POST /chat_sync` 的可选表单字段
+`lark_user_access_token` 注入。令牌仅用于当前请求，后续聊天请求需重新传入。
 
 携带非空令牌时，沙盒加载 `lark-skills-token`，`lark-cli` 使用该令牌且不回退请求 `lark-token-manager`；未携带时加载 `lark-skills` 和 `lark-cli-auth`，使用令牌容器。
+
+查询技能列表时，`GET /skills?has_lark_user_access_token=true` 返回注入模式的技能列表，
+其中飞书内置技能为 `lark-skills-token`。省略此布尔参数或传 `false` 时，飞书内置技能为
+`lark-skills` 和 `lark-cli-auth`。列表查询只需携带用户 JWT 和对应的模式参数。
 
 ---
 
@@ -193,6 +188,7 @@ x-sender-name: %E5%BC%A0%E4%B8%89
 | `content` | 是 | — | **JSON 字符串**，文本块列表，例如 `[{"text":"你好"},{"text":"第二段"}]`；目前仅支持文本块；文本中加入完整标记 `::请严格以JSON格式回复::` 可启用 JSON 输出，见第 3.5 节 |
 | `session_metadata` | 否 | `"{}"` | **JSON 字符串**，元数据对象，例如 `{"sender_id":"u-123"}`；值请使用字符串 |
 | `profile` | 否 | 空 | 本次聊天选择的资源配置名称。例如传入 `sales`，资源配置中的 `profile("sales")` 即为真。区分大小写，每次请求单独传入 |
+| `lark_user_access_token` | 否 | 空 | 飞书用户访问令牌，仅本次聊天请求生效，见第 2.5 节 |
 | `files` | 否 | 空 | multipart 文件字段，可重复多个；附件保存到用户工作区的 `attachments/YYYY-MM-DD/` 下，重名自动加序号 |
 
 `content`、`session_metadata` 是表单里的字符串，不能把整个请求发送为 `application/json`。非法 JSON 返回 `422`；`session_metadata` 必须为对象。渠道由 JWT `kid` 决定，元数据中的 `channel` 键会被丢弃。
