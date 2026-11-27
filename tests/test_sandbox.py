@@ -109,6 +109,7 @@ async def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path
     workspace.mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(backend_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(backend_home / ".config"))
     monkeypatch.setattr(settings.path, "sandbox_home_path", tmp_path / "config-home")
     mock_builtin_skill_dirs([])
 
@@ -117,6 +118,7 @@ async def test_sandbox_workspace_does_not_expand_the_backend_home(tmp_path: Path
     args = await sandbox.wrap_sandbox_command("pwd", relative_workspace, skills_loader=SkillsLoader(relative_workspace, channel="web_client"))
     environment = dict(_option_pairs(args, "--setenv"))
     assert environment["HOME"] == str(workspace / "home")
+    assert environment["XDG_CONFIG_HOME"] == str(workspace / "home/.config")
     assert _option_pairs(args, "--bind") == [(str(workspace), str(workspace))]
     assert args[args.index("--chdir") + 1] == str(workspace)
     assert not backend_home.exists()
@@ -482,7 +484,7 @@ async def test_sandbox_converts_document_with_libreoffice(tmp_path, mock_builtin
 
     command = await sandbox.wrap_sandbox_command(
         [
-            "libreoffice", "--headless", f"-env:UserInstallation={(workspace / 'lo-profile').as_uri()}",
+            "libreoffice", "--headless",
             "--convert-to", "pdf", "--outdir", str(workspace), str(source),
         ],
         workspace, skills_loader=SkillsLoader(workspace, channel="web_client"), network_isolation=network_isolation,

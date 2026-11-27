@@ -67,6 +67,7 @@ RUN sed -i \
         build-essential cppcheck tshark libgl1 libglu1-mesa \
         cmake ninja-build pkg-config gdb clang-format \
         libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-draw \
+        libreoffice-java-common openjdk-11-jre-headless \
         poppler-utils pandoc tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
         fontconfig fonts-dejavu-core fonts-noto-cjk && \
     fc-cache -f && \
